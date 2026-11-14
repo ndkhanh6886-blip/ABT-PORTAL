@@ -497,10 +497,11 @@ export async function listQualityRecords(tx: Tx, actor: AuthzActor) {
 
   const coas = (
     await tx.query(
-      `SELECT c.*, po.actual_ph::float AS actual_ph
+      `SELECT c.*, po.actual_ph::float AS actual_ph,
+              (c.superseded_by_id IS NOT NULL OR EXISTS (SELECT 1 FROM kit.coa_certificate child WHERE child.amended_from_id = c.id)) AS is_superseded
          FROM kit.coa_certificate c
          LEFT JOIN kit.production_order po ON po.id = c.production_order_id
-        ORDER BY c.issued_at DESC LIMIT 100`
+        ORDER BY c.issued_at DESC, c.revision_no DESC LIMIT 100`
     )
   ).rows;
 
@@ -556,7 +557,17 @@ export async function traceKitLotGenealogy(tx: Tx, actor: AuthzActor, lotId: str
     )
   ).rows;
 
-  const coa = (await tx.query("SELECT * FROM kit.coa_certificate WHERE lot_id = $1 LIMIT 1", [lotId])).rows[0] ?? null;
+  const coa = (
+    await tx.query(
+      `SELECT c.*,
+              (c.superseded_by_id IS NOT NULL OR EXISTS (SELECT 1 FROM kit.coa_certificate child WHERE child.amended_from_id = c.id)) AS is_superseded
+         FROM kit.coa_certificate c
+        WHERE c.lot_id = $1
+        ORDER BY is_superseded ASC, c.revision_no DESC, c.issued_at DESC
+        LIMIT 1`,
+      [lotId]
+    )
+  ).rows[0] ?? null;
 
   const targetLotIds = [lotId, ...downstream_children.map((c: { child_lot_id: string }) => c.child_lot_id)];
   const downstream_deliveries = (

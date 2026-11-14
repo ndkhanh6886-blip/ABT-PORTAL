@@ -1,6 +1,7 @@
 "use client";
 
 import { api } from "./api";
+import { barcode128SvgMarkup } from "./barcodeSvg";
 
 const esc = (v: unknown) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 const d = (v: string | null | undefined) => (v ? v.slice(0, 10).split("-").reverse().join("/") : "");
@@ -268,13 +269,25 @@ export function printKitCoaCertificate(coa: any, template?: any) {
       ? `${esc(coa.tests_per_kit)} tests (${esc(coa.good_qty)} ${esc(coa.uom)})`
       : `${esc(coa.good_qty)} ${esc(coa.uom)}`;
 
+  const supersededBanner = coa.is_superseded
+    ? `<div style="border:2px solid #dc2626;background:#fef2f2;color:#b91c1c;padding:6pt 10pt;margin-bottom:8pt;text-align:center;font-weight:bold;letter-spacing:0.5px;">⚠️ BẢN ĐÃ THAY THẾ / SUPERSEDED — CHỈ DÙNG TRA CỨU LỊCH SỬ</div>`
+    : "";
+  const hashNote = coa.sha256_hash
+    ? ` · SHA-256: <code style="font-size:8pt">${esc(String(coa.sha256_hash).slice(0, 16))}…</code>`
+    : "";
+
   const body = `
+    ${supersededBanner}
     <h1>${esc(docTitle)}</h1>
     <div class="sub">
       Số chứng nhận / Certificate No.: <b>${esc(coa.code)}</b>
       ${coa.revision_no ? ` · Phiên bản / Rev: <b>v${esc(coa.revision_no)}</b>` : ""}
       ${coa.qc_test_code ? ` · Phiếu QC gốc / QC Test Ref: <b>${esc(coa.qc_test_code)}</b>` : ""}
-      ${isoSubtitle ? ` · ${esc(isoSubtitle)}` : ""}
+      ${isoSubtitle ? ` · ${esc(isoSubtitle)}` : ""}${hashNote}
+    </div>
+    <div style="display:flex;justify-content:center;gap:18pt;align-items:center;margin:4pt 0 8pt;">
+      <div style="text-align:center;">${barcode128SvgMarkup(String(coa.code ?? ""), 30)}<div style="font-size:7.5pt;font-family:monospace;">${esc(coa.code)}</div></div>
+      ${coa.lot_code ? `<div style="text-align:center;">${barcode128SvgMarkup(String(coa.lot_code), 28)}<div style="font-size:7.5pt;font-family:monospace;">LOT ${esc(coa.lot_code)}</div></div>` : ""}
     </div>
     <table class="meta" style="border:0.5pt solid #64748b;background:#f8fafc;margin-bottom:8pt;">
       <tr>
@@ -370,11 +383,18 @@ export async function printOrderCoa(
     .filter((s) => !singleAmpliconId || s.id === singleAmpliconId);
 
   const issueDateStr = new Date().toLocaleDateString("vi-VN");
+  const quarantineBanner = c.quarantine_watermark
+    ? `<div style="border:2px solid #d97706;background:#fffbeb;color:#b45309;padding:5pt 10pt;margin-bottom:8pt;text-align:center;font-weight:bold;">⛔ BẢN NHÁP / BIỆT TRỮ — CHƯA HOÀN TẤT PHÊ DUYỆT QC ĐẦY ĐỦ</div>`
+    : "";
   const orderMetaHtml = `
+    ${quarantineBanner}
     <table class="meta" style="width:100%;border:0.5pt solid #94a3b8;background:#f8fafc;margin-bottom:8pt;">
       <tr>
         <td style="width:18%;font-weight:bold;">Mã Đơn Oligo:</td>
-        <td style="width:32%;font-weight:bold;color:#0f172a;">${esc(o.code)}</td>
+        <td style="width:32%;font-weight:bold;color:#0f172a;">
+          <div>${esc(o.code)}</div>
+          <div style="margin-top:2pt;">${barcode128SvgMarkup(String(o.code ?? ""), 24)}</div>
+        </td>
         <td style="width:18%;font-weight:bold;">Đơn nội bộ / PO KD:</td>
         <td style="width:32%;">${esc(o.internal_order_code || "—")} / <b>${esc(o.kd_po_code || "—")}</b></td>
       </tr>

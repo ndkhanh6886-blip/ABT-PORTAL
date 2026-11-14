@@ -66,8 +66,10 @@ export async function orderCoa(tx: Tx, actor: AuthzActor, orderId: string) {
       qc: test ? { code: test.code, reviewed_at: test.reviewed_at, signature: await reviewSignature(tx, test.id), results } : null,
     });
   }
+  const hasUnapproved = sequences.some((s: any) => s.status !== "COMPLETED" && s.status !== "DELIVERED");
   return {
     ...(await coaHeader(tx)),
+    quarantine_watermark: hasUnapproved,
     order: {
       id: o.id,
       code: o.code,

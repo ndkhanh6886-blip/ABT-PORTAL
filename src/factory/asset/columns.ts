@@ -70,6 +70,7 @@ export async function listColumns(tx: Tx, actor: AuthzActor) {
     await tx.query(
       `SELECT c.id, c.code, c.name, c.status, c.retired_reason,
               c.lot_code, c.catalog_code, COALESCE(c.brand, 'Waters') AS brand,
+              c.last_molecule_type, c.last_cleaned_at,
               c.price_vnd::float AS price_vnd, c.design_runs,
               a.code AS asset_code, a.name AS asset_name,
               round(c.price_vnd / c.design_runs, 2)::float AS cost_per_run,
@@ -102,10 +103,68 @@ export async function columnRuns(tx: Tx, actor: AuthzActor, id: string) {
 }
 
 /** A sequence run on a column in an SOP step: one run, costed at price / design runs. */
-export async function recordColumnRun(tx: Tx, actor: AuthzActor, columnId: string, ref: { post_process_id: string; sequence_code: string; step_name: string }) {
+export async function recordColumnRun(
+  tx: Tx,
+  actor: AuthzActor,
+  columnId: string,
+  ref: { post_process_id?: string | null; sequence_code: string; step_name: string; molecule_type?: string | null }
+) {
   const c = (await tx.query("SELECT * FROM asset.lc_column WHERE id = $1 FOR UPDATE", [columnId])).rows[0];
   if (!c || c.status !== "ACTIVE") throw invalid("Cột sắc ký không có hoặc đã thanh lý.", undefined, "COLUMN_RETIRED");
-  await tx.query("INSERT INTO asset.lc_column_run (column_id, post_process_id, sequence_code, step_name, cost_vnd, run_by) VALUES ($1, $2, $3, $4, $5, $6)", [
-    columnId, ref.post_process_id, ref.sequence_code, ref.step_name, Math.round((Number(c.price_vnd) / c.design_runs) * 100) / 100, actor.userId,
-  ]);
+  const lastRunAt = (
+    await tx.query("SELECT max(run_at) AS last_run_at FROM asset.lc_column_run WHERE column_id = $1", [columnId])
+  ).rows[0]?.last_run_at;
+  if (ref.molecule_type && c.last_molecule_type && ref.molecule_type !== c.last_molecule_type) {
+    const cleaned =
+      Boolean(c.last_cleaned_at) &&
+      (!lastRunAt || new Date(c.last_cleaned_at).getTime() >= new Date(lastRunAt).getTime());
+    if (!cleaned) {
+      throw invalid(
+        `Cột sắc ký ${c.code} vừa chạy hóa học ${c.last_molecule_type}, bắt buộc rửa/tái sinh cột trước khi chuyển sang ${ref.molecule_type}.`,
+        undefined,
+        "COLUMN_CLEANING_REQUIRED"
+      );
+    }
+  }
+  await tx.query(
+    "INSERT INTO asset.lc_column_run (column_id, post_process_id, sequence_code, step_name, cost_vnd, run_by) VALUES ($1, $2, $3, $4, $5, $6)",
+    [columnId, ref.post_process_id ?? null, ref.sequence_code, ref.step_name, Math.round((Number(c.price_vnd) / c.design_runs) * 100) / 100, actor.userId]
+  );
+  if (ref.molecule_type) {
+    await tx.query(
+      "UPDATE asset.lc_column SET last_molecule_type = $2, updated_at = now(), updated_by = $3 WHERE id = $1",
+      [columnId, ref.molecule_type, actor.userId]
+    );
+  }
+}
+
+/** Records chromatographic column cleaning / regeneration so chemistry switching (e.g. DNA <-> RNA) is cleared safely. */
+export async function cleanColumn(tx: Tx, actor: AuthzActor, id: string, notesInput?: unknown) {
+  await authorizeAnywhere(tx, actor, "asset.operate").catch((err) => {
+    if (err?.code === "FORBIDDEN") {
+      return authorizeAnywhere(tx, actor, "oligo.post.manage").catch((err2) => {
+        if (err2?.code === "FORBIDDEN") return authorizeAnywhere(tx, actor, "asset.manage");
+        throw err2;
+      });
+    }
+    throw err;
+  });
+  const notes = parseInput(z.string().trim().max(500).optional().nullable(), notesInput);
+  const c = (await tx.query("SELECT * FROM asset.lc_column WHERE id = $1 FOR UPDATE", [id])).rows[0];
+  if (!c) throw notFound("cột");
+  if (c.status !== "ACTIVE") throw invalid("Chỉ rửa được cột đang hoạt động.", undefined, "COLUMN_RETIRED");
+  const updated = (
+    await tx.query(
+      "UPDATE asset.lc_column SET last_cleaned_at = now(), version = version + 1, updated_at = now(), updated_by = $2 WHERE id = $1 RETURNING *",
+      [id, actor.userId]
+    )
+  ).rows[0];
+  await writeAudit(tx, actor, {
+    entityType: "lc_column",
+    entityId: id,
+    action: "clean_column",
+    changes: { last_cleaned_at: [c.last_cleaned_at ? String(c.last_cleaned_at) : null, String(updated.last_cleaned_at)] },
+    reason: notes ?? "Rửa / tái sinh cột sắc ký",
+  });
+  return updated;
 }

@@ -52,6 +52,7 @@ import {
   transferDeviceRdToProduction,
 } from "../workflow";
 import { getIssueSlip, signIssueSlip } from "../issueSlip";
+import { saveSpecEvaluation } from "../../rd/projects";
 import { approveSpec, createSpecDraft, specMachine } from "../../qms/specs";
 import { qcTestMachine, saveResults } from "../../qms/qcTests";
 import "../../modules";
@@ -851,8 +852,37 @@ describe("Phase 4c — Module Phòng Kỹ thuật – Công nghệ / Thiết b�
     );
     expect(rdRes.project_id).toBeTruthy();
 
-    // Advance Gates 1, 2, 3, 4 and Transfer to Production at Gate 5
-    for (const gateNo of [1, 2, 3, 4]) {
+    // Advance Gates 1, 2, then verify Gate 3 blocks PENDING specs until actual measured PASS results are recorded
+    for (const gateNo of [1, 2]) {
+      await withTransaction((tx) => advanceDeviceRdGate(tx, lead, rdRes.project_id, gateNo, `Pass G${gateNo}`));
+    }
+    await expect(
+      withTransaction((tx) => advanceDeviceRdGate(tx, lead, rdRes.project_id, 3, "Pass G3 prematurely"))
+    ).rejects.toMatchObject({ code: "SPEC_EVALUATION_NOT_PASSED" });
+
+    const pendingSpecs = (
+      await getFactoryPool().query("SELECT * FROM rd.spec_evaluation WHERE project_id = $1 ORDER BY parameter ASC", [
+        rdRes.project_id,
+      ])
+    ).rows;
+    expect(pendingSpecs.length).toBeGreaterThanOrEqual(3);
+    for (const sp of pendingSpecs) {
+      await withTransaction((tx) =>
+        saveSpecEvaluation(tx, engineer, rdRes.project_id, sp.id, {
+          category: sp.category,
+          design_stage: sp.design_stage,
+          parameter: sp.parameter,
+          unit: sp.unit,
+          baseline_value: sp.baseline_value,
+          target_value: sp.target_value,
+          actual_value: sp.target_value,
+          method_ref: sp.method_ref,
+          result: "PASS",
+        })
+      );
+    }
+
+    for (const gateNo of [3, 4]) {
       await withTransaction((tx) => advanceDeviceRdGate(tx, lead, rdRes.project_id, gateNo, `Pass G${gateNo}`));
     }
     const transferRes = await withTransaction((tx) =>

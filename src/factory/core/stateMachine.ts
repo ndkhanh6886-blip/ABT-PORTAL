@@ -41,7 +41,7 @@ export interface TransitionDef<S extends string, Row> {
   /** Columns of the entity written in the same UPDATE as the status (e.g. reviewer, result). Names come from code only. */
   patch?: (ctx: GuardContext<Row>) => Record<string, unknown> | Promise<Record<string, unknown>>;
   /** Runs after the status update, same transaction; may write related records. */
-  effects?: (ctx: GuardContext<Row> & { updated: Row }) => Promise<void>;
+  effects?: (ctx: GuardContext<Row> & { updated: Row; trusted?: boolean }) => Promise<void>;
 }
 
 export interface MachineDef<S extends string, Row> {
@@ -168,7 +168,7 @@ export async function runTransition<S extends string, Row extends { id: string; 
     [row.id, t.to, actor.userId, row.version, ...patchCols.map((c) => patch[c])]
   );
   const updated = upd.rows[0] as Row;
-  await t.effects?.({ ...ctx, updated });
+  await t.effects?.({ ...ctx, updated, trusted: opts.trusted });
   if (t.signature) {
     const fresh = (await tx.query(`SELECT * FROM ${machine.table} WHERE id = $1`, [row.id])).rows[0];
     await insertSignature(tx, actor, {

@@ -66,17 +66,57 @@ async function applyToAsset(tx: Tx, actor: AuthzActor, ev: AssetEvent & Record<s
   await writeAudit(tx, actor, { entityType: "asset", entityId: ev.asset_id, action: `event_${ev.kind.toLowerCase()}`, changes: Object.fromEntries(keys.map((k) => [k, [a[k], next[k]]])), reason: `Phiếu ${ev.code}` });
 
   if (next.status === "OUT_OF_CALIBRATION") {
-    await tx.query("ALTER TABLE qms.deviation ADD COLUMN IF NOT EXISTS category TEXT");
     const devCode = await nextNumber(tx, "DEVIATION");
+    const sinceSql = a.last_calibration_date
+      ? new Date(a.last_calibration_date).toISOString()
+      : new Date(Date.now() - 90 * 86400_000).toISOString();
+    const kitOrders = (
+      await tx.query(
+        `SELECT DISTINCT po.id, po.code, po.lot_id
+           FROM kit.production_step ps
+           JOIN kit.production_order po ON po.id = ps.order_id
+          WHERE ps.asset_id = $1
+            AND COALESCE(ps.completed_at, ps.started_at, ps.checked_at, po.created_at) >= $2::timestamptz`,
+        [ev.asset_id, sinceSql]
+      )
+    ).rows;
+    const qcTests = (
+      await tx.query(
+        `SELECT DISTINCT qt.id, qt.code, qt.entity_type, qt.entity_id
+           FROM qms.qc_result qr
+           JOIN qms.qc_test qt ON qt.id = qr.test_id
+          WHERE qr.instrument_asset_id = $1
+            AND qr.entered_at >= $2::timestamptz`,
+        [ev.asset_id, sinceSql]
+      )
+    ).rows;
+    const oligoBatches = (
+      await tx.query(
+        `SELECT DISTINCT sb.id, sb.code
+           FROM oligo.synthesis_batch sb
+          WHERE sb.synthesizer_id = $1
+            AND COALESCE(sb.finished_at, sb.started_at, sb.created_at) >= $2::timestamptz`,
+        [ev.asset_id, sinceSql]
+      )
+    ).rows;
+    const totalCount = kitOrders.length + qcTests.length + oligoBatches.length;
+    const affectedPayload = {
+      since: sinceSql,
+      kit_orders: kitOrders,
+      qc_tests: qcTests,
+      oligo_batches: oligoBatches,
+      total_count: totalCount,
+    };
+
     const title = `Thiết bị lệch chuẩn / không đạt hiệu chuẩn: ${a.code} (${a.name})`;
-    const description = `[Tự động từ Phiếu ${ev.code}] Thiết bị ${a.code} (${a.name}) chuyển trạng thái OUT_OF_CALIBRATION. Yêu cầu QA/QC đánh giá tác động hồi cứu (Retrospective Impact Assessment) các lô đã kiểm nghiệm / sản xuất trên thiết bị này.`;
+    const description = `[Tự động từ Phiếu ${ev.code}] Thiết bị ${a.code} (${a.name}) chuyển trạng thái OUT_OF_CALIBRATION. Truy vết tự động từ ${sinceSql.slice(0, 10)}: phát hiện ${totalCount} hồ sơ/lô bị ảnh hưởng (${kitOrders.length} lệnh Kit, ${qcTests.length} phiếu QC, ${oligoBatches.length} mẻ Oligo). Yêu cầu QA/QC đánh giá tác động hồi cứu (Retrospective Impact Assessment).`;
     const dev = (
       await tx.query(
         `INSERT INTO qms.deviation
-           (code, source_module, category, entity_type, entity_id, step_ref, severity, title, description, detected_by, created_by, updated_by)
-         VALUES ($1, 'ASSET', 'INSTRUMENT', 'ASSET', $2, $3, 'HIGH', $4, $5, $6, $6, $6)
+           (code, source_module, category, entity_type, entity_id, step_ref, severity, title, description, affected_batches_json, detected_by, created_by, updated_by)
+         VALUES ($1, 'ASSET', 'INSTRUMENT', 'ASSET', $2, $3, 'HIGH', $4, $5, $7::jsonb, $6, $6, $6)
          RETURNING id`,
-        [devCode, ev.asset_id, ev.code, title, description, actor.userId]
+        [devCode, ev.asset_id, ev.code, title, description, actor.userId, JSON.stringify(affectedPayload)]
       )
     ).rows[0];
     await writeAudit(tx, actor, {
@@ -89,8 +129,18 @@ async function applyToAsset(tx: Tx, actor: AuthzActor, ev: AssetEvent & Record<s
         category: [null, "INSTRUMENT"],
         entity_type: [null, "ASSET"],
         entity_id: [null, ev.asset_id],
+        affected_count: [null, String(totalCount)],
       },
       reason: `Phiếu ${ev.code}`,
+    });
+    await notifyUsers(tx, await usersWithPermission(tx, "qms.qc.review", null), {
+      type: "QMS_DEVIATION",
+      title: `Cảnh báo lệch chuẩn TB ${a.code} — ${devCode} (${totalCount} hồ sơ ảnh hưởng)`,
+      body: description.slice(0, 300),
+      entityType: "deviation",
+      entityId: dev.id,
+      link: "/?tab=factory-qa",
+      sourceKey: `deviation:${dev.id}`,
     });
   }
 }

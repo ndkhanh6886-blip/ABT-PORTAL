@@ -454,7 +454,7 @@ export async function createDeviceRdProject(tx: Tx, actor: AuthzActor, input: un
             unit: "°C",
             baseline_value: d.project_type === "IMPROVEMENT" ? "±0.3°C" : "N/A (Máy mới)",
             target_value: "±0.15°C",
-            actual_value: "±0.12°C",
+            actual_value: null,
             method_ref: "Đầu dò chuẩn Fluke 96-well",
           },
           {
@@ -462,7 +462,7 @@ export async function createDeviceRdProject(tx: Tx, actor: AuthzActor, input: un
             unit: "mA",
             baseline_value: d.project_type === "IMPROVEMENT" ? "< 0.5 mA" : "N/A (Máy mới)",
             target_value: "< 0.25 mA (Chuẩn IEC 61010-1)",
-            actual_value: "0.14 mA",
+            actual_value: null,
             method_ref: "Máy đo an toàn điện Hioki",
           },
           {
@@ -470,7 +470,7 @@ export async function createDeviceRdProject(tx: Tx, actor: AuthzActor, input: un
             unit: "giờ",
             baseline_value: d.project_type === "IMPROVEMENT" ? "24 giờ" : "N/A (Máy mới)",
             target_value: `${d.required_burn_in_hours} giờ liên tục không lỗi`,
-            actual_value: `${d.required_burn_in_hours} giờ PASS`,
+            actual_value: null,
             method_ref: "SOP-FQC-BURNIN",
           },
         ];
@@ -1665,7 +1665,6 @@ export async function issueWorkOrderBomKitting(
         );
         componentsInstalled++;
       }
-      await tx.query("ALTER TABLE device.device_unit ADD COLUMN IF NOT EXISTS assembled_by integer");
       await tx.query("UPDATE device.device_unit SET assembled_by = COALESCE(assembled_by, $2) WHERE id = $1", [unit.id, actor.userId]);
     }
 

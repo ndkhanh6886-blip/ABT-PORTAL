@@ -21,15 +21,6 @@ export async function ensureHplcReagentSlotsAndColumnsSeed(tx: Tx) {
   if (hplcSlotSchemaEnsured) return;
   await tx.query("SAVEPOINT hplc_seed_sp");
   try {
-    await tx.query(`
-      ALTER TABLE asset.reagent_slot
-        ADD COLUMN IF NOT EXISTS bottle_volume_base numeric(14,4) NOT NULL DEFAULT 2500,
-        ADD COLUMN IF NOT EXISTS std_qty_per_run numeric(14,4) NOT NULL DEFAULT 15,
-        ADD COLUMN IF NOT EXISTS std_qty_per_purge numeric(14,4) NOT NULL DEFAULT 30,
-        ADD COLUMN IF NOT EXISTS bottle_price_vnd numeric(18,2) NOT NULL DEFAULT 1850000,
-        ADD COLUMN IF NOT EXISTS design_runs integer NOT NULL DEFAULT 140
-    `);
-
     const oligoUnit = (
       await tx.query("SELECT id FROM core.org_unit WHERE code = 'P-OLIGO' OR module_key = 'OLIGO' ORDER BY code LIMIT 1")
     ).rows[0];
@@ -307,6 +298,7 @@ const slotsSchema = z.object({
         std_qty_per_purge: z.coerce.number().min(0).optional(),
         bottle_price_vnd: z.coerce.number().min(0).optional(),
         design_runs: z.coerce.number().int().positive().optional(),
+        open_stability_hours: z.coerce.number().int().min(1).max(8760).optional().nullable(),
       })
     )
     .max(50),
@@ -329,8 +321,8 @@ export async function configureSlots(tx: Tx, actor: AuthzActor, assetId: string,
   for (const s of slots) {
     await tx.query(
       `INSERT INTO asset.reagent_slot
-         (asset_id, slot_no, label, item_id, bottle_volume_base, std_qty_per_run, std_qty_per_purge, bottle_price_vnd, design_runs)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         (asset_id, slot_no, label, item_id, bottle_volume_base, std_qty_per_run, std_qty_per_purge, bottle_price_vnd, design_runs, open_stability_hours)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT (asset_id, slot_no) DO UPDATE
          SET label = EXCLUDED.label,
              item_id = EXCLUDED.item_id,
@@ -339,6 +331,7 @@ export async function configureSlots(tx: Tx, actor: AuthzActor, assetId: string,
              std_qty_per_purge = EXCLUDED.std_qty_per_purge,
              bottle_price_vnd = EXCLUDED.bottle_price_vnd,
              design_runs = EXCLUDED.design_runs,
+             open_stability_hours = EXCLUDED.open_stability_hours,
              version = asset.reagent_slot.version + 1`,
       [
         assetId,
@@ -350,6 +343,7 @@ export async function configureSlots(tx: Tx, actor: AuthzActor, assetId: string,
         s.std_qty_per_purge ?? 30,
         s.bottle_price_vnd ?? 1850000,
         s.design_runs ?? 140,
+        s.open_stability_hours ?? null,
       ]
     );
   }
@@ -410,6 +404,20 @@ async function issueFrom(tx: Tx, actor: AuthzActor, picks: { candidate: Candidat
   return first;
 }
 
+function assertSlotOpenStability(slot: { label?: string; open_stability_hours?: number | null; installed_at?: Date | string | null }) {
+  if (slot.open_stability_hours == null || Number(slot.open_stability_hours) <= 0 || !slot.installed_at) return;
+  const installedMs = new Date(slot.installed_at).getTime();
+  if (!Number.isFinite(installedMs)) return;
+  const elapsedHours = (Date.now() - installedMs) / 3_600_000;
+  if (elapsedHours > Number(slot.open_stability_hours)) {
+    throw invalid(
+      `Chai lắp ở ${slot.label ?? "kênh"} đã mở nắp ${elapsedHours.toFixed(1)} giờ, vượt giới hạn ổn định ${slot.open_stability_hours} giờ. Vui lòng thay chai mới.`,
+      { elapsed_hours: Math.round(elapsedHours * 10) / 10, open_stability_hours: Number(slot.open_stability_hours) },
+      "REAGENT_OPEN_EXPIRED"
+    );
+  }
+}
+
 const usageSchema = z.object({
   kind: z.enum(USAGE_KINDS),
   qty: z.coerce.number().positive("lượng phải lớn hơn 0").optional(),
@@ -434,6 +442,7 @@ export async function logSlotUsage(tx: Tx, actor: AuthzActor, assetId: string, s
     const runs = d.sample_runs ?? 1;
     let totalIssued = 0;
     for (const s of activeSlots) {
+      assertSlotOpenStability(s);
       const item = await getItem(tx, s.item_id);
       const rawQty =
         d.kind === "RUN"
@@ -467,6 +476,7 @@ export async function logSlotUsage(tx: Tx, actor: AuthzActor, assetId: string, s
 
   const slot = await lockSlot(tx, assetId, slotNo);
   if (!slot.current_lot_id) throw invalid(`Vị trí ${slot.label} chưa lắp chai.`, undefined, "SLOT_EMPTY");
+  assertSlotOpenStability(slot);
   const item = await getItem(tx, slot.item_id);
   const rawQty =
     d.qty ??
@@ -499,6 +509,7 @@ export async function drawFromInstrument(tx: Tx, actor: AuthzActor, assetIds: st
     if (left <= 1e-9) break;
     const slot = (await tx.query("SELECT * FROM asset.reagent_slot WHERE asset_id = $1 AND item_id = $2 AND current_lot_id IS NOT NULL ORDER BY slot_no LIMIT 1 FOR UPDATE", [assetId, itemId])).rows[0];
     if (!slot) continue;
+    assertSlotOpenStability(slot);
     const a = await asset(tx, assetId);
     const plan = allocate(await lotCandidates(tx, a, itemId, slot.current_lot_id, true), left);
     const taken = plan.picks.reduce((n, p) => n + p.qty, 0);
@@ -517,7 +528,7 @@ export async function listSlots(tx: Tx, actor: AuthzActor, assetId: string) {
   if (!(await hasFactoryPermission(tx, actor, "asset.view", a.owner_org_unit_id)) && !(await hasFactoryPermission(tx, actor, "oligo.view", a.owner_org_unit_id))) throw notFound("thiết bị");
   const slots = (
     await tx.query(
-      `SELECT s.slot_no, s.label, s.item_id, s.current_lot_id, s.installed_at,
+      `SELECT s.slot_no, s.label, s.item_id, s.current_lot_id, s.installed_at, s.open_stability_hours,
               s.bottle_volume_base::float AS bottle_volume_base,
               s.std_qty_per_run::float AS std_qty_per_run,
               s.std_qty_per_purge::float AS std_qty_per_purge,

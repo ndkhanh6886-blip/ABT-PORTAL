@@ -61,6 +61,9 @@ export function TransferView({ canManage, canAccept, section = "all" }: { canMan
   const [swProjId, setSwProjId] = useState("");
   const [swVersion, setSwVersion] = useState("v1.0.0");
   const [swKind, setSwKind] = useState("ASSAY_CALLER");
+  const [swSafetyClass, setSwSafetyClass] = useState<"CLASS_A" | "CLASS_B" | "CLASS_C">("CLASS_B");
+  const [swChecksum, setSwChecksum] = useState("");
+  const [swSoupText, setSwSoupText] = useState("");
   const [swNotes, setSwNotes] = useState("");
   const [swValidation, setSwValidation] = useState("");
   const [swSourceRef, setSwSourceRef] = useState("");
@@ -100,21 +103,35 @@ export function TransferView({ canManage, canAccept, section = "all" }: { canMan
   });
 
   const createSwMut = useMutation({
-    mutationFn: () =>
-      api("/api/factory/rd/software-releases", {
+    mutationFn: () => {
+      const soupList = swSoupText
+        .split(/[\n,;]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((entry) => {
+          const [name, version] = entry.split("@").map((x) => x.trim());
+          return { name: name || entry, version: version || "unspecified" };
+        });
+      return api("/api/factory/rd/software-releases", {
         method: "POST",
         idempotent: true,
         json: {
           project_id: swProjId || projects.data?.[0]?.id,
           version_tag: swVersion,
           target_kind: swKind,
+          safety_class: swSafetyClass,
+          soup_list: soupList,
+          checksum_sha256: swChecksum.trim() || null,
           release_notes: swNotes,
           validation_summary: swValidation,
           source_ref: swSourceRef.trim() || null,
         },
-      }),
+      });
+    },
     onSuccess: () => {
       setAddingSw(false);
+      setSwChecksum("");
+      setSwSoupText("");
       setSwNotes("");
       setSwValidation("");
       setSwSourceRef("");
@@ -286,6 +303,13 @@ export function TransferView({ canManage, canAccept, section = "all" }: { canMan
                 <option value="STANDALONE">Phần mềm độc lập (SaMD)</option>
               </select>
             </Field>
+            <Field label="Phân loại an toàn IEC 62304 *">
+              <select className={inputClass} value={swSafetyClass} onChange={(e) => setSwSafetyClass(e.target.value as any)}>
+                <option value="CLASS_A">Class A (Không gây tổn hại)</option>
+                <option value="CLASS_B">Class B (Tổn hại không nghiêm trọng)</option>
+                <option value="CLASS_C">Class C (Nguy cơ tử vong / nghiêm trọng)</option>
+              </select>
+            </Field>
             <div className="sm:col-span-3 grid gap-2 sm:grid-cols-2">
               <Field label="Nội dung phát hành (Release Notes) *">
                 <input className={inputClass} value={swNotes} onChange={(e) => setSwNotes(e.target.value)} required />
@@ -295,6 +319,12 @@ export function TransferView({ canManage, canAccept, section = "all" }: { canMan
               </Field>
               <Field label="Commit / tag mã nguồn của bản dựng">
                 <input className={`${inputClass} font-mono`} placeholder="git: ez32-fw@v1.2.0" value={swSourceRef} onChange={(e) => setSwSourceRef(e.target.value)} />
+              </Field>
+              <Field label="SHA-256 Checksum bản dựng (64 hex — bắt buộc nếu Class C)">
+                <input className={`${inputClass} font-mono`} placeholder="64 ký tự hex SHA-256" value={swChecksum} onChange={(e) => setSwChecksum(e.target.value)} />
+              </Field>
+              <Field label="Danh sách SOUP (thư viện bên thứ 3, VD: openssl@3.0, numpy@1.26)">
+                <input className={inputClass} placeholder="package@version, ..." value={swSoupText} onChange={(e) => setSwSoupText(e.target.value)} />
               </Field>
             </div>
             <div className="sm:col-span-3 flex justify-end gap-2">
@@ -306,13 +336,20 @@ export function TransferView({ canManage, canAccept, section = "all" }: { canMan
 
         {swReleases.data?.length === 0 && <Empty>Chưa có bản phát hành phần mềm nào.</Empty>}
         {swReleases.data && swReleases.data.length > 0 && (
-          <Table head={["Mã", "Dự án", "Phiên bản", "Loại", "Release Notes & Thẩm định", "Người ký phát hành", "Trạng thái", "Thao tác"]}>
+          <Table head={["Mã", "Dự án", "Phiên bản", "Loại / Class", "Release Notes & Thẩm định", "Người ký phát hành", "Trạng thái", "Thao tác"]}>
             {swReleases.data.map((sr) => (
               <tr key={sr.id}>
                 <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">{sr.code}</td>
                 <td className="py-2 pr-3 font-mono">{sr.project_code}</td>
                 <td className="py-2 pr-3 font-mono font-bold">{sr.version_tag}</td>
-                <td className="py-2 pr-3 font-mono">{sr.target_kind}</td>
+                <td className="py-2 pr-3 font-mono">
+                  <div>{sr.target_kind}</div>
+                  {sr.safety_class && (
+                    <span className="inline-block mt-0.5 rounded bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold">
+                      {sr.safety_class}
+                    </span>
+                  )}
+                </td>
                 <td className="py-2 pr-3">
                   <div>{sr.release_notes}</div>
                   <div className="text-[11px] text-slate-500">Thẩm định: {sr.validation_summary}</div>

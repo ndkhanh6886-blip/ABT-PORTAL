@@ -46,16 +46,6 @@ registerLotQualityGuards({
   ],
   release: [
     {
-      code: "OPEN_NCR_EXISTS",
-      message: "Lô đang có phiếu Sai lệch / NCR chưa đóng. Phải hoàn tất điều tra OOS và đóng NCR trước khi giải phóng lô.",
-      check: async ({ tx, row }) => {
-        const openNcr = await tx.query("SELECT 1 FROM qms.ncr WHERE lot_id = $1 AND status <> 'CLOSED' LIMIT 1", [row.id]);
-        if (openNcr.rowCount) return false;
-        const openDev = await tx.query("SELECT 1 FROM qms.deviation WHERE entity_type = 'LOT' AND entity_id = $1 AND status <> 'CLOSED' LIMIT 1", [row.id]);
-        return !openDev.rowCount;
-      },
-    },
-    {
       code: "QC_OPEN",
       message: "Lô còn phiếu QC chưa được duyệt.",
       check: async ({ tx, row }) =>
@@ -70,9 +60,48 @@ registerLotQualityGuards({
         Boolean((await tx.query("SELECT 1 FROM qms.ncr WHERE lot_id = $1 AND disposition = 'USE_AS_IS' AND status IN ('APPROVED', 'CLOSED')", [row.id])).rowCount),
     },
     {
+      code: "OPEN_NCR_EXISTS",
+      message: "Lô đang có phiếu Sai lệch / NCR chưa đóng. Phải hoàn tất điều tra OOS và đóng NCR trước khi giải phóng lô.",
+      check: async ({ tx, row }) => {
+        const openNcr = await tx.query(
+          `SELECT 1 FROM qms.ncr
+            WHERE lot_id = $1
+              AND status <> 'CLOSED'
+              AND NOT (disposition = 'USE_AS_IS' AND status = 'APPROVED')
+            LIMIT 1`,
+          [row.id]
+        );
+        if (openNcr.rowCount) return false;
+        const openDev = await tx.query(
+          `SELECT 1 FROM qms.deviation d
+            WHERE d.entity_type = 'LOT'
+              AND d.entity_id = $1
+              AND d.status <> 'CLOSED'
+              AND NOT EXISTS (
+                SELECT 1 FROM qms.ncr n
+                 WHERE n.deviation_id = d.id
+                   AND n.disposition = 'USE_AS_IS'
+                   AND n.status IN ('APPROVED', 'CLOSED')
+              )
+            LIMIT 1`,
+          [row.id]
+        );
+        return !openDev.rowCount;
+      },
+    },
+    {
       code: "SAME_PERSON",
-      message: "Người giải phóng lô phải khác người kiểm nghiệm.",
-      check: async ({ tx, row, actor }) => (await latestReviewed(tx, row.id))?.analyst_id !== actor.userId,
+      message: "Người giải phóng lô phải khác người kiểm nghiệm và khác người trực tiếp sản xuất lô.",
+      check: async ({ tx, row, actor }) => {
+        if ((await latestReviewed(tx, row.id))?.analyst_id === actor.userId) return false;
+        const prod = await tx.query(
+          `SELECT 1 FROM kit.production_order po
+             JOIN kit.production_step ps ON ps.order_id = po.id
+            WHERE po.lot_id = $1 AND ps.performed_by = $2 LIMIT 1`,
+          [row.id, actor.userId]
+        );
+        return !prod.rowCount;
+      },
     },
   ],
   unhold: [{ code: "OPEN_NCR", message: "Lô còn NCR chưa đóng.", check: async ({ tx, row }) => !(await hasOpenNcr(tx, row.id)) }],

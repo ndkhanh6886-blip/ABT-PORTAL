@@ -37,7 +37,7 @@ export function inferOligoRole(
     return explicitRole.toUpperCase() as OligoRole;
   }
   const pt = (explicitProductType || a.product_type || "").toUpperCase();
-  if (pt === "AMPLICON_LINEAR" || pt === "AMPLICON_PLASMID") {
+  if (pt === "AMPLICON" || pt === "AMPLICON_LINEAR" || pt === "AMPLICON_PLASMID") {
     return "TEMPLATE";
   }
   if (pt === "PROBE") {
@@ -54,6 +54,7 @@ async function oligoUnit(tx: Tx, orgUnitId: string) {
 const orderSchema = z.object({
   org_unit_id: z.string().uuid("chọn phòng Oligo"),
   internal_order_id: z.string().uuid().optional().nullable(),
+  auto_internal_order: z.boolean().optional().default(true),
   customer_label: z.string().trim().max(200).optional().nullable(),
   due_date: z.string().regex(DATE, "ngày dạng YYYY-MM-DD").optional().nullable(),
   notes: z.string().trim().max(2000).optional().nullable(),
@@ -83,7 +84,7 @@ export async function createOligoOrder(tx: Tx, actor: AuthzActor, input: unknown
     due ??= ioDate;
     customerLabel ??= io.ship_to?.name ? `${io.kd_po_code} — ${io.ship_to.name}` : `PO ${io.kd_po_code} (${io.code})`;
     orderNotes ??= io.notes || `Triển khai tổng hợp Oligo theo Đơn nội bộ ${io.code} (PO ${io.kd_po_code})`;
-  } else {
+  } else if (data.auto_internal_order !== false) {
     // Tự động tạo và liên kết Đơn Nội Bộ tương ứng nếu người dùng tạo trực tiếp từ phân hệ Tổng hợp Oligo
     const ioCode = await nextNumber(tx, "INTERNAL_ORDER");
     const kdPoCode = await nextNumber(tx, "KD_PO_OLIGO");
@@ -211,7 +212,7 @@ async function parseLines(tx: Tx, text: string, defaults: z.infer<typeof linesSc
 
 export function productTypeOf(a: ReturnType<typeof analyze>, role?: OligoRole | string | null): string {
   const r = (role || "").toUpperCase();
-  if (r === "TEMPLATE" || r === "POSITIVE_CONTROL") return "AMPLICON_LINEAR";
+  if (r === "TEMPLATE" || r === "POSITIVE_CONTROL" || a.product_type === "AMPLICON") return "AMPLICON_LINEAR";
   return a.product_type === "PROBE" ? "PROBE" : "PRIMER";
 }
 

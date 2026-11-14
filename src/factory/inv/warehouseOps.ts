@@ -14,26 +14,8 @@ import "../purchase/permissions";
 
 let warehouseOpsSchemaEnsured = false;
 
-export async function ensureWarehouseOpsSchema(tx: Tx): Promise<void> {
+export async function ensureWarehouseOpsSchema(_tx: Tx): Promise<void> {
   if (warehouseOpsSchemaEnsured) return;
-  await tx.query(`
-    CREATE EXTENSION IF NOT EXISTS pg_trgm;
-    ALTER TABLE master.item ADD COLUMN IF NOT EXISTS min_safety_stock NUMERIC(18,6) NOT NULL DEFAULT 10;
-    ALTER TABLE master.item ADD COLUMN IF NOT EXISTS reorder_qty NUMERIC(18,6) NOT NULL DEFAULT 50;
-    ALTER TABLE master.item ADD COLUMN IF NOT EXISTS lead_time_days INT NOT NULL DEFAULT 14;
-    ALTER TABLE inv.container ADD COLUMN IF NOT EXISTS opened_at TIMESTAMPTZ;
-    ALTER TABLE inv.container ADD COLUMN IF NOT EXISTS open_expiry_date DATE;
-
-    CREATE INDEX IF NOT EXISTS idx_master_item_code_trgm ON master.item USING gin (code gin_trgm_ops);
-    CREATE INDEX IF NOT EXISTS idx_master_item_name_trgm ON master.item USING gin (name gin_trgm_ops);
-    CREATE INDEX IF NOT EXISTS idx_inv_lot_code_trgm ON inv.lot USING gin (code gin_trgm_ops);
-    CREATE INDEX IF NOT EXISTS idx_inv_lot_mfr_trgm ON inv.lot USING gin (mfr_lot_no gin_trgm_ops);
-    CREATE INDEX IF NOT EXISTS idx_inv_stock_balance_active ON inv.stock_balance (location_id, item_id, lot_id) WHERE qty_on_hand > 0;
-    CREATE INDEX IF NOT EXISTS idx_inv_stock_balance_item_active ON inv.stock_balance (item_id, lot_id) WHERE qty_on_hand > 0;
-    CREATE INDEX IF NOT EXISTS idx_inv_lot_fefo ON inv.lot (item_id, status, expiry_date ASC NULLS LAST);
-    CREATE INDEX IF NOT EXISTS idx_inv_stock_doc_wh_created ON inv.stock_document (warehouse_id, created_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_inv_stock_doc_code_trgm ON inv.stock_document USING gin (code gin_trgm_ops);
-  `);
   warehouseOpsSchemaEnsured = true;
 }
 

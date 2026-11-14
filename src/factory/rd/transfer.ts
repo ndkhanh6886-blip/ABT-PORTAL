@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Tx } from "../core/db";
+import { writeAudit } from "../core/audit";
 import { authorize, authorizeAnywhere, hasFactoryPermission, type AuthzActor } from "../core/authz";
 import { invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
@@ -467,7 +468,6 @@ export const swReleaseMachine = defineMachine<SwReleaseStatus, SwReleaseRow>({
       reasonRequired: true,
       patch: ({ reason }) => ({ withdraw_reason: reason }),
       effects: async ({ tx, actor, updated, reason }) => {
-        await tx.query("ALTER TABLE qms.deviation ADD COLUMN IF NOT EXISTS category text");
         const linkedUnits = (
           await tx.query("SELECT id, serial_no FROM device.device_unit WHERE firmware_release_id = $1", [updated.id])
         ).rows;
@@ -655,6 +655,59 @@ export async function createSoftwareRelease(tx: Tx, actor: AuthzActor, input: un
     source_ref: d.source_ref ?? null,
     validation_summary: d.validation_summary,
   });
+}
+
+const updateSwReleaseSchema = createSwReleaseSchema.omit({ project_id: true });
+
+export async function updateSoftwareRelease(tx: Tx, actor: AuthzActor, id: string, input: unknown) {
+  const cur = (await tx.query("SELECT * FROM rd.software_release WHERE id = $1 FOR UPDATE", [id])).rows[0] as
+    | (SwReleaseRow & Record<string, unknown>)
+    | undefined;
+  if (!cur) throw notFound("bản phát hành phần mềm");
+  const owner = await projectOwner(tx, cur.project_id);
+  await authorize(tx, actor, "rd.transfer.manage", owner);
+  if (cur.status !== "DRAFT") {
+    throw invalid(
+      "Bản phát hành phần mềm đã phê duyệt / thu hồi không được phép chỉnh sửa trực tiếp.",
+      undefined,
+      "IMMUTABLE_RELEASED_SW"
+    );
+  }
+  const d = parseInput(updateSwReleaseSchema, input);
+  const upd = (
+    await tx.query(
+      `UPDATE rd.software_release
+          SET version_tag = $2, target_kind = $3, safety_class = $4,
+              srs_traceability = $5::jsonb, soup_list = $6::jsonb, known_anomalies = $7::jsonb,
+              release_notes = $8, checksum_sha256 = $9, source_ref = $10, validation_summary = $11,
+              version = version + 1, updated_at = now(), updated_by = $12
+        WHERE id = $1 RETURNING *`,
+      [
+        id,
+        d.version_tag,
+        d.target_kind,
+        d.safety_class,
+        JSON.stringify(d.srs_traceability),
+        JSON.stringify(d.soup_list),
+        JSON.stringify(d.known_anomalies),
+        d.release_notes,
+        d.checksum_sha256 ? d.checksum_sha256.toLowerCase() : null,
+        d.source_ref ?? null,
+        d.validation_summary,
+        actor.userId,
+      ]
+    )
+  ).rows[0];
+  await writeAudit(tx, actor, {
+    entityType: "rd_software_release",
+    entityId: id,
+    action: "update",
+    changes: {
+      version_tag: [cur.version_tag, d.version_tag],
+      safety_class: [cur.safety_class, d.safety_class],
+    },
+  });
+  return upd;
 }
 
 export async function listSoftwareReleases(tx: Tx, actor: AuthzActor, projectId?: string) {

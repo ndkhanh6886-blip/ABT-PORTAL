@@ -2,6 +2,8 @@ import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
 import { authorize, hasFactoryPermission, registerPermissions, type AuthzActor } from "../core/authz";
 import { nextNumber } from "../core/numbering";
+import { runTransition } from "../core/stateMachine";
+import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import { ensureKitBomRoutingAndIfuSchema } from "../kit/bomRouting";
 import { ensureQaOpsSchema } from "../qms/qaOps";
 import { ensureRdProjectOpsSchema } from "../rd/projectOps";
@@ -20,35 +22,8 @@ registerPermissions([
 
 let importSchemaEnsured = false;
 
-export async function ensureExcelImportSchema(tx: Tx): Promise<void> {
+export async function ensureExcelImportSchema(_tx: Tx): Promise<void> {
   if (importSchemaEnsured) return;
-  await tx.query("SELECT pg_advisory_xact_lock(2026111405)");
-  if (importSchemaEnsured) return;
-  await tx.query(`
-    CREATE TABLE IF NOT EXISTS core.excel_import_log (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      template_key varchar(60) NOT NULL,
-      template_name varchar(200) NOT NULL,
-      target_dept_code varchar(40),
-      target_warehouse_code varchar(40),
-      file_name varchar(255) NOT NULL,
-      total_rows int NOT NULL DEFAULT 0,
-      created_count int NOT NULL DEFAULT 0,
-      updated_count int NOT NULL DEFAULT 0,
-      error_count int NOT NULL DEFAULT 0,
-      errors_json jsonb NOT NULL DEFAULT '[]'::jsonb,
-      actor_id int,
-      actor_name varchar(150),
-      created_at timestamptz NOT NULL DEFAULT now()
-    );
-    ALTER TABLE master.uom DROP CONSTRAINT IF EXISTS uom_code_check;
-    ALTER TABLE master.uom ALTER COLUMN dimension SET DEFAULT 'COUNT';
-    ALTER TABLE asset.asset DROP CONSTRAINT IF EXISTS asset_code_check;
-    ALTER TABLE asset.asset ADD COLUMN IF NOT EXISTS location text;
-    ALTER TABLE asset.asset ADD COLUMN IF NOT EXISTS equipment_category text;
-    ALTER TABLE asset.asset ADD COLUMN IF NOT EXISTS last_calibration_date date;
-    ALTER TABLE asset.asset ADD COLUMN IF NOT EXISTS notes text;
-  `);
   importSchemaEnsured = true;
 }
 
@@ -200,7 +175,7 @@ async function ensureItemByCode(
          code, name, item_type, base_uom, tracking, storage_condition,
          shelf_life_days, min_stock, receipt_qc_required, is_purchasable,
          is_manufacturable, notes, status, created_by, updated_by
-       ) VALUES ($1, $2, $3, $4, 'LOT', $5, $6, $7, false, true, $8, $9, 'ACTIVE', $10, $10)
+       ) VALUES ($1, $2, $3, $4, 'LOT', $5, $6, $7, true, true, $8, $9, 'ACTIVE', $10, $10)
        RETURNING id, code, base_uom, tracking`,
       [
         code,
@@ -397,8 +372,6 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
     const canReleaseOpeningLot =
       Boolean(input.is_audited_opening_balance) && (await hasFactoryPermission(tx, actor, "inv.lot.release"));
 
-    const batchDocByWarehouse = new Map<string, { docId: string; lineNo: number }>();
-
     for (let i = 0; i < rawRows.length; i++) {
       const r = rawRows[i];
       const sp = `sp_inv_${i}`;
@@ -433,15 +406,6 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
         let lotCode = normCode(hasExplicitLot ? rawLotCode : `${itemCode}-L01`, `${itemCode}-L01`);
         if ((qty > 0 || hasExplicitLot) && itemRes.tracking !== "NONE") {
           const lotStatus = canReleaseOpeningLot ? "RELEASED" : "QUARANTINE";
-          const whLoc = await resolveWarehouseAndLocation(
-            tx,
-            actor,
-            normStr(r.warehouse_code || r["Mã kho"]) || targetWarehouseCode,
-            normStr(r.dept_code || r["Mã phòng"]) || targetDeptCode,
-            lotStatus === "QUARANTINE",
-            whLocCache,
-            orgCache
-          );
           let mfgDate = normDate(r.mfg_date || r["Ngày SX"] || r["Ngày sản xuất"]);
           let expiryDate = normDate(r.expiry_date || r["Hạn dùng"] || r["Hạn sử dụng"]) || "2027-12-31";
           if (mfgDate && expiryDate && expiryDate < mfgDate) {
@@ -471,6 +435,16 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
             ).rows[0];
           }
 
+          const whLoc = await resolveWarehouseAndLocation(
+            tx,
+            actor,
+            normStr(r.warehouse_code || r["Mã kho"]) || targetWarehouseCode,
+            normStr(r.dept_code || r["Mã phòng"]) || targetDeptCode,
+            ["QUARANTINE", "PENDING_QC", "REJECTED"].includes(String(lot.status)),
+            whLocCache,
+            orgCache
+          );
+
           if (qty > 0) {
             const prevBalRow = (
               await tx.query(
@@ -484,57 +458,35 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
             const prevQty = Number(prevBalRow?.qty_on_hand ?? 0);
             const deltaQty = Math.round((qty - prevQty) * 1e6) / 1e6;
 
-            if (prevBalRow) {
-              await tx.query(
-                `UPDATE inv.stock_balance
-                    SET qty_on_hand = $2, updated_at = now()
-                  WHERE id = $1`,
-                [prevBalRow.id, qty]
-              );
-            } else {
-              await tx.query(
-                `INSERT INTO inv.stock_balance (item_id, lot_id, container_id, location_id, qty_on_hand, qty_reserved)
-                 VALUES ($1, $2, NULL, $3, $4, 0)`,
-                [itemRes.id, lot.id, whLoc.location_id, qty]
-              );
-            }
-
             if (Math.abs(deltaQty) > 1e-9) {
-              let batchDoc = batchDocByWarehouse.get(whLoc.warehouse_id);
-              if (!batchDoc) {
-                const docCode = await nextNumber(tx, "STOCK_RECEIPT");
-                const docRow = (
-                  await tx.query(
-                    `INSERT INTO inv.stock_document
-                       (code, doc_type, reason_code, warehouse_id, status, posted_at, posted_by, notes, created_by, updated_by)
-                     VALUES ($1, 'RECEIPT', 'INITIAL_BALANCE', $2, 'POSTED', now(), $3, $4, $3, $3)
-                     RETURNING id`,
-                    [
-                      docCode,
-                      whLoc.warehouse_id,
-                      actor.userId,
-                      `Nhập tồn kho đầu kỳ từ file Excel (${fileName})`,
-                    ]
-                  )
-                ).rows[0];
-                batchDoc = { docId: docRow.id as string, lineNo: 0 };
-                batchDocByWarehouse.set(whLoc.warehouse_id, batchDoc);
-              }
-              batchDoc.lineNo += 1;
-              const lineRow = (
-                await tx.query(
-                  `INSERT INTO inv.stock_document_line
-                     (document_id, line_no, item_id, lot_id, container_id, to_location_id, qty, uom, qty_base)
-                   VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $6)
-                   RETURNING id`,
-                  [batchDoc.docId, batchDoc.lineNo, itemRes.id, lot.id, whLoc.location_id, Math.abs(deltaQty), itemRes.base_uom]
-                )
-              ).rows[0];
-              await tx.query(
-                `INSERT INTO inv.stock_ledger
-                   (document_line_id, item_id, lot_id, container_id, location_id, qty_delta_base)
-                 VALUES ($1, $2, $3, NULL, $4, $5)`,
-                [lineRow.id, itemRes.id, lot.id, whLoc.location_id, deltaQty]
+              const doc = await createStockDocument(
+                tx,
+                actor,
+                {
+                  doc_type: deltaQty > 0 ? "RECEIPT" : "ADJUSTMENT",
+                  reason_code: "INITIAL_BALANCE",
+                  warehouse_id: whLoc.warehouse_id,
+                  notes: `Nhập tồn kho đầu kỳ từ file Excel (${fileName})`,
+                  lines: [
+                    {
+                      item_id: itemRes.id,
+                      lot_id: lot.id,
+                      ...(deltaQty > 0
+                        ? { to_location_id: whLoc.location_id }
+                        : { from_location_id: whLoc.location_id }),
+                      qty: Math.abs(deltaQty),
+                      uom: itemRes.base_uom,
+                    },
+                  ],
+                },
+                { trusted: true }
+              );
+              await runTransition(
+                tx,
+                stockDocumentMachine,
+                actor,
+                { id: doc.id, action: "post", expectedVersion: doc.version },
+                { trusted: true }
               );
             }
           }
@@ -1263,8 +1215,8 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
             : "STATION_1_MECH";
           await tx.query(
             `INSERT INTO device.model_bom_line (
-               revision_id, line_no, component_item_id, qty_per_device, uom,
-               station_code, trace_mode, is_critical, notes
+               revision_id, line_no, component_item_id, qty_per_unit, uom,
+               station_code, tracking_type, is_critical, notes
              ) VALUES ($1, $2, $3, $4, $5, $6, 'LOT', true, $7)`,
             [revId, idx + 1, partItem.id, qtyPerDevice, partItem.base_uom, station, normStr(l.notes || l["Ghi chú"]) || null]
           );
@@ -1454,8 +1406,9 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
           if (!tpl) {
             tpl = (
               await tx.query(
-                `INSERT INTO rd.gate_template (code, name, target_domain, gates, status)
-                 VALUES ('TPL-IVD-STD', 'Khung 5 Cổng Stage-Gate Chuẩn IVD', 'KIT', '[]'::jsonb, 'ACTIVE')
+                `INSERT INTO rd.gate_template (code, name, domain, status)
+                 VALUES ('TPL-IVD-STD', 'Khung 5 Cổng Stage-Gate Chuẩn IVD', 'KIT', 'ACTIVE')
+                 ON CONFLICT (code) DO UPDATE SET status = 'ACTIVE'
                  RETURNING id`
               )
             ).rows[0];
@@ -1464,7 +1417,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
             await tx.query(
               `INSERT INTO rd.project (
                  code, name, owner_org_unit_id, target_domain, ivd_class,
-                 leader_id, leader_name_override, template_id, current_stage,
+                 leader_id, leader_name_override, gate_template_id, current_stage,
                  status, project_type, budget_amount, created_by, updated_by
                ) VALUES ($1, $2, $3, $4, 'CLASS_B', $5, $6, $7, 'G1_FEASIBILITY', 'ACTIVE', 'NEW_PRODUCT', $8, $5, $5)
                RETURNING id`,

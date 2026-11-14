@@ -946,36 +946,12 @@ export async function ensureOligoPricingSchema(tx: Tx): Promise<void> {
   if (pricingSchemaEnsured) return;
   await tx.query("SAVEPOINT oligo_pricing_schema_sp");
   try {
-    await tx.query(`
-      CREATE TABLE IF NOT EXISTS oligo.price_config (
-        id integer PRIMARY KEY DEFAULT 1,
-        config jsonb NOT NULL,
-        version integer NOT NULL DEFAULT 1,
-        updated_at timestamptz NOT NULL DEFAULT now(),
-        updated_by integer
-      )
-    `);
     await tx.query(
       `INSERT INTO oligo.price_config (id, config)
        VALUES (1, $1::jsonb)
        ON CONFLICT (id) DO NOTHING`,
       [JSON.stringify(DEFAULT_PRICE_CONFIG)]
     );
-
-    await tx.query(`
-      ALTER TABLE oligo.oligo_order
-        ADD COLUMN IF NOT EXISTS pricing_type text NOT NULL DEFAULT 'auto',
-        ADD COLUMN IF NOT EXISTS price_percentage numeric(6,2) NOT NULL DEFAULT 100,
-        ADD COLUMN IF NOT EXISTS vat_rate numeric(5,2) NOT NULL DEFAULT 8,
-        ADD COLUMN IF NOT EXISTS total_price numeric(18,2) NOT NULL DEFAULT 0
-    `);
-
-    await tx.query(`
-      ALTER TABLE oligo.oligo_sequence
-        ADD COLUMN IF NOT EXISTS unit_price numeric(18,2) NOT NULL DEFAULT 0,
-        ADD COLUMN IF NOT EXISTS price numeric(18,2) NOT NULL DEFAULT 0,
-        ADD COLUMN IF NOT EXISTS price_lines_json jsonb NOT NULL DEFAULT '[]'::jsonb
-    `);
 
     // Tự động tính giá cho các trình tự hiện có chưa có giá
     const unpricedSeqs = (

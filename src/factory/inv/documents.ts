@@ -34,7 +34,13 @@ export const stockDocumentMachine = defineMachine<DocStatus, StockDocument>({
   terminal: ["CANCELLED", "REVERSED"],
   scopeOf: (row, tx) => warehouseOwner(tx, row.warehouse_id),
   transitions: [
-    { action: "post", from: "DRAFT", to: "POSTED", permission: "inv.document.post", effects: ({ tx, actor, updated }) => applyPosting(tx, actor, updated) },
+    {
+      action: "post",
+      from: "DRAFT",
+      to: "POSTED",
+      permission: "inv.document.post",
+      effects: ({ tx, actor, updated, trusted }) => applyPosting(tx, actor, updated, { trusted }),
+    },
     { action: "cancel", from: "DRAFT", to: "CANCELLED", permission: "inv.document.create" },
     {
       action: "reverse",
@@ -101,7 +107,12 @@ function directionError(docType: DocType, lineNo: number): FactoryError {
 }
 
 /** Validates every line, then writes ledger rows and balances in fixed key order (no deadlocks). */
-async function applyPosting(tx: Tx, actor: AuthzActor, doc: StockDocument, opts: { reversal?: boolean } = {}): Promise<void> {
+async function applyPosting(
+  tx: Tx,
+  actor: AuthzActor,
+  doc: StockDocument,
+  opts: { reversal?: boolean; trusted?: boolean } = {}
+): Promise<void> {
   const lines = (
     await tx.query(
       `SELECT dl.*, dl.qty_base::text AS qty_base_text, i.code AS item_code, i.tracking,
@@ -142,11 +153,49 @@ async function applyPosting(tx: Tx, actor: AuthzActor, doc: StockDocument, opts:
     if (l.lot_id && l.lot_item_id !== l.item_id) throw invalid(`Dòng ${n}: lô ${l.lot_code} không thuộc vật tư ${l.item_code}.`);
     if (l.tracking === "SERIAL" && Number(l.qty_base_text) !== 1) throw invalid(`Dòng ${n}: mỗi serial chỉ có số lượng 1.`);
     if (!opts.reversal && l.lot_id) {
-      const outbound = doc.doc_type === "ISSUE" && !(NON_RELEASED_ISSUE_REASONS as readonly string[]).includes(doc.reason_code);
-      if (outbound && l.lot_status !== "RELEASED") throw invalid(`Dòng ${n}: lô ${l.lot_code} đang ở trạng thái ${l.lot_status}, chỉ lô đã giải phóng mới được xuất dùng.`);
+      if (
+        l.lot_status === "REJECTED" &&
+        (doc.doc_type === "ADJUSTMENT" ||
+          doc.doc_type === "COUNT_ADJUST" ||
+          (!opts.trusted && doc.doc_type === "RECEIPT" && hasTo))
+      ) {
+        throw invalid(
+          `Dòng ${n}: lô ${l.lot_code} đã bị loại bỏ (REJECTED), không được điều chỉnh tăng/giảm hoặc nhập lại.`,
+          undefined,
+          "LOT_REJECTED"
+        );
+      }
+      if (
+        !opts.trusted &&
+        (doc.doc_type === "ADJUSTMENT" || doc.doc_type === "COUNT_ADJUST") &&
+        hasTo &&
+        !l.to_quarantine &&
+        ["QUARANTINE", "PENDING_QC"].includes(l.lot_status)
+      ) {
+        throw invalid(
+          `Dòng ${n}: lô ${l.lot_code} đang chờ QC/biệt trữ (${l.lot_status}), không được điều chỉnh vào vị trí thường.`,
+          undefined,
+          "LOT_NOT_RELEASED"
+        );
+      }
+      const allowTrustedQcSample = Boolean(opts.trusted && doc.reason_code === "QC_SAMPLE" && l.lot_status !== "REJECTED");
+      const outbound =
+        doc.doc_type === "ISSUE" &&
+        !(NON_RELEASED_ISSUE_REASONS as readonly string[]).includes(doc.reason_code);
+      if (outbound && !allowTrustedQcSample && l.lot_status !== "RELEASED") {
+        throw invalid(
+          `Dòng ${n}: lô ${l.lot_code} đang ở trạng thái ${l.lot_status}, chỉ lô đã giải phóng mới được xuất dùng.`,
+          undefined,
+          "LOT_NOT_RELEASED"
+        );
+      }
       if (outbound && l.expiry_date && l.expiry_date < today) throw invalid(`Dòng ${n}: lô ${l.lot_code} đã hết hạn (${l.expiry_date}).`);
       if (hasTo && !l.to_quarantine && ["QUARANTINE", "PENDING_QC", "REJECTED"].includes(l.lot_status)) {
-        throw invalid(`Dòng ${n}: lô ${l.lot_code} chưa được giải phóng nên phải để ở vị trí biệt trữ.`);
+        throw invalid(
+          `Dòng ${n}: lô ${l.lot_code} chưa được giải phóng nên phải để ở vị trí biệt trữ.`,
+          undefined,
+          "LOT_NOT_RELEASED"
+        );
       }
     }
     const base = { lineId: l.id, itemId: l.item_id, lotId: l.lot_id, containerId: l.container_id, qty: l.qty_base_text };

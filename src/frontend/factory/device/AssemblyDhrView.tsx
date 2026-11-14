@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActionBar, type AllowedAction } from "../actions";
 import { api, escHtml, fmtDate, fmtDateTime, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
+import { barcode128SvgMarkup } from "../barcodeSvg";
 import { ORDER_STATUS, STATION_LABELS, UNIT_STATUS, useDeviceOptions } from "./shared";
 import { IssueSlipPanel } from "./IssueSlipPanel";
 import { LotSerialField } from "./LotSerialField";
@@ -254,7 +255,13 @@ export function AssemblyDhrView() {
     win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Biên Bản Bàn Giao Thiết Bị — ${escHtml(unit.serial_no)}</title>
       <style>body{font-family:Arial,sans-serif;padding:24px;color:#0f172a}table{width:100%;border-collapse:collapse;margin-top:12px;font-size:12px}th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:left}th{background:#f1f5f9}</style>
     </head><body>
-      <h2 style="margin:0">CÔNG TY TNHH Y SINH ABT — BIÊN BẢN BÀN GIAO &amp; KÍCH HOẠT BẢO HÀNH THIẾT BỊ</h2>
+      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #0284c7;padding-bottom:8px;margin-bottom:10px">
+        <h2 style="margin:0;color:#0284c7">CÔNG TY TNHH Y SINH ABT — BIÊN BẢN BÀN GIAO &amp; KÍCH HOẠT BẢO HÀNH THIẾT BỊ</h2>
+        <div style="text-align:right">
+          ${barcode128SvgMarkup(unit.serial_no, 28)}
+          <div style="font-family:monospace;font-size:10px">S/N: ${escHtml(unit.serial_no)}</div>
+        </div>
+      </div>
       <p style="font-size:13px;margin:6px 0">Thiết bị: <b>${escHtml(unit.model_code)} — ${escHtml(unit.model_name)} (Rev ${escHtml(unit.revision_code)})</b> · Số Serial (S/N): <b>${escHtml(unit.serial_no)}</b> · Firmware: <b>${escHtml(unit.firmware_version ?? "—")}</b></p>
       <p style="font-size:13px;margin:6px 0">Đơn vị nhận bàn giao: <b>${escHtml(unit.customer_name || deliverCustomer)}</b> · Ngày bàn giao: <b>${escHtml(fmtDate(unit.delivered_at ?? null))}</b> · Bảo hành đến: <b>${escHtml(fmtDate(unit.warranty_end))}</b></p>
       <p style="font-size:12px;margin:6px 0">Kết quả chạy lão hóa (Burn-in): <b>${escHtml(unit.passed_burn_in_hours ?? unit.required_burn_in_hours)} giờ (PASS)</b> · Kết quả FQC: <b>${escHtml(unit.fqc_summary ?? "ĐẠT")}</b> · QA phê duyệt xuất xưởng: <b>${escHtml(unit.qa_released_by_name ?? "Đã ký")}</b></p>
@@ -286,7 +293,7 @@ export function AssemblyDhrView() {
           <div style="font-size:11px;color:#334155;margin-top:3px">Nguồn điện: 220VAC 50Hz · Chạy lão hóa: ${escHtml(unit.passed_burn_in_hours ?? order.required_burn_in_hours)}h</div>
           <div style="margin-top:8px;padding-top:6px;border-top:1px dashed #94a3b8;display:flex;justify-content:space-between;align-items:center;font-size:11px">
             <span style="color:#15803d;font-weight:bold">✔ QC PASS / QA RELEASED</span>
-            <span style="font-family:monospace">|||| |||| |||| ${escHtml(unit.serial_no)}</span>
+            <span style="display:inline-flex;align-items:center;gap:6px">${barcode128SvgMarkup(unit.serial_no, 24)}<span style="font-family:monospace">${escHtml(unit.serial_no)}</span></span>
           </div>
         </div>`
       )

@@ -62,7 +62,13 @@ describe("operational incidents with CAPA, and sequence trace", () => {
     // the NCR is still open: the deviation cannot close yet
     await expect(act(qa, r.deviation_id, "close", { reason: "Đã khắc phục", credential: { method: "PIN", secret: PIN } })).rejects.toMatchObject({ code: "GUARD_FAILED" });
     await db().query("UPDATE qms.ncr SET status = 'CLOSED', disposition = 'REWORK' WHERE id = $1", [r.ncr_id]);
-    await act(qa, r.deviation_id, "close", { reason: "Đã khắc phục", credential: { method: "PIN", secret: PIN } });
+    // HIGH deviation still requires effectiveness_summary before closing (ISO 13485 §8.5.2)
+    await expect(act(qa, r.deviation_id, "close", { reason: "Đã khắc phục", credential: { method: "PIN", secret: PIN } })).rejects.toMatchObject({ code: "GUARD_FAILED" });
+    await act(qa, r.deviation_id, "close", {
+      reason: "Đã khắc phục",
+      payload: { effectiveness_summary: "Đã kiểm tra 3 mẻ liên tiếp đạt yêu cầu, không tái diễn" },
+      credential: { method: "PIN", secret: PIN },
+    });
     expect((await db().query("SELECT status, closed_at IS NOT NULL AS closed FROM qms.deviation WHERE id = $1", [r.deviation_id])).rows[0]).toEqual({ status: "CLOSED", closed: true });
 
     const t = await withTransaction((tx) => traceSequence(tx, op, s.code));

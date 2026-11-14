@@ -24,7 +24,6 @@ export interface RaiseDeviation {
 export async function autoHoldLotOnIssue(tx: Tx, actor: AuthzActor, lotId: string, reason: string): Promise<void> {
   const lot = (await tx.query("SELECT id, status FROM inv.lot WHERE id = $1 FOR UPDATE", [lotId])).rows[0];
   if (!lot || !["RELEASED", "PENDING_QC", "QUARANTINE"].includes(lot.status)) return;
-  await tx.query("ALTER TABLE inv.lot ADD COLUMN IF NOT EXISTS hold_reason text");
   const holdReason = reason.slice(0, 500);
   const res = await tx.query(
     `UPDATE inv.lot

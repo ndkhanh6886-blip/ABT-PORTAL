@@ -173,23 +173,18 @@ export async function createInternalOrderManual(tx: Tx, actor: AuthzActor, input
       notes: d.notes || `Đơn Tổng hợp Oligo liên kết từ Đơn nội bộ ${order.code} (PO ${kdPoCode})`,
     });
     const prefix = firstLine?.kd_item_code || "OLI-SET";
-    const defaultSeqs =
-      d.oligo_sequences_text?.trim() ||
-      [
-        `${prefix}-F; GAGTGTGGATTCGCACTCCT; 200NMOL; OPC; LYOPHILIZED`,
-        `${prefix}-R; GAGGAGTTGGGGGAGGAGATT; 200NMOL; OPC; LYOPHILIZED`,
-        `${prefix}-PRB; [FAM]CCAYTCRTCCBGCRGGBTR[BHQ1]; 200NMOL; HPLC; LYOPHILIZED`,
-        `${prefix}-Amplicon-PC; GAGTGTGGATTCGCACTCCTCCTGCCTCCACCAATCGCCAGTCAGGAAGGCAGCCTACCCCGCTGTCTCCACCTTTGAGAAACACTCATCCTCAGGCCATGCAGTGGAATTCCACAACCTTCCACCAAACTCTGCAAGATCCCAGAGTGAGAGGCCTGTATTTCCCTGCTGGTGGCTCCAGTTCAGGAACAGTAAACCCTGTTCTGACTACTGCCTCTCCCTTATCGTCAATCTTCTCGAGGATTGGGGACCCTGCGCTGAACATGGAGAACATCACATCAGGATTCCTAGGACCCCTTCTCGTGTTACAGGCGGGGTTTTTCTTGTTGACAAGAATCCTCACAATACCGCAGAGTCTAGACTCGTGGTGGACTTCTCTCAATTTTCTAGGGGG; 200NMOL; PAGE; LYOPHILIZED`,
-      ].join("\n");
-    await addSequences(tx, dispatchActor, oligoOrder.id, {
-      text: defaultSeqs,
-      defaults: {
-        scale_code: "200NMOL",
-        purification: "OPC",
-        format: "LYOPHILIZED",
-        target_pathogen: firstLine?.kd_item_name || prefix,
-      },
-    });
+    const userSeqs = d.oligo_sequences_text?.trim();
+    if (userSeqs) {
+      await addSequences(tx, dispatchActor, oligoOrder.id, {
+        text: userSeqs,
+        defaults: {
+          scale_code: "200NMOL",
+          purification: "OPC",
+          format: "LYOPHILIZED",
+          target_pathogen: firstLine?.kd_item_name || prefix,
+        },
+      });
+    }
   }
 
   // Nếu tạo Đơn nội bộ cho Phòng Kỹ thuật – Thiết bị (DEVICE), đảm bảo liên kết Model & BOM cho PO Sản xuất (Tab 3: po_mrp)
@@ -430,40 +425,11 @@ export async function dispatchInternalOrderLineToProduction(tx: Tx, actor: Authz
     ).rows[0];
 
     if (!effBom || !effRt) {
-      const templateBom = (await tx.query("SELECT * FROM kit.bom WHERE status = 'EFFECTIVE' ORDER BY created_at LIMIT 1")).rows[0];
-      const templateRt = (await tx.query("SELECT * FROM kit.routing WHERE status = 'EFFECTIVE' ORDER BY created_at LIMIT 1")).rows[0];
-      if (!effBom && templateBom) {
-        const insBom = (
-          await tx.query(
-            `INSERT INTO kit.bom (code, org_unit_id, product_item_id, version_tag, status, batch_size, uom, tests_per_kit, shelf_life_days, created_by, updated_by)
-             VALUES ($1, $2, $3, 'v1.0', 'EFFECTIVE', $4, $5, 50, 365, $6, $6) RETURNING id`,
-            [`BOM-${line.item_code}-V1`, order.org_unit_id, line.item_id, qtyToProduce, line.base_uom || "Hộp", actor.userId]
-          )
-        ).rows[0];
-        await tx.query(
-          `INSERT INTO kit.bom_line (bom_id, line_no, component_item_id, component_role, qty_per_batch, uom, scrap_pct, is_critical)
-           SELECT $1, line_no, component_item_id, component_role, qty_per_batch, uom, scrap_pct, is_critical
-             FROM kit.bom_line WHERE bom_id = $2`,
-          [insBom.id, templateBom.id]
-        );
-        effBom = insBom;
-      }
-      if (!effRt && templateRt) {
-        const insRt = (
-          await tx.query(
-            `INSERT INTO kit.routing (code, org_unit_id, product_item_id, version_tag, status, created_by, updated_by)
-             VALUES ($1, $2, $3, 'v1.0', 'EFFECTIVE', $4, $4) RETURNING id`,
-            [`RT-${line.item_code}-V1`, order.org_unit_id, line.item_id, actor.userId]
-          )
-        ).rows[0];
-        await tx.query(
-          `INSERT INTO kit.routing_step (routing_id, seq, step_code, step_name, workcenter, sop_doc_code, is_qc, requires_check_signature, allow_skip, param_schema)
-           SELECT $1, seq, step_code, step_name, workcenter, sop_doc_code, is_qc, requires_check_signature, allow_skip, param_schema
-             FROM kit.routing_step WHERE routing_id = $2`,
-          [insRt.id, templateRt.id]
-        );
-        effRt = insRt;
-      }
+      throw invalid(
+        `Sản phẩm ${line.item_code || line.kd_item_code} chưa có ${!effBom ? "Định mức BOM" : ""}${!effBom && !effRt ? " và " : ""}${!effRt ? "Quy trình Routing" : ""} ở trạng thái HIỆU LỰC (EFFECTIVE). Không tự nhân bản từ sản phẩm khác — vui lòng thiết lập và phê duyệt hiệu lực trước khi phát hành lệnh.`,
+        undefined,
+        !effBom ? "MISSING_EFFECTIVE_BOM" : "MISSING_EFFECTIVE_ROUTING"
+      );
     }
 
     const specSummaryNote = hasKitSpec(ks) ? ` [Dạng: ${kitSpecLabel(ks)}]` : "";
@@ -506,22 +472,15 @@ export async function dispatchInternalOrderLineToProduction(tx: Tx, actor: Authz
         ).rows[0]
       : null;
 
-    const defaultSeqText =
-      d.oligo_sequences_text?.trim() ||
-      [
-        `${line.kd_item_code}-F; GAGTGTGGATTCGCACTCCT; 200NMOL; OPC; LYOPHILIZED`,
-        `${line.kd_item_code}-R; GAGGAGTTGGGGGAGGAGATT; 200NMOL; OPC; LYOPHILIZED`,
-        `${line.kd_item_code}-PRB; [FAM]CCAYTCRTCCBGCRGGBTR[BHQ1]; 200NMOL; HPLC; LYOPHILIZED`,
-        `${line.kd_item_code}-Amplicon-PC; GAGTGTGGATTCGCACTCCTCCTGCCTCCACCAATCGCCAGTCAGGAAGGCAGCCTACCCCGCTGTCTCCACCTTTGAGAAACACTCATCCTCAGGCCATGCAGTGGAATTCCACAACCTTCCACCAAACTCTGCAAGATCCCAGAGTGAGAGGCCTGTATTTCCCTGCTGGTGGCTCCAGTTCAGGAACAGTAAACCCTGTTCTGACTACTGCCTCTCCCTTATCGTCAATCTTCTCGAGGATTGGGGACCCTGCGCTGAACATGGAGAACATCACATCAGGATTCCTAGGACCCCTTCTCGTGTTACAGGCGGGGTTTTTCTTGTTGACAAGAATCCTCACAATACCGCAGAGTCTAGACTCGTGGTGGACTTCTCTCAATTTTCTAGGGGG; 200NMOL; PAGE; LYOPHILIZED`,
-      ].join("\n");
+    const userSeqText = d.oligo_sequences_text?.trim() || "";
 
     if (existingOligo) {
       const seqCount = Number(
         (await tx.query("SELECT count(*)::int AS c FROM oligo.oligo_sequence WHERE order_id = $1 AND status != 'CANCELLED'", [existingOligo.id])).rows[0]?.c || 0
       );
-      if (seqCount === 0) {
+      if (seqCount === 0 && userSeqText) {
         await addSequences(tx, dispatchActor, existingOligo.id, {
-          text: defaultSeqText,
+          text: userSeqText,
           defaults: {
             scale_code: "200NMOL",
             purification: "OPC",
@@ -552,15 +511,17 @@ export async function dispatchInternalOrderLineToProduction(tx: Tx, actor: Authz
       notes: order.notes || `Tổng hợp Oligo theo Đơn nội bộ ${order.code} (${qtyToProduce} ${line.kd_unit || "Ống"})`,
     });
 
-    await addSequences(tx, dispatchActor, oligoOrder.id, {
-      text: defaultSeqText,
-      defaults: {
-        scale_code: "200NMOL",
-        purification: "OPC",
-        format: "LYOPHILIZED",
-        target_pathogen: line.kd_item_name || line.kd_item_code,
-      },
-    });
+    if (userSeqText) {
+      await addSequences(tx, dispatchActor, oligoOrder.id, {
+        text: userSeqText,
+        defaults: {
+          scale_code: "200NMOL",
+          purification: "OPC",
+          format: "LYOPHILIZED",
+          target_pathogen: line.kd_item_name || line.kd_item_code,
+        },
+      });
+    }
 
     if (order.status === "ACCEPTED") {
       await runTransition(tx, orderMachine, SYSTEM_ACTOR, { id: order.id, action: "start_production", expectedVersion: order.version }, { trusted: true });
@@ -571,7 +532,9 @@ export async function dispatchInternalOrderLineToProduction(tx: Tx, actor: Authz
       order_code: oligoOrder.code,
       order_id: oligoOrder.id,
       target_tab: "factory-oligo",
-      message: `Đã phát hành Đơn Tổng Hợp Oligo ${oligoOrder.code} (kèm bộ chuỗi Primer/Probe) cho Phòng Tổng hợp Oligo.`,
+      message: userSeqText
+        ? `Đã phát hành Đơn Tổng Hợp Oligo ${oligoOrder.code} (kèm bộ chuỗi Primer/Probe từ đơn) cho Phòng Tổng hợp Oligo.`
+        : `Đã phát hành Đơn Tổng Hợp Oligo ${oligoOrder.code} (chờ nhập/import trình tự Primer/Probe) cho Phòng Tổng hợp Oligo.`,
     };
   }
 
@@ -903,14 +866,7 @@ export async function syncKdOrderOrPoToInternalOrder(tx: Tx, input: SyncKdOrderT
           .join("\n")
           .trim();
 
-        const seqText =
-          extractedSeqs ||
-          [
-            `${prefix}-F; GAGTGTGGATTCGCACTCCT; 200NMOL; OPC; LYOPHILIZED`,
-            `${prefix}-R; GAGGAGTTGGGGGAGGAGATT; 200NMOL; OPC; LYOPHILIZED`,
-            `${prefix}-PRB; [FAM]CCAYTCRTCCBGCRGGBTR[BHQ1]; 200NMOL; HPLC; LYOPHILIZED`,
-            `${prefix}-Amplicon-PC; GAGTGTGGATTCGCACTCCTCCTGCCTCCACCAATCGCCAGTCAGGAAGGCAGCCTACCCCGCTGTCTCCACCTTTGAGAAACACTCATCCTCAGGCCATGCAGTGGAATTCCACAACCTTCCACCAAACTCTGCAAGATCCCAGAGTGAGAGGCCTGTATTTCCCTGCTGGTGGCTCCAGTTCAGGAACAGTAAACCCTGTTCTGACTACTGCCTCTCCCTTATCGTCAATCTTCTCGAGGATTGGGGACCCTGCGCTGAACATGGAGAACATCACATCAGGATTCCTAGGACCCCTTCTCGTGTTACAGGCGGGGTTTTTCTTGTTGACAAGAATCCTCACAATACCGCAGAGTCTAGACTCGTGGTGGACTTCTCTCAATTTTCTAGGGGG; 200NMOL; PAGE; LYOPHILIZED`,
-          ].join("\n");
+        const seqText = extractedSeqs;
 
         const oligoOrder = await createOligoOrder(tx, SYSTEM_ACTOR, {
           org_unit_id: unit.id,
@@ -919,15 +875,17 @@ export async function syncKdOrderOrPoToInternalOrder(tx: Tx, input: SyncKdOrderT
           due_date: reqDate >= vnToday() ? reqDate : addDays(vnToday(), 7),
           notes: input.notes || `Đơn Tổng hợp Oligo đồng bộ tự động từ ${basePoCode}`,
         });
-        await addSequences(tx, SYSTEM_ACTOR, oligoOrder.id, {
-          text: seqText,
-          defaults: {
-            scale_code: "200NMOL",
-            purification: "OPC",
-            format: "LYOPHILIZED",
-            target_pathogen: firstEntry?.raw?.product_name || prefix,
-          },
-        });
+        if (seqText) {
+          await addSequences(tx, SYSTEM_ACTOR, oligoOrder.id, {
+            text: seqText,
+            defaults: {
+              scale_code: "200NMOL",
+              purification: "OPC",
+              format: "LYOPHILIZED",
+              target_pathogen: firstEntry?.raw?.product_name || prefix,
+            },
+          });
+        }
       }
     }
 

@@ -13,15 +13,8 @@ import "../inv/permissions";
 
 let supplyChainSchemaEnsured = false;
 
-export async function ensureSupplyChainSchema(tx: Tx): Promise<void> {
-  await ensureWarehouseOpsSchema(tx);
+export async function ensureSupplyChainSchema(_tx: Tx): Promise<void> {
   if (supplyChainSchemaEnsured) return;
-  await tx.query(`
-    ALTER TABLE purchase.purchase_request ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'NORMAL';
-    ALTER TABLE master.partner ADD COLUMN IF NOT EXISTS asl_status TEXT NOT NULL DEFAULT 'APPROVED';
-    ALTER TABLE master.partner ADD COLUMN IF NOT EXISTS lead_time_days INT NOT NULL DEFAULT 7;
-    ALTER TABLE master.partner ADD COLUMN IF NOT EXISTS category_domain TEXT NOT NULL DEFAULT 'BIOCHEM';
-  `);
   supplyChainSchemaEnsured = true;
 }
 

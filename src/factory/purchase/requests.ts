@@ -226,11 +226,8 @@ async function resolveHeaderAndLines(
     try {
       await toBaseQty(tx, item, l.qty, canonicalUom);
     } catch {
-      await tx.query(
-        `INSERT INTO master.uom_conversion (from_uom, to_uom, factor, item_id)
-         VALUES ($1, $2, 1, $3)
-         ON CONFLICT (from_uom, to_uom, item_id) DO NOTHING`,
-        [canonicalUom, item.base_uom, item.id]
+      throw invalid(
+        `Đơn vị "${canonicalUom}" chưa có cấu hình quy đổi sang đơn vị chuẩn "${item.base_uom}" cho vật tư "${item.code}". Vui lòng khai báo quy đổi UOM trước khi lập Đề nghị mua hàng.`
       );
     }
 

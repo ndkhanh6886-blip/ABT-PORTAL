@@ -291,6 +291,7 @@ const batchPostSchema = z.object({
   action: z.enum(["batch_start", "batch_measure", "batch_submit_qc"]),
   sequence_ids: z.array(z.string().uuid()).min(1, "chọn ít nhất 1 trình tự").max(200),
   a260: z.coerce.number().positive().max(1000).optional(),
+  per_sequence_a260: z.record(z.string(), z.coerce.number().positive().max(1000)).optional(),
   dilution_factor: z.coerce.number().min(1).max(100000).optional().default(10),
   path_cm: z.coerce.number().positive().max(10).optional().default(1),
   stock_volume_ul: z.coerce.number().positive().max(1_000_000).optional().default(200),
@@ -334,7 +335,7 @@ async function ensureSopStepsCompletedForBatch(tx: Tx, actor: AuthzActor, rec: a
  */
 export async function batchPostProcessAction(tx: Tx, actor: AuthzActor, input: unknown) {
   const d = parseInput(batchPostSchema, input);
-  const ids = [...new Set(d.sequence_ids)];
+  const ids = [...new Set(d.sequence_ids)].sort();
   const processed: string[] = [];
 
   if (d.action === "batch_start") {
@@ -349,10 +350,17 @@ export async function batchPostProcessAction(tx: Tx, actor: AuthzActor, input: u
   }
 
   if (d.action === "batch_measure") {
-    if (d.a260 == null || !Number.isFinite(d.a260) || d.a260 <= 0) {
-      throw invalid("Bắt buộc nhập giá trị A260 đo được (> 0) từ máy quang phổ trước khi ghi kết quả đo OD hàng loạt.", undefined, "A260_REQUIRED");
+    const missingA260 = ids.filter((id) => {
+      const val = d.per_sequence_a260?.[id] ?? d.a260;
+      return val == null || !Number.isFinite(val) || val <= 0;
+    });
+    if (missingA260.length > 0) {
+      throw invalid(
+        "Bắt buộc nhập giá trị A260 đo được (> 0) từ máy quang phổ (chung hoặc theo từng giếng/trình tự) trước khi ghi kết quả đo OD hàng loạt.",
+        { missing_count: missingA260.length },
+        "A260_REQUIRED"
+      );
     }
-    const a260 = d.a260;
     for (const seqId of ids) {
       let s = await lockSequence(tx, seqId);
       if (s.status === "SYNTHESIZED") {
@@ -368,7 +376,7 @@ export async function batchPostProcessAction(tx: Tx, actor: AuthzActor, input: u
         cleavage_done: true,
         deprotection_done: true,
         purification_done: true,
-        a260,
+        a260: Number(d.per_sequence_a260?.[seqId] ?? d.a260!),
         dilution_factor: d.dilution_factor,
         path_cm: d.path_cm,
         stock_volume_ul: d.stock_volume_ul,

@@ -1,14 +1,16 @@
+import crypto from "crypto";
 import { z } from "zod";
 import type { Tx } from "../core/db";
-import { authorizeAnywhere, type AuthzActor } from "../core/authz";
+import { authorize, authorizeAnywhere, type AuthzActor } from "../core/authz";
 import { writeAudit } from "../core/audit";
 import { addDays, vnToday } from "../core/dates";
 import { invalid, notFound } from "../core/errors";
-import { nextNumber } from "../core/numbering";
 import { parseInput } from "../core/records";
+import { runTransition } from "../core/stateMachine";
 import { ensureWarehouseOpsSchema } from "../inv/warehouseOps";
 import { ensureSupplyChainSchema } from "../purchase/supplyChainOps";
 import { createRequest } from "../purchase/requests";
+import { productionOrderMachine } from "../kit/ordersEbr";
 import { raiseDeviation } from "../qms/incidents";
 import { ensureQaOpsSchema } from "../qms/qaOps";
 import { ensureRdProjectOpsSchema } from "../rd/projectOps";
@@ -101,51 +103,6 @@ export async function ensureAnalyticsSchema(tx: Tx): Promise<void> {
   await ensureSupplyChainSchema(tx);
   await ensureQaOpsSchema(tx);
   await ensureRdProjectOpsSchema(tx);
-
-  await tx.query(`
-    ALTER TABLE inv.lot ADD COLUMN IF NOT EXISTS freeze_thaw_count INT NOT NULL DEFAULT 0;
-    ALTER TABLE inv.lot ADD COLUMN IF NOT EXISTS max_freeze_thaw INT NOT NULL DEFAULT 5;
-    ALTER TABLE inv.lot ADD COLUMN IF NOT EXISTS last_thaw_at TIMESTAMPTZ;
-    ALTER TABLE inv.lot ADD COLUMN IF NOT EXISTS last_thaw_by TEXT;
-    ALTER TABLE inv.lot ADD COLUMN IF NOT EXISTS storage_temp_actual TEXT DEFAULT '-20°C';
-    ALTER TABLE inv.lot ADD COLUMN IF NOT EXISTS unit_cost NUMERIC(18,4) NOT NULL DEFAULT 185000;
-
-    ALTER TABLE master.item ADD COLUMN IF NOT EXISTS std_unit_cost NUMERIC(18,4) NOT NULL DEFAULT 220000;
-    ALTER TABLE master.item ADD COLUMN IF NOT EXISTS daily_burn_rate_override NUMERIC(18,4);
-
-    CREATE TABLE IF NOT EXISTS qms.spc_control_series (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      code varchar(50) NOT NULL UNIQUE,
-      name varchar(250) NOT NULL,
-      department varchar(40) NOT NULL DEFAULT 'KIT',
-      parameter_name varchar(120) NOT NULL,
-      unit varchar(40) NOT NULL DEFAULT 'Ct',
-      target_mean numeric(18,4) NOT NULL,
-      sd_value numeric(18,4) NOT NULL CHECK (sd_value > 0),
-      spec_lower numeric(18,4),
-      spec_upper numeric(18,4),
-      instrument_code varchar(80),
-      standard_code varchar(80),
-      status varchar(30) NOT NULL DEFAULT 'ACTIVE',
-      created_at timestamptz NOT NULL DEFAULT now()
-    );
-
-    CREATE TABLE IF NOT EXISTS qms.spc_control_point (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      series_id uuid NOT NULL REFERENCES qms.spc_control_series(id) ON DELETE CASCADE,
-      seq int NOT NULL,
-      batch_or_lot_code varchar(80) NOT NULL,
-      measured_value numeric(18,4) NOT NULL,
-      z_score numeric(10,4) NOT NULL DEFAULT 0,
-      westgard_rule varchar(30) NOT NULL DEFAULT 'OK',
-      westgard_status varchar(30) NOT NULL DEFAULT 'IN_CONTROL',
-      analyst_name varchar(120) DEFAULT 'QC Analyst',
-      measured_at date NOT NULL DEFAULT CURRENT_DATE,
-      notes text,
-      created_at timestamptz NOT NULL DEFAULT now()
-    );
-    CREATE INDEX IF NOT EXISTS idx_spc_point_series ON qms.spc_control_point(series_id, seq);
-  `);
 
   // Seed SPC series & points if empty and demo seed is enabled
   const spcCount = Number((await tx.query("SELECT count(*)::int AS c FROM qms.spc_control_series")).rows[0]?.c ?? 0);
@@ -309,7 +266,8 @@ export async function getEnterpriseAnalyticsOverview(tx: Tx, actor: AuthzActor) 
         count(*)::int AS total_orders,
         count(*) FILTER (WHERE status = 'COMPLETED')::int AS completed_orders,
         count(*) FILTER (WHERE status IN ('IN_PROGRESS', 'CONFIRMED', 'PENDING_QC', 'PENDING_RELEASE'))::int AS active_orders,
-        COALESCE(avg(CASE WHEN planned_qty > 0 AND good_qty IS NOT NULL THEN (good_qty / planned_qty) * 100 ELSE NULL END)::numeric(6,2), 96.5)::float AS avg_fpy_pct,
+        COALESCE(avg(CASE WHEN planned_qty > 0 AND good_qty IS NOT NULL THEN (good_qty / planned_qty) * 100 ELSE NULL END)::numeric(6,2), 0)::float AS avg_fpy_pct,
+        avg(CASE WHEN finished_at IS NOT NULL AND started_at IS NOT NULL THEN EXTRACT(EPOCH FROM (finished_at - started_at)) / 86400.0 ELSE NULL END)::numeric(6,1)::float AS avg_cycle_days,
         count(*) FILTER (WHERE line_clearance_passed = true)::int AS clearance_passed_count
       FROM kit.production_order
     `)
@@ -390,40 +348,43 @@ export async function getEnterpriseAnalyticsOverview(tx: Tx, actor: AuthzActor) 
   ).rows[0];
 
   const rdCompletionPct =
-    rdTasks.total_tasks > 0 ? Math.round((rdTasks.done_tasks / rdTasks.total_tasks) * 100) : 84;
-  const kitFpyPct = Number(kitStats.avg_fpy_pct || 96.5);
+    rdTasks.total_tasks > 0 ? Math.round((rdTasks.done_tasks / rdTasks.total_tasks) * 1000) / 10 : 0;
+  const kitFpyPct = Number(kitStats.avg_fpy_pct ?? 0);
   const oligoYieldPct =
     oligoStats.total_sequences > 0
-      ? Math.max(88, Math.round(((oligoStats.passed_sequences || oligoStats.total_sequences) / oligoStats.total_sequences) * 100))
-      : 94.5;
+      ? Math.round((Number(oligoStats.passed_sequences || 0) / oligoStats.total_sequences) * 1000) / 10
+      : 0;
   const devicePassPct =
     deviceStats.total_units > 0
-      ? Math.max(90, Math.round(((deviceStats.passed_units || deviceStats.total_units) / deviceStats.total_units) * 100))
-      : 95.0;
+      ? Math.round((Number(deviceStats.passed_units || 0) / deviceStats.total_units) * 1000) / 10
+      : 0;
   const qaPassPct =
     qaStats.total_tests > 0
-      ? Math.max(85, Math.round(((qaStats.passed_tests || qaStats.total_tests) / qaStats.total_tests) * 100))
-      : 93.8;
+      ? Math.round((Number(qaStats.passed_tests || 0) / qaStats.total_tests) * 1000) / 10
+      : 0;
   const otifPct =
     intakeStats.total_orders > 0
-      ? Math.round((intakeStats.on_time_orders / intakeStats.total_orders) * 100)
-      : 92.0;
+      ? Math.round((intakeStats.on_time_orders / intakeStats.total_orders) * 1000) / 10
+      : 0;
   const prSlaPct =
     purchaseStats.total_prs > 0
-      ? Math.round((purchaseStats.processed_prs / purchaseStats.total_prs) * 100)
-      : 90.0;
+      ? Math.round((purchaseStats.processed_prs / purchaseStats.total_prs) * 1000) / 10
+      : 0;
   const whHealthPct = Math.max(
-    75,
-    100 - whStats.near_expiry_lots * 4 - whStats.freeze_thaw_alert_lots * 5 - whStats.hold_lots * 3
+    0,
+    Math.min(100, 100 - whStats.near_expiry_lots * 4 - whStats.freeze_thaw_alert_lots * 5 - whStats.hold_lots * 3)
   );
+  const rdHealthScore = rdTasks.total_tasks > 0 ? Math.min(100, Math.round(rdCompletionPct)) : 0;
+  const kitCycleDisplay =
+    kitStats.avg_cycle_days != null ? `${Number(kitStats.avg_cycle_days).toFixed(1)} ngày/lô` : "Chưa có dữ liệu";
 
   const department_scorecards = [
     {
       dept_key: "factory-rd",
       dept_code: "P-RD",
       dept_name: "Nghiên Cứu & Phát Triển (R&D)",
-      health_score: Math.min(100, Math.max(78, rdCompletionPct)),
-      sla_status: rdCompletionPct >= 80 ? "ON_TRACK" : "WARNING",
+      health_score: rdHealthScore,
+      sla_status: rdTasks.total_tasks === 0 || rdCompletionPct >= 80 ? "ON_TRACK" : "WARNING",
       primary_kpi_label: "Stage-Gate & Hoàn thành WBS",
       primary_kpi_value: `${rdCompletionPct}%`,
       target_label: "≥ 85%",
@@ -432,47 +393,47 @@ export async function getEnterpriseAnalyticsOverview(tx: Tx, actor: AuthzActor) 
         { label: "Dự án G3–G4 (Sắp chuyển giao)", value: `${rdStats.late_stage_projects} dự án` },
         { label: "Tỷ lệ đóng Task WBS", value: `${rdTasks.done_tasks}/${rdTasks.total_tasks}` },
       ],
-      forecast_note: "Dự báo 2 dự án IVD Kit đủ điều kiện qua cổng G4 chuyển giao SX trong 30 ngày tới.",
+      forecast_note: `${rdStats.late_stage_projects} dự án đang ở giai đoạn G3–G4 chuẩn bị chuyển giao công nghệ.`,
     },
     {
       dept_key: "factory-kit",
       dept_code: "P-KIT",
       dept_name: "Sản Xuất Kit Chẩn Đoán (IVD)",
       health_score: Math.min(100, Math.round(kitFpyPct)),
-      sla_status: kitFpyPct >= 95 ? "ON_TRACK" : "WARNING",
+      sla_status: kitStats.total_orders === 0 || kitFpyPct >= 95 ? "ON_TRACK" : "WARNING",
       primary_kpi_label: "First Pass Yield (FPY)",
       primary_kpi_value: `${kitFpyPct.toFixed(1)}%`,
       target_label: "≥ 95.0%",
       metrics: [
         { label: "Lệnh SX hoàn thành / Tổng", value: `${kitStats.completed_orders}/${kitStats.total_orders}` },
         { label: "Lệnh đang chạy trên xưởng", value: `${kitStats.active_orders} lệnh` },
-        { label: "Chu kỳ lô TB (Batch Cycle)", value: "2.4 ngày/lô" },
+        { label: "Chu kỳ lô TB (Batch Cycle)", value: kitCycleDisplay },
       ],
-      forecast_note: "Tải dây chuyền chia lẻ & đóng gói dự kiến đạt 78% công suất trong 30 ngày tới.",
+      forecast_note: `Hiện có ${kitStats.active_orders} lệnh đang vận hành và ${kitStats.clearance_passed_count} lệnh đã xác nhận Line Clearance.`,
     },
     {
       dept_key: "factory-oligo",
       dept_code: "P-OLIGO",
       dept_name: "Tổng Hợp Oligo (Primer / Probe)",
       health_score: Math.min(100, Math.round(oligoYieldPct)),
-      sla_status: oligoYieldPct >= 92 ? "ON_TRACK" : "WARNING",
+      sla_status: oligoStats.total_sequences === 0 || oligoYieldPct >= 92 ? "ON_TRACK" : "WARNING",
       primary_kpi_label: "Tỷ lệ Tổng hợp Đạt lần đầu",
       primary_kpi_value: `${oligoYieldPct}%`,
       target_label: "≥ 93.0%",
       metrics: [
         { label: "Tổng số Trình tự / Đơn", value: `${oligoStats.total_sequences} mồi (${oligoStats.total_orders} đơn)` },
         { label: "Số mẻ tổng hợp (Batch)", value: `${oligoStats.total_batches} mẻ` },
-        { label: "TAT trung bình (Primer/Probe)", value: "36h / 72h" },
+        { label: "Trình tự đã đạt QC", value: `${oligoStats.passed_sequences}/${oligoStats.total_sequences}` },
       ],
-      forecast_note: "Dự báo bình Amidite A & Acetonitrile trên máy tổng hợp cần nạp bổ sung sau ~420 base nữa.",
+      forecast_note: `Tổng hợp trên ${oligoStats.total_batches} mẻ, tỷ lệ đạt ${oligoYieldPct}%.`,
     },
     {
       dept_key: "factory-device",
       dept_code: "P-DEVICE",
       dept_name: "Kỹ Thuật – Thiết Bị Y Sinh",
       health_score: Math.min(100, Math.round(devicePassPct)),
-      sla_status: devicePassPct >= 92 ? "ON_TRACK" : "WARNING",
-      primary_kpi_label: "Tỷ lệ Vượt Burn-in 48h & FQC",
+      sla_status: deviceStats.total_units === 0 || devicePassPct >= 92 ? "ON_TRACK" : "WARNING",
+      primary_kpi_label: "Tỷ lệ Vượt Burn-in & FQC",
       primary_kpi_value: `${devicePassPct}%`,
       target_label: "≥ 95.0%",
       metrics: [
@@ -480,13 +441,13 @@ export async function getEnterpriseAnalyticsOverview(tx: Tx, actor: AuthzActor) 
         { label: "Phiếu thay đổi kỹ thuật (ECO)", value: `${deviceStats.eco_count} ECO` },
         { label: "Hồ sơ bảo hành / bảo trì", value: `${deviceStats.service_tickets} phiếu` },
       ],
-      forecast_note: "Trạm Burn-in 48h dự kiến đạt 85% tải khi thực hiện các đơn nội bộ máy tháng tới.",
+      forecast_note: `${deviceStats.passed_units}/${deviceStats.total_units} thiết bị đã đạt FQC, ${deviceStats.eco_count} ECO được theo dõi.`,
     },
     {
       dept_key: "factory-qa",
       dept_code: "P-QAQC",
       dept_name: "Quản Lý Chất Lượng (QA/QC)",
-      health_score: Math.min(100, Math.max(75, Math.round(qaPassPct - qaStats.open_ncrs * 2))),
+      health_score: qaStats.total_tests > 0 ? Math.min(100, Math.max(0, Math.round(qaPassPct - qaStats.open_ncrs * 2))) : 0,
       sla_status: qaStats.open_ncrs <= 2 ? "ON_TRACK" : "WARNING",
       primary_kpi_label: "Tỷ lệ Đạt QC & Kiểm soát CAPA",
       primary_kpi_value: `${qaPassPct}%`,
@@ -496,30 +457,30 @@ export async function getEnterpriseAnalyticsOverview(tx: Tx, actor: AuthzActor) 
         { label: "Sai lệch / NCR đang mở", value: `${qaStats.open_deviations} Dev · ${qaStats.open_ncrs} NCR` },
         { label: "Bộ mẫu chuẩn đang hiệu lực", value: `${qaStats.active_standards} mẫu chuẩn` },
       ],
-      forecast_note: "Phát hiện 1 xu hướng trôi nhẹ Ct trên biểu đồ SPC Mẫu chuẩn Dương cần theo dõi.",
+      forecast_note: `Hiện có ${qaStats.pending_tests} phiếu QC đang chờ hoàn tất và ${qaStats.open_ncrs} NCR đang xử lý.`,
     },
     {
       dept_key: "factory-orders",
       dept_code: "P-INTAKE",
       dept_name: "Điều Phối Đơn Nội Bộ (KD ➔ SX)",
-      health_score: Math.min(100, otifPct),
-      sla_status: otifPct >= 90 ? "ON_TRACK" : "WARNING",
+      health_score: Math.min(100, Math.round(otifPct)),
+      sla_status: intakeStats.total_orders === 0 || otifPct >= 90 ? "ON_TRACK" : "WARNING",
       primary_kpi_label: "Giao hàng đúng cam kết (OTIF)",
       primary_kpi_value: `${otifPct}%`,
       target_label: "≥ 95.0%",
       metrics: [
         { label: "Tổng đơn nội bộ", value: `${intakeStats.total_orders} đơn` },
         { label: "Đơn đúng hạn cam kết", value: `${intakeStats.on_time_orders}/${intakeStats.total_orders}` },
-        { label: "Thời gian phân luồng TB", value: "< 2.5 giờ" },
+        { label: "Đơn hoàn thành / xuất", value: `${intakeStats.completed_orders} đơn` },
       ],
-      forecast_note: "Nhu cầu đặt hàng Kit PCR và Oligo dự báo tăng +18% trong chu kỳ 30–60 ngày tới.",
+      forecast_note: `Tỷ lệ đơn đúng hạn đạt ${otifPct}% trên tổng ${intakeStats.total_orders} đơn nội bộ.`,
     },
     {
       dept_key: "factory-purchase",
       dept_code: "P-SUPPLY",
       dept_name: "Cung Ứng Nguyên Vật Liệu",
-      health_score: Math.min(100, prSlaPct),
-      sla_status: prSlaPct >= 85 ? "ON_TRACK" : "WARNING",
+      health_score: Math.min(100, Math.round(prSlaPct)),
+      sla_status: purchaseStats.total_prs === 0 || prSlaPct >= 85 ? "ON_TRACK" : "WARNING",
       primary_kpi_label: "Tỷ lệ Đáp ứng PR & ASL NCC",
       primary_kpi_value: `${prSlaPct}%`,
       target_label: "ASL ≥ 90%",
@@ -528,7 +489,7 @@ export async function getEnterpriseAnalyticsOverview(tx: Tx, actor: AuthzActor) 
         { label: "Đơn mua hàng PO", value: `${purchaseStats.total_pos} đơn PO` },
         { label: "NCC đạt chuẩn ASL", value: `${purchaseStats.approved_suppliers}/${purchaseStats.total_suppliers} NCC` },
       ],
-      forecast_note: "Cần phát hành sớm PR dự báo cho các mã Enzyme/Cột lọc có Lead-time nhập khẩu ≥ 14 ngày.",
+      forecast_note: `${purchaseStats.approved_suppliers}/${purchaseStats.total_suppliers} nhà cung cấp đang được phê duyệt ASL.`,
     },
     {
       dept_key: "factory-warehouse",
@@ -566,6 +527,7 @@ export async function getEnterpriseAnalyticsOverview(tx: Tx, actor: AuthzActor) 
         po.line_clearance_passed,
         po.qc_passed,
         po.materials_issued,
+        po.lot_id,
         i.code AS product_code,
         i.name AS product_name,
         COALESCE(i.std_unit_cost, 320000)::float AS std_unit_cost,
@@ -599,20 +561,27 @@ export async function getEnterpriseAnalyticsOverview(tx: Tx, actor: AuthzActor) 
         0::float AS scrap_qty,
         'EA' AS uom,
         true AS line_clearance_passed,
-        true AS qc_passed,
+        (
+          EXISTS (SELECT 1 FROM device.device_unit u WHERE u.order_id = o.id)
+          AND NOT EXISTS (
+            SELECT 1 FROM device.device_unit u
+             WHERE u.order_id = o.id AND u.fqc_passed = false AND u.status NOT IN ('QA_PASSED', 'DELIVERED')
+          )
+        ) AS qc_passed,
         true AS materials_issued,
+        NULL::uuid AS lot_id,
         m.code AS product_code,
         m.name AS product_name,
-        18500000::float AS std_unit_cost,
+        COALESCE((SELECT i.std_unit_cost FROM master.item i WHERE i.id = m.item_id), 18500000)::float AS std_unit_cost,
         rev.revision AS lot_code,
         o.status AS lot_status,
-        4 AS total_steps,
-        CASE WHEN o.status IN ('READY', 'DELIVERED') THEN 4 ELSE 2 END AS done_steps,
-        0 AS failed_steps,
+        (SELECT count(*)::int FROM device.device_unit u WHERE u.order_id = o.id) AS total_steps,
+        (SELECT count(*)::int FROM device.device_unit u WHERE u.order_id = o.id AND (u.fqc_passed = true OR u.status IN ('QA_PASSED', 'DELIVERED'))) AS done_steps,
+        (SELECT count(*)::int FROM device.burn_in_run br JOIN device.device_unit u ON u.id = br.unit_id WHERE u.order_id = o.id AND br.result = 'FAIL') AS failed_steps,
         0 AS missing_dual_sign,
-        1.2::float AS max_bom_variance_pct,
-        0 AS open_deviations,
-        0 AS open_ncrs
+        0::float AS max_bom_variance_pct,
+        (SELECT count(*)::int FROM qms.deviation d WHERE (d.entity_id = o.id OR d.entity_id IN (SELECT u.id FROM device.device_unit u WHERE u.order_id = o.id)) AND d.status <> 'CLOSED') AS open_deviations,
+        (SELECT count(*)::int FROM qms.ncr n WHERE (n.entity_id = o.id OR n.entity_id IN (SELECT u.id FROM device.device_unit u WHERE u.order_id = o.id)) AND n.status <> 'CLOSED') AS open_ncrs
       FROM device.device_order o
       JOIN device.device_model m ON m.id = o.model_id
       JOIN device.model_revision rev ON rev.id = o.model_revision_id
@@ -646,7 +615,7 @@ export async function getEnterpriseAnalyticsOverview(tx: Tx, actor: AuthzActor) 
     const goodQty = Math.max(1, Number(b.good_qty || plannedQty));
     const stdUnitCost = Number(b.std_unit_cost || (b.batch_domain === "DEVICE" ? 18500000 : 320000));
     const stdMaterialCost = plannedQty * stdUnitCost * 0.72;
-    const varianceFactor = 1 + Number(b.max_bom_variance_pct || 1.5) / 100;
+    const varianceFactor = 1 + Number(b.max_bom_variance_pct ?? 0) / 100;
     const actualMaterialCost = Math.round(stdMaterialCost * varianceFactor);
     const machineLaborCost = Math.round(plannedQty * stdUnitCost * 0.18);
     const qcTestingCost = Math.round(plannedQty * stdUnitCost * 0.1 + (b.open_ncrs > 0 ? 1500000 : 0));
@@ -733,7 +702,7 @@ export async function getEnterpriseAnalyticsOverview(tx: Tx, actor: AuthzActor) 
       category_code: "MATERIAL",
       label: "Nguyên liệu / Hoạt tính Enzyme & Hóa chất NCC lệch chuẩn",
       m_group: "Material (Nguyên vật liệu)",
-      count: 6,
+      count: 0,
       examples: ["Độ tinh sạch Primer/Probe giảm", "Hóa chất Amidite hút ẩm", "Lô ống nghiệm trầy xước"],
       recommended_capa: "Kiểm soát chặt chu kỳ rã đông (≤ 3 lần) & yêu cầu COA + IQC Ct đầu vào cho mọi lô Enzyme",
     },
@@ -741,7 +710,7 @@ export async function getEnterpriseAnalyticsOverview(tx: Tx, actor: AuthzActor) 
       category_code: "MACHINE",
       label: "Thiết bị / Trôi hiệu chuẩn nhiệt độ Block & Áp suất van tổng hợp",
       m_group: "Machine (Thiết bị & Công cụ)",
-      count: 4,
+      count: 0,
       examples: ["Dao động nhiệt độ Peltier ±0.25°C", "Tắc nghẽn đầu phun Port Amidite G"],
       recommended_capa: "Thiết lập lịch rửa đường ống tự động sau mỗi 2 mẻ Oligo & hiệu chuẩn cảm biến nhiệt định kỳ",
     },
@@ -749,7 +718,7 @@ export async function getEnterpriseAnalyticsOverview(tx: Tx, actor: AuthzActor) 
       category_code: "METHOD",
       label: "Quy trình / Thời gian trộn Master Mix & Chia lẻ (Aliquoting)",
       m_group: "Method (Phương pháp SOP)",
-      count: 3,
+      count: 0,
       examples: ["Hao hụt chia lẻ ống 0.5mL vượt 4.2%", "Thời gian rã đông đệm vượt SOP"],
       recommended_capa: "Cập nhật SOP chia lẻ tự động & hiệu chỉnh hệ số bù hao hụt BOM thêm +1.5%",
     },
@@ -757,7 +726,7 @@ export async function getEnterpriseAnalyticsOverview(tx: Tx, actor: AuthzActor) 
       category_code: "MAN",
       label: "Nhân sự / Chậm ký xác nhận kép EBR & Ghi chép nhật ký lô",
       m_group: "Man (Thao tác nhân sự)",
-      count: 2,
+      count: 0,
       examples: ["Thiếu chữ ký người kiểm tra bước Pha chế", "Nhập nhầm mã cột tinh sạch"],
       recommended_capa: "Bắt buộc khóa chuyển bước EBR nếu chưa đủ chữ ký kép & tái đào tạo SOP GMP",
     },
@@ -765,7 +734,7 @@ export async function getEnterpriseAnalyticsOverview(tx: Tx, actor: AuthzActor) 
       category_code: "MEASUREMENT",
       label: "Đo lường / Mẫu chuẩn Dương (Positive Control) trôi giá trị Ct",
       m_group: "Measurement (Hệ thống đo & Mẫu chuẩn)",
-      count: 1,
+      count: 0,
       examples: ["Mẫu chuẩn Dương rã đông lần thứ 4 làm Ct tăng +0.8 chu kỳ"],
       recommended_capa: "Chia nhỏ Aliquot mẫu chuẩn dùng 1 lần (Single-use Aliquot) & khóa tự động khi vượt Max Freeze-Thaw",
     },
@@ -1179,21 +1148,25 @@ const createCapaSchema = z.object({
   corrective_action: z.string().trim().min(3),
   preventive_action: z.string().trim().min(3),
   action_owner: z.string().trim().default("Trưởng phòng QA/QC & Trưởng bộ phận"),
+  lot_id: z.string().uuid().optional().nullable(),
+  entity_type: z.string().trim().max(60).optional(),
+  entity_id: z.string().uuid().optional(),
 });
 
 export async function createCapaFromAnalytics(tx: Tx, actor: AuthzActor, input: unknown) {
   await ensureAnalyticsSchema(tx);
   const d = parseInput(createCapaSchema, input);
-  const anyLot = (await tx.query("SELECT id FROM inv.lot ORDER BY created_at DESC LIMIT 1")).rows[0];
-  const entityId = anyLot?.id ?? "00000000-0000-0000-0000-000000000001";
+  const entityType = d.entity_type || (d.lot_id ? "LOT" : "ANALYTICS_PDCA");
+  const entityId = d.entity_id || d.lot_id || crypto.randomUUID();
 
   const res = await raiseDeviation(tx, actor, {
     source_module: d.source_module,
-    entity_type: "LOT",
+    entity_type: entityType,
     entity_id: entityId,
     severity: d.severity,
     description: `${d.title} — Khởi tạo tự động từ Trung tâm Phân tích Chẩn đoán & Cải tiến PDCA`,
     step_ref: "ANALYTICS_PDCA",
+    ncr: d.lot_id ? { lot_id: d.lot_id } : undefined,
   });
 
   const dueDate = addDays(vnToday(), 14);
@@ -1716,16 +1689,28 @@ export async function recordLotFreezeThaw(tx: Tx, actor: AuthzActor, input: unkn
 const fastTrackReleaseSchema = z.object({
   batch_id: z.string().uuid(),
   batch_domain: z.enum(["KIT", "DEVICE"]),
+  note: z.string().trim().max(500).optional(),
+  credential: z.object({ method: z.enum(["PIN", "PASSWORD"]), secret: z.string().min(1) }).optional(),
 });
 
-export async function fastTrackReleaseZeroExceptionBatch(tx: Tx, actor: AuthzActor, input: unknown) {
+export async function fastTrackReleaseZeroExceptionBatch(
+  tx: Tx,
+  actor: AuthzActor,
+  input: unknown,
+  opts?: { signerAuthenticated?: boolean }
+) {
   await ensureAnalyticsSchema(tx);
   const d = parseInput(fastTrackReleaseSchema, input);
   if (d.batch_domain === "KIT") {
     const po = (
       await tx.query(
-        `SELECT po.id, po.code, po.lot_id, po.planned_qty, po.status,
+        `SELECT po.id, po.code, po.org_unit_id, po.lot_id, po.qc_test_id, po.planned_qty, po.status, po.version,
                 po.qc_passed, po.line_clearance_passed, po.created_by,
+                (SELECT count(*)::int FROM kit.production_step s WHERE s.order_id = po.id AND s.status = 'FAILED') AS failed_steps,
+                (SELECT count(*)::int FROM kit.production_step s WHERE s.order_id = po.id AND s.status NOT IN ('DONE', 'SKIPPED')) AS incomplete_steps,
+                (SELECT count(*)::int FROM kit.production_step s WHERE s.order_id = po.id AND s.requires_check_signature = true AND s.checked_by IS NULL AND s.status = 'DONE') AS missing_dual_sign,
+                (SELECT COALESCE(max(abs(mc.variance_pct)), 0)::float FROM kit.material_consumption mc WHERE mc.order_id = po.id) AS max_bom_variance_pct,
+                (SELECT count(*)::int FROM qms.deviation dev WHERE dev.entity_id = po.id AND dev.status <> 'CLOSED') AS open_deviations,
                 (SELECT count(*)::int FROM qms.ncr n WHERE (n.entity_id = po.id OR n.lot_id = po.lot_id) AND n.status <> 'CLOSED') AS open_ncrs,
                 EXISTS (
                   SELECT 1 FROM kit.production_step s
@@ -1737,50 +1722,87 @@ export async function fastTrackReleaseZeroExceptionBatch(tx: Tx, actor: AuthzAct
       )
     ).rows[0];
     if (!po) throw notFound("Lệnh sản xuất Kit");
-    if (po.qc_passed !== true) {
-      throw invalid(`Lô ${po.code} chưa đạt kiểm nghiệm QC (qc_passed !== true). Không được giải phóng nhanh.`, undefined, "QC_NOT_PASSED");
+    await authorize(tx, actor, "qms.qc.review", po.org_unit_id);
+    if (!d.credential?.secret) {
+      throw invalid("Bắt buộc xác thực chữ ký điện tử (PIN hoặc Mật khẩu) khi duyệt giải phóng lô Kit theo chuẩn 21 CFR Part 11.", undefined, "SIGNATURE_REQUIRED");
+    }
+    if (po.status === "COMPLETED") {
+      throw invalid(`Lô ${po.code} đã được giải phóng hoàn tất trước đó.`, undefined, "ALREADY_RELEASED");
+    }
+    if (po.status !== "PENDING_QC" && po.status !== "PENDING_RELEASE") {
+      throw invalid(`Lô ${po.code} đang ở trạng thái ${po.status} — chỉ được duyệt nhanh RbE khi lô ở trạng thái PENDING_QC hoặc PENDING_RELEASE.`, undefined, "INVALID_ORDER_STATUS");
     }
     if (po.line_clearance_passed !== true) {
       throw invalid(`Lô ${po.code} chưa hoàn tất dọn dây chuyền GMP (line_clearance_passed !== true).`, undefined, "LINE_CLEARANCE_REQUIRED");
     }
-    if (Number(po.open_ncrs) > 0) {
-      throw invalid(`Lô ${po.code} đang có ${po.open_ncrs} phiếu NCR chưa đóng. Không được giải phóng lô.`, undefined, "OPEN_NCR");
+    if (Number(po.failed_steps) > 0 || Number(po.incomplete_steps) > 0 || Number(po.missing_dual_sign) > 0) {
+      throw invalid(`Lô ${po.code} vẫn còn bước lỗi, chưa hoàn tất hoặc thiếu chữ ký kép EBR — không đủ chuẩn Zero-Exception.`, undefined, "EBR_EXCEPTION");
+    }
+    if (Number(po.max_bom_variance_pct) > 5) {
+      throw invalid(`Lô ${po.code} có chênh lệch vật tư BOM vượt 5% — cần thẩm định đầy đủ.`, undefined, "BOM_VARIANCE_HIGH");
+    }
+    if (Number(po.open_deviations) > 0 || Number(po.open_ncrs) > 0) {
+      throw invalid(`Lô ${po.code} đang có ${po.open_deviations} sai lệch / ${po.open_ncrs} phiếu NCR chưa đóng. Không được giải phóng lô.`, undefined, "OPEN_NCR");
     }
     if (po.actor_is_performer || Number(po.created_by) === actor.userId) {
-      throw invalid("Vi phạm nguyên tắc Bất kiêm nhiệm (SoD / SELF_RELEASE): Người trực tiếp thực hiện sản xuất không được tự ký giải phóng lô.", undefined, "SELF_RELEASE");
+      throw invalid("Vi phạm nguyên tắc Bất kiêm nhiệm (SoD / SELF_RELEASE): Người tạo lệnh hoặc trực tiếp thực hiện sản xuất không được tự ký giải phóng lô.", undefined, "SELF_RELEASE");
     }
 
-    await tx.query(
-      `UPDATE kit.production_order
-          SET good_qty = COALESCE(good_qty, planned_qty),
-              released_by = $2,
-              released_at = now(),
-              status = CASE WHEN status IN ('PENDING_RELEASE', 'PENDING_QC') THEN 'COMPLETED' ELSE status END,
-              updated_at = now()
-        WHERE id = $1`,
-      [po.id, actor.userId]
-    );
-    if (po.lot_id) {
-      await tx.query("UPDATE inv.lot SET status = 'RELEASED', updated_at = now() WHERE id = $1 AND status IN ('QUARANTINE', 'PENDING_QC')", [po.lot_id]);
+    let currentVersion = Number(po.version);
+    if (po.status === "PENDING_QC") {
+      const afterQc = await runTransition(
+        tx,
+        productionOrderMachine,
+        actor,
+        {
+          id: po.id,
+          action: "pass_qc",
+          expectedVersion: currentVersion,
+          reason: "Đạt kiểm tra hồ sơ lô tự động (RbE)",
+        },
+        { trusted: true }
+      );
+      currentVersion = afterQc.version;
     }
+
+    await runTransition(
+      tx,
+      productionOrderMachine,
+      actor,
+      {
+        id: po.id,
+        action: "release",
+        expectedVersion: currentVersion,
+        credential: d.credential,
+        reason: d.note || "Giải phóng nhanh theo ngoại lệ RbE (Zero-Exception)",
+      },
+      { signerAuthenticated: opts?.signerAuthenticated }
+    );
+
     await writeAudit(tx, actor, {
       entityType: "kit_production_order",
       entityId: po.id,
       action: "rbe_fast_track_release",
       changes: { rbe: [null, "ZERO_EXCEPTION_FAST_TRACK"] },
+      reason: d.note || "Giải phóng nhanh RbE (Zero-Exception)",
     });
     return { ok: true, code: po.code };
   } else {
     const o = (
       await tx.query(
-        `SELECT o.id, o.code, o.created_by,
+        `SELECT o.id, o.code, o.org_unit_id, o.created_by, o.status,
                 (SELECT count(*)::int FROM device.device_unit u WHERE u.order_id = o.id) AS total_units,
-                (SELECT count(*)::int FROM device.device_unit u WHERE u.order_id = o.id AND u.fqc_passed = true) AS passed_units,
-                (SELECT count(*)::int FROM qms.ncr n WHERE n.entity_id = o.id AND n.status <> 'CLOSED') AS open_ncrs,
-                EXISTS (
-                  SELECT 1 FROM device.station_execution se
-                    JOIN device.device_unit u ON u.id = se.unit_id
-                   WHERE u.order_id = o.id AND se.performed_by = $2
+                (SELECT count(*)::int FROM device.device_unit u WHERE u.order_id = o.id AND (u.fqc_passed = true OR u.status IN ('QA_PASSED', 'DELIVERED'))) AS passed_units,
+                (SELECT count(*)::int FROM device.device_unit u WHERE u.order_id = o.id AND u.status NOT IN ('FQC', 'QA_PASSED', 'DELIVERED')) AS unready_units,
+                (SELECT count(*)::int FROM qms.deviation dev WHERE (dev.entity_id = o.id OR dev.entity_id IN (SELECT u.id FROM device.device_unit u WHERE u.order_id = o.id)) AND dev.status <> 'CLOSED') AS open_deviations,
+                (SELECT count(*)::int FROM qms.ncr n WHERE (n.entity_id = o.id OR n.entity_id IN (SELECT u.id FROM device.device_unit u WHERE u.order_id = o.id)) AND n.status <> 'CLOSED') AS open_ncrs,
+                (
+                  EXISTS (SELECT 1 FROM device.device_unit u WHERE u.order_id = o.id AND u.assembled_by = $2)
+                  OR EXISTS (
+                    SELECT 1 FROM device.device_unit_component c
+                      JOIN device.device_unit u ON u.id = c.unit_id
+                     WHERE u.order_id = o.id AND c.installed_by = $2
+                  )
                 ) AS actor_is_performer
            FROM device.device_order o
           WHERE o.id = $1 FOR UPDATE`,
@@ -1788,14 +1810,15 @@ export async function fastTrackReleaseZeroExceptionBatch(tx: Tx, actor: AuthzAct
       )
     ).rows[0];
     if (!o) throw notFound("Lệnh lắp ráp thiết bị");
-    if (Number(o.total_units) === 0 || Number(o.passed_units) < Number(o.total_units)) {
-      throw invalid(`Lệnh lắp ráp ${o.code} chưa đạt FQC 100% các máy trong lô (qc_passed !== true).`, undefined, "QC_NOT_PASSED");
+    await authorize(tx, actor, "qms.qc.review", o.org_unit_id);
+    if (Number(o.total_units) === 0 || Number(o.passed_units) < Number(o.total_units) || Number(o.unready_units) > 0) {
+      throw invalid(`Lệnh lắp ráp ${o.code} chưa hoàn tất FQC 100% các máy trong lô.`, undefined, "QC_NOT_PASSED");
     }
-    if (Number(o.open_ncrs) > 0) {
-      throw invalid(`Lệnh lắp ráp ${o.code} đang có ${o.open_ncrs} phiếu NCR chưa đóng.`, undefined, "OPEN_NCR");
+    if (Number(o.open_deviations) > 0 || Number(o.open_ncrs) > 0) {
+      throw invalid(`Lệnh lắp ráp ${o.code} đang có ${o.open_deviations} sai lệch / ${o.open_ncrs} phiếu NCR chưa đóng.`, undefined, "OPEN_NCR");
     }
     if (o.actor_is_performer || Number(o.created_by) === actor.userId) {
-      throw invalid("Vi phạm nguyên tắc Bất kiêm nhiệm (SoD / SELF_RELEASE): Kỹ sư trực tiếp lắp ráp không được tự ký giải phóng xuất xưởng.", undefined, "SELF_RELEASE");
+      throw invalid("Vi phạm nguyên tắc Bất kiêm nhiệm (SoD / SELF_RELEASE): Kỹ sư trực tiếp lắp ráp hoặc tạo lệnh không được tự ký giải phóng xuất xưởng.", undefined, "SELF_RELEASE");
     }
 
     await tx.query(
@@ -1803,7 +1826,7 @@ export async function fastTrackReleaseZeroExceptionBatch(tx: Tx, actor: AuthzAct
       [o.id, actor.userId]
     );
     await tx.query(
-      "UPDATE device.device_unit SET qa_released_by = $2, qa_released_at = now(), status = 'QA_PASSED' WHERE order_id = $1 AND fqc_passed = true AND status IN ('IN_ASSEMBLY', 'BURN_IN', 'FQC')",
+      "UPDATE device.device_unit SET qa_released_by = $2, qa_released_at = now(), status = 'QA_PASSED', updated_at = now() WHERE order_id = $1 AND fqc_passed = true AND status IN ('FQC')",
       [o.id, actor.userId]
     );
     await writeAudit(tx, actor, {
@@ -1811,6 +1834,7 @@ export async function fastTrackReleaseZeroExceptionBatch(tx: Tx, actor: AuthzAct
       entityId: o.id,
       action: "rbe_fast_track_release",
       changes: { rbe: [null, "ZERO_EXCEPTION_FAST_TRACK"] },
+      reason: d.note || "Giải phóng nhanh RbE (Zero-Exception)",
     });
     return { ok: true, code: o.code };
   }

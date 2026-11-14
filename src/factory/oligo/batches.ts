@@ -276,13 +276,16 @@ function sharesHomology(seqA: string, seqB: string, minK = 12): boolean {
  * and flags whether an adjacent-column collision exists.
  */
 export function checkColumnContamination(
-  positions: { position_no: number; s: { code: string; name: string; oligo_role?: string; target_pathogen?: string | null; normalized_sequence: string } }[]
+  positions: { position_no: number; s: { code: string; name: string; oligo_role?: string; target_pathogen?: string | null; normalized_sequence: string } }[],
+  capacity = 16
 ): { warningsByPos: Map<number, string>; adjacentCollisions: string[] } {
   const warningsByPos = new Map<number, string[]>();
   const adjacentCollisions: string[] = [];
 
   const templateRoles = new Set(["POSITIVE_CONTROL", "TEMPLATE"]);
   const assayRoles = new Set(["PRIMER", "PROBE"]);
+  const is2DPlate = capacity >= 48;
+  const cols = capacity >= 96 ? 12 : 8;
 
   for (let i = 0; i < positions.length; i++) {
     for (let j = i + 1; j < positions.length; j++) {
@@ -302,9 +305,13 @@ export function checkColumnContamination(
 
       if (!samePathogen && !homologous) continue;
 
-      const dist = Math.abs(a.position_no - b.position_no);
+      const isAdjacent = is2DPlate
+        ? Math.abs(Math.floor((a.position_no - 1) / cols) - Math.floor((b.position_no - 1) / cols)) +
+            Math.abs(((a.position_no - 1) % cols) - ((b.position_no - 1) % cols)) ===
+          1
+        : Math.abs(a.position_no - b.position_no) === 1;
       const reasonTag = samePathogen ? `cùng tác nhân đích "${a.s.target_pathogen}"` : "trùng trình tự tương đồng ≥12 bp";
-      if (dist === 1) {
+      if (isAdjacent) {
         const msg = `CẢNH BÁO NHIỄM CHÉO CỘT LIỀN KỀ (Cột #${a.position_no} ${a.s.code} [${roleA}] & Cột #${b.position_no} ${b.s.code} [${roleB}] — ${reasonTag})`;
         adjacentCollisions.push(msg);
         warningsByPos.set(a.position_no, [...(warningsByPos.get(a.position_no) ?? []), msg]);
@@ -355,7 +362,7 @@ export async function planBatch(tx: Tx, actor: AuthzActor, input: unknown) {
   });
 
   // Check column-based cross-contamination between POSITIVE_CONTROL/TEMPLATE and PRIMER/PROBE columns
-  const contam = checkColumnContamination(analysed);
+  const contam = checkColumnContamination(analysed, Number(synth.column_positions ?? 16));
   if (data.allow_adjacent_contamination && (!data.contamination_override_reason || !data.contamination_override_reason.trim())) {
     throw invalid(
       "Khi cho phép ghi đè cảnh báo nhiễm chéo cột liền kề (allow_adjacent_contamination = true), bắt buộc nhập lý do phê duyệt (contamination_override_reason).",

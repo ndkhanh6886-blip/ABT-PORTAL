@@ -508,6 +508,9 @@ function ProjectPanel({
   const [prob, setProb] = useState("2");
   const [det, setDet] = useState("2");
   const [controlMeasure, setControlMeasure] = useState("");
+  const [resSev, setResSev] = useState("2");
+  const [resOcc, setResOcc] = useState("1");
+  const [resDet, setResDet] = useState("1");
 
   // Milestone form state
   const [msTitle, setMsTitle] = useState("");
@@ -682,8 +685,9 @@ function ProjectPanel({
   });
 
   const addRiskMut = useMutation({
-    mutationFn: () =>
-      api(`/api/factory/rd/projects/${id}`, {
+    mutationFn: () => {
+      const hasControl = controlMeasure.trim().length > 0;
+      return api(`/api/factory/rd/projects/${id}`, {
         method: "POST",
         json: {
           kind: "risk",
@@ -693,10 +697,18 @@ function ProjectPanel({
           severity: Number(sev),
           probability: Number(prob),
           detectability: Number(det),
-          control_measure: controlMeasure || null,
-          status: controlMeasure ? "MITIGATED" : "OPEN",
+          control_measure: controlMeasure.trim() || null,
+          status: hasControl ? "MITIGATED" : "OPEN",
+          ...(hasControl
+            ? {
+                residual_severity: Number(resSev),
+                residual_occurrence: Number(resOcc),
+                residual_detection: Number(resDet),
+              }
+            : {}),
         },
-      }),
+      });
+    },
     onSuccess: () => {
       setHazard("");
       setSituation("");
@@ -2018,6 +2030,15 @@ function ProjectPanel({
                         <input className={inputClass} value={controlMeasure} onChange={(e) => setControlMeasure(e.target.value)} placeholder="VD: Bổ sung enzyme UDG/dUTP chống nhiễm chéo" />
                       </Field>
                     </div>
+                    {controlMeasure.trim().length > 0 && (
+                      <Field label="Tồn dư S×P×D">
+                        <div className="flex gap-1">
+                          <input type="number" min="1" max="5" className={`${inputClass} w-12`} value={resSev} onChange={(e) => setResSev(e.target.value)} title="Residual Severity" />
+                          <input type="number" min="1" max="5" className={`${inputClass} w-12`} value={resOcc} onChange={(e) => setResOcc(e.target.value)} title="Residual Occurrence" />
+                          <input type="number" min="1" max="5" className={`${inputClass} w-12`} value={resDet} onChange={(e) => setResDet(e.target.value)} title="Residual Detection" />
+                        </div>
+                      </Field>
+                    )}
                     <Button type="submit" disabled={addRiskMut.isPending}>+ Lưu FMEA</Button>
                   </div>
                 </form>

@@ -238,8 +238,8 @@ export function tokenize(input: string, catalog: CatalogEntry[]): Token[] {
         tokens.push({ code: e.code, text: e.code, entry: e, base: e.base_letter });
         i += 2;
       } else if ((c === "m" || c === "f") && next && "ACGTU".includes(next)) {
-        const e = (c === "m" && next === "C" ? cat.base("5MC") ?? cat.base("MC") : cat.base(`${c.toUpperCase()}${next}`))!;
-        tokens.push({ code: e.code, text: e.code === "5MC" ? "5mC" : `${c}${next}`, entry: e, base: e.base_letter || next.toUpperCase() });
+        const e = cat.base(`${c.toUpperCase()}${next}`)!;
+        tokens.push({ code: e.code, text: `${c}${next}`, entry: e, base: e.base_letter || next.toUpperCase() });
         i += 2;
       } else if (c === "5" && (next === "m" || next === "M") && chunk[i + 2]?.toUpperCase() === "C") {
         const e = cat.base("5MC")!;
@@ -370,7 +370,7 @@ export function analyze(input: string, catalog: CatalogEntry[]): Analysis {
   const { tm: tmC, selfComp } = tm(baseLetters);
   const clean = baseLetters.join("");
   const gc = clean.length ? pyRound(([...clean].filter((b) => b === "G" || b === "C").length / clean.length) * 100, 1) : 0;
-  const mods = tokens.filter((t) => t.entry?.nn_role === "MOD");
+  const mods = tokens.filter((t) => t.entry?.nn_role === "MOD" || t.entry?.kind === "METHYL");
 
   const warnings: string[] = [];
   const firstBase = tokens.findIndex((t) => t.base);

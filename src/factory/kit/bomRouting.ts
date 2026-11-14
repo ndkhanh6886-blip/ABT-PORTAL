@@ -29,6 +29,7 @@ export interface KitBomRow {
   approved_by: number | null;
   approved_at: string | null;
   created_by: number | null;
+  updated_by?: number | null;
   version: number;
 }
 
@@ -45,6 +46,7 @@ export interface KitRoutingRow {
   approved_by: number | null;
   approved_at: string | null;
   created_by: number | null;
+  updated_by?: number | null;
   version: number;
 }
 
@@ -437,6 +439,9 @@ export async function updateBomHeader(tx: Tx, actor: AuthzActor, bomId: string, 
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as Record<string, unknown> | undefined;
   if (!bom) throw notFound("định mức BOM");
   await authorize(tx, actor, "kit.bom.manage", String(bom.org_unit_id));
+  if (bom.status !== "DRAFT") {
+    throw invalid("Chỉ được chỉnh sửa thông tin định mức BOM ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
+  }
 
   const name = input.name !== undefined ? String(input.name).trim() : String(bom.name);
   const testsPerKit = input.tests_per_kit !== undefined ? Math.max(1, Number(input.tests_per_kit) || 50) : Number(bom.tests_per_kit || 50);
@@ -539,9 +544,19 @@ export async function assignBomRouting(
   await authorize(tx, actor, "kit.bom.manage", String(bom.org_unit_id));
 
   const cleanRoutingId = routingId && String(routingId).trim() ? String(routingId).trim() : null;
-  if (cleanRoutingId) {
-    const rt = (await tx.query("SELECT id, code, name FROM kit.routing WHERE id = $1", [cleanRoutingId])).rows[0];
-    if (!rt) throw notFound("quy trình công đoạn (Routing)");
+  const rt = cleanRoutingId
+    ? (await tx.query("SELECT id, code, name, status FROM kit.routing WHERE id = $1", [cleanRoutingId])).rows[0]
+    : null;
+  if (cleanRoutingId && !rt) throw notFound("quy trình công đoạn (Routing)");
+
+  const allowInitialLegacyBind =
+    bom.status === "EFFECTIVE" && !bom.routing_id && Boolean(cleanRoutingId) && rt?.status === "EFFECTIVE";
+  if (bom.status !== "DRAFT" && !allowInitialLegacyBind) {
+    throw invalid(
+      "Chỉ được thay đổi quy trình Routing trên BOM Nháp (DRAFT), hoặc gắn lần đầu quy trình EFFECTIVE cho BOM chưa có Routing. Vui lòng tạo phiên bản BOM mới.",
+      undefined,
+      "IMMUTABLE_EFFECTIVE_SPEC"
+    );
   }
 
   const updated = (
@@ -608,7 +623,7 @@ export async function addBomLine(tx: Tx, actor: AuthzActor, input: unknown) {
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [d.bom_id])).rows[0] as KitBomRow | undefined;
   if (!bom) throw notFound("định mức BOM");
   await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
-  if (bom.status === "OBSOLETE") throw invalid("Không thể chỉnh sửa BOM đã hết hiệu lực (OBSOLETE).");
+  if (bom.status !== "DRAFT") throw invalid("Chỉ được chỉnh sửa BOM ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
   if (d.component_item_id === bom.product_item_id) {
     throw invalid("Nguyên vật liệu thành phần không được trùng với sản phẩm đầu ra của BOM.");
   }
@@ -666,7 +681,7 @@ export async function updateBomLine(tx: Tx, actor: AuthzActor, bomId: string, in
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as KitBomRow | undefined;
   if (!bom) throw notFound("định mức BOM");
   await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
-  if (bom.status === "OBSOLETE") throw invalid("Không thể chỉnh sửa BOM đã hết hiệu lực (OBSOLETE).");
+  if (bom.status !== "DRAFT") throw invalid("Chỉ được chỉnh sửa BOM ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
 
   const existing = (await tx.query("SELECT * FROM kit.bom_line WHERE id = $1 AND bom_id = $2", [lineId, bomId])).rows[0];
   if (!existing) throw notFound("dòng nguyên vật liệu BOM");
@@ -752,7 +767,7 @@ export async function deleteBomLine(tx: Tx, actor: AuthzActor, bomId: string, li
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as KitBomRow | undefined;
   if (!bom) throw notFound("định mức BOM");
   await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
-  if (bom.status === "OBSOLETE") throw invalid("Không thể xóa dòng của BOM đã hết hiệu lực (OBSOLETE).");
+  if (bom.status !== "DRAFT") throw invalid("Chỉ được chỉnh sửa BOM ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
 
   await tx.query("DELETE FROM kit.bom_line WHERE id = $1 AND bom_id = $2", [lineId, bomId]);
   await tx.query(
@@ -911,7 +926,7 @@ export async function addKitPackaging(tx: Tx, actor: AuthzActor, input: unknown)
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [d.bom_id])).rows[0] as KitBomRow | undefined;
   if (!bom) throw notFound("định mức BOM");
   await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
-  if (bom.status === "OBSOLETE") throw invalid("Không thể chỉnh sửa cấu trúc đóng gói khi BOM đã hết hiệu lực (OBSOLETE).");
+  if (bom.status !== "DRAFT") throw invalid("Chỉ được chỉnh sửa cấu trúc đóng gói khi BOM đang ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
 
   const row = (
     await tx.query(
@@ -950,7 +965,7 @@ export async function updateKitPackaging(tx: Tx, actor: AuthzActor, bomId: strin
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as KitBomRow | undefined;
   if (!bom) throw notFound("định mức BOM");
   await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
-  if (bom.status === "OBSOLETE") throw invalid("Không thể chỉnh sửa cấu trúc đóng gói khi BOM đã hết hiệu lực (OBSOLETE).");
+  if (bom.status !== "DRAFT") throw invalid("Chỉ được chỉnh sửa cấu trúc đóng gói khi BOM đang ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
 
   const existing = (await tx.query("SELECT * FROM kit.kit_packaging WHERE id = $1 AND bom_id = $2", [d.pack_id, bomId])).rows[0];
   if (!existing) throw notFound("quy cách đóng gói");
@@ -1002,7 +1017,7 @@ export async function deleteKitPackaging(tx: Tx, actor: AuthzActor, bomId: strin
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as KitBomRow | undefined;
   if (!bom) throw notFound("định mức BOM");
   await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
-  if (bom.status === "OBSOLETE") throw invalid("Không thể xóa quy cách đóng gói khi BOM đã hết hiệu lực (OBSOLETE).");
+  if (bom.status !== "DRAFT") throw invalid("Chỉ được xóa quy cách đóng gói khi BOM đang ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
 
   const existing = (await tx.query("SELECT * FROM kit.kit_packaging WHERE id = $1 AND bom_id = $2", [packId, bomId])).rows[0];
   if (!existing) throw notFound("quy cách đóng gói");
@@ -1427,7 +1442,7 @@ export async function addRoutingStep(tx: Tx, actor: AuthzActor, input: unknown) 
     | undefined;
   if (!rtg) throw notFound("quy trình công đoạn (Routing)");
   await authorize(tx, actor, "kit.bom.manage", rtg.org_unit_id);
-  if (rtg.status === "OBSOLETE") throw invalid("Không thể thêm bước công đoạn khi quy trình Routing đã hết hiệu lực (OBSOLETE).");
+  if (rtg.status !== "DRAFT") throw invalid("Chỉ được thêm bước công đoạn khi quy trình Routing đang ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
 
   const seq =
     d.seq ??
@@ -1501,7 +1516,7 @@ export async function updateRoutingStep(tx: Tx, actor: AuthzActor, routingId: st
     | undefined;
   if (!rtg) throw notFound("quy trình công đoạn (Routing)");
   await authorize(tx, actor, "kit.bom.manage", rtg.org_unit_id);
-  if (rtg.status === "OBSOLETE") throw invalid("Không thể chỉnh sửa bước công đoạn khi quy trình Routing đã hết hiệu lực (OBSOLETE).");
+  if (rtg.status !== "DRAFT") throw invalid("Chỉ được chỉnh sửa bước công đoạn khi quy trình Routing đang ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
 
   const existing = (await tx.query("SELECT * FROM kit.routing_step WHERE id = $1 AND routing_id = $2", [stepId, routingId])).rows[0];
   if (!existing) throw notFound("bước công đoạn Routing");
@@ -1598,7 +1613,7 @@ export async function deleteRoutingStep(tx: Tx, actor: AuthzActor, routingId: st
     | undefined;
   if (!rtg) throw notFound("quy trình công đoạn (Routing)");
   await authorize(tx, actor, "kit.bom.manage", rtg.org_unit_id);
-  if (rtg.status === "OBSOLETE") throw invalid("Không thể xóa bước công đoạn khi quy trình Routing đã hết hiệu lực (OBSOLETE).");
+  if (rtg.status !== "DRAFT") throw invalid("Chỉ được xóa bước công đoạn khi quy trình Routing đang ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
 
   const existing = (await tx.query("SELECT * FROM kit.routing_step WHERE id = $1 AND routing_id = $2", [stepId, routingId])).rows[0];
   if (!existing) throw notFound("bước công đoạn Routing");
@@ -1703,61 +1718,7 @@ export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
   await tx.query("SELECT pg_advisory_xact_lock(2026111401)");
   if (kitBomRoutingIfuSchemaEnsured) return;
 
-  await tx.query(`
-    ALTER TABLE kit.bom
-      ADD COLUMN IF NOT EXISTS label_template_code text,
-      ADD COLUMN IF NOT EXISTS label_dimensions text,
-      ADD COLUMN IF NOT EXISTS udi_di text,
-      ADD COLUMN IF NOT EXISTS ifu_code text,
-      ADD COLUMN IF NOT EXISTS ifu_version text,
-      ADD COLUMN IF NOT EXISTS ifu_intended_use text,
-      ADD COLUMN IF NOT EXISTS ifu_thermal_profile text,
-      ADD COLUMN IF NOT EXISTS ifu_channels text,
-      ADD COLUMN IF NOT EXISTS ifu_interpretation text,
-      ADD COLUMN IF NOT EXISTS bom_type text DEFAULT 'finished_good',
-      ADD COLUMN IF NOT EXISTS bom_category text DEFAULT 'PCR Kit',
-      ADD COLUMN IF NOT EXISTS variant_code text DEFAULT 'BASE',
-      ADD COLUMN IF NOT EXISTS supply_form text DEFAULT 'NO_SPLIT_NO_IC',
-      ADD COLUMN IF NOT EXISTS parent_item_code text,
-      ADD COLUMN IF NOT EXISTS tccs_code text,
-      ADD COLUMN IF NOT EXISTS tccs_file_name text,
-      ADD COLUMN IF NOT EXISTS tccs_file_url text,
-      ADD COLUMN IF NOT EXISTS registration_no text,
-      ADD COLUMN IF NOT EXISTS responsible_person_id text,
-      ADD COLUMN IF NOT EXISTS responsible_person_name text,
-      ADD COLUMN IF NOT EXISTS qc_assignee_name text,
-      ADD COLUMN IF NOT EXISTS specification text,
-      ADD COLUMN IF NOT EXISTS storage_condition text,
-      ADD COLUMN IF NOT EXISTS shelf_life_months int DEFAULT 12,
-      ADD COLUMN IF NOT EXISTS qc_retention_qty numeric DEFAULT 1,
-      ADD COLUMN IF NOT EXISTS ph_min numeric,
-      ADD COLUMN IF NOT EXISTS ph_max numeric,
-      ADD COLUMN IF NOT EXISTS ifu_file_name text,
-      ADD COLUMN IF NOT EXISTS ifu_file_url text,
-      ADD COLUMN IF NOT EXISTS ifu_file_size text,
-      ADD COLUMN IF NOT EXISTS ifu_updated_at timestamptz,
-      ADD COLUMN IF NOT EXISTS ifu_aliquoted_file_name text,
-      ADD COLUMN IF NOT EXISTS ifu_aliquoted_file_url text,
-      ADD COLUMN IF NOT EXISTS ifu_aliquoted_file_size text,
-      ADD COLUMN IF NOT EXISTS label_design_json jsonb DEFAULT '{}'::jsonb
-  `);
-
-  await tx.query(`
-    ALTER TABLE kit.routing ALTER COLUMN product_item_id DROP NOT NULL;
-    ALTER TABLE kit.routing ADD COLUMN IF NOT EXISTS routing_category text DEFAULT 'PCR Kit';
-    DROP INDEX IF EXISTS kit.kit_routing_one_effective;
-    ALTER TABLE kit.bom ADD COLUMN IF NOT EXISTS routing_id uuid REFERENCES kit.routing(id) ON DELETE SET NULL;
-  `);
-
-  await tx.query(`
-    ALTER TABLE kit.bom_line
-      ADD COLUMN IF NOT EXISTS qty_per_base_aliquoted numeric,
-      ADD COLUMN IF NOT EXISTS is_mix_component boolean DEFAULT true,
-      ADD COLUMN IF NOT EXISTS is_demo_fixed_component boolean DEFAULT false,
-      ADD COLUMN IF NOT EXISTS include_in_qc_retention boolean DEFAULT true,
-      ADD COLUMN IF NOT EXISTS bundle_parent_code text
-  `);
-
+  // Backfill neutral operational defaults (never inject fake registration numbers or PDF file sizes)
   await tx.query(`
     UPDATE kit.bom_line
        SET component_role = 'REAGENT'
@@ -1775,55 +1736,6 @@ export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
           'SEMI_FINISHED',
           'REAGENT'
         );
-    ALTER TABLE kit.bom_line DROP CONSTRAINT IF EXISTS bom_line_component_role_check;
-    ALTER TABLE kit.bom_line ADD CONSTRAINT bom_line_component_role_check
-      CHECK (component_role IN (
-        'MASTER_MIX',
-        'PRIMER_PROBE',
-        'ENZYME',
-        'INTERNAL_CONTROL',
-        'POSITIVE_CONTROL',
-        'NEGATIVE_CONTROL',
-        'EXTRACTION_BUFFER',
-        'PCR_TUBE_STRIP',
-        'PACKAGING',
-        'SEMI_FINISHED',
-        'REAGENT'
-      ));
-    WITH ranked_effective AS (
-      SELECT id,
-             row_number() OVER (
-               PARTITION BY product_item_id, upper(coalesce(nullif(trim(variant_code), ''), 'BASE'))
-               ORDER BY bom_version DESC, updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
-             ) AS rn
-        FROM kit.bom
-       WHERE status = 'EFFECTIVE'
-    )
-    UPDATE kit.bom b
-       SET status = 'OBSOLETE'
-      FROM ranked_effective r
-     WHERE b.id = r.id AND r.rn > 1;
-    DROP INDEX IF EXISTS kit.kit_bom_one_effective;
-    CREATE UNIQUE INDEX IF NOT EXISTS kit_bom_one_effective_variant
-      ON kit.bom (product_item_id, upper(coalesce(nullif(trim(variant_code), ''), 'BASE')))
-      WHERE status = 'EFFECTIVE';
-  `);
-
-  await tx.query(`
-    ALTER TABLE kit.routing_step
-      ADD COLUMN IF NOT EXISTS step_function text DEFAULT 'FORMULATION_MIXING',
-      ADD COLUMN IF NOT EXISTS work_center text DEFAULT 'Phòng sạch Class 10.000 (ISO 7)',
-      ADD COLUMN IF NOT EXISTS functional_flags jsonb DEFAULT '{}'::jsonb
-  `);
-
-  await tx.query(`
-    ALTER TABLE kit.production_step
-      ADD COLUMN IF NOT EXISTS step_function text DEFAULT 'FORMULATION_MIXING',
-      ADD COLUMN IF NOT EXISTS work_center text DEFAULT 'Phòng sạch Class 10.000 (ISO 7)',
-      ADD COLUMN IF NOT EXISTS functional_flags jsonb DEFAULT '{}'::jsonb
-  `);
-
-  await tx.query(`
     UPDATE kit.routing_step
        SET step_function = CASE
              WHEN category = 'PREPARATION' AND (step_code ~* 'CLEAR' OR step_name ~* 'Line Clearance|UV') THEN 'LINE_CLEARANCE'
@@ -1845,36 +1757,6 @@ export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
              'require_label_ifu_check', (category IN ('PACKAGING', 'LABELING'))
            )
      WHERE step_function IS NULL OR functional_flags = '{}'::jsonb
-  `);
-
-  // Backfill metadata on existing BOMs if missing
-  await tx.query(`
-    UPDATE kit.bom b
-       SET bom_type = CASE
-             WHEN it.item_type = 'SEMI_FINISHED' OR it.code ~* '^(BTP|SFG|ST|MIX)' THEN 'semi_finished'
-             ELSE coalesce(nullif(b.bom_type, ''), 'finished_good')
-           END,
-           bom_category = CASE
-             WHEN it.code ~* '(PCR|HBV|HCV|HPV|HI-|SQH|ABP)' OR it.name ~* '(PCR|TopSENSI)' THEN 'PCR Kit'
-             ELSE coalesce(nullif(b.bom_category, ''), 'Tách chiết / Khác')
-           END,
-           parent_item_code = coalesce(
-             b.parent_item_code,
-             CASE WHEN upper(it.code) LIKE '%.D.IC' THEN substring(it.code from 1 for length(it.code) - 5) ELSE NULL END
-           ),
-           tccs_code = coalesce(b.tccs_code, CASE WHEN it.item_type <> 'SEMI_FINISHED' THEN 'TCCS 01:2026/ABT' ELSE 'TCCS-BTP:2026/ABT' END),
-           registration_no = coalesce(b.registration_no, CASE WHEN it.item_type <> 'SEMI_FINISHED' THEN '2400189/ĐKLH-BYT-TB-CT' ELSE NULL END),
-           specification = coalesce(b.specification, CASE WHEN it.item_type = 'SEMI_FINISHED' THEN 'Lô chuẩn 100 mL' ELSE 'Hộp ' || coalesce(b.tests_per_kit, 50)::text || ' test' END),
-           storage_condition = coalesce(b.storage_condition, CASE WHEN it.code ~* '(HK-|ST)' THEN '15°C...25°C' ELSE '-20°C ± 2°C' END),
-           shelf_life_months = coalesce(b.shelf_life_months, greatest(1, round(coalesce(b.shelf_life_days, 365)::numeric / 30.0)::int)),
-           qc_retention_qty = coalesce(b.qc_retention_qty, CASE WHEN it.item_type = 'SEMI_FINISHED' THEN 0 ELSE 1 END),
-           ifu_file_name = coalesce(b.ifu_file_name, CASE WHEN it.item_type <> 'SEMI_FINISHED' THEN 'HDSD_' || replace(it.code, '.D.IC', '') || '_Rev01.pdf' ELSE NULL END),
-           ifu_file_size = coalesce(b.ifu_file_size, CASE WHEN it.item_type <> 'SEMI_FINISHED' THEN '428 KB (PDF chuẩn ISO 13485)' ELSE NULL END),
-           ifu_aliquoted_file_name = coalesce(b.ifu_aliquoted_file_name, CASE WHEN it.item_type <> 'SEMI_FINISHED' THEN 'HDSD_' || replace(it.code, '.D.IC', '') || '.D.IC_ChiaSan_Rev01.pdf' ELSE NULL END),
-           ifu_aliquoted_file_size = coalesce(b.ifu_aliquoted_file_size, CASE WHEN it.item_type <> 'SEMI_FINISHED' THEN '452 KB (PDF bản chia sẵn .D.IC)' ELSE NULL END)
-      FROM master.item it
-     WHERE it.id = b.product_item_id
-       AND (b.tccs_code IS NULL OR b.specification IS NULL)
   `);
 
   // Ensure the 8 standard PCR Tube / Strip items (T02, T01, S02, S01, LQ02, MIC, R01, LP02) exist in master.item
@@ -2204,6 +2086,9 @@ export async function updateBomLabelIfuSpec(tx: Tx, actor: AuthzActor, bomId: st
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as Record<string, unknown> | undefined;
   if (!bom) throw notFound("định mức BOM");
   await authorize(tx, actor, "kit.bom.manage", String(bom.org_unit_id));
+  if (bom.status !== "DRAFT") {
+    throw invalid("Chỉ được chỉnh sửa thông tin định mức BOM ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
+  }
 
   const labelDesignJson =
     input.label_design_json !== undefined
@@ -2828,6 +2713,13 @@ export async function fastActivateRouting(tx: Tx, actor: AuthzActor, routingId: 
   const rtg = (await tx.query("SELECT * FROM kit.routing WHERE id = $1 FOR UPDATE", [routingId])).rows[0] as KitRoutingRow | undefined;
   if (!rtg) throw notFound("quy trình Routing");
   await authorize(tx, actor, "kit.bom.approve", rtg.org_unit_id);
+  if (!actor.isRootAdmin && (rtg.created_by === actor.userId || rtg.updated_by === actor.userId)) {
+    throw invalid(
+      "Vi phạm Bất kiêm nhiệm (SoD): Người tạo/sửa Quy trình không được tự kích hoạt hiệu lực.",
+      undefined,
+      "SOD_SELF_APPROVAL"
+    );
+  }
   const stepCount = Number((await tx.query("SELECT count(*)::int AS c FROM kit.routing_step WHERE routing_id = $1", [routingId])).rows[0]?.c ?? 0);
   if (stepCount === 0) {
     if (rtg.status === "DRAFT") {

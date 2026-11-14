@@ -16,6 +16,10 @@ export function FactoryAnalyticsModule() {
 
   // Tab 1 filters
   const [rbeFilter, setRbeFilter] = useState<"ALL" | "ZERO_EXCEPTION" | "EXCEPTION">("ALL");
+  const [rbeSignBatch, setRbeSignBatch] = useState<any | null>(null);
+  const [rbeAuthMethod, setRbeAuthMethod] = useState<"PIN" | "PASSWORD">("PIN");
+  const [rbeSecret, setRbeSecret] = useState("");
+  const [rbeReason, setRbeReason] = useState("");
 
   // Tab 2 SPC state
   const [selectedSpcId, setSelectedSpcId] = useState<string>("");
@@ -263,7 +267,7 @@ export function FactoryAnalyticsModule() {
               Điểm Sức Khỏe Toàn Nhà Máy (8 Phòng Ban)
             </div>
             <div className="text-lg font-extrabold text-emerald-800 dark:text-emerald-200 mt-0.5">
-              {data?.overall_health_score ?? 92}/100{" "}
+              {data?.overall_health_score ?? "—"}/100{" "}
               <span className="text-xs font-semibold text-emerald-600">· Chuẩn SLA</span>
             </div>
           </div>
@@ -529,7 +533,13 @@ export function FactoryAnalyticsModule() {
                             <Button
                               variant="primary"
                               disabled={busyKey === `rbe-${b.id}` || b.status === "COMPLETED" || b.status === "READY"}
-                              onClick={() =>
+                              onClick={() => {
+                                if (b.batch_domain === "KIT") {
+                                  setRbeSignBatch(b);
+                                  setRbeSecret("");
+                                  setRbeReason("");
+                                  return;
+                                }
                                 runAction(
                                   `rbe-${b.id}`,
                                   {
@@ -538,8 +548,8 @@ export function FactoryAnalyticsModule() {
                                     batch_domain: b.batch_domain,
                                   },
                                   `Đã duyệt xuất xưởng nhanh (Fast-Track RbE) cho lô ${b.code}!`
-                                )
-                              }
+                                );
+                              }}
                             >
                               {b.status === "COMPLETED" || b.status === "READY"
                                 ? "✓ Đã giải phóng"
@@ -556,6 +566,9 @@ export function FactoryAnalyticsModule() {
                                     op: "create_capa",
                                     title: `[RbE Exception] Thẩm định ngoại lệ lô ${b.code} (${b.product_code})`,
                                     source_module: b.batch_domain,
+                                    entity_type: b.batch_domain === "KIT" ? "PRODUCTION_ORDER" : "DEVICE_ORDER",
+                                    entity_id: b.id,
+                                    lot_id: b.lot_id || undefined,
                                     severity: b.rbe_status === "CRITICAL_EXCEPTION" ? "CRITICAL" : "HIGH",
                                     root_cause: (b.exceptions ?? []).join("; "),
                                     corrective_action: `Rà soát hồ sơ EBR/DHR của lô ${b.code}, ký bù kiểm tra kép và đánh giá độ lệch vật tư`,
@@ -1593,6 +1606,85 @@ export function FactoryAnalyticsModule() {
               ))}
             </div>
           </Card>
+        </div>
+      )}
+      {rbeSignBatch && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
+          <form
+            className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 shadow-xl space-y-3"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const b = rbeSignBatch;
+              const res = await runAction(
+                `rbe-${b.id}`,
+                {
+                  op: "fast_track_release",
+                  batch_id: b.id,
+                  batch_domain: b.batch_domain,
+                  note: rbeReason.trim() || undefined,
+                  credential: { method: rbeAuthMethod, secret: rbeSecret },
+                },
+                `Đã ký số 21 CFR Part 11 & giải phóng nhanh RbE cho lô ${b.code}!`
+              );
+              if (res) {
+                setRbeSignBatch(null);
+                setRbeSecret("");
+                setRbeReason("");
+              }
+            }}
+          >
+            <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
+              ✍️ Ký Điện Tử Giải Phóng Nhanh Lô Kit ({rbeSignBatch.code})
+            </h3>
+            <p className="text-xs text-slate-500">
+              Theo chuẩn 21 CFR Part 11, giải phóng lô Zero-Exception yêu cầu xác thực người ký độc lập với bộ phận sản xuất & QC.
+            </p>
+            <div className="grid grid-cols-3 gap-2">
+              <Field label="Phương thức">
+                <select
+                  className={inputClass}
+                  value={rbeAuthMethod}
+                  onChange={(e) => {
+                    setRbeAuthMethod(e.target.value as "PIN" | "PASSWORD");
+                    setRbeSecret("");
+                  }}
+                >
+                  <option value="PIN">Mã PIN</option>
+                  <option value="PASSWORD">Mật khẩu</option>
+                </select>
+              </Field>
+              <div className="col-span-2">
+                <Field label={rbeAuthMethod === "PIN" ? "Mã PIN chữ ký *" : "Mật khẩu đăng nhập *"}>
+                  <input
+                    required
+                    autoFocus
+                    type="password"
+                    inputMode={rbeAuthMethod === "PIN" ? "numeric" : "text"}
+                    autoComplete="off"
+                    className={inputClass}
+                    value={rbeSecret}
+                    onChange={(e) => setRbeSecret(e.target.value)}
+                  />
+                </Field>
+              </div>
+            </div>
+            <Field label="Ghi chú phê duyệt (tuỳ chọn)">
+              <input
+                className={inputClass}
+                placeholder="VD: Hồ sơ EBR & COA đạt chuẩn Zero-Exception"
+                value={rbeReason}
+                onChange={(e) => setRbeReason(e.target.value)}
+              />
+            </Field>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" type="button" onClick={() => setRbeSignBatch(null)}>
+                Hủy
+              </Button>
+              <Button variant="primary" type="submit" disabled={busyKey === `rbe-${rbeSignBatch.id}`}>
+                {busyKey === `rbe-${rbeSignBatch.id}` ? "Đang xác thực..." : "⚡ Ký & Giải Phóng Lô"}
+              </Button>
+            </div>
+          </form>
         </div>
       )}
     </div>

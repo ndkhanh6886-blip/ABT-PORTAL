@@ -18,81 +18,8 @@ let rdOpsSchemaEnsured = false;
 
 export async function ensureRdProjectOpsSchema(tx: Tx): Promise<void> {
   if (rdOpsSchemaEnsured) return;
-  await tx.query(`
-    ALTER TABLE rd.project
-      ADD COLUMN IF NOT EXISTS budget_amount numeric(18,2) NOT NULL DEFAULT 50000000,
-      ADD COLUMN IF NOT EXISTS target_product_item_id uuid REFERENCES master.item(id),
-      ADD COLUMN IF NOT EXISTS leader_name_override varchar(150);
-
-    ALTER TABLE rd.experiment
-      ADD COLUMN IF NOT EXISTS performer_name varchar(150),
-      ADD COLUMN IF NOT EXISTS wbs_task_code varchar(60);
-
-    CREATE TABLE IF NOT EXISTS rd.project_task (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      code varchar(40) NOT NULL UNIQUE,
-      project_id uuid NOT NULL REFERENCES rd.project(id) ON DELETE CASCADE,
-      gate_no int NOT NULL DEFAULT 1,
-      title varchar(250) NOT NULL,
-      assignee_name varchar(120),
-      due_date date,
-      status varchar(30) NOT NULL DEFAULT 'TODO'
-        CHECK (status IN ('TODO', 'IN_PROGRESS', 'DONE', 'BLOCKED')),
-      progress_pct int NOT NULL DEFAULT 0 CHECK (progress_pct >= 0 AND progress_pct <= 100),
-      linked_experiment_id uuid REFERENCES rd.experiment(id),
-      notes text,
-      created_by int,
-      updated_by int,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      updated_at timestamptz NOT NULL DEFAULT now()
-    );
-
-    ALTER TABLE rd.project_task
-      ADD COLUMN IF NOT EXISTS protocol_summary text,
-      ADD COLUMN IF NOT EXISTS result_summary text,
-      ADD COLUMN IF NOT EXISTS key_metrics_json jsonb DEFAULT '[]'::jsonb,
-      ADD COLUMN IF NOT EXISTS outcome_verdict varchar(30) DEFAULT 'PENDING',
-      ADD COLUMN IF NOT EXISTS next_steps text,
-      ADD COLUMN IF NOT EXISTS attachment_name varchar(255),
-      ADD COLUMN IF NOT EXISTS attachment_url text,
-      ADD COLUMN IF NOT EXISTS completed_at timestamptz,
-      ADD COLUMN IF NOT EXISTS completed_by_name varchar(150);
-
-    CREATE TABLE IF NOT EXISTS rd.project_material_ledger (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      project_id uuid NOT NULL REFERENCES rd.project(id) ON DELETE CASCADE,
-      gate_no int,
-      entry_type varchar(30) NOT NULL
-        CHECK (entry_type IN ('DIRECT_ISSUE', 'PR_REQUEST', 'OLIGO_TRIAL')),
-      item_id uuid REFERENCES master.item(id),
-      lot_id uuid REFERENCES inv.lot(id),
-      qty numeric(18,6) NOT NULL DEFAULT 0,
-      uom varchar(30),
-      estimated_cost numeric(18,2) NOT NULL DEFAULT 0,
-      ref_code varchar(80),
-      ref_entity_id uuid,
-      purpose text,
-      created_by int,
-      created_at timestamptz NOT NULL DEFAULT now()
-    );
-
-    CREATE TABLE IF NOT EXISTS rd.project_prototype_bom (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      project_id uuid NOT NULL REFERENCES rd.project(id) ON DELETE CASCADE,
-      line_no int NOT NULL,
-      component_item_id uuid NOT NULL REFERENCES master.item(id),
-      component_role varchar(50) NOT NULL DEFAULT 'REAGENT',
-      qty_per_base numeric(18,6) NOT NULL CHECK (qty_per_base > 0),
-      uom varchar(30) NOT NULL,
-      scrap_pct numeric(5,2) NOT NULL DEFAULT 0,
-      notes text,
-      created_by int,
-      updated_by int,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      updated_at timestamptz NOT NULL DEFAULT now(),
-      UNIQUE (project_id, line_no)
-    );
-  `);
+  // Schema DDL now lives cleanly in versioned migrations (0035+).
+  // Only backfill missing project_gate / performer_name data if needed.
   // Backfill gates from rd.gate_template_item for any project that has 0 gates
   const gateless = (
     await tx.query(
@@ -1161,14 +1088,17 @@ export async function createTransferFromProjectBom(tx: Tx, actor: AuthzActor, in
           "MASTER_MIX",
           "PRIMER_PROBE",
           "ENZYME",
+          "INTERNAL_CONTROL",
           "POSITIVE_CONTROL",
           "NEGATIVE_CONTROL",
           "EXTRACTION_BUFFER",
+          "PCR_TUBE_STRIP",
           "PACKAGING",
-          "OTHER",
+          "SEMI_FINISHED",
+          "REAGENT",
         ].includes(l.component_role)
           ? l.component_role
-          : "OTHER";
+          : "REAGENT";
         await tx.query(
           `INSERT INTO kit.bom_line
              (bom_id, line_no, component_item_id, component_role, qty_per_base, uom, scrap_pct, is_mix_component, include_in_qc_retention, notes)

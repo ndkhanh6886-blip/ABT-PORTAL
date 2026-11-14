@@ -15,17 +15,7 @@ import { addSequences, createOligoOrder } from "../oligo/orders";
 import { kitSpecOf, kitSpecToFactorySupplyAndTube } from "@/frontend/utils/packagingForm";
 
 let internalOrderLineColumnsEnsured = false;
-export async function ensureInternalOrderLineKitSpecColumns(tx: Tx) {
-  if (internalOrderLineColumnsEnsured) return;
-  await tx.query("SELECT pg_advisory_xact_lock(2026111403)");
-  if (internalOrderLineColumnsEnsured) return;
-  await tx.query(`
-    ALTER TABLE intake.internal_order_line
-      ADD COLUMN IF NOT EXISTS supply_form text,
-      ADD COLUMN IF NOT EXISTS tube_code text,
-      ADD COLUMN IF NOT EXISTS specification text,
-      ADD COLUMN IF NOT EXISTS line_notes text
-  `);
+export async function ensureInternalOrderLineKitSpecColumns(_tx: Tx) {
   internalOrderLineColumnsEnsured = true;
 }
 
@@ -125,45 +115,8 @@ async function resolveOrCreateMasterItemForPoLine(
     return existing;
   }
 
-  const rawUom = String(line.unit || (factoryUnit === "OLIGO" ? "tube" : factoryUnit === "DEVICE" ? "Cái" : "Hộp")).trim() || "Hộp";
-  const uomCode = rawUom.slice(0, 20);
-  await tx.query(
-    `INSERT INTO master.uom (code, name, dimension)
-     VALUES ($1, $2, 'COUNT')
-     ON CONFLICT (code) DO NOTHING`,
-    [uomCode, rawUom]
-  );
-
-  const itemType =
-    factoryUnit === "OLIGO" ? "OLIGO_SERVICE" : factoryUnit === "DEVICE" ? "DEVICE" : "FINISHED_KIT";
-  const lotControlled = factoryUnit !== "OLIGO";
-  const serialControlled = factoryUnit === "DEVICE";
-  const itemName = String(line.product_name || code).trim() || code;
-
-  const created = (
-    await tx.query(
-      `INSERT INTO master.item
-         (code, name, item_type, base_uom, lot_controlled, serial_controlled, fefo_enabled, default_storage_cond, kd_item_code, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'ACTIVE')
-       ON CONFLICT (code) DO UPDATE
-         SET kd_item_code = COALESCE(master.item.kd_item_code, EXCLUDED.kd_item_code),
-             status = 'ACTIVE',
-             updated_at = now()
-       RETURNING id, code, name, base_uom, kd_item_code`,
-      [
-        code.toUpperCase(),
-        itemName,
-        itemType,
-        uomCode,
-        lotControlled,
-        serialControlled,
-        factoryUnit === "KIT",
-        factoryUnit === "DEVICE" ? "AMBIENT" : "MINUS20",
-        code,
-      ]
-    )
-  ).rows[0];
-  return created;
+  // Không tự động sinh đơn vị tính hoặc mã hàng hóa giả khi chưa khai báo trên danh mục ERP gốc.
+  return null;
 }
 
 async function ensureDownstreamDepartmentOrder(
@@ -182,32 +135,13 @@ async function ensureDownstreamDepartmentOrder(
       ).rows[0];
       const reqDate = order.requested_date ? String(order.requested_date).slice(0, 10) : addDays(vnToday(), 7);
       const dueDate = reqDate >= vnToday() ? reqDate : addDays(vnToday(), 7);
-      const oligoOrder = await createOligoOrder(tx, SYSTEM_ACTOR, {
+      await createOligoOrder(tx, SYSTEM_ACTOR, {
         org_unit_id: unit.id,
         internal_order_id: order.id,
         customer_label: `${order.kd_po_code} — ${firstLine?.kd_item_name || "Đơn tổng hợp Oligo"}`,
         due_date: dueDate,
         notes: order.notes || `Đơn Tổng hợp Oligo tự động chuyển từ PO Kinh doanh ${order.kd_po_code} (Đơn nội bộ ${order.code})`,
       });
-      const prefix = firstLine?.kd_item_code || "OLI-SET";
-      const defaultSeqs = [
-        `${prefix}-F; GAGTGTGGATTCGCACTCCT; 200NMOL; OPC; LYOPHILIZED`,
-        `${prefix}-R; GAGGAGTTGGGGGAGGAGATT; 200NMOL; OPC; LYOPHILIZED`,
-        `${prefix}-PRB; [FAM]CCAYTCRTCCBGCRGGBTR[BHQ1]; 200NMOL; HPLC; LYOPHILIZED`,
-      ].join("\n");
-      try {
-        await addSequences(tx, SYSTEM_ACTOR, oligoOrder.id, {
-          text: defaultSeqs,
-          defaults: {
-            scale_code: "200NMOL",
-            purification: "OPC",
-            format: "LYOPHILIZED",
-            target_pathogen: firstLine?.kd_item_name || prefix,
-          },
-        });
-      } catch {
-        // Ignore sequence seed error if scale/purification constraints differ
-      }
     }
   } else if (factoryUnit === "DEVICE") {
     const linesRows = (
@@ -260,7 +194,10 @@ async function receivePo(tx: Tx, payload: unknown): Promise<void> {
     ).rows[0];
 
     const hasProdOrder = (
-      await tx.query("SELECT 1 FROM kit.production_order WHERE internal_order_id = $1 LIMIT 1", [existing.id])
+      await tx.query(
+        "SELECT 1 FROM kit.production_order WHERE internal_order_line_id IN (SELECT id FROM intake.internal_order_line WHERE order_id = $1) LIMIT 1",
+        [existing.id],
+      )
     ).rowCount;
     if (["RECEIVED", "ACCEPTED"].includes(String(existing.status)) && !hasProdOrder) {
       await tx.query("DELETE FROM intake.internal_order_line WHERE order_id = $1", [existing.id]);
@@ -282,8 +219,8 @@ async function receivePo(tx: Tx, payload: unknown): Promise<void> {
             ++n,
             l.line_index,
             l.product_code,
-            l.product_name ?? item.name ?? null,
-            l.unit ?? item.base_uom ?? null,
+            l.product_name ?? item?.name ?? l.product_code,
+            l.unit ?? item?.base_uom ?? null,
             item?.id ?? null,
             l.quantity,
             l.unit_price,
@@ -333,8 +270,8 @@ async function receivePo(tx: Tx, payload: unknown): Promise<void> {
         ++n,
         l.line_index,
         l.product_code,
-        l.product_name ?? item.name ?? null,
-        l.unit ?? item.base_uom ?? null,
+        l.product_name ?? item?.name ?? l.product_code,
+        l.unit ?? item?.base_uom ?? null,
         item?.id ?? null,
         l.quantity,
         l.unit_price,

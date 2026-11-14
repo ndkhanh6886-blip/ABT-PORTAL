@@ -102,6 +102,12 @@ export const qcTestMachine = defineMachine<QcStatus, QcTest>({
           message: "Còn chỉ tiêu bắt buộc chưa có kết quả.",
           check: async ({ tx, row }) => overallResult(await specParameters(tx, row), await results(tx, row.id)).missing.length === 0,
         },
+        {
+          code: "SYSTEM_SUITABILITY_FAILED",
+          message: "Mẫu chuẩn đối chứng (System Suitability) không đạt giới hạn cho phép; kết quả kiểm nghiệm không hợp lệ.",
+          check: async ({ tx, row }) =>
+            !(await tx.query("SELECT 1 FROM qms.reference_standard_usage WHERE test_id = $1 AND passed = false LIMIT 1", [row.id])).rowCount,
+        },
       ],
       patch: async ({ tx, row }) => ({ overall_result: overallResult(await specParameters(tx, row), await results(tx, row.id)).result }),
     },
@@ -111,7 +117,31 @@ export const qcTestMachine = defineMachine<QcStatus, QcTest>({
       to: "REVIEWED",
       permission: "qms.qc.review",
       signature: "REVIEWED",
-      guards: [{ code: "SAME_PERSON", message: "Người duyệt kết quả phải khác người kiểm nghiệm.", check: ({ actor, row }) => row.analyst_id !== actor.userId }],
+      guards: [
+        {
+          code: "SAME_PERSON",
+          message: "Người duyệt kết quả phải khác người kiểm nghiệm và khác kỹ thuật viên trực tiếp thực hiện sản xuất lô này.",
+          check: async ({ tx, actor, row }) => {
+            if (row.analyst_id === actor.userId) return false;
+            if (row.entity_type === "PRODUCTION_ORDER") {
+              const prod = await tx.query(
+                "SELECT 1 FROM kit.production_step WHERE order_id = $1 AND performed_by = $2 LIMIT 1",
+                [row.entity_id, actor.userId]
+              );
+              if (prod.rowCount) return false;
+            } else if (row.entity_type === "LOT") {
+              const prod = await tx.query(
+                `SELECT 1 FROM kit.production_order po
+                   JOIN kit.production_step ps ON ps.order_id = po.id
+                  WHERE po.lot_id = $1 AND ps.performed_by = $2 LIMIT 1`,
+                [row.entity_id, actor.userId]
+              );
+              if (prod.rowCount) return false;
+            }
+            return true;
+          },
+        },
+      ],
       patch: ({ actor }) => ({ reviewer_id: actor.userId, reviewed_at: new Date() }),
       effects: async ({ tx, actor, updated }) => {
         if (updated.overall_result === "FAIL") await raiseFailure(tx, actor, updated);

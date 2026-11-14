@@ -50,7 +50,17 @@ function FinishForm({ batch, onDone }: { batch: Batch; onDone: () => void }) {
   });
   return (
     <form className="flex flex-col gap-3 p-3 rounded-xl border border-sky-200 dark:border-sky-900 bg-sky-50/60 dark:bg-sky-950/30" onSubmit={(e) => { e.preventDefault(); finish.mutate(); }}>
-      <div className="text-xs font-bold">Kết thúc mẻ — nhập kết quả</div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs font-bold">Kết thúc mẻ — nhập kết quả</div>
+        <Button
+          type="button"
+          variant="ghost"
+          className="text-xs px-2 py-1"
+          onClick={() => setPos((prev) => prev.map((x) => ({ ...x, eff: "98.5" })))}
+        >
+          ⚡ Điền nhanh 98.5% tất cả vị trí
+        </Button>
+      </div>
       <Table head={["Vị trí", "Trình tự", "Hiệu suất ghép TB (%)", "Đạt"]}>
         {pos.map((p, i) => (
           <tr key={p.position_no}>

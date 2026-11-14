@@ -74,17 +74,6 @@ let schemaEnsured = false;
 
 async function ensureSampleSchema(tx: Tx) {
   if (schemaEnsured) return;
-  await tx.query(`ALTER TABLE rd.sample ADD COLUMN IF NOT EXISTS metadata jsonb NOT NULL DEFAULT '{}'::jsonb`);
-  await tx.query(`
-    INSERT INTO master.uom (code, name, dimension) VALUES
-      ('ml', 'mililít', 'VOLUME'),
-      ('ul', 'microlít', 'VOLUME'),
-      ('mL', 'mililít', 'VOLUME'),
-      ('µL', 'microlít', 'VOLUME'),
-      ('vial', 'lọ/vial', 'COUNT'),
-      ('tube', 'ống', 'COUNT')
-    ON CONFLICT (code) DO NOTHING
-  `);
   schemaEnsured = true;
 }
 

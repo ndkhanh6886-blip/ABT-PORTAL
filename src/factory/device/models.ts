@@ -116,6 +116,11 @@ export const modelRevisionMachine = defineMachine<RevisionStatus, ModelRevisionR
       signature: "APPROVED",
       guards: [
         {
+          code: "SELF_APPROVAL",
+          message: "Người tạo phiên bản thiết kế (DMR) không được tự ký phê duyệt phát hành.",
+          check: ({ row, actor }) => Boolean(actor.isRootAdmin || row.created_by == null || row.created_by !== actor.userId),
+        },
+        {
           code: "BOM_REQUIRED",
           message: "Phiên bản thiết kế (DMR) phải có ít nhất 1 dòng cấu trúc linh kiện (BOM) trước khi phát hành.",
           check: async ({ tx, row }) => {
@@ -379,31 +384,6 @@ function mapStationToCode(station?: string | null): "STATION_1_MECH" | "STATION_
 let catalogSeededInProcess = false;
 
 export async function ensureTechCatalogAndBomSeeded(tx: Tx) {
-  await tx.query(`
-    ALTER TABLE device.device_model
-      ADD COLUMN IF NOT EXISTS category_label text,
-      ADD COLUMN IF NOT EXISTS manufacturer text DEFAULT 'CÔNG TY TNHH GIẢI PHÁP Y SINH ABT - CHI NHÁNH LONG HẬU',
-      ADD COLUMN IF NOT EXISTS origin text DEFAULT 'Việt Nam',
-      ADD COLUMN IF NOT EXISTS price numeric(18,2) NOT NULL DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS price_dealer1 numeric(18,2) NOT NULL DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS price_dealer2 numeric(18,2) NOT NULL DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS lead_time_days integer NOT NULL DEFAULT 14,
-      ADD COLUMN IF NOT EXISTS image_url text DEFAULT '/logo_abt.png',
-      ADD COLUMN IF NOT EXISTS production_stages jsonb NOT NULL DEFAULT '[]'::jsonb,
-      ADD COLUMN IF NOT EXISTS bom_json jsonb NOT NULL DEFAULT '[]'::jsonb,
-      ADD COLUMN IF NOT EXISTS baseline_specs_json jsonb NOT NULL DEFAULT '{}'::jsonb,
-      ADD COLUMN IF NOT EXISTS base_model_code text
-  `);
-
-  await tx.query(`
-    ALTER TABLE device.model_bom_line
-      ADD COLUMN IF NOT EXISTS unit_cost numeric(18,2) NOT NULL DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS display_uom text,
-      ADD COLUMN IF NOT EXISTS part_category text,
-      ADD COLUMN IF NOT EXISTS station_label text,
-      ADD COLUMN IF NOT EXISTS preferred_vendor text
-  `);
-
   if (process.env.FACTORY_ALLOW_DEMO_SEED !== "1") {
     catalogSeededInProcess = true;
     return;
@@ -1001,7 +981,10 @@ export async function updateDeviceModelCatalogAndBom(tx: Tx, actor: AuthzActor, 
       }
     }
     if (revId) {
-      await syncBomJsonToRevisionLines(tx, revId, d.bom_json as LegacyEquipmentBOMItem[]);
+      const revStatus = (await tx.query("SELECT status FROM device.model_revision WHERE id = $1", [revId])).rows[0]?.status;
+      if (revStatus === "DRAFT") {
+        await syncBomJsonToRevisionLines(tx, revId, d.bom_json as LegacyEquipmentBOMItem[]);
+      }
     }
   }
 

@@ -168,6 +168,8 @@ async function deliverable(tx: Tx, orderId: string) {
     await tx.query(
       `SELECT s.id, s.code, s.name, s.status, s.version, s.base_count, s.scale_code, s.purification,
               coalesce(pp.tube_count, pa.tube_count, mpp.tube_count, 1) AS tube_count,
+              coalesce(pp.od_total, mpp.od_total)::float AS od_total,
+              (pp.id IS NOT NULL OR mpp.id IS NOT NULL) AS has_post_process,
               EXISTS (SELECT 1 FROM oligo.label_print lp WHERE lp.sequence_id IN (s.id, m.id)) AS labelled
          FROM oligo.oligo_sequence s
          LEFT JOIN oligo.oligo_pool p ON p.id = s.pool_id AND s.status = 'POOLED'
@@ -251,6 +253,8 @@ export async function createDelivery(tx: Tx, actor: AuthzActor, input: unknown) 
   if (picked.some((s) => !s)) throw invalid("Có trình tự không thuộc đơn, chưa đạt QC hoặc đã giao. Tải lại trang.", undefined, "NOT_DELIVERABLE");
   const unlabelled = picked.filter((s) => !s!.labelled).map((s) => s!.code);
   if (unlabelled.length) throw invalid(`Chưa in nhãn ống: ${unlabelled.join(", ")}.`, undefined, "NOT_LABELLED");
+  const noOd = picked.filter((s) => s!.has_post_process && !(Number(s!.od_total) > 0)).map((s) => s!.code);
+  if (noOd.length) throw invalid(`Trình tự chưa có kết quả đo OD260 (> 0) hợp lệ: ${noOd.join(", ")}.`, undefined, "OD_REQUIRED");
 
   const code = await nextNumber(tx, "DELIVERY_NOTE");
   let shipmentId: string | null = null;

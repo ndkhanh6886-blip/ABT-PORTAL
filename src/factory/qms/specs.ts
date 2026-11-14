@@ -50,17 +50,6 @@ const draftSchema = z.object({
 let specItemsSchemaEnsured = false;
 export async function ensureSpecItemsSchema(tx: Tx): Promise<void> {
   if (specItemsSchemaEnsured) return;
-  await tx.query(`
-    CREATE TABLE IF NOT EXISTS qms.qc_spec_item (
-      spec_id uuid NOT NULL REFERENCES qms.qc_spec(id) ON DELETE CASCADE,
-      item_id uuid NOT NULL REFERENCES master.item(id) ON DELETE CASCADE,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      PRIMARY KEY (spec_id, item_id)
-    );
-    INSERT INTO qms.qc_spec_item (spec_id, item_id)
-    SELECT id, item_id FROM qms.qc_spec WHERE item_id IS NOT NULL
-    ON CONFLICT (spec_id, item_id) DO NOTHING;
-  `);
   specItemsSchemaEnsured = true;
 }
 

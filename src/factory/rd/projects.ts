@@ -180,8 +180,9 @@ export const projectGateMachine = defineMachine<GateStatus, ProjectGateRow>({
           code: "SPEC_EVALUATION_NOT_PASSED",
           message: "Tất cả chỉ tiêu thiết kế / TPP (spec_evaluation) của giai đoạn này phải đạt kết quả PASS trước khi qua cổng.",
           check: async ({ tx, row }) => {
+            const disallowed = Number(row.gate_no) < 2 ? "('FAIL')" : "('FAIL', 'PENDING')";
             const unpassed = await tx.query(
-              "SELECT 1 FROM rd.spec_evaluation WHERE project_id = $1 AND result IN ('FAIL', 'PENDING') LIMIT 1",
+              `SELECT 1 FROM rd.spec_evaluation WHERE project_id = $1 AND result IN ${disallowed} LIMIT 1`,
               [row.project_id]
             );
             return !unpassed.rowCount;
@@ -508,11 +509,33 @@ const specEvalSchema = z.object({
   result: z.enum(["PENDING", "PASS", "FAIL"]).default("PENDING"),
 });
 
-async function assertDhfEditable(
-  tx: Tx,
-  projectId: string,
-  opts?: { isUpdate?: boolean; explicitDesignStage?: string | null; checkAnyPassedGate?: boolean }
-) {
+const STAGE_GATE_MAP: Record<string, number> = {
+  USER_NEED: 0,
+  INPUT: 1,
+  DESIGN_INPUT: 1,
+  OUTPUT: 2,
+  DESIGN_OUTPUT: 2,
+  VERIFICATION: 2,
+  VALIDATION: 3,
+};
+
+async function isStageGatePassed(tx: Tx, projectId: string, designStage: string): Promise<boolean> {
+  const baseGateNo = STAGE_GATE_MAP[designStage];
+  if (baseGateNo === undefined) return false;
+  const minRow = (
+    await tx.query("SELECT min(gate_no)::int AS min_gate FROM rd.project_gate WHERE project_id = $1", [projectId])
+  ).rows[0];
+  const offset = Number(minRow?.min_gate ?? 0) >= 1 ? 1 : 0;
+  const gate = (
+    await tx.query("SELECT status FROM rd.project_gate WHERE project_id = $1 AND gate_no = $2", [
+      projectId,
+      baseGateNo + offset,
+    ])
+  ).rows[0];
+  return gate?.status === "PASSED";
+}
+
+async function assertDhfEditable(tx: Tx, projectId: string) {
   const proj = (await tx.query("SELECT status, current_stage FROM rd.project WHERE id = $1", [projectId])).rows[0];
   if (!proj) throw notFound("dự án R&D");
   if (
@@ -521,47 +544,45 @@ async function assertDhfEditable(
     proj.status === "KILLED" ||
     proj.current_stage === "TRANSFERRED"
   ) {
-    throw invalid("Hồ sơ thiết kế (DHF) của giai đoạn đã phê duyệt không được phép chỉnh sửa trực tiếp.");
+    throw invalid(
+      "Hồ sơ thiết kế (DHF) của giai đoạn đã phê duyệt không được phép chỉnh sửa trực tiếp.",
+      undefined,
+      "DHF_STAGE_FROZEN"
+    );
   }
   const gates = (
     await tx.query("SELECT gate_no, status FROM rd.project_gate WHERE project_id = $1 ORDER BY gate_no ASC", [projectId])
   ).rows;
   if (gates.length > 0 && gates.every((g) => g.status === "PASSED")) {
-    throw invalid("Hồ sơ thiết kế (DHF) của giai đoạn đã phê duyệt không được phép chỉnh sửa trực tiếp.");
-  }
-  if ((opts?.isUpdate || opts?.checkAnyPassedGate) && gates.some((g) => g.status === "PASSED")) {
-    throw invalid("Hồ sơ thiết kế (DHF) của giai đoạn đã phê duyệt không được phép chỉnh sửa trực tiếp.");
-  }
-  if (opts?.explicitDesignStage) {
-    const stageGateMap: Record<string, number> = {
-      USER_NEED: 0,
-      INPUT: 0,
-      DESIGN_INPUT: 0,
-      OUTPUT: 1,
-      DESIGN_OUTPUT: 1,
-      VERIFICATION: 2,
-      VALIDATION: 3,
-    };
-    const gateNo = stageGateMap[opts.explicitDesignStage];
-    if (gateNo !== undefined) {
-      const gate = gates.find((g) => Number(g.gate_no) === gateNo);
-      if (gate?.status === "PASSED") {
-        throw invalid("Hồ sơ thiết kế (DHF) của giai đoạn đã phê duyệt không được phép chỉnh sửa trực tiếp.");
-      }
-    }
+    throw invalid(
+      "Hồ sơ thiết kế (DHF) của giai đoạn đã phê duyệt không được phép chỉnh sửa trực tiếp.",
+      undefined,
+      "DHF_STAGE_FROZEN"
+    );
   }
 }
 
 /** Saves a Design Input / Design Output / V&V Traceability Matrix (TPP) row for a project (ISO 13485 §7.3). */
 export async function saveSpecEvaluation(tx: Tx, actor: AuthzActor, projectId: string, specId: string | null, input: unknown) {
-  const owner = await projectOwner(tx, projectId);
-  await authorize(tx, actor, "rd.project.manage", owner);
-  const rawDesignStage =
-    input && typeof input === "object" && "design_stage" in input && typeof (input as any).design_stage === "string"
-      ? (input as any).design_stage
-      : null;
-  await assertDhfEditable(tx, projectId, { isUpdate: Boolean(specId), explicitDesignStage: rawDesignStage });
+  const proj = (
+    await tx.query("SELECT owner_org_unit_id, target_domain FROM rd.project WHERE id = $1", [projectId])
+  ).rows[0] as { owner_org_unit_id: string; target_domain: string } | undefined;
+  if (!proj) throw notFound("dự án R&D");
+  const canDeviceManage =
+    proj.target_domain === "DEVICE" &&
+    (await hasFactoryPermission(tx, actor, "device.model.manage", proj.owner_org_unit_id));
+  if (!canDeviceManage) {
+    await authorize(tx, actor, "rd.project.manage", proj.owner_org_unit_id);
+  }
+  await assertDhfEditable(tx, projectId);
   const d = parseInput(specEvalSchema, input);
+  if (!specId && (await isStageGatePassed(tx, projectId, d.design_stage))) {
+    throw invalid(
+      "Hồ sơ thiết kế (DHF) của giai đoạn đã phê duyệt không được phép thêm mới trực tiếp.",
+      undefined,
+      "DHF_STAGE_FROZEN"
+    );
+  }
   if (!specId) {
     const row = (
       await tx.query(
@@ -599,6 +620,21 @@ export async function saveSpecEvaluation(tx: Tx, actor: AuthzActor, projectId: s
   }
   const cur = (await tx.query("SELECT * FROM rd.spec_evaluation WHERE id = $1 AND project_id = $2 FOR UPDATE", [specId, projectId])).rows[0];
   if (!cur) throw notFound("thông số mục tiêu");
+  if (await isStageGatePassed(tx, projectId, String(cur.design_stage))) {
+    const coreChanged =
+      d.parameter !== cur.parameter ||
+      (d.unit ?? null) !== (cur.unit ?? null) ||
+      d.target_value !== cur.target_value;
+    const stageTargetFrozen =
+      d.design_stage !== cur.design_stage && (await isStageGatePassed(tx, projectId, d.design_stage));
+    if (coreChanged || stageTargetFrozen) {
+      throw invalid(
+        "Thông số mục tiêu (parameter / unit / target_value) của giai đoạn đã qua cổng không được phép chỉnh sửa trực tiếp.",
+        undefined,
+        "DHF_STAGE_FROZEN"
+      );
+    }
+  }
   const upd = (
     await tx.query(
       `UPDATE rd.spec_evaluation
@@ -661,7 +697,7 @@ const riskItemSchema = z.object({
 export async function saveRiskItem(tx: Tx, actor: AuthzActor, projectId: string, riskId: string | null, input: unknown) {
   const owner = await projectOwner(tx, projectId);
   await authorize(tx, actor, "rd.project.manage", owner);
-  await assertDhfEditable(tx, projectId, { isUpdate: Boolean(riskId), checkAnyPassedGate: true });
+  await assertDhfEditable(tx, projectId);
   const d = parseInput(riskItemSchema, input);
   const occ = d.occurrence ?? d.probability ?? 2;
   const det = d.detection ?? d.detectability ?? 2;
@@ -827,10 +863,6 @@ export async function exportRoadmapIcs(tx: Tx, actor: AuthzActor, projectId?: st
 
 export async function listProjects(tx: Tx, actor: AuthzActor, domain?: string) {
   await authorizeAnywhere(tx, actor, "rd.view");
-  await tx.query(`
-    ALTER TABLE rd.project
-      ADD COLUMN IF NOT EXISTS leader_name_override varchar(150);
-  `);
   const rows = (
     await tx.query(
       `SELECT p.*,
@@ -862,10 +894,6 @@ export async function listProjects(tx: Tx, actor: AuthzActor, domain?: string) {
 }
 
 export async function getProjectDetail(tx: Tx, actor: AuthzActor, id: string) {
-  await tx.query(`
-    ALTER TABLE rd.project
-      ADD COLUMN IF NOT EXISTS leader_name_override varchar(150);
-  `);
   const project = (
     await tx.query(
       `SELECT p.*, u.name AS org_unit_name,

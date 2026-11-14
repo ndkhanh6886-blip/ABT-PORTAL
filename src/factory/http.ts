@@ -4,6 +4,7 @@ import { getAuthorizedUser, isAdminUser, unauthorizedResponse } from "@/backend/
 import { clientIp } from "@/backend/services/rateLimit";
 import type { AuthzActor } from "./core/authz";
 import { getFactoryPool, withTransaction, type Tx } from "./core/db";
+import { migrate } from "./db/migrate";
 import { FactoryError, notFound } from "./core/errors";
 import { parseInput } from "./core/records";
 import { listAllowedActions, preAuthenticate, runTransition, type MachineDef, type TransitionRequest } from "./core/stateMachine";
@@ -28,6 +29,18 @@ export interface RouteContext {
  * failed-attempt counter on its own) → one business transaction → errors mapped to status +
  * Vietnamese message. Business rules live in services; routes only parse and delegate.
  */
+let startupMigrationPromise: Promise<unknown> | null = null;
+async function ensureFactoryMigrated(): Promise<void> {
+  if (process.env.VITEST) return;
+  if (!startupMigrationPromise) {
+    startupMigrationPromise = migrate(getFactoryPool()).catch((err) => {
+      startupMigrationPromise = null;
+      throw err;
+    });
+  }
+  await startupMigrationPromise;
+}
+
 export function factoryRoute(
   handler: (tx: Tx, ctx: RouteContext) => Promise<unknown>,
   opts: { before?: (ctx: RouteContext) => Promise<void> } = {}
@@ -45,6 +58,7 @@ export function factoryRoute(
       ip: clientIp(req),
     };
     try {
+      await ensureFactoryMigrated();
       const params = (await segment?.params) ?? {};
       const body = req.method === "GET" || req.method === "HEAD" ? {} : await req.json().catch(() => ({}));
       // Own statement, outside the business transaction: never holds the profile row lock

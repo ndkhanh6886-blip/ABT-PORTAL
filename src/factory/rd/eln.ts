@@ -169,11 +169,6 @@ const createExpSchema = z.object({
 });
 
 export async function createExperiment(tx: Tx, actor: AuthzActor, input: unknown) {
-  await tx.query(`
-    ALTER TABLE rd.experiment
-      ADD COLUMN IF NOT EXISTS performer_name varchar(150),
-      ADD COLUMN IF NOT EXISTS wbs_task_code varchar(60);
-  `);
   const d = parseInput(createExpSchema, input);
   const owner = await expOwner(tx, d.project_id);
   await authorize(tx, actor, "rd.eln.write", owner);
@@ -442,11 +437,6 @@ export async function createExperimentRevision(tx: Tx, actor: AuthzActor, experi
 
 export async function listExperiments(tx: Tx, actor: AuthzActor, projectId?: string) {
   await authorizeAnywhere(tx, actor, "rd.view");
-  await tx.query(`
-    ALTER TABLE rd.experiment
-      ADD COLUMN IF NOT EXISTS performer_name varchar(150),
-      ADD COLUMN IF NOT EXISTS wbs_task_code varchar(60);
-  `);
   const rows = (
     await tx.query(
       `SELECT e.*, p.code AS project_code, p.name AS project_name, p.owner_org_unit_id,
@@ -472,11 +462,6 @@ export async function listExperiments(tx: Tx, actor: AuthzActor, projectId?: str
 }
 
 export async function getExperimentDetail(tx: Tx, actor: AuthzActor, id: string) {
-  await tx.query(`
-    ALTER TABLE rd.experiment
-      ADD COLUMN IF NOT EXISTS performer_name varchar(150),
-      ADD COLUMN IF NOT EXISTS wbs_task_code varchar(60);
-  `);
   const exp = (
     await tx.query(
       `SELECT e.*, p.code AS project_code, p.name AS project_name, p.owner_org_unit_id,

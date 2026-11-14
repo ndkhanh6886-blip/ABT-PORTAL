@@ -25,6 +25,7 @@ import {
   productionStepMachine,
   updateMaterialActuals,
   updateOrderDates,
+  verifyLineClearance,
 } from "../ordersEbr";
 import {
   createRetainSample,
@@ -36,6 +37,7 @@ import {
   stabilityStudyMachine,
   traceKitLotGenealogy,
 } from "../qualityTrace";
+import { ncrMachine } from "../../qms/ncr";
 import "../../modules";
 
 afterAll(closeFactoryPool);
@@ -365,6 +367,20 @@ describe("Phase 4b — Module Phòng Sản xuất Kit (kit schema)", () => {
 
     await withTransaction((tx) => issueOrderMaterials(tx, operator, order.id));
 
+    // Starting step 1 before GMP line clearance must fail LINE_CLEARANCE_REQUIRED
+    await expect(act(productionStepMachine, operator, step1.id, "start")).rejects.toMatchObject({
+      code: "GUARD_FAILED",
+      details: [{ code: "LINE_CLEARANCE_REQUIRED" }],
+    });
+    await withTransaction((tx) =>
+      verifyLineClearance(tx, operator, order.id, {
+        uv_sterilized: true,
+        prev_labels_cleared: true,
+        bench_sanitized: true,
+        env_temp_ok: true,
+      })
+    );
+
     // Starting step 2 before step 1 is DONE must fail PREV_STEP_INCOMPLETE
     await expect(act(productionStepMachine, operator, step2.id, "start")).rejects.toMatchObject({
       code: "GUARD_FAILED",
@@ -479,16 +495,30 @@ describe("Phase 4b — Module Phòng Sản xuất Kit (kit schema)", () => {
         product_item_id: kitItem.id,
         warehouse_id: site.warehouse,
         planned_qty: 10,
+        no_retention: true,
       })
     );
     await act(productionOrderMachine, operator, order.id, "confirm");
     await withTransaction((tx) => issueOrderMaterials(tx, operator, order.id));
+    await withTransaction((tx) =>
+      verifyLineClearance(tx, operator, order.id, {
+        uv_sterilized: true,
+        prev_labels_cleared: true,
+        bench_sanitized: true,
+        env_temp_ok: true,
+      })
+    );
 
     const detail0 = await withTransaction((tx) => getProductionOrderDetail(tx, operator, order.id));
     await act(productionStepMachine, operator, detail0.steps[0].id, "start");
     await act(productionStepMachine, operator, detail0.steps[0].id, "complete", signed);
 
-    await act(productionOrderMachine, operator, order.id, "pass_qc", {
+    await expect(
+      act(productionOrderMachine, operator, order.id, "pass_qc", {
+        payload: { good_qty: 10, scrap_qty: 0, qc_summary: "Đạt 100% chỉ tiêu QC" },
+      })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await act(productionOrderMachine, qa, order.id, "pass_qc", {
       payload: { good_qty: 10, scrap_qty: 0, qc_summary: "Đạt 100% chỉ tiêu QC" },
     });
 
@@ -634,6 +664,14 @@ describe("Phase 4b — Module Phòng Sản xuất Kit (kit schema)", () => {
     );
     await act(productionOrderMachine, operator, order.id, "confirm");
     await withTransaction((tx) => issueOrderMaterials(tx, operator, order.id));
+    await withTransaction((tx) =>
+      verifyLineClearance(tx, operator, order.id, {
+        uv_sterilized: true,
+        prev_labels_cleared: true,
+        bench_sanitized: true,
+        env_temp_ok: true,
+      })
+    );
 
     const d0 = await withTransaction((tx) => getProductionOrderDetail(tx, operator, order.id));
     await act(productionStepMachine, operator, d0.steps[0].id, "start");
@@ -670,9 +708,30 @@ describe("Phase 4b — Module Phòng Sản xuất Kit (kit schema)", () => {
     const dAfterRw = await withTransaction((tx) => getProductionOrderDetail(tx, operator, order.id));
     expect(dAfterRw.order.status).toBe("PENDING_QC");
 
-    await act(productionOrderMachine, operator, order.id, "pass_qc", {
+    await act(productionOrderMachine, qa, order.id, "pass_qc", {
       payload: { good_qty: 5, scrap_qty: 0, qc_summary: "Đạt QC sau khi thay thế Hộp 2" },
     });
+
+    // Release is blocked while the NCR opened by fail_qc is not CLOSED
+    await expect(act(productionOrderMachine, qa, order.id, "release", signed)).rejects.toMatchObject({
+      code: "GUARD_FAILED",
+      details: expect.arrayContaining([expect.objectContaining({ code: "OPEN_NCR" })]),
+    });
+
+    // Propose REWORK disposition -> Approve -> Close NCR after partial rework & pass_qc
+    await grant(operator, ["qms.ncr.propose"]);
+    const openNcr = (
+      await getFactoryPool().query("SELECT id FROM qms.ncr WHERE lot_id = $1 AND status <> 'CLOSED' LIMIT 1", [
+        dAfterRw.order.lot_id,
+      ])
+    ).rows[0];
+    expect(openNcr).toBeTruthy();
+    await act(ncrMachine, operator, openNcr.id, "propose", {
+      payload: { disposition: "REWORK", note: "Đã làm lại Hộp 2 và đạt tái kiểm QC" },
+    });
+    await act(ncrMachine, qa, openNcr.id, "approve", signed);
+    await act(ncrMachine, qa, openNcr.id, "close", { ...signed, reason: "Hoàn tất xử lý NCR sau làm lại Hộp 2" });
+
     await act(productionOrderMachine, qa, order.id, "release", signed);
 
     // Genealogy of the Kit lot includes BOTH initial lots AND the replacement lot from the Partial Rework

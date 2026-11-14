@@ -155,7 +155,7 @@ export async function updateInternalOrderNotes(tx: Tx, actor: AuthzActor, id: st
 
 /** Org units whose internal orders the actor may see. */
 async function visibleUnits(tx: Tx, actor: AuthzActor): Promise<string[] | "ALL"> {
-  if (actor.userId > 0 || (await hasFactoryPermission(tx, actor, "intake.order.view"))) return "ALL";
+  if (actor.isRootAdmin || (await hasFactoryPermission(tx, actor, "intake.order.view"))) return "ALL";
   const units = (await tx.query("SELECT id FROM core.org_unit WHERE module_key IN ('KIT', 'OLIGO', 'DEVICE')")).rows.map((r) => r.id as string);
   const out: string[] = [];
   for (const u of units) if (await hasFactoryPermission(tx, actor, "intake.order.view", u)) out.push(u);
@@ -311,7 +311,7 @@ export async function getOrder(tx: Tx, actor: AuthzActor, id: string) {
       wo_codes: lines.flatMap((ln: any) => (ln.device_order_serials ?? []).map((w: string) => w.split(" ")[0])),
     };
   }
-  let linked_oligo_orders = (
+  const linked_oligo_orders = (
     await tx.query(
       `SELECT oo.id, oo.code, oo.status, oo.due_date, oo.notes,
               (SELECT count(*)::int FROM oligo.oligo_sequence os WHERE os.order_id = oo.id AND os.status NOT IN ('CANCELLED', 'SPLIT')) AS sequence_count
@@ -321,29 +321,6 @@ export async function getOrder(tx: Tx, actor: AuthzActor, id: string) {
       [id]
     )
   ).rows;
-  if (order.module_key === "OLIGO" && linked_oligo_orders.length === 0) {
-    const code = await nextNumber(tx, "OLIGO_ORDER");
-    const dueDate = order.committed_date
-      ? String(order.committed_date).slice(0, 10)
-      : order.requested_date
-      ? String(order.requested_date).slice(0, 10)
-      : null;
-    const customerLabel = order.ship_to?.name
-      ? `${order.kd_po_code} — ${order.ship_to.name}`
-      : `PO ${order.kd_po_code} (${order.code})`;
-    const createdOligo = (
-      await tx.query(
-        `INSERT INTO oligo.oligo_order
-           (code, org_unit_id, internal_order_id, customer_label, due_date, initial_due_date, notes, created_by, updated_by)
-         VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $7)
-         RETURNING id, code, status, due_date, notes`,
-        [code, order.org_unit_id, order.id, customerLabel, dueDate, order.notes ?? null, actor.userId]
-      )
-    ).rows[0];
-    if (createdOligo) {
-      linked_oligo_orders = [{ ...createdOligo, sequence_count: 0 }];
-    }
-  }
   const shipments = (
     await tx.query(
       `SELECT s.id, s.code, s.status, s.ship_mode, s.created_at, s.delivered_at, s.kd_acknowledged_at, s.kd_inbound_code, s.version, w.code AS warehouse_code

@@ -6,6 +6,7 @@ import { ActionBar, type AllowedAction } from "../actions";
 import { api, fmtDate, fmtQty, useFactoryMe } from "../api";
 import { printKitCoaCertificate, printTestCoa } from "../coa";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
+import { Barcode128 } from "../barcodeSvg";
 
 interface QcRow {
   id: string;
@@ -116,6 +117,8 @@ function QcDetailPanel({
   const [stdNotes, setStdNotes] = useState("");
   const [retainQty, setRetainQty] = useState("2");
   const [releaseNotice, setReleaseNotice] = useState<string | null>(null);
+  const [sigMethod, setSigMethod] = useState<"PIN" | "PASSWORD">("PIN");
+  const [sigSecret, setSigSecret] = useState("");
 
   useEffect(() => {
     if (!test.data) return;
@@ -188,9 +191,11 @@ function QcDetailPanel({
         json: {
           op: "issue_coa_from_test",
           test_id: id,
+          credential: { method: sigMethod, secret: sigSecret },
         },
       }),
     onSuccess: (res) => {
+      setSigSecret("");
       setReleaseNotice(
         res.already_issued
           ? `📜 COA ${res.coa.code} đã được cấp và đồng bộ ánh xạ sang Phòng Sản xuất Kit & Kinh doanh cho lô ${res.coa.lot_code}.`
@@ -209,9 +214,11 @@ function QcDetailPanel({
           test_id: id,
           auto_putaway: true,
           retain_sample_qty: Number(retainQty || 0),
+          credential: { method: sigMethod, secret: sigSecret },
         },
       }),
     onSuccess: (res) => {
+      setSigSecret("");
       setReleaseNotice(
         `✅ Đã giải phóng lô ${res.lot_code} (RELEASED)${
           res.coa_code ? `, cấp phát & ánh xạ COA ${res.coa_code} sang Phòng Sản xuất Kit` : ""
@@ -236,7 +243,7 @@ function QcDetailPanel({
 
   return (
     <Card title={t ? `Phiếu ${t.code} — ${t.spec_code} rev ${t.spec_version} (${t.test_kind})` : "Phiếu QC"} actions={<Button variant="ghost" onClick={onClose}>Đóng</Button>}>
-      <ErrorNote error={test.error ?? save.error ?? recordStdMut.error ?? releaseLotMut.error ?? retest.error} />
+      <ErrorNote error={test.error ?? save.error ?? recordStdMut.error ?? issueCoaMut.error ?? releaseLotMut.error ?? retest.error} />
       {t && (
         <div className="flex flex-col gap-3">
           <p className="text-xs text-slate-600 dark:text-slate-300">
@@ -390,6 +397,27 @@ function QcDetailPanel({
               </Button>
               {["LOT", "PRODUCTION_ORDER"].includes(t.entity_type) && t.overall_result === "PASS" && (
                 <>
+                  <div className="flex flex-wrap items-end gap-2 p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900/40">
+                    <Field label="Ký số (21 CFR Part 11)">
+                      <select
+                        className={`${inputClass} w-28`}
+                        value={sigMethod}
+                        onChange={(e) => setSigMethod(e.target.value as "PIN" | "PASSWORD")}
+                      >
+                        <option value="PIN">Mã PIN</option>
+                        <option value="PASSWORD">Mật khẩu</option>
+                      </select>
+                    </Field>
+                    <Field label="PIN / Mật khẩu *">
+                      <input
+                        type="password"
+                        className={`${inputClass} w-36`}
+                        placeholder="Nhập để ký COA/Lô"
+                        value={sigSecret}
+                        onChange={(e) => setSigSecret(e.target.value)}
+                      />
+                    </Field>
+                  </div>
                   {t.coa_code ? (
                     <div className="px-3 py-2 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50/70 dark:bg-sky-950/30 text-xs font-semibold text-sky-900 dark:text-sky-200 flex items-center gap-2">
                       <span>📜 Đã cấp COA chính thức: <b className="font-mono">{t.coa_code}</b> (Đã ánh xạ sang Sản xuất Kit &amp; Kinh doanh)</span>
@@ -455,7 +483,7 @@ export function QcTestsView() {
     address_line: string;
     footer_statement: string;
     approver_title: string;
-    results_display_mode: "SUMMARY_TEMPLATE" | "CONFORMS_ONLY" | "DETAILED_QC";
+    results_display_mode: "MEASURED_VALUES" | "SUMMARY_TEMPLATE" | "CONFORMS_ONLY" | "DETAILED_QC";
     default_coa_parameters: {
       seq: number;
       parameter_name: string;
@@ -511,6 +539,8 @@ export function QcTestsView() {
   });
   const [editingCoa, setEditingCoa] = useState<any | null>(null);
   const [coaNotice, setCoaNotice] = useState<string | null>(null);
+  const [coaSigMethod, setCoaSigMethod] = useState<"PIN" | "PASSWORD">("PIN");
+  const [coaSigSecret, setCoaSigSecret] = useState("");
 
   const list = useQuery({
     queryKey: ["factory", "qc-tests", status],
@@ -562,13 +592,18 @@ export function QcTestsView() {
     mutationFn: (payload: any) =>
       api<any>("/api/factory/qms/ops", {
         method: "POST",
-        json: { op: "update_coa_certificate", ...payload },
+        json: {
+          op: "update_coa_certificate",
+          ...payload,
+          credential: { method: coaSigMethod, secret: coaSigSecret },
+        },
       }),
     onSuccess: (updated) => {
       qc.invalidateQueries({ queryKey: ["factory", "qa-ops"] });
+      setCoaSigSecret("");
       setSelectedCoa(updated);
       setEditingCoa(null);
-      setCoaNotice(`✅ Đã cập nhật thông tin & chỉ tiêu trên Giấy chứng nhận ${updated.code} (Phiên bản v${updated.revision_no ?? 1})!`);
+      setCoaNotice(`✅ Đã ban hành phụ lục COA ${updated.code} (Phiên bản v${updated.revision_no ?? 1}) theo quy tắc chỉ ghi nối (append-only)!`);
     },
   });
 
@@ -1011,14 +1046,17 @@ export function QcTestsView() {
                     value={tplForm.results_display_mode}
                     onChange={(e) => setTplForm({ ...tplForm, results_display_mode: e.target.value as any })}
                   >
+                    <option value="MEASURED_VALUES">
+                      1. Giá trị đo thực tế chuẩn hóa theo Phiếu QC (MEASURED_VALUES — Khuyến nghị ISO 13485)
+                    </option>
                     <option value="SUMMARY_TEMPLATE">
-                      1. Nêu chung theo Bộ chỉ tiêu chuẩn của Biểu mẫu COA bên dưới (Ẩn chỉ tiêu &amp; số đo chi tiết nội bộ)
+                      2. Nêu chung theo Bộ chỉ tiêu chuẩn của Biểu mẫu COA bên dưới (Ẩn chỉ tiêu &amp; số đo chi tiết nội bộ)
                     </option>
                     <option value="CONFORMS_ONLY">
-                      2. Lấy tên chỉ tiêu từ Phiếu QC nhưng chỉ ghi chung &quot;Đạt tiêu chuẩn / Conforms&quot; (Ẩn số đo pH, Ct...)
+                      3. Lấy tên chỉ tiêu từ Phiếu QC nhưng chỉ ghi chung &quot;Đạt tiêu chuẩn / Conforms&quot; (Ẩn số đo pH, Ct...)
                     </option>
                     <option value="DETAILED_QC">
-                      3. Hiển thị chi tiết từng chỉ tiêu &amp; số đo thực tế từ Phiếu QC
+                      4. Hiển thị chi tiết từng chỉ tiêu &amp; số đo thực tế từ Phiếu QC
                     </option>
                   </select>
                 </Field>
@@ -1153,7 +1191,19 @@ export function QcTestsView() {
           <Table head={["Số COA (Do QC cấp)", "Phiếu QC gốc", "Mã Lô & Sản phẩm", "NSX → HSD", "Quy cách / SL Đạt", "Người kiểm nghiệm & Người ký duyệt COA", "Trạng thái Ánh xạ", "Thao tác"]}>
             {(qaOps.data?.issued_coas ?? []).map((c: any) => (
               <tr key={c.id}>
-                <td className="py-2 pr-3 font-mono text-xs font-bold text-emerald-700 dark:text-emerald-400">{c.code}</td>
+                <td className="py-2 pr-3 font-mono text-xs font-bold text-emerald-700 dark:text-emerald-400">
+                  <div>{c.code}</div>
+                  <div className="flex flex-wrap gap-1 mt-0.5 font-sans">
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                      v{c.revision_no ?? 1}
+                    </span>
+                    {c.is_superseded && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                        Đã thay thế (Superseded)
+                      </span>
+                    )}
+                  </div>
+                </td>
                 <td className="py-2 pr-3 font-mono text-xs">
                   {c.qc_test_code ? (
                     <button
@@ -1187,7 +1237,16 @@ export function QcTestsView() {
                   <div>Ký duyệt: <b className="text-emerald-700 dark:text-emerald-400">{c.issued_by_name}</b></div>
                 </td>
                 <td className="py-2 pr-3 text-xs">
-                  <StatusBadge status="RELEASED" label={c.order_code ? `Đã ánh xạ → ${c.order_code}` : "Đã ánh xạ sang SX & KD"} />
+                  <StatusBadge
+                    status={c.is_superseded ? "CANCELLED" : "RELEASED"}
+                    label={
+                      c.is_superseded
+                        ? "Bản cũ (Đã cấp phụ lục mới)"
+                        : c.order_code
+                          ? `Đã ánh xạ → ${c.order_code}`
+                          : "Đã ánh xạ sang SX & KD"
+                    }
+                  />
                 </td>
                 <td className="py-2 pr-3 text-xs whitespace-nowrap">
                   <div className="inline-flex items-center gap-1">
@@ -1260,21 +1319,38 @@ export function QcTestsView() {
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200 dark:border-amber-800 pb-2">
                 <div>
                   <div className="text-xs font-extrabold uppercase text-amber-900 dark:text-amber-300">
-                    ✏️ Chỉnh sửa Thông tin &amp; Bảng Chỉ tiêu trên COA ({editingCoa.code})
+                    ✏️ Ban hành Phụ lục Sửa đổi COA (-R{Number(selectedCoa?.revision_no ?? 1) + 1} · Chỉ ghi nối Append-only)
                   </div>
                   <div className="text-[11px] text-slate-500">
-                    Mọi thay đổi sẽ được cập nhật trực tiếp lên bản in COA và tự động đồng bộ sang tab Sản xuất Kit &amp; Kinh doanh.
+                    Bản COA cũ ({selectedCoa?.code}) được giữ nguyên lịch sử và đánh dấu Đã thay thế (Superseded) theo 21 CFR Part 11.
                   </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    className={`${inputClass} w-28`}
+                    value={coaSigMethod}
+                    onChange={(e) => setCoaSigMethod(e.target.value as "PIN" | "PASSWORD")}
+                  >
+                    <option value="PIN">Mã PIN</option>
+                    <option value="PASSWORD">Mật khẩu</option>
+                  </select>
+                  <input
+                    type="password"
+                    className={`${inputClass} w-40`}
+                    placeholder="PIN / Mật khẩu ký số *"
+                    value={coaSigSecret}
+                    onChange={(e) => setCoaSigSecret(e.target.value)}
+                    required
+                  />
                   <Button type="submit" disabled={updateCoaMut.isPending}>
-                    💾 Lưu cập nhật COA
+                    💾 Ban hành Phụ lục COA
                   </Button>
                   <Button variant="ghost" onClick={() => setEditingCoa(null)}>
                     Hủy sửa
                   </Button>
                 </div>
               </div>
+              <ErrorNote error={updateCoaMut.error} />
 
               <div className="grid gap-3 sm:grid-cols-4">
                 <Field label="Số chứng nhận COA *">
@@ -1398,12 +1474,13 @@ export function QcTestsView() {
                   />
                 </Field>
                 <div className="sm:col-span-4">
-                  <Field label="Lý do cập nhật phiên bản COA (Audit Trail — 21 CFR Part 11) *">
+                  <Field label="Lý do ban hành phụ lục COA (Tối thiểu 5 ký tự — Audit Trail 21 CFR Part 11) *">
                     <input
                       className={inputClass}
                       value={editingCoa.reason ?? ""}
                       onChange={(e) => setEditingCoa({ ...editingCoa, reason: e.target.value })}
-                      placeholder="Nhập lý do hiệu chỉnh phiên bản COA..."
+                      placeholder="Nhập rõ lý do hiệu chỉnh / ban hành phụ lục COA..."
+                      minLength={5}
                       required
                     />
                   </Field>
@@ -1537,6 +1614,16 @@ export function QcTestsView() {
                 {selectedCoa.revision_no ? <> · Phiên bản / Rev: <strong>v{selectedCoa.revision_no}</strong></> : null}
                 {selectedCoa.qc_test_code ? <> · Phiếu QC gốc / QC Test Ref: <strong>{selectedCoa.qc_test_code}</strong></> : null}
                 {tplForm.iso_subtitle ? <> · {tplForm.iso_subtitle}</> : null}
+                {selectedCoa.sha256_hash ? <> · SHA-256: <code>{String(selectedCoa.sha256_hash).slice(0, 16)}…</code></> : null}
+              </div>
+              {selectedCoa.is_superseded && (
+                <div className="mt-2 px-3 py-1.5 rounded border border-red-400 bg-red-50 text-red-700 text-xs font-bold">
+                  ⚠️ BẢN ĐÃ THAY THẾ / SUPERSEDED — CHỈ DÙNG TRA CỨU LỊCH SỬ
+                </div>
+              )}
+              <div className="mt-2 flex flex-wrap justify-center gap-4">
+                <Barcode128 value={selectedCoa.code} height={28} showText />
+                {selectedCoa.lot_code && <Barcode128 value={selectedCoa.lot_code} height={28} showText />}
               </div>
             </div>
 

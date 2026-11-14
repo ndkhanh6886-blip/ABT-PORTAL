@@ -182,7 +182,9 @@ describe("ISO 13485 / IEC 62304 / ISO 14971 / GMP / High-Scale & Column Oligo Au
   it("4. R&D ISO 14971 FMEA Risk Register & IEC 62304 Software Release Safety Class Guards", async () => {
     const site = await makeSite();
     const rdLead = await createUser("Trưởng nhóm R&D ISO", PIN);
+    const swApprover = await createUser("Trưởng phòng KTCN Ký phát hành SW", PIN);
     await grant(rdLead, ["rd.view", "rd.project.manage", "rd.transfer.manage"], site.dept);
+    await grant(swApprover, ["rd.view", "rd.software.release"], site.dept);
 
     const projDetail = await withTransaction((tx) =>
       createProject(tx, rdLead, {
@@ -193,20 +195,32 @@ describe("ISO 13485 / IEC 62304 / ISO 14971 / GMP / High-Scale & Column Oligo Au
       })
     );
 
-    // Save ISO 14971 Risk Item -> RPN auto-computed (4 * 3 * 2 = 24)
+    // Save ISO 14971 Risk Item -> MITIGATED without residual scores must be blocked
+    const riskBase = {
+      hazard: "Sai lệch ngưỡng đường nền (Baseline drift)",
+      hazardous_situation: "Tín hiệu huỳnh quang nhiễu ở chu kỳ đầu",
+      harm: "Dương tính giả dẫn đến điều trị sai",
+      severity: 4,
+      occurrence: 3,
+      detection: 2,
+      mitigation_measure: "Thuật toán lọc nhiễu Savitzky-Golay & kiểm tra ngưỡng R² ≥ 0.99",
+      status: "MITIGATED" as const,
+    };
+    await expect(withTransaction((tx) => saveRiskItem(tx, rdLead, projDetail.id, null, riskBase))).rejects.toThrow(
+      /rủi ro tồn dư|residual/i
+    );
+
+    // With full residual risk indices -> RPN auto-computed (4 * 3 * 2 = 24), residual RPN = 4 * 1 * 1 = 4
     const risk = await withTransaction((tx) =>
       saveRiskItem(tx, rdLead, projDetail.id, null, {
-        hazard: "Sai lệch ngưỡng đường nền (Baseline drift)",
-        hazardous_situation: "Tín hiệu huỳnh quang nhiễu ở chu kỳ đầu",
-        harm: "Dương tính giả dẫn đến điều trị sai",
-        severity: 4,
-        occurrence: 3,
-        detection: 2,
-        mitigation_measure: "Thuật toán lọc nhiễu Savitzky-Golay & kiểm tra ngưỡng R² ≥ 0.99",
-        status: "MITIGATED",
+        ...riskBase,
+        residual_severity: 4,
+        residual_occurrence: 1,
+        residual_detection: 1,
       })
     );
     expect(risk.rpn).toBe(24);
+    expect(risk.residual_rpn).toBe(4);
 
     // Save ISO 13485 Design Traceability spec linked to risk_item_id
     const spec = await withTransaction((tx) =>
@@ -238,7 +252,9 @@ describe("ISO 13485 / IEC 62304 / ISO 14971 / GMP / High-Scale & Column Oligo Au
         validation_summary: "Đã chạy 100 bộ dữ liệu giả lập",
       })
     );
-    await expect(act(swReleaseMachine, rdLead, swBlocked.id, "release", signed)).rejects.toThrow();
+    await expect(act(swReleaseMachine, swApprover, swBlocked.id, "release", signed)).rejects.toThrow(
+      /Known Anomaly|CRITICAL|IEC 62304/i
+    );
 
     // Create IEC 62304 Class C Software Release with all SRS PASS and no open HIGH/CRITICAL anomalies -> release succeeds
     const swClean = await withTransaction((tx) =>
@@ -254,7 +270,7 @@ describe("ISO 13485 / IEC 62304 / ISO 14971 / GMP / High-Scale & Column Oligo Au
         validation_summary: "Đạt 100% ca kiểm thử SRS-01..SRS-25",
       })
     );
-    const released = await act(swReleaseMachine, rdLead, swClean.id, "release", signed);
+    const released = await act(swReleaseMachine, swApprover, swClean.id, "release", signed);
     expect(released.status).toBe("RELEASED");
   });
 });

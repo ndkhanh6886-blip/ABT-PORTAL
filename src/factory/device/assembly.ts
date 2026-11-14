@@ -7,11 +7,13 @@ import { invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { insertRecord, parseInput } from "../core/records";
 import { defineMachine, listAllowedActions, runTransition } from "../core/stateMachine";
+import { assertUsable } from "../asset/service";
 import { allocate, findCandidates } from "../inv/allocation";
 import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import { getItem, toBaseQty } from "../master/service";
 import { notifyUsers, usersWithPermissionAnywhere } from "../core/notifications";
 import { createQcTest, registerQcSubject } from "../qms/qcTests";
+import { raiseDeviation } from "../qms/incidents";
 import "./permissions";
 
 registerPermissions([
@@ -803,7 +805,6 @@ export async function installUnitComponent(tx: Tx, actor: AuthzActor, unitId: st
     ).rows[0];
     inserted.push(row);
   }
-  await tx.query("ALTER TABLE device.device_unit ADD COLUMN IF NOT EXISTS assembled_by integer");
   await tx.query("UPDATE device.device_unit SET assembled_by = COALESCE(assembled_by, $2) WHERE id = $1", [unit.id, actor.userId]);
   await writeAudit(tx, actor, {
     entityType: "device_unit",
@@ -819,6 +820,7 @@ const burnInSchema = z.object({
   max_temp_c: z.coerce.number().optional().nullable(),
   cycles_completed: z.coerce.number().int().min(0).optional().nullable(),
   result: z.enum(["PASS", "FAIL"]),
+  test_asset_id: z.string().uuid().optional().nullable(),
   notes: z.string().trim().max(1000).optional().nullable(),
 });
 
@@ -832,6 +834,9 @@ export async function recordBurnInRun(tx: Tx, actor: AuthzActor, unitId: string,
   await authorize(tx, actor, "device.assembly.execute", orgId);
   if (unit.status !== "BURN_IN") {
     throw invalid("Máy phải đang ở trạng thái Chạy lão hóa (BURN_IN) mới ghi được kết quả lão hóa.");
+  }
+  if (d.test_asset_id) {
+    await assertUsable(tx, d.test_asset_id);
   }
   const model = (
     await tx.query("SELECT required_burn_in_hours::float AS req FROM device.device_model WHERE id = $1", [unit.model_id])
@@ -851,16 +856,26 @@ export async function recordBurnInRun(tx: Tx, actor: AuthzActor, unitId: string,
     action: "record_burn_in",
     changes: { burn_in: [null, `${d.hours}h / ${reqHours}h — ${d.result}`] },
   });
+  if (d.result === "FAIL") {
+    await raiseDeviation(tx, actor, {
+      source_module: "DEVICE",
+      entity_type: "DEVICE_UNIT",
+      entity_id: unit.id,
+      step_ref: "BURN_IN",
+      severity: "HIGH",
+      description: `Lão hóa (Burn-In) máy SN ${unit.serial_no} không đạt (${d.hours}h/${reqHours}h)${d.notes ? ": " + d.notes : ""}`,
+    });
+  }
   return run;
 }
 
 const fqcResultSchema = z.object({
   passed: z.boolean(),
+  test_asset_id: z.string().uuid().optional().nullable(),
   summary: z.string().trim().min(3, "nhập tóm tắt biên bản đo kiểm FQC").max(2000),
 });
 
 export async function recordUnitFqcResult(tx: Tx, actor: AuthzActor, unitId: string, input: unknown) {
-  await tx.query("ALTER TABLE device.device_unit ADD COLUMN IF NOT EXISTS assembled_by integer");
   const d = parseInput(fqcResultSchema, input);
   const unit = (await tx.query("SELECT * FROM device.device_unit WHERE id = $1 FOR UPDATE", [unitId])).rows[0] as
     | DeviceUnitRow
@@ -877,6 +892,9 @@ export async function recordUnitFqcResult(tx: Tx, actor: AuthzActor, unitId: str
   }
   if (unit.status !== "FQC") {
     throw invalid("Máy phải đang ở trạng thái Kiểm tra xuất xưởng (FQC) mới ghi được kết quả FQC.");
+  }
+  if (d.test_asset_id) {
+    await assertUsable(tx, d.test_asset_id);
   }
   const inst = await tx.query(
     "SELECT 1 FROM device.device_unit_component WHERE unit_id = $1 AND installed_by = $2 LIMIT 1",

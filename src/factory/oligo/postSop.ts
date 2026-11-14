@@ -210,7 +210,12 @@ export async function logStep(tx: Tx, actor: AuthzActor, input: unknown) {
   const ids = [...new Set(data.sequence_ids)].sort();
   const done = [];
   for (const seqId of ids) {
-    const s = (await tx.query("SELECT id, code, org_unit_id, status FROM oligo.oligo_sequence WHERE id = $1 FOR UPDATE", [seqId])).rows[0];
+    const s = (
+      await tx.query(
+        "SELECT id, code, org_unit_id, status, molecule_type, raw_sequence FROM oligo.oligo_sequence WHERE id = $1 FOR UPDATE",
+        [seqId]
+      )
+    ).rows[0];
     if (!s) throw notFound("trình tự");
     await authorize(tx, actor, "oligo.post.manage", s.org_unit_id);
     const rec = (await tx.query("SELECT * FROM oligo.post_process WHERE sequence_id = $1 AND status <> 'VOID' FOR UPDATE", [seqId])).rows[0];
@@ -224,8 +229,16 @@ export async function logStep(tx: Tx, actor: AuthzActor, input: unknown) {
     if (step.kind === "QUANTIFICATION" && !(Number(rec.od_total) > 0)) throw invalid(`${s.code}: lưu kết quả đo OD trước khi xác nhận bước "${step.name}".`, undefined, "OD_MISSING");
     const values = await cleanValues(tx, step, data.values);
     const docId = await issueStepReagents(tx, actor, s, rec.id, step, values);
+    const seqMoleculeType = /\[r[ACGU]\]|m[ACGU]/i.test(String(s.raw_sequence || ""))
+      ? "RNA"
+      : (s.molecule_type ?? null);
     for (const f of step.fields.filter((x) => x.type === "COLUMN" && values[x.key])) {
-      await recordColumnRun(tx, actor, String(values[f.key]), { post_process_id: rec.id, sequence_code: s.code, step_name: step.name });
+      await recordColumnRun(tx, actor, String(values[f.key]), {
+        post_process_id: rec.id,
+        sequence_code: s.code,
+        step_name: step.name,
+        molecule_type: seqMoleculeType,
+      });
     }
     await tx.query("INSERT INTO oligo.ps_step_log (post_process_id, step_no, method_id, step_name, values, stock_document_id, performed_by) VALUES ($1, $2, $3, $4, $5, $6, $7)", [
       rec.id, step.step_no, step.method_id, step.name, JSON.stringify(values), docId, actor.userId,

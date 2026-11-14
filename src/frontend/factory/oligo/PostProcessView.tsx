@@ -213,6 +213,7 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
   const [orderFilter, setOrderFilter] = useState("ALL");
   const [searchQuery, setSearchQuery] = useState("");
   const [batchA260, setBatchA260] = useState("");
+  const [batchTsvText, setBatchTsvText] = useState("");
   const [batchDilution, setBatchDilution] = useState("10");
   const [batchVolUl, setBatchVolUl] = useState("200");
   const [batchTubeCount, setBatchTubeCount] = useState("1");
@@ -226,9 +227,42 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
     mutationFn: (payload: Record<string, unknown>) => api("/api/factory/oligo/post", { method: "POST", json: payload }),
     onSuccess: () => {
       setPicked([]);
+      setBatchTsvText("");
       refreshKeys.forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k] }));
     },
   });
+
+  const parsedPerSeqA260 = useMemo(() => {
+    const map: Record<string, number> = {};
+    if (!batchTsvText.trim()) return map;
+    const pickedRows = (list.data ?? []).filter((r) => picked.includes(r.id));
+    const codeToId = new Map((list.data ?? []).map((r) => [r.code.trim().toUpperCase(), r.id]));
+    const lines = batchTsvText
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    let seqIdx = 0;
+    for (const line of lines) {
+      const parts = line.split(/[\t,;]+|\s{2,}/).map((p) => p.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        const matchedId = picked.includes(parts[0]) ? parts[0] : codeToId.get(parts[0].toUpperCase());
+        const num = Number(parts[parts.length - 1].replace(",", "."));
+        if (matchedId && picked.includes(matchedId) && Number.isFinite(num) && num > 0 && num <= 1000) {
+          map[matchedId] = num;
+        }
+      } else if (parts.length === 1) {
+        const num = Number(parts[0].replace(",", "."));
+        if (Number.isFinite(num) && num > 0 && num <= 1000) {
+          while (seqIdx < pickedRows.length && map[pickedRows[seqIdx].id] !== undefined) seqIdx++;
+          if (seqIdx < pickedRows.length) {
+            map[pickedRows[seqIdx].id] = num;
+            seqIdx++;
+          }
+        }
+      }
+    }
+    return map;
+  }, [batchTsvText, list.data, picked]);
 
   const orderGroups = useMemo(() => {
     const map = new Map<string, { key: string; label: string; count: number }>();
@@ -420,7 +454,7 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                   </div>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-6 items-end pt-1 border-t border-sky-200 dark:border-sky-800/70">
-                  <Field label="A260 đo được (bắt buộc > 0)">
+                  <Field label="A260 đo được (chung nếu không dán bảng)">
                     <input
                       className={inputClass}
                       inputMode="decimal"
@@ -440,37 +474,61 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                   </Field>
                   <Button
                     variant="ghost"
-                    disabled={batchAct.isPending || !(Number(batchA260.replace(",", ".")) > 0)}
-                    onClick={() =>
+                    disabled={
+                      batchAct.isPending ||
+                      (!(Number(batchA260.replace(",", ".")) > 0) && !picked.every((id) => parsedPerSeqA260[id] > 0))
+                    }
+                    onClick={() => {
+                      const fallback = Number(batchA260.replace(",", "."));
                       batchAct.mutate({
                         action: "batch_measure",
                         sequence_ids: picked,
-                        a260: Number(batchA260.replace(",", ".")),
+                        ...(fallback > 0 ? { a260: fallback } : {}),
+                        ...(Object.keys(parsedPerSeqA260).length > 0 ? { per_sequence_a260: parsedPerSeqA260 } : {}),
                         dilution_factor: Number(batchDilution || 10),
                         stock_volume_ul: Number(batchVolUl || 200),
                         tube_count: Number(batchTubeCount || 1),
                         auto_submit_qc: false,
-                      })
-                    }
+                      });
+                    }}
                   >
                     🧪 Ghi Cắt cột + Tinh sạch + Đo OD Hàng loạt
                   </Button>
                   <Button
-                    disabled={batchAct.isPending || !(Number(batchA260.replace(",", ".")) > 0)}
-                    onClick={() =>
+                    disabled={
+                      batchAct.isPending ||
+                      (!(Number(batchA260.replace(",", ".")) > 0) && !picked.every((id) => parsedPerSeqA260[id] > 0))
+                    }
+                    onClick={() => {
+                      const fallback = Number(batchA260.replace(",", "."));
                       batchAct.mutate({
                         action: "batch_measure",
                         sequence_ids: picked,
-                        a260: Number(batchA260.replace(",", ".")),
+                        ...(fallback > 0 ? { a260: fallback } : {}),
+                        ...(Object.keys(parsedPerSeqA260).length > 0 ? { per_sequence_a260: parsedPerSeqA260 } : {}),
                         dilution_factor: Number(batchDilution || 10),
                         stock_volume_ul: Number(batchVolUl || 200),
                         tube_count: Number(batchTubeCount || 1),
                         auto_submit_qc: true,
-                      })
-                    }
+                      });
+                    }}
                   >
                     🚀 Hoàn tất Hậu tổng hợp &amp; Gửi QC Hàng loạt
                   </Button>
+                </div>
+                <div className="pt-1 border-t border-sky-200/70 dark:border-sky-800/50 space-y-1">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-medium text-sky-900 dark:text-sky-200">
+                    <span>📋 Dán bảng kết quả máy đọc khay / NanoDrop (96 giếng): mỗi dòng `Mã_Trình_Tự[Tab]A260` hoặc cột số A260 theo thứ tự đã chọn</span>
+                    <span className="font-mono">
+                      Đã khớp: <b>{Object.keys(parsedPerSeqA260).length}</b> / {picked.length} trình tự
+                    </span>
+                  </div>
+                  <textarea
+                    className={`${inputClass} min-h-[68px] font-mono text-xs`}
+                    placeholder={"VD:\nOL-2601-001\t1.45\nOL-2601-002\t1.62"}
+                    value={batchTsvText}
+                    onChange={(e) => setBatchTsvText(e.target.value)}
+                  />
                 </div>
                 <BulkStep
                   ids={picked}

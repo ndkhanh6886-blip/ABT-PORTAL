@@ -16,6 +16,7 @@ export interface Ncr {
   lot_id: string | null;
   disposition: string;
   proposed_by: number | null;
+  qa_approved_by?: number | null;
   status: NcrStatus;
   version: number;
 }
@@ -94,6 +95,7 @@ export const ncrMachine = defineMachine<NcrStatus, Ncr>({
       permission: "qms.ncr.approve",
       signature: "REVIEWED",
       guards: [notProposer, { code: "NOT_CONCESSION", message: "Chỉ dùng cho chấp nhận đặc cách.", check: ({ row }) => row.disposition === "USE_AS_IS" }],
+      patch: ({ actor }) => ({ qa_approved_by: actor.userId, qa_approved_at: new Date() }),
     },
     {
       action: "bod_approve",
@@ -101,7 +103,14 @@ export const ncrMachine = defineMachine<NcrStatus, Ncr>({
       to: "APPROVED",
       permission: "qms.ncr.approve_bod",
       signature: "APPROVED",
-      guards: [notProposer],
+      guards: [
+        notProposer,
+        {
+          code: "SOD_QA_BOD",
+          message: "Người phê duyệt Ban Giám Đốc phải khác người đã duyệt QA.",
+          check: ({ actor, row }) => Boolean(actor.isRootAdmin || !row.qa_approved_by || row.qa_approved_by !== actor.userId),
+        },
+      ],
       patch: ({ actor }) => ({ disposition_approved_by: actor.userId }),
       effects: ({ tx, actor, updated }) => applyDisposition(tx, actor, updated),
     },
@@ -139,6 +148,7 @@ interface Deviation {
   root_cause?: string | null;
   corrective_action?: string | null;
   preventive_action?: string | null;
+  effectiveness_summary?: string | null;
 }
 
 const capaSchema = z.object({
@@ -193,10 +203,14 @@ export const deviationMachine = defineMachine<DevStatus, Deviation>({
         },
         {
           code: "CAPA_REQUIRED",
-          message: "Phải ghi nhận nguyên nhân gốc (root_cause) trước khi đóng sai lệch; sai lệch mức HIGH/CRITICAL phải có đầy đủ CAPA (nguyên nhân, khắc phục, phòng ngừa).",
-          check: ({ row: d }) =>
-            Boolean(d.root_cause && d.root_cause.trim()) &&
-            (!serious(d.severity) || Boolean(d.corrective_action && d.preventive_action)),
+          message: "Phải ghi nhận nguyên nhân gốc (root_cause / lý do) trước khi đóng sai lệch; sai lệch mức HIGH/CRITICAL phải có đầy đủ CAPA và đánh giá hiệu lực (effectiveness_summary).",
+          check: ({ row: d, reason, payload }) => {
+            if (!serious(d.severity)) {
+              return Boolean((d.root_cause && d.root_cause.trim()) || (reason && reason.trim()));
+            }
+            const eff = String(payload?.effectiveness_summary ?? d.effectiveness_summary ?? "").trim();
+            return Boolean(d.root_cause?.trim() && d.corrective_action?.trim() && d.preventive_action?.trim() && eff.length >= 5);
+          },
         },
         {
           code: "NOT_REPORTER",
@@ -204,7 +218,13 @@ export const deviationMachine = defineMachine<DevStatus, Deviation>({
           check: ({ row: d, actor }) => (d.reported_by ?? d.detected_by) !== actor.userId,
         },
       ],
-      patch: () => ({ closed_at: new Date() }),
+      patch: ({ actor, row, reason, payload }) => ({
+        closed_at: new Date(),
+        root_cause: row.root_cause?.trim() ? row.root_cause : reason?.trim() || null,
+        effectiveness_summary: String(payload?.effectiveness_summary ?? row.effectiveness_summary ?? "").trim() || null,
+        capa_verified_by: serious(row.severity) ? actor.userId : null,
+        capa_verified_at: serious(row.severity) ? new Date() : null,
+      }),
     },
   ],
 });

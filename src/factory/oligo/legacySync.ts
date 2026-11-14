@@ -44,16 +44,6 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
 
   await tx.query("SAVEPOINT legacy_oligo_seed_sp");
   try {
-    // 0. Mở rộng bảng asset.lc_column để tương thích hoàn toàn với "Khấu hao & Sử dụng Cột sắc ký HPLC" trên abt-portal.online
-    await tx.query(`
-      ALTER TABLE asset.lc_column
-        ADD COLUMN IF NOT EXISTS lot_code text,
-        ADD COLUMN IF NOT EXISTS catalog_code text,
-        ADD COLUMN IF NOT EXISTS brand text DEFAULT 'Waters',
-        ADD COLUMN IF NOT EXISTS initial_used_runs integer NOT NULL DEFAULT 0,
-        ADD COLUMN IF NOT EXISTS remaining_runs_override integer
-    `);
-
     const oligoUnit = (
       await tx.query("SELECT id FROM core.org_unit WHERE code = 'P-OLIGO' OR module_key = 'OLIGO' ORDER BY code LIMIT 1")
     ).rows[0];

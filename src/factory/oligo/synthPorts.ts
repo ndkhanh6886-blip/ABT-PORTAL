@@ -23,13 +23,26 @@ export interface Port {
   label: string | null;
   item_id?: string | null;
   current_lot_id: string | null;
+  installed_at?: string | null;
+  open_stability_hours?: number | null;
   version: number;
 }
 
+function assertPortOpenStability(p: { port_no: number; role: string; installed_at?: string | Date | null; open_stability_hours?: number | null }) {
+  if (p.open_stability_hours && p.installed_at) {
+    const elapsedMs = Date.now() - new Date(p.installed_at).getTime();
+    if (elapsedMs > Number(p.open_stability_hours) * 3600_000) {
+      throw invalid(
+        `Hóa chất trên cổng ${p.port_no} (${p.role}) đã quá hạn mở nắp (${p.open_stability_hours}h). Thay chai mới trước khi chạy mẻ.`,
+        undefined,
+        "REAGENT_OPEN_EXPIRED"
+      );
+    }
+  }
+}
+
 let synthPortSchemaEnsured = false;
-async function ensureSynthPortSchema(tx: Tx) {
-  if (synthPortSchemaEnsured) return;
-  await tx.query("ALTER TABLE oligo.synth_port ADD COLUMN IF NOT EXISTS item_id uuid REFERENCES master.item(id)");
+async function ensureSynthPortSchema(_tx: Tx) {
   synthPortSchemaEnsured = true;
 }
 
@@ -96,6 +109,7 @@ const portsSchema = z.object({
         label: z.string().trim().max(100).optional().nullable(),
         item_id: z.string().uuid().optional().nullable(),
         current_lot_id: z.string().uuid().optional().nullable(),
+        open_stability_hours: z.coerce.number().int().positive().max(8760).optional().nullable(),
       })
     )
     .max(200),
@@ -134,9 +148,13 @@ export async function configurePorts(tx: Tx, actor: AuthzActor, synthId: string,
   for (const p of ports) {
     const resolvedItemId = p.item_id ?? (await itemForRole(tx, p.role));
     await tx.query(
-      `INSERT INTO oligo.synth_port (synthesizer_id, port_no, role, label, item_id) VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (synthesizer_id, port_no) DO UPDATE SET label = EXCLUDED.label, item_id = EXCLUDED.item_id, version = oligo.synth_port.version + 1`,
-      [synthId, p.port_no, p.role, p.label ?? null, resolvedItemId]
+      `INSERT INTO oligo.synth_port (synthesizer_id, port_no, role, label, item_id, open_stability_hours) VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (synthesizer_id, port_no) DO UPDATE
+         SET label = EXCLUDED.label,
+             item_id = EXCLUDED.item_id,
+             open_stability_hours = CASE WHEN $7 THEN EXCLUDED.open_stability_hours ELSE oligo.synth_port.open_stability_hours END,
+             version = oligo.synth_port.version + 1`,
+      [synthId, p.port_no, p.role, p.label ?? null, resolvedItemId, p.open_stability_hours ?? null, p.open_stability_hours !== undefined]
     );
     if (p.current_lot_id !== undefined) {
       const existingPort = cur.find((c) => c.port_no === p.port_no && c.role === p.role);
@@ -240,7 +258,7 @@ export async function listPorts(tx: Tx, actor: AuthzActor, synthId: string) {
 
   const ports = (
     await tx.query(
-      `SELECT p.port_no, p.role, p.label, p.item_id, p.current_lot_id, p.installed_at, l.code AS lot_code, l.expiry_date, r.name AS rule_name, r.display_name, r.qty::float AS rule_qty, r.uom AS rule_uom, r.basis AS rule_basis
+      `SELECT p.port_no, p.role, p.label, p.item_id, p.current_lot_id, p.installed_at, p.open_stability_hours, l.code AS lot_code, l.expiry_date, r.name AS rule_name, r.display_name, r.qty::float AS rule_qty, r.uom AS rule_uom, r.basis AS rule_basis
          FROM oligo.synth_port p LEFT JOIN inv.lot l ON l.id = p.current_lot_id LEFT JOIN oligo.reagent_rule r ON r.role = p.role
         WHERE p.synthesizer_id = $1 ORDER BY p.port_no`,
       [synthId]
@@ -280,7 +298,7 @@ export async function listPorts(tx: Tx, actor: AuthzActor, synthId: string) {
  * installed); the rest are returned for the usual FEFO reservation. Records which bottle the batch holds.
  */
 export async function reservePortLines(tx: Tx, actor: AuthzActor, batch: { id: string; synthesizer_id: string; org_unit_id: string }, lines: ConsumptionLine[]) {
-  const ports: Port[] = (await tx.query("SELECT * FROM oligo.synth_port WHERE synthesizer_id = $1", [batch.synthesizer_id])).rows;
+  const ports: Port[] = (await tx.query("SELECT * FROM oligo.synth_port WHERE synthesizer_id = $1 ORDER BY port_no FOR UPDATE", [batch.synthesizer_id])).rows;
   const warehouses = await warehousesOf(tx, batch.org_unit_id);
   const rest: ConsumptionLine[] = [];
   const perItem = new Map<string, number>();
@@ -291,6 +309,7 @@ export async function reservePortLines(tx: Tx, actor: AuthzActor, batch: { id: s
       continue;
     }
     if (!port.current_lot_id) throw invalid(`Cổng ${port.port_no} (${l.label}) chưa lắp chai. Lắp chai ở tab Thiết bị & định mức trước khi lập mẻ.`, undefined, "PORT_EMPTY");
+    assertPortOpenStability(port);
     const itemId = (await tx.query("SELECT item_id FROM inv.lot WHERE id = $1", [port.current_lot_id])).rows[0].item_id;
     const qty = Math.round((await toBaseQty(tx, await getItem(tx, itemId), l.qty, l.uom)) * 1e6) / 1e6;
     if (qty > 0) await reserveLot(tx, actor, { lot_id: port.current_lot_id, qty_base: qty, warehouse_ids: warehouses, demand_entity_type: DEMAND, demand_entity_id: batch.id });
@@ -304,14 +323,24 @@ export async function reservePortLines(tx: Tx, actor: AuthzActor, batch: { id: s
 
 /** Start: a bottle changed on a port since the plan moves the batch's hold to the bottle now installed. */
 export async function followInstalledBottles(tx: Tx, actor: AuthzActor, batch: { id: string; code: string; synthesizer_id: string; org_unit_id: string }) {
+  await tx.query("SELECT * FROM oligo.synth_port WHERE synthesizer_id = $1 ORDER BY port_no FOR UPDATE", [batch.synthesizer_id]);
   const uses = (
     await tx.query(
-      `SELECT u.*, p.current_lot_id FROM oligo.batch_port_use u LEFT JOIN oligo.synth_port p ON p.synthesizer_id = $2 AND p.role = u.role WHERE u.batch_id = $1 ORDER BY u.role`,
+      `SELECT u.*, p.current_lot_id, p.installed_at, p.open_stability_hours
+         FROM oligo.batch_port_use u
+         LEFT JOIN oligo.synth_port p ON p.synthesizer_id = $2 AND p.role = u.role
+        WHERE u.batch_id = $1 ORDER BY u.role`,
       [batch.id, batch.synthesizer_id]
     )
   ).rows;
   const warehouses = await warehousesOf(tx, batch.org_unit_id);
   for (const u of uses) {
+    assertPortOpenStability({
+      port_no: u.port_no,
+      role: u.role,
+      installed_at: u.installed_at,
+      open_stability_hours: u.open_stability_hours,
+    });
     if (u.current_lot_id === u.lot_id) continue;
     if (!u.current_lot_id) throw invalid(`Cổng ${u.port_no} (${u.role}) đang không có chai.`, undefined, "PORT_EMPTY");
     await releaseDemandLotReservations(tx, actor, DEMAND, batch.id, u.lot_id, `Đổi chai trên cổng ${u.port_no} trước khi chạy mẻ ${batch.code}`);

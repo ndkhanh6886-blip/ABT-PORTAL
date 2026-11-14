@@ -7,6 +7,7 @@ import { lotMachine } from "../../inv/lots";
 import { makeItem, makeSite, stockedLot } from "../../inv/__tests__/fixtures";
 import { evaluateResult, overallResult } from "../evaluate";
 import { approveSpec, createSpecDraft, specMachine, updateSpecDraft } from "../specs";
+import { deviationMachine, ncrMachine } from "../ncr";
 import { createRetest, qcTestMachine, saveResults } from "../qcTests";
 import "../../modules";
 
@@ -32,12 +33,14 @@ const signed = { credential: { method: "PIN" as const, secret: PIN } };
 
 async function people() {
   const author = await createUser("Soạn tiêu chuẩn");
-  await grant(author, ["qms.spec.manage", "qms.qc.view"]);
+  await grant(author, ["qms.spec.manage", "qms.qc.view", "qms.ncr.propose"]);
   const analyst = await createUser("Kiểm nghiệm viên", PIN);
   await grant(analyst, ["qms.qc.view", "qms.qc.analyze", "inv.lot.sample", "qms.qc.review", "inv.lot.release"]);
   const qa = await createUser("QA", PIN);
-  await grant(qa, ["qms.qc.view", "qms.qc.review", "qms.qc.lead", "qms.spec.approve", "inv.lot.release", "inv.lot.reject", "inv.lot.hold"]);
-  return { author, analyst, qa };
+  await grant(qa, ["qms.qc.view", "qms.qc.review", "qms.qc.lead", "qms.spec.approve", "qms.ncr.approve", "inv.lot.release", "inv.lot.reject", "inv.lot.hold"]);
+  const qaLead = await createUser("Trưởng QA", PIN);
+  await grant(qaLead, ["qms.qc.view", "qms.qc.review", "qms.ncr.approve"]);
+  return { author, analyst, qa, qaLead };
 }
 
 async function effectiveSpec(itemId: string, p: Awaited<ReturnType<typeof people>>, appliesTo = "ITEM") {
@@ -146,6 +149,33 @@ describe("lot QC → release", () => {
     );
     await act(qcTestMachine, p.analyst, "qms.qc_test", retest.id, "submit_results");
     await act(qcTestMachine, p.qa, "qms.qc_test", retest.id, "review", signed);
+
+    // Open OOS NCR / HIGH deviation from failed t1 still blocks release until investigated & closed with CAPA effectiveness
+    await expect(act(lotMachine, p.qa, "inv.lot", lot.id, "release", signed)).rejects.toThrow(/NCR chưa đóng/);
+    const ncrRow = (await getFactoryPool().query("SELECT id, deviation_id FROM qms.ncr WHERE lot_id = $1", [lot.id])).rows[0];
+    await act(ncrMachine, p.author, "qms.ncr", ncrRow.id, "propose", { payload: { disposition: "REWORK", note: "Tái kiểm nghiệm lô mẫu đạt chuẩn" } });
+    await act(ncrMachine, p.qa, "qms.ncr", ncrRow.id, "approve", signed);
+    await act(ncrMachine, p.qa, "qms.ncr", ncrRow.id, "close", { ...signed, reason: "Đã tái kiểm nghiệm đạt" });
+    await act(deviationMachine, p.author, "qms.deviation", ncrRow.deviation_id, "investigate");
+    await act(deviationMachine, p.author, "qms.deviation", ncrRow.deviation_id, "define_action", {
+      payload: {
+        root_cause: "Mẫu lần 1 lấy sai thao tác hút",
+        corrective_action: "Lấy lại mẫu đại diện và kiểm lại đạt 98.5%",
+        preventive_action: "Đào tạo lại SOP lấy mẫu cho KTV",
+      },
+    });
+    await expect(
+      act(deviationMachine, p.qa, "qms.deviation", ncrRow.deviation_id, "close", {
+        ...signed,
+        reason: "Đã xác minh CAPA hiệu quả",
+        payload: { effectiveness_summary: "Phiếu retest đạt 98.5% và đã nhắc nhở SOP lấy mẫu" },
+      })
+    ).rejects.toMatchObject({ code: "GUARD_FAILED", details: expect.arrayContaining([expect.objectContaining({ code: "NOT_REPORTER" })]) });
+    await act(deviationMachine, p.qaLead, "qms.deviation", ncrRow.deviation_id, "close", {
+      ...signed,
+      reason: "Đã xác minh CAPA hiệu quả",
+      payload: { effectiveness_summary: "Phiếu retest đạt 98.5% và đã nhắc nhở SOP lấy mẫu" },
+    });
 
     await expect(act(lotMachine, p.analyst, "inv.lot", lot.id, "release", signed)).rejects.toThrow(/khác người kiểm nghiệm/);
     const released = await act(lotMachine, p.qa, "inv.lot", lot.id, "release", signed);

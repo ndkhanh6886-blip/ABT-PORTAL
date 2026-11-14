@@ -38,7 +38,7 @@ async function ncrAct(actor: AuthzActor, id: string, action: string, extra: Part
 }
 
 async function order(internalOrderId: string | null = null, text = "F; ACGTACGTACGTACGTAC") {
-  const o = await withTransaction((tx) => createOligoOrder(tx, op, { org_unit_id: dept, internal_order_id: internalOrderId }));
+  const o = await withTransaction((tx) => createOligoOrder(tx, op, { org_unit_id: dept, internal_order_id: internalOrderId, auto_internal_order: Boolean(internalOrderId) }));
   await withTransaction((tx) => addSequences(tx, op, o.id, { text, defaults: { scale_code: "100NMOL", purification: "DESALT", format: "LYOPHILIZED" } }));
   const seqs = (await db().query("SELECT * FROM oligo.oligo_sequence WHERE order_id = $1 ORDER BY line_no", [o.id])).rows;
   return { o, seqs };

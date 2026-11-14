@@ -77,14 +77,22 @@ export const SYSTEM_ACTOR: AuthzActor = { userId: 0, name: "Hệ thống", isSys
  * True when the user holds the permission through an active role (own or delegated to them), whose
  * scope is the whole company or `orgUnitId` / one of its parent units.
  */
+const QA_CROSS_DEPT_PERMS = new Set([
+  "inv.lot.release",
+  "inv.lot.hold",
+  "inv.lot.reject",
+  "kit.order.release",
+  "device.unit.release",
+  "device.qa.release",
+]);
+
 export async function hasFactoryPermission(tx: Tx, actor: AuthzActor, permission: string, orgUnitId?: string | null): Promise<boolean> {
   const def = registry.get(permission);
   if (!def) throw new Error(`Quyền chưa được khai báo: ${permission}`);
   if (def.systemOnly || actor.isSystem) return Boolean(def.systemOnly && actor.isSystem);
   if (actor.isRootAdmin) return true;
   if (def.bootstrapAdmin && actor.isPortalAdmin) return true;
-  // Khối Kinh Doanh & toàn bộ nhân sự nội bộ đều được xem/theo dõi tiến độ Đơn Nội Bộ chuyển sản xuất
-  if (permission === "intake.order.view" && actor.userId > 0) return true;
+  const isQaCrossDept = permission.startsWith("qms.") || QA_CROSS_DEPT_PERMS.has(permission);
   const res = await tx.query(
     `WITH RECURSIVE ancestors AS (
        SELECT id, parent_id FROM core.org_unit WHERE id = $3::uuid
@@ -104,9 +112,12 @@ export async function hasFactoryPermission(tx: Tx, actor: AuthzActor, permission
        JOIN core.role r ON r.id = g.role_id AND r.status = 'ACTIVE'
        JOIN core.role_permission rp ON rp.role_id = g.role_id AND rp.permission_code = $2
        JOIN core.user_profile up ON up.user_id = $1 AND up.status = 'ACTIVE'
-      WHERE g.scope_org_unit_id IS NULL OR g.scope_org_unit_id IN (SELECT id FROM ancestors)
+       LEFT JOIN core.org_unit g_ou ON g_ou.id = g.scope_org_unit_id
+      WHERE g.scope_org_unit_id IS NULL
+         OR g.scope_org_unit_id IN (SELECT id FROM ancestors)
+         OR ($4::boolean AND g_ou.module_key = 'QA')
       LIMIT 1`,
-    [actor.userId, permission, orgUnitId ?? null]
+    [actor.userId, permission, orgUnitId ?? null, isQaCrossDept]
   );
   return (res.rowCount ?? 0) > 0;
 }

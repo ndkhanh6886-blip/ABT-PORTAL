@@ -144,13 +144,13 @@
  },
  {
   "input": "AC5mCGT",
-  "mw": 1477.04,
-  "tm": -42.2,
-  "ec": 47600.0,
-  "nmol_od": 21.01,
-  "ug_od": 31.03,
-  "length": 4,
-  "gc": 50.0,
+  "mw": 1477.05,
+  "tm": -18.8,
+  "ec": 47500.0,
+  "nmol_od": 21.05,
+  "ug_od": 31.1,
+  "length": 5,
+  "gc": 60.0,
   "type": "Probe"
  },
  {
@@ -199,7 +199,7 @@
  },
  {
   "input": "/TXR/ATGCTTTAGCAGGAC/BHQ2/",
-  "mw": 6029.56,
+  "mw": 6029.59,
   "tm": 43.6,
   "ec": 169000.0,
   "nmol_od": 5.92,
@@ -322,9 +322,9 @@
   "input": "/DABCYL/ACGTACGTAC",
   "mw": 3435.53,
   "tm": 26.9,
-  "ec": 132400.0,
-  "nmol_od": 7.55,
-  "ug_od": 25.95,
+  "ec": 111400.0,
+  "nmol_od": 8.98,
+  "ug_od": 30.84,
   "length": 10,
   "gc": 50.0,
   "type": "Probe"
@@ -377,9 +377,9 @@
   "input": "/CY7/ACGTACGT",
   "mw": 3058.44,
   "tm": 19.1,
-  "ec": 278900.0,
-  "nmol_od": 3.59,
-  "ug_od": 10.97,
+  "ec": 89900.0,
+  "nmol_od": 11.12,
+  "ug_od": 34.02,
   "length": 8,
   "gc": 50.0,
   "type": "Probe"
@@ -452,13 +452,13 @@
  },
  {
   "input": "/FAM/A+CG+TmAfC5mCGTA/BHQ1/",
-  "mw": 4159.07,
-  "tm": 20.2,
-  "ec": 130900.0,
-  "nmol_od": 7.64,
-  "ug_od": 31.77,
-  "length": 9,
-  "gc": 44.4,
+  "mw": 4159.08,
+  "tm": 27.9,
+  "ec": 130800.0,
+  "nmol_od": 7.65,
+  "ug_od": 31.8,
+  "length": 10,
+  "gc": 50.0,
   "type": "Probe"
  }
 ]

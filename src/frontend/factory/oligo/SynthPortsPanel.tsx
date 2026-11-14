@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, fmtDate, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, inputClass, Table } from "../ui";
+import { BarcodeScanVerifier } from "../BarcodeScanVerifier";
 import { ItemPicker } from "./EquipmentView";
 
 interface PortRow {
@@ -174,6 +175,12 @@ export function SynthPortsPanel({ synthId, canConfigure, canOperate, onClose }: 
       {d && !editing && (
         <div className="flex flex-col gap-3">
           {d.ports.length === 0 && <Empty>Chưa khai báo cổng. Máy chưa có cổng thì hóa chất được giữ chỗ theo hạn dùng (FEFO) từ kho.</Empty>}
+          {d.ports.length > 0 && (
+            <BarcodeScanVerifier
+              label="Quét mã vạch chai hóa chất trên cổng"
+              expectedCodes={d.ports.map((p) => p.lot_code).filter((x): x is string => Boolean(x))}
+            />
+          )}
           {d.ports.length > 0 && (
             <Table head={["Cổng", "Vai trò & Hóa chất", "Mã hóa chất / Reagent kho", "Định mức", "Chai / Lô đang lắp", "Còn (sổ kho)", "Hạn dùng", "Lắp / thay chai", "Tháo chai (đo lượng còn)"]}>
               {d.ports.map((p) => (

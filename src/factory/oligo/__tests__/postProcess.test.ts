@@ -43,6 +43,7 @@ beforeAll(async () => {
 async function synthesized(text = "F; ACGTACGTACGTACGTAC") {
   const order = await withTransaction((tx) => createOligoOrder(tx, op, { org_unit_id: dept }));
   await withTransaction((tx) => addSequences(tx, op, order.id, { text, defaults: { scale_code: "100NMOL", purification: "DESALT", format: "LYOPHILIZED" } }));
+  await db().query("UPDATE oligo.ps_workflow SET status = 'INACTIVE' WHERE 'DESALT' = ANY(purifications)");
   const s = (await db().query("SELECT * FROM oligo.oligo_sequence WHERE order_id = $1", [order.id])).rows[0];
   await db().query("UPDATE oligo.oligo_sequence SET status = 'SYNTHESIZED' WHERE id = $1", [s.id]); // stands in for a finished batch
   return { order, s };

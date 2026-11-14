@@ -37,15 +37,6 @@ const assetSchema = z.object({
 let assetExtraColsEnsured = false;
 export async function ensureAssetExtraColumnsSchema(tx: Tx): Promise<void> {
   if (assetExtraColsEnsured) return;
-  await tx.query("SELECT pg_advisory_xact_lock(2026111404)");
-  if (assetExtraColsEnsured) return;
-  await tx.query(`
-    ALTER TABLE asset.asset DROP CONSTRAINT IF EXISTS asset_code_check;
-    ALTER TABLE asset.asset ADD COLUMN IF NOT EXISTS location text;
-    ALTER TABLE asset.asset ADD COLUMN IF NOT EXISTS equipment_category text;
-    ALTER TABLE asset.asset ADD COLUMN IF NOT EXISTS last_calibration_date date;
-    ALTER TABLE asset.asset ADD COLUMN IF NOT EXISTS notes text;
-  `);
   assetExtraColsEnsured = true;
 }
 

@@ -6,6 +6,8 @@ import JsBarcode from "jsbarcode";
 import { ActionBar } from "../actions";
 import { api, fmtDate, fmtDateTime, fmtQty, vnToday } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
+import { BarcodeScanVerifier } from "../BarcodeScanVerifier";
+import { barcode128SvgMarkup } from "../barcodeSvg";
 import {
   ABT_KIT_SUPPLY_FORMS,
   ABT_TUBE_STRIP_CATALOG,
@@ -483,6 +485,10 @@ export function OrdersEbrView({
       <div>Mã biểu mẫu: <b>BM-SX-KIT-01 (Rev 03)</b></div>
       <div>Mã Lệnh SX: <b>${o.code}</b></div>
       <div>Ngày in: ${new Date().toLocaleString("vi-VN")}</div>
+      <div style="margin-top:4px;display:flex;gap:8px;justify-content:flex-end;align-items:center;">
+        ${barcode128SvgMarkup(String(o.code ?? ""), 26)}
+        ${o.lot_code ? barcode128SvgMarkup(String(o.lot_code), 24) : ""}
+      </div>
     </div>
   </div>
   <div class="title">
@@ -1801,6 +1807,11 @@ export function OrdersEbrView({
                                     <div key={c.id}>
                                       <b className="text-emerald-700 dark:text-emerald-400">{c.lot_code || "Lô FEFO"}</b>{" "}
                                       {c.expiry_date ? `(HSD: ${fmtDate(c.expiry_date)})` : ""}
+                                      {c.expiry_shorter_than_product && (
+                                        <span className="ml-1 inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 dark:bg-amber-950/70 dark:text-amber-300 font-sans font-semibold">
+                                          ⚠️ HSD NVL &lt; HSD Kit
+                                        </span>
+                                      )}
                                     </div>
                                   ))
                                 : eb.lot_code
@@ -2258,25 +2269,31 @@ export function OrdersEbrView({
                 {detail.consumptions.length === 0 ? (
                   <Empty>Xác nhận lệnh sản xuất để hệ thống tự động phân bổ lô nguyên vật liệu theo FEFO.</Empty>
                 ) : (
-                  <Table
-                    head={[
-                      "Hộp / Vai trò",
-                      "Vật tư / Bán TP",
-                      "Lô FEFO & Hạn dùng",
-                      "Định mức",
-                      "Đã xuất",
-                      "Thực dùng & Giải trình",
-                    ]}
-                  >
-                    {detail.consumptions.map((c: any) => (
-                      <ConsumptionRow
-                        key={c.id}
-                        row={c}
-                        locked={["COMPLETED", "CANCELLED"].includes(detail.order.status)}
-                        onSave={handleReconcile}
-                      />
-                    ))}
-                  </Table>
+                  <div className="space-y-3">
+                    <BarcodeScanVerifier
+                      label="Quét mã vạch lô NVL đối chiếu FEFO (Scan-to-Verify)"
+                      expectedCodes={detail.consumptions.map((c: any) => c.lot_code).filter(Boolean)}
+                    />
+                    <Table
+                      head={[
+                        "Hộp / Vai trò",
+                        "Vật tư / Bán TP",
+                        "Lô FEFO & Hạn dùng",
+                        "Định mức",
+                        "Đã xuất",
+                        "Thực dùng & Giải trình",
+                      ]}
+                    >
+                      {detail.consumptions.map((c: any) => (
+                        <ConsumptionRow
+                          key={c.id}
+                          row={c}
+                          locked={["COMPLETED", "CANCELLED"].includes(detail.order.status)}
+                          onSave={handleReconcile}
+                        />
+                      ))}
+                    </Table>
+                  </div>
                 )}
               </Card>
 
@@ -3070,6 +3087,11 @@ function ConsumptionRow({
       </td>
       <td className="px-3 py-2 text-xs font-mono">
         {row.lot_code} (HSD: {fmtDate(row.expiry_date)})
+        {row.expiry_shorter_than_product && (
+          <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 dark:bg-amber-950/70 dark:text-amber-300 font-sans font-semibold">
+            ⚠️ HSD NVL &lt; HSD Kit
+          </span>
+        )}
       </td>
       <td className="px-3 py-2 text-xs">
         {fmtQty(row.planned_qty)} {row.uom}

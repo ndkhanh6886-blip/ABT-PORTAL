@@ -1,5 +1,7 @@
 import { factoryRoute } from "@/factory/http";
 import { ensureFactoryBootstrapped } from "@/factory/bootstrap";
+import { authorizeAnywhere } from "@/factory/core/authz";
+import { forbidden } from "@/factory/core/errors";
 import { query } from "@/backend/db/db";
 
 const SAMPLE_LEGAL_LICENSES = [
@@ -165,6 +167,19 @@ async function ensureSampleLegalStorage(): Promise<void> {
 
 export const GET = factoryRoute(async (tx, { actor }) => {
   await ensureFactoryBootstrapped(tx, actor);
+  let authorized = false;
+  for (const perm of ["qms.qc.view", "kit.view", "rd.view", "device.view"]) {
+    try {
+      await authorizeAnywhere(tx, actor, perm);
+      authorized = true;
+      break;
+    } catch {
+      // try next permitted domain
+    }
+  }
+  if (!authorized) {
+    throw forbidden("Bạn chưa có quyền xem dữ liệu Pháp chế / Hồ sơ chất lượng.");
+  }
   if (process.env.FACTORY_ALLOW_DEMO_SEED === "1") {
     await ensureSampleLegalStorage().catch(() => {});
 
@@ -191,7 +206,7 @@ export const GET = factoryRoute(async (tx, { actor }) => {
 
   const products = (
     await tx.query(`
-      SELECT id, code, name, item_type, base_uom, storage_temp, shelf_life_days
+      SELECT id, code, name, item_type, base_uom, storage_condition AS storage_temp, shelf_life_days
         FROM master.item
        WHERE status = 'ACTIVE' AND item_type IN ('FINISHED_KIT', 'DEVICE', 'SEMI_FINISHED')
        ORDER BY item_type, code
@@ -200,7 +215,8 @@ export const GET = factoryRoute(async (tx, { actor }) => {
 
   const dhf_projects = (
     await tx.query(`
-      SELECT id, code, name, product_line, target_specs, status, start_date, target_date
+      SELECT id, code, name, target_domain AS product_line, description AS target_specs, status,
+             planned_start AS start_date, planned_end AS target_date
         FROM rd.project
        ORDER BY created_at DESC LIMIT 30
     `)
@@ -235,15 +251,15 @@ export const GET = factoryRoute(async (tx, { actor }) => {
   const pulseRow = (
     await tx.query(`
       SELECT
-        (SELECT count(*)::int FROM rd.project WHERE status NOT IN ('CLOSED', 'CANCELLED')) AS rd_projects,
+        (SELECT count(*)::int FROM rd.project WHERE status NOT IN ('TRANSFERRED', 'KILLED')) AS rd_projects,
         (SELECT count(*)::int FROM kit.production_order WHERE status NOT IN ('COMPLETED', 'CANCELLED')) AS kit_orders,
         (SELECT count(*)::int FROM oligo.synthesis_batch WHERE status NOT IN ('COMPLETED', 'CANCELLED')) AS oligo_batches,
-        (SELECT count(*)::int FROM device.production_order WHERE status NOT IN ('COMPLETED', 'CANCELLED')) AS device_orders,
+        (SELECT count(*)::int FROM device.device_order WHERE status NOT IN ('DELIVERED', 'CANCELLED')) AS device_orders,
         (SELECT count(*)::int FROM qms.ncr WHERE status != 'CLOSED') AS open_ncrs,
-        (SELECT count(*)::int FROM inv.lot WHERE qa_status = 'QUARANTINE') AS quarantine_lots,
-        (SELECT count(*)::int FROM plan.intake_order WHERE status NOT IN ('CLOSED', 'CANCELLED')) AS intake_orders,
-        (SELECT count(*)::int FROM proc.purchase_requisition WHERE status NOT IN ('CLOSED', 'REJECTED', 'CANCELLED')) AS open_prs,
-        (SELECT count(*)::int FROM inv.lot WHERE status = 'ACTIVE') AS active_lots
+        (SELECT count(*)::int FROM inv.lot WHERE status IN ('QUARANTINE', 'PENDING_QC', 'ON_HOLD')) AS quarantine_lots,
+        (SELECT count(*)::int FROM intake.internal_order WHERE status NOT IN ('CLOSED', 'CANCELLED', 'REJECTED')) AS intake_orders,
+        (SELECT count(*)::int FROM purchase.purchase_request WHERE status NOT IN ('CLOSED', 'REJECTED', 'CANCELLED')) AS open_prs,
+        (SELECT count(*)::int FROM inv.lot WHERE status = 'RELEASED') AS active_lots
     `)
   ).rows[0] ?? {};
 

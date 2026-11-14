@@ -782,7 +782,7 @@ export const productionOrderMachine = defineMachine<ProductionOrderStatus, Produ
       action: "pass_qc",
       from: "PENDING_QC",
       to: "PENDING_RELEASE",
-      permission: "kit.order.manage",
+      permission: "qms.qc.review",
       guards: [
         {
           code: "INVALID_GOOD_QTY",
@@ -793,10 +793,19 @@ export const productionOrderMachine = defineMachine<ProductionOrderStatus, Produ
           code: "QC_TEST_PENDING",
           message: "Phiếu kiểm nghiệm QC của mẻ Kit đang mở và phải được bộ phận QC/QA ký duyệt Đạt (PASS) trước.",
           check: async ({ tx, row }) => {
-            if (!row.qc_test_id) return false;
-            const qt = (await tx.query("SELECT status, overall_result FROM qms.qc_test WHERE id = $1", [row.qc_test_id])).rows[0];
-            if (!qt) return false;
-            return qt.status === "REVIEWED" && qt.overall_result === "PASS";
+            if (row.qc_test_id) {
+              const qt = (await tx.query("SELECT status, overall_result FROM qms.qc_test WHERE id = $1", [row.qc_test_id])).rows[0];
+              return Boolean(qt && qt.status === "REVIEWED" && qt.overall_result === "PASS");
+            }
+            const bom = row.bom_id
+              ? (await tx.query("SELECT qc_spec_id FROM kit.bom WHERE id = $1", [row.bom_id])).rows[0]
+              : null;
+            if (bom?.qc_spec_id) {
+              const spec = (await tx.query("SELECT 1 FROM qms.qc_spec WHERE id = $1 AND status = 'EFFECTIVE'", [bom.qc_spec_id])).rows[0];
+              if (spec) return false;
+            }
+            const eff = await findEffectiveSpec(tx, row.product_item_id, ["PRODUCT", "ITEM"]);
+            return !eff?.id;
           },
         },
       ],
@@ -921,9 +930,9 @@ export const productionOrderMachine = defineMachine<ProductionOrderStatus, Produ
             if ((p.rowCount ?? 0) > 0) return false;
             if (row.qc_test_id) {
               const qt = (
-                await tx.query("SELECT analyst_id, reviewed_by FROM qms.qc_test WHERE id = $1", [row.qc_test_id])
+                await tx.query("SELECT analyst_id, reviewer_id FROM qms.qc_test WHERE id = $1", [row.qc_test_id])
               ).rows[0];
-              if (qt && (qt.analyst_id === actor.userId || qt.reviewed_by === actor.userId)) return false;
+              if (qt && (qt.analyst_id === actor.userId || qt.reviewer_id === actor.userId)) return false;
             }
             return true;
           },
@@ -1659,6 +1668,7 @@ async function generateAbtStructuredKitLotCode(
   const yy = dt.slice(2, 4);
   const mm = dt.slice(5, 7);
   const prefix = `B${yy}${mm}`;
+  await tx.query("SELECT pg_advisory_xact_lock(hashtext($1))", [prefix]);
   const existingRows = (
     await tx.query("SELECT code FROM inv.lot WHERE upper(code) LIKE $1", [`${prefix}%`])
   ).rows as Array<{ code: string }>;
@@ -1738,41 +1748,30 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1", [bomId])).rows[0] as (KitBomRow & Record<string, unknown>) | undefined;
   if (!bom || bom.product_item_id !== d.product_item_id) throw invalid("BOM không thuộc sản phẩm đã chọn.");
 
-  // Nếu người dùng phát lệnh trực tiếp từ BOM đang ở DRAFT/APPROVED, tự động kích hoạt EFFECTIVE cho BOM này
-  if (bom.status !== "EFFECTIVE" && bom.status !== "OBSOLETE") {
-    const vCode = String(bom.variant_code || "BASE").trim().toUpperCase() || "BASE";
-    await tx.query(
-      `UPDATE kit.bom
-          SET status = 'OBSOLETE', updated_at = now()
-        WHERE product_item_id = $1
-          AND status = 'EFFECTIVE'
-          AND upper(coalesce(nullif(trim(variant_code), ''), 'BASE')) = $2
-          AND id <> $3`,
-      [d.product_item_id, vCode, bom.id]
+  if (bom.status !== "EFFECTIVE") {
+    throw invalid(
+      `Định mức BOM ${String(bom.code)} hiện đang ở trạng thái ${String(bom.status)}; phải được phê duyệt có hiệu lực (EFFECTIVE) trước khi phát lệnh sản xuất.`,
+      undefined,
+      "BOM_NOT_EFFECTIVE"
     );
-    await tx.query(
-      "UPDATE kit.bom SET status = 'EFFECTIVE', approved_by = coalesce(approved_by, $2), approved_at = coalesce(approved_at, now()), updated_at = now() WHERE id = $1",
-      [bom.id, actor.userId]
-    );
-    bom.status = "EFFECTIVE";
   }
 
   let routingId = d.routing_id ?? (bom.routing_id ? String(bom.routing_id) : null);
   if (routingId) {
-    const chosenRt = (await tx.query("SELECT id, status FROM kit.routing WHERE id = $1", [routingId])).rows[0];
-    if (!chosenRt || chosenRt.status === "OBSOLETE") {
-      routingId = null;
-    } else if (chosenRt.status !== "EFFECTIVE") {
-      const stepCnt = Number(
-        (await tx.query("SELECT count(*)::int AS c FROM kit.routing_step WHERE routing_id = $1", [routingId])).rows[0]?.c ?? 0
-      );
-      if (stepCnt === 0 && chosenRt.status === "DRAFT") {
-        await loadStandardKitRoutingSteps(tx, actor, routingId, "PCR_5_STEPS", { trusted: true });
+    const chosenRt = (await tx.query("SELECT id, status, product_item_id FROM kit.routing WHERE id = $1", [routingId])).rows[0];
+    if (!chosenRt || chosenRt.status !== "EFFECTIVE") {
+      if (d.routing_id) {
+        throw invalid("Quy trình công đoạn (Routing) được chọn chưa có hiệu lực (EFFECTIVE).", undefined, "ROUTING_NOT_EFFECTIVE");
       }
-      await tx.query(
-        "UPDATE kit.routing SET status = 'EFFECTIVE', approved_by = coalesce(approved_by, $2), approved_at = coalesce(approved_at, now()), updated_at = now() WHERE id = $1",
-        [routingId, actor.userId]
-      );
+      routingId = null;
+    } else if (!d.routing_id && !chosenRt.product_item_id) {
+      const dedicatedRt = (
+        await tx.query(
+          "SELECT id FROM kit.routing WHERE product_item_id = $1 AND status = 'EFFECTIVE' ORDER BY routing_version DESC LIMIT 1",
+          [d.product_item_id]
+        )
+      ).rows[0];
+      if (dedicatedRt?.id) routingId = String(dedicatedRt.id);
     }
   }
   if (!routingId) {
@@ -1787,13 +1786,6 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
         : isExtractionBom
           ? "RTG-EXT-BUF"
           : "RTG-PCR-STD";
-    const autoTemplateKey = isSemiBom
-      ? "SEMI_FINISHED_4_STEPS"
-      : isLyoBom
-        ? "LYO_6_STEPS"
-        : isExtractionBom
-          ? "EXTRACTION_5_STEPS"
-          : "PCR_5_STEPS";
 
     const effRt = (
       await tx.query(
@@ -1811,51 +1803,14 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
         [d.product_item_id, preferredSharedCode]
       )
     ).rows[0];
-    if (effRt) {
-      routingId = effRt.id;
-    } else {
-      const draftRt = (
-        await tx.query(
-          "SELECT id, status FROM kit.routing WHERE (product_item_id = $1 OR code = $2) AND status <> 'OBSOLETE' ORDER BY routing_version DESC LIMIT 1",
-          [d.product_item_id, preferredSharedCode]
-        )
-      ).rows[0];
-
-      let targetRtId: string;
-      if (draftRt) {
-        targetRtId = draftRt.id;
-        const stepCnt = Number(
-          (await tx.query("SELECT count(*)::int AS c FROM kit.routing_step WHERE routing_id = $1", [targetRtId])).rows[0]?.c ?? 0
-        );
-        if (stepCnt === 0 && draftRt.status === "DRAFT") {
-          await loadStandardKitRoutingSteps(tx, actor, targetRtId, autoTemplateKey, { trusted: true });
-        }
-      } else {
-        const rtCode = await nextNumber(tx, "KIT_ROUTING");
-        const rtName = isSemiBom
-          ? `Quy trình Pha chế Bán thành phẩm (Dùng chung)`
-          : `Quy trình Sản xuất & Đóng gói Kit (Dùng chung)`;
-        const createdRt = (
-          await tx.query(
-            `INSERT INTO kit.routing (code, org_unit_id, product_item_id, routing_version, name, status, created_by, updated_by)
-             VALUES ($1, $2, NULL, 1, $3, 'DRAFT', $4, $4)
-             RETURNING id`,
-            [rtCode, d.org_unit_id, rtName.slice(0, 240), actor.userId]
-          )
-        ).rows[0];
-        targetRtId = createdRt.id;
-        await loadStandardKitRoutingSteps(tx, actor, targetRtId, autoTemplateKey, { trusted: true });
-      }
-
-      await tx.query(
-        "UPDATE kit.routing SET status = 'EFFECTIVE', approved_by = $2, approved_at = now(), updated_at = now() WHERE id = $1",
-        [targetRtId, actor.userId]
+    if (!effRt) {
+      throw invalid(
+        "Sản phẩm chưa có Quy trình công đoạn (Routing) đang có hiệu lực (EFFECTIVE). Vui lòng phê duyệt Routing trước khi phát lệnh.",
+        undefined,
+        "MISSING_EFFECTIVE_ROUTING"
       );
-      routingId = targetRtId;
     }
-  }
-  if (routingId && bom.routing_id !== routingId) {
-    await tx.query("UPDATE kit.bom SET routing_id = $2 WHERE id = $1", [bom.id, routingId]);
+    routingId = effRt.id;
   }
 
   const mfgDate = d.mfg_date ?? vnToday();
@@ -1975,7 +1930,22 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
     origin_entity_id: created.id,
   });
 
-  await tx.query("UPDATE kit.production_order SET lot_id = $2 WHERE id = $1", [created.id, lot.id]);
+  const bomLinesSnap = (
+    await tx.query(
+      `SELECT bl.*, mi.code AS component_code, mi.name AS component_name
+         FROM kit.bom_line bl
+         JOIN master.item mi ON mi.id = bl.component_item_id
+        WHERE bl.bom_id = $1 ORDER BY bl.line_no`,
+      [bomId]
+    )
+  ).rows;
+  const packSnap = (
+    await tx.query("SELECT * FROM kit.kit_packaging WHERE bom_id = $1 ORDER BY box_no, id", [bomId])
+  ).rows;
+  await tx.query(
+    "UPDATE kit.production_order SET lot_id = $2, bom_snapshot_json = $3::jsonb, packaging_snapshot_json = $4::jsonb WHERE id = $1",
+    [created.id, lot.id, JSON.stringify({ bom, lines: bomLinesSnap }), JSON.stringify(packSnap)]
+  );
 
   // Copy EBR steps from Routing immediately so the operator can inspect and print the Batch Manufacturing Worksheet right away
   await tx.query(
@@ -2436,10 +2406,21 @@ export async function splitKitLot(tx: Tx, actor: AuthzActor, orderId: string, in
   if (order.status === "COMPLETED") {
     const oh = (
       await tx.query(
-        "SELECT location_id, qty_on_hand FROM inv.on_hand WHERE lot_id = $1 AND warehouse_id = $2 AND qty_on_hand >= $3 ORDER BY qty_on_hand DESC LIMIT 1 FOR UPDATE",
+        `SELECT sb.location_id, sb.qty_on_hand
+           FROM inv.stock_balance sb
+           JOIN master.location loc ON loc.id = sb.location_id
+          WHERE sb.lot_id = $1 AND loc.warehouse_id = $2 AND sb.qty_on_hand >= $3
+          ORDER BY sb.qty_on_hand DESC LIMIT 1 FOR UPDATE OF sb`,
         [parentLot.id, order.warehouse_id, d.split_qty]
       )
     ).rows[0];
+    if (!oh) {
+      throw invalid(
+        `Không đủ tồn kho khả dụng tại kho của lô ${parentLot.code} để tách ${d.split_qty} ${order.uom}.`,
+        undefined,
+        "INSUFFICIENT_LOT_BALANCE"
+      );
+    }
     if (oh) {
       const iss = await createStockDocument(
         tx,
@@ -2536,48 +2517,7 @@ export async function splitKitLot(tx: Tx, actor: AuthzActor, orderId: string, in
 
 let kitDailyTrackerSchemaEnsured = false;
 
-export async function ensureKitDailyTrackerAndQcGateSchema(tx: Tx) {
-  if (kitDailyTrackerSchemaEnsured) return;
-  await tx.query("SELECT pg_advisory_xact_lock(2026111402)");
-  if (kitDailyTrackerSchemaEnsured) return;
-  await tx.query(`
-    ALTER TABLE kit.production_step
-      ADD COLUMN IF NOT EXISTS assigned_to_name text,
-      ADD COLUMN IF NOT EXISTS shift_code text DEFAULT 'CA_SANG',
-      ADD COLUMN IF NOT EXISTS planned_date date DEFAULT current_date,
-      ADD COLUMN IF NOT EXISTS qc_gate_status text DEFAULT 'NONE',
-      ADD COLUMN IF NOT EXISTS qc_verified_by_name text,
-      ADD COLUMN IF NOT EXISTS qc_verified_at timestamptz,
-      ADD COLUMN IF NOT EXISTS qc_gate_note text
-  `);
-
-  // Kế hoạch sản xuất theo PO (Trưởng nhóm lập) & QA phụ trách giám sát (Phòng QA/QC phân bổ) + Quy cách Lô ABT (4 dạng cung cấp & 8 mã Tube)
-  await tx.query(`
-    ALTER TABLE kit.production_order
-      ADD COLUMN IF NOT EXISTS planned_start_date date,
-      ADD COLUMN IF NOT EXISTS planned_end_date date,
-      ADD COLUMN IF NOT EXISTS team_lead_name text,
-      ADD COLUMN IF NOT EXISTS qa_assignee_name text,
-      ADD COLUMN IF NOT EXISTS qa_assigned_at timestamptz,
-      ADD COLUMN IF NOT EXISTS plan_note text,
-      ADD COLUMN IF NOT EXISTS supply_form text DEFAULT 'NO_SPLIT_NO_IC',
-      ADD COLUMN IF NOT EXISTS tube_code text,
-      ADD COLUMN IF NOT EXISTS bom_variant_code text DEFAULT 'BASE',
-      ADD COLUMN IF NOT EXISTS mix_tests_per_kit int,
-      ADD COLUMN IF NOT EXISTS pcr_tubes_per_kit int
-  `);
-  await tx.query(`ALTER TABLE kit.production_step ADD COLUMN IF NOT EXISTS qa_assignee_name text`);
-
-  // Initialize qc_gate_status on existing steps if null (never overwrite real status or inject fake pH values)
-  await tx.query(`
-    UPDATE kit.production_step
-       SET qc_gate_status = CASE
-             WHEN is_qc = true AND status = 'DONE' THEN 'PASSED'
-             WHEN is_qc = true THEN 'WAITING_QC'
-             ELSE 'NONE'
-           END
-     WHERE qc_gate_status IS NULL OR (is_qc = true AND qc_gate_status = 'NONE')
-  `);
+export async function ensureKitDailyTrackerAndQcGateSchema(_tx: Tx) {
   kitDailyTrackerSchemaEnsured = true;
 }
 
@@ -2688,10 +2628,8 @@ export async function verifyStepQcGate(
     return upd;
   }
 
-  // PASS / REJECT requires QA/QC review permission (or kit.order.manage) and Separation of Duties
-  if (!(await hasFactoryPermission(tx, actor, "qms.qc.review"))) {
-    await authorize(tx, actor, "kit.order.manage", step.org_unit_id);
-  }
+  // PASS / REJECT requires strict QA/QC review permission and Separation of Duties
+  await authorize(tx, actor, "qms.qc.review", step.org_unit_id);
   if (!step.performed_by) {
     throw invalid("Bước công đoạn phải được thực hiện bởi kỹ thuật viên sản xuất (performed_by) trước khi QA/QC xác nhận cổng IPQC.");
   }
@@ -2776,6 +2714,16 @@ export async function verifyStepQcGate(
     action: "IPQC_VERIFY",
     changes: diffChanges(step, updatedStep, ["qc_gate_status", "status", "qc_verified_by_name", "qc_gate_note"]),
     reason: note,
+  });
+
+  await raiseDeviation(tx, actor, {
+    source_module: "KIT",
+    entity_type: "KIT_ORDER",
+    entity_id: orderId,
+    severity: "MEDIUM",
+    step_ref: `${step.order_code} · ${step.step_code}`,
+    performer_id: step.performed_by ?? undefined,
+    description: `[IPQC Không đạt] Lệnh ${step.order_code} — Bước #${step.seq} (${step.step_name}): ${note ?? "Thông số bán thành phẩm chưa đạt ngưỡng IPQC"}`,
   });
 
   const kitUsers = await usersWithPermission(tx, "kit.view", step.org_unit_id);
@@ -3130,6 +3078,18 @@ export async function getProductionOrderDetail(tx: Tx, actor: AuthzActor, id: st
     steps.push({ ...s, allowed_actions: await listAllowedActions(tx, productionStepMachine, actor, s) });
   }
 
+  const toYmd = (v: unknown) => {
+    if (!v) return "";
+    if (v instanceof Date) {
+      const y = v.getFullYear();
+      const m = String(v.getMonth() + 1).padStart(2, "0");
+      const d = String(v.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
+    }
+    return String(v).slice(0, 10);
+  };
+  const orderExpYmd = toYmd(order.expiry_date);
+
   const consumptions = (
     await tx.query(
       `SELECT mc.*, i.code AS item_code, i.name AS item_name,
@@ -3144,7 +3104,13 @@ export async function getProductionOrderDetail(tx: Tx, actor: AuthzActor, id: st
         ORDER BY bl.box_no, bl.line_no, mc.id`,
       [id]
     )
-  ).rows;
+  ).rows.map((c: any) => {
+    const lotExpYmd = toYmd(c.expiry_date);
+    return {
+      ...c,
+      expiry_shorter_than_product: Boolean(lotExpYmd && orderExpYmd && lotExpYmd < orderExpYmd),
+    };
+  });
 
   const packaging = (
     await tx.query(
@@ -3172,7 +3138,17 @@ export async function getProductionOrderDetail(tx: Tx, actor: AuthzActor, id: st
   const bomObj = (await tx.query("SELECT * FROM kit.bom WHERE id = $1", [order.bom_id])).rows[0] as KitBomRow;
   const exploded_bom = bomObj ? await explodeKitBom(tx, order, bomObj) : [];
 
-  const coaRow = (await tx.query("SELECT * FROM kit.coa_certificate WHERE production_order_id = $1 LIMIT 1", [id])).rows[0] ?? null;
+  const coaRow = (
+    await tx.query(
+      `SELECT c.*,
+              (c.superseded_by_id IS NOT NULL OR EXISTS (SELECT 1 FROM kit.coa_certificate child WHERE child.amended_from_id = c.id)) AS is_superseded
+         FROM kit.coa_certificate c
+        WHERE c.production_order_id = $1
+        ORDER BY is_superseded ASC, c.revision_no DESC, c.issued_at DESC
+        LIMIT 1`,
+      [id]
+    )
+  ).rows[0] ?? null;
   const coa = coaRow ? { ...coaRow, actual_ph: order.actual_ph ?? null } : null;
   const reworks = (
     await tx.query(
