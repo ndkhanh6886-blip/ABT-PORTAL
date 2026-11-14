@@ -12,9 +12,12 @@ import {
   bomMachine,
   createBom,
   createRouting,
+  deleteCustomStepFunction,
   getBomDetail,
   getRoutingDetail,
+  listCustomStepFunctions,
   routingMachine,
+  upsertCustomStepFunction,
 } from "../bomRouting";
 import {
   createProductionOrder,
@@ -1126,5 +1129,163 @@ describe("Phase 4b — Module Phòng Sản xuất Kit (kit schema)", () => {
       id: validPipette.id,
       code: validPipette.code,
     });
+  });
+
+  it("7. Chức năng công đoạn FQC_FINAL_GATE & CRUD Chức năng công đoạn tùy chỉnh trong core.setting -> Routing -> Lệnh SX", async () => {
+    const site = await makeSite();
+    const { operator, checker } = await setupKitTeam(site);
+
+    const suffix = Date.now().toString(36).slice(-5).toUpperCase();
+    const customKeyInput = `QC_STERILITY_${suffix}`;
+    const expectedNormalizedKey = `CUSTOM_${customKeyInput}`;
+
+    // 1. Protect built-in step function keys from overwrite or deletion
+    await expect(
+      withTransaction((tx) =>
+        upsertCustomStepFunction(tx, operator, {
+          key: "FQC_FINAL_GATE",
+          shortLabel: "Ghi đè bất hợp lệ",
+        })
+      )
+    ).rejects.toMatchObject({ code: "INVALID" });
+
+    await expect(
+      withTransaction((tx) => deleteCustomStepFunction(tx, operator, "IPQC_PH_GATE"))
+    ).rejects.toMatchObject({ code: "INVALID" });
+
+    // 2. Create custom step function -> key auto-normalized with CUSTOM_ prefix & persisted
+    const created = await withTransaction((tx) =>
+      upsertCustomStepFunction(tx, operator, {
+        key: customKeyInput,
+        icon: "🧫",
+        shortLabel: "Kiểm tra Vô khuẩn",
+        description: "Ủ mẫu kiểm tra độ vô khuẩn trước khi xuất xưởng",
+        colorTheme: "violet",
+        defaultCategory: "QC",
+        defaultStepCodePrefix: "STEP-STER",
+        defaultStepName: "Ủ & Đọc kết quả Độ vô khuẩn",
+        defaultWorkCenter: "Phòng Đảm bảo & Kiểm soát Chất lượng (QA/QC)",
+        defaultSop: "SOP-QC-STER-01",
+        defaultDurationMin: 90,
+        defaultFlags: { qc_gate: true, dual_sign: true },
+        defaultParams: [
+          { key: "sterility_obs", label: "Kết quả quan sát độ đục", type: "text", unit: "", min: "", max: "", required: true },
+        ],
+      })
+    );
+    expect(created.item.key).toBe(expectedNormalizedKey);
+    expect(created.item.isCustom).toBe(true);
+
+    // 3. Update existing custom step function idempotently (no duplicate key)
+    const updated = await withTransaction((tx) =>
+      upsertCustomStepFunction(tx, operator, {
+        key: expectedNormalizedKey,
+        shortLabel: "Kiểm tra Vô khuẩn & Nội độc tố",
+        colorTheme: "emerald",
+        defaultCategory: "QC",
+        defaultFlags: { qc_gate: true, dual_sign: true },
+      })
+    );
+    expect(updated.item.shortLabel).toBe("Kiểm tra Vô khuẩn & Nội độc tố");
+    const listed = await withTransaction((tx) => listCustomStepFunctions(tx));
+    expect(listed.filter((x) => x.key === expectedNormalizedKey)).toHaveLength(1);
+
+    // 4. Create BOM + Routing combining CUSTOM_* step function + FQC_FINAL_GATE & issue Production Order
+    const kitItem = await makeItem(site, {
+      code: `KIT-CSFN-${suffix}`,
+      item_type: "FINISHED_KIT",
+      base_uom: "pcs",
+      shelf_life_days: 365,
+    });
+    const reagentItem = await makeItem(site, {
+      code: `REA-CSFN-${suffix}`,
+      item_type: "REAGENT",
+      base_uom: "mL",
+    });
+    await stockedLot(site, reagentItem.id, 100, "2028-06-01", { uom: "mL" });
+
+    const bom = await withTransaction(async (tx) => {
+      const b = await createBom(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: kitItem.id,
+        name: "BOM Custom StepFn Test",
+        tests_per_kit: 50,
+        shelf_life_days: 365,
+      });
+      await addBomLine(tx, operator, {
+        bom_id: b.id,
+        component_item_id: reagentItem.id,
+        qty_per_base: 5,
+        uom: "mL",
+        box_no: 1,
+        component_role: "EXTRACTION_BUFFER",
+      });
+      return b;
+    });
+    await act(bomMachine, operator, bom.id, "submit_review");
+    await act(bomMachine, checker, bom.id, "approve", signed);
+
+    const rt = await withTransaction(async (tx) => {
+      const r = await createRouting(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: kitItem.id,
+        name: "Routing Custom StepFn & FQC Gate",
+      });
+      await addRoutingStep(tx, operator, {
+        routing_id: r.id,
+        seq: 10,
+        step_code: "STEP-STER-10",
+        step_name: updated.item.shortLabel,
+        category: "QC",
+        step_function: expectedNormalizedKey,
+        work_center: "Phòng Đảm bảo & Kiểm soát Chất lượng (QA/QC)",
+        instructions: "Ủ mẫu 14 ngày và đọc kết quả độ đục kiểm tra vô khuẩn.",
+        requires_check_signature: true,
+        is_qc: true,
+      });
+      await addRoutingStep(tx, operator, {
+        routing_id: r.id,
+        seq: 20,
+        step_code: "STEP-FQC-QC-20",
+        step_name: "Kiểm định QC Thành phẩm (FQC)",
+        step_function: "FQC_FINAL_GATE",
+        work_center: "Phòng Đảm bảo & Kiểm soát Chất lượng (QA/QC)",
+        instructions: "Lấy mẫu đại diện thành phẩm chạy kiểm định FQC trước khi QA giải phóng cấp COA.",
+        requires_check_signature: true,
+      });
+      return r;
+    });
+
+    const rtDetail = await withTransaction((tx) => getRoutingDetail(tx, operator, rt.id));
+    expect(rtDetail.steps).toHaveLength(2);
+    expect(rtDetail.steps[0].step_function).toBe(expectedNormalizedKey);
+    expect(rtDetail.steps[1].step_function).toBe("FQC_FINAL_GATE");
+    expect(rtDetail.steps[1].category).toBe("QC");
+    expect(rtDetail.steps[1].is_qc).toBe(true);
+
+    await act(routingMachine, operator, rt.id, "submit_review");
+    await act(routingMachine, checker, rt.id, "approve", signed);
+
+    const order = await withTransaction((tx) =>
+      createProductionOrder(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: kitItem.id,
+        warehouse_id: site.warehouse,
+        planned_qty: 10,
+        no_retention: true,
+      })
+    );
+    const orderDetail = await withTransaction((tx) => getProductionOrderDetail(tx, operator, order.id));
+    expect(orderDetail.steps[0].step_function).toBe(expectedNormalizedKey);
+    expect(orderDetail.steps[1].step_function).toBe("FQC_FINAL_GATE");
+    expect(orderDetail.steps[1].is_qc).toBe(true);
+
+    // 5. Delete custom step function preset; historical routing & order snapshots remain intact
+    await withTransaction((tx) => deleteCustomStepFunction(tx, operator, expectedNormalizedKey));
+    const afterDel = await withTransaction((tx) => listCustomStepFunctions(tx));
+    expect(afterDel.find((x) => x.key === expectedNormalizedKey)).toBeUndefined();
+
+    const rtStillExists = await withTransaction((tx) => getRoutingDetail(tx, operator, rt.id));
+    expect(rtStillExists.steps[0].step_function).toBe(expectedNormalizedKey);
   });
 });

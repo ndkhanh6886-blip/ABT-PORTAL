@@ -1,6 +1,6 @@
 import { authorizeAnywhere, hasFactoryPermission } from "@/factory/core/authz";
 import { factoryRoute } from "@/factory/http";
-import { ensureKitBomRoutingAndIfuSchema } from "@/factory/kit/bomRouting";
+import { ensureKitBomRoutingAndIfuSchema, listCustomStepFunctions } from "@/factory/kit/bomRouting";
 import { listDepartmentStaffForKitAndQa } from "@/factory/kit/ordersEbr";
 import { ensureDepartmentEquipmentSeed, syncOverdueCalibrationAssets } from "@/factory/asset/service";
 import { ensureInternalOrderLineKitSpecColumns } from "@/factory/intake/kdEvents";
@@ -91,5 +91,7 @@ export const GET = factoryRoute(async (tx, { actor }) => {
     )
   ).rows;
 
-  return { units, warehouses, items, assets, lots, po_lines, kit_staff, qa_staff, effective_boms };
+  const custom_step_functions = await listCustomStepFunctions(tx);
+
+  return { units, warehouses, items, assets, lots, po_lines, kit_staff, qa_staff, effective_boms, custom_step_functions };
 });

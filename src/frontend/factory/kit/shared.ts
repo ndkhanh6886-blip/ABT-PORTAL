@@ -82,6 +82,7 @@ export interface KitOptions {
     tests_per_kit?: number;
     specification?: string;
   }[];
+  custom_step_functions?: StepFunctionArchetype[];
 }
 
 export const ROLE_LABELS: Record<string, string> = {
@@ -168,6 +169,8 @@ export interface StepFunctionArchetype {
   label: string;
   description: string;
   badgeClass: string;
+  colorTheme?: string;
+  isCustom?: boolean;
   defaultCategory: string;
   defaultStepCodePrefix: string;
   defaultStepName: string;
@@ -178,6 +181,41 @@ export interface StepFunctionArchetype {
   defaultFlags: StepFunctionalFlags;
   defaultParams: StepParamDraft[];
 }
+
+export const STEP_FUNCTION_COLOR_THEMES: Record<string, { label: string; badgeClass: string }> = {
+  slate: {
+    label: "Xám (Chuẩn bị / Dọn chuyền)",
+    badgeClass: "bg-slate-100 text-slate-800 border-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700",
+  },
+  amber: {
+    label: "Hổ phách (Cân đong / Vật tư)",
+    badgeClass: "bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/50 dark:text-amber-200 dark:border-amber-800",
+  },
+  sky: {
+    label: "Xanh dương (Pha chế / Kỹ thuật)",
+    badgeClass: "bg-sky-50 text-sky-800 border-sky-300 dark:bg-sky-950/50 dark:text-sky-200 dark:border-sky-800",
+  },
+  violet: {
+    label: "Tím (Kiểm định QC / IPQC / FQC)",
+    badgeClass: "bg-violet-50 text-violet-800 border-violet-300 dark:bg-violet-950/50 dark:text-violet-200 dark:border-violet-800",
+  },
+  teal: {
+    label: "Xanh ngọc (Chiết rót / Phân liều)",
+    badgeClass: "bg-teal-50 text-teal-800 border-teal-300 dark:bg-teal-950/50 dark:text-teal-200 dark:border-teal-800",
+  },
+  indigo: {
+    label: "Chàm (Đông khô / Chuyên sâu)",
+    badgeClass: "bg-indigo-50 text-indigo-800 border-indigo-300 dark:bg-indigo-950/50 dark:text-indigo-200 dark:border-indigo-800",
+  },
+  emerald: {
+    label: "Xanh lá (Đóng gói / Dán nhãn)",
+    badgeClass: "bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950/50 dark:text-emerald-200 dark:border-emerald-800",
+  },
+  rose: {
+    label: "Hồng đỏ (Bàn giao / Giải phóng / COA)",
+    badgeClass: "bg-rose-50 text-rose-800 border-rose-300 dark:bg-rose-950/50 dark:text-rose-200 dark:border-rose-800",
+  },
+};
 
 export const WORK_CENTER_PRESETS: string[] = [
   "Phòng sạch Chuẩn bị & Cấp phát (ISO 7)",
@@ -421,7 +459,85 @@ export const STEP_FUNCTION_CATALOG: Record<string, StepFunctionArchetype> = {
       { key: "batch_yield_pct", label: "Hiệu suất tổng thể của Lô (Yield)", type: "number", unit: "%", min: "90", max: "102", required: true },
     ],
   },
+  FQC_FINAL_GATE: {
+    key: "FQC_FINAL_GATE",
+    icon: "🔬",
+    shortLabel: "Kiểm định QC Thành phẩm (FQC Gate)",
+    label: "9. Kiểm định QC Thành phẩm trước nhập kho & Chuẩn bị cấp COA (FQC Gate)",
+    description: "Lấy mẫu thành phẩm chạy QC xuất xưởng (FQC), đánh giá chỉ tiêu TCCS và xác nhận đạt để QA giải phóng lô, nhập kho Thành phẩm & cấp COA.",
+    badgeClass: "bg-violet-50 text-violet-800 border-violet-300 dark:bg-violet-950/50 dark:text-violet-200 dark:border-violet-800",
+    defaultCategory: "QC",
+    defaultStepCodePrefix: "STEP-FQC-QC",
+    defaultStepName: "Kiểm định QC Thành phẩm (FQC) & Đánh giá đạt chuẩn cấp COA",
+    defaultWorkCenter: "Phòng Đảm bảo & Kiểm soát Chất lượng (QA/QC)",
+    defaultSop: "SOP-QC-FQC-01",
+    defaultDurationMin: 60,
+    defaultInstructions: "Lấy mẫu đại diện thành phẩm theo AQL, chạy kiểm tra TCCS (PCR Ct, độ nhạy, độ tinh sạch/độ vô khuẩn) trước khi hoàn tất bước để chuyển QA/QC xét duyệt cấp COA.",
+    defaultFlags: {
+      qc_gate: true,
+      dual_sign: true,
+      require_line_clearance: false,
+      require_material_scan: false,
+      require_env_log: false,
+      require_yield_reconcile: false,
+      require_label_ifu_check: true,
+      expected_output: "Kết quả FQC đạt TCCS, sẵn sàng chuyển trạng thái Chờ QC duyệt & QA Giải phóng cấp COA",
+    },
+    defaultParams: [
+      { key: "fqc_ct_pos", label: "Ngưỡng Ct chứng dương FQC (Ct)", type: "number", unit: "Ct", min: "15", max: "32", required: true },
+      { key: "fqc_conclusion", label: "Kết luận sơ bộ mẫu FQC (Đạt/Không đạt)", type: "text", unit: "", min: "", max: "", required: false },
+    ],
+  },
 };
+
+/**
+ * Merge built-in standard step functions with user-defined custom step functions stored in core settings.
+ * Built-in keys are preserved so custom presets extend the catalog without shadowing core archetypes.
+ */
+export function buildMergedStepFunctionCatalog(
+  customFunctions?: StepFunctionArchetype[] | null
+): Record<string, StepFunctionArchetype> {
+  const merged: Record<string, StepFunctionArchetype> = { ...STEP_FUNCTION_CATALOG };
+  if (!Array.isArray(customFunctions)) return merged;
+  for (const item of customFunctions) {
+    if (!item || !item.key || STEP_FUNCTION_CATALOG[item.key]) continue;
+    const themeClass =
+      item.badgeClass ||
+      (item.colorTheme ? STEP_FUNCTION_COLOR_THEMES[item.colorTheme]?.badgeClass : undefined) ||
+      STEP_FUNCTION_COLOR_THEMES.sky.badgeClass;
+    merged[item.key] = {
+      ...item,
+      badgeClass: themeClass,
+      isCustom: true,
+    };
+  }
+  return merged;
+}
+
+/**
+ * Resolve a step function specification from a merged catalog, synthesizing a safe fallback
+ * so removed custom presets on historical routings or steps remain inspectable in UI badges.
+ */
+export function resolveStepFunctionSpec(
+  funcKey: string | null | undefined,
+  catalog: Record<string, StepFunctionArchetype> = STEP_FUNCTION_CATALOG
+): StepFunctionArchetype {
+  const key = (funcKey || "").trim();
+  if (key && catalog[key]) return catalog[key];
+  if (key && STEP_FUNCTION_CATALOG[key]) return STEP_FUNCTION_CATALOG[key];
+  if (key) {
+    return {
+      ...STEP_FUNCTION_CATALOG.FORMULATION_MIXING,
+      key,
+      icon: "🧩",
+      shortLabel: key,
+      label: `Chức năng tùy chỉnh (${key})`,
+      description: "Chức năng công đoạn tùy chỉnh đã lưu trên quy trình.",
+      isCustom: true,
+    };
+  }
+  return catalog.FORMULATION_MIXING || STEP_FUNCTION_CATALOG.FORMULATION_MIXING;
+}
 
 export const ROUTING_STANDARD_TEMPLATES: {
   key: string;

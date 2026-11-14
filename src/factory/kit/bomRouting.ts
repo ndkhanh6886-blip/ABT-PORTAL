@@ -1316,6 +1316,7 @@ export const STEP_FUNCTION_ENUM = [
   "LYOPHILIZATION",
   "LABELING_IFU_PACKAGING",
   "FQC_RELEASE_HANDOVER",
+  "FQC_FINAL_GATE",
 ] as const;
 
 export type RoutingStepFunction = (typeof STEP_FUNCTION_ENUM)[number];
@@ -1342,7 +1343,7 @@ const routingStepItemSchema = z.object({
   step_name: z.string().trim().min(2, "nhập tên bước công đoạn").max(250),
   category: z
     .enum(["PREPARATION", "FORMULATION", "FILLING", "LYOPHILIZATION", "QC", "PACKAGING", "LABELING"])
-    .default("FORMULATION"),
+    .optional(),
   step_function: z.string().trim().max(60).optional().nullable(),
   work_center: z.string().trim().max(160).optional().nullable(),
   functional_flags: functionalFlagsSchema.optional(),
@@ -1383,6 +1384,7 @@ export function inferCategoryFromFunction(stepFn: string | null | undefined, fal
     case "FORMULATION_MIXING":
       return "FORMULATION";
     case "IPQC_PH_GATE":
+    case "FQC_FINAL_GATE":
     case "FQC_RELEASE_HANDOVER":
       return "QC";
     case "DISPENSING_ALIQUOT":
@@ -1462,7 +1464,7 @@ export async function addRoutingStep(tx: Tx, actor: AuthzActor, input: unknown) 
 
   const stepFn = d.step_function?.trim() || "FORMULATION_MIXING";
   const category = d.category || (inferCategoryFromFunction(stepFn) as any);
-  const isQc = Boolean(d.is_qc || d.functional_flags?.qc_gate || stepFn === "IPQC_PH_GATE");
+  const isQc = Boolean(d.is_qc || d.functional_flags?.qc_gate || stepFn === "IPQC_PH_GATE" || stepFn === "FQC_FINAL_GATE");
   const dualSign = Boolean(d.requires_check_signature || d.functional_flags?.dual_sign);
   const eqGroup = d.functional_flags?.equipment_group ? String(d.functional_flags.equipment_group).trim() : null;
   const reqAsset =
@@ -1536,7 +1538,7 @@ export async function updateRoutingStep(tx: Tx, actor: AuthzActor, routingId: st
   const seq = d.seq ?? Number(existing.seq);
   const stepFn = d.step_function?.trim() || existing.step_function || "FORMULATION_MIXING";
   const category = d.category || existing.category || inferCategoryFromFunction(stepFn);
-  const isQc = Boolean(d.is_qc || d.functional_flags?.qc_gate || stepFn === "IPQC_PH_GATE");
+  const isQc = Boolean(d.is_qc || d.functional_flags?.qc_gate || stepFn === "IPQC_PH_GATE" || stepFn === "FQC_FINAL_GATE");
   const dualSign = Boolean(d.requires_check_signature || d.functional_flags?.dual_sign);
   const eqGroup = d.functional_flags?.equipment_group ? String(d.functional_flags.equipment_group).trim() : null;
   const reqAsset =
@@ -1714,6 +1716,235 @@ export async function replaceAllRoutingSteps(
     await addRoutingStep(tx, actor, { ...s, routing_id: routingId, seq });
   }
   return { count: parsedSteps.length };
+}
+
+export const KIT_CUSTOM_STEP_FUNCTIONS_KEY = "kit.custom_step_functions";
+
+const BUILTIN_STEP_FUNCTION_KEYS = new Set<string>(STEP_FUNCTION_ENUM);
+
+const CUSTOM_STEP_FUNCTION_BADGE_MAP: Record<string, string> = {
+  slate: "bg-slate-100 text-slate-800 border-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700",
+  amber: "bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/50 dark:text-amber-200 dark:border-amber-800",
+  sky: "bg-sky-50 text-sky-800 border-sky-300 dark:bg-sky-950/50 dark:text-sky-200 dark:border-sky-800",
+  violet: "bg-violet-50 text-violet-800 border-violet-300 dark:bg-violet-950/50 dark:text-violet-200 dark:border-violet-800",
+  teal: "bg-teal-50 text-teal-800 border-teal-300 dark:bg-teal-950/50 dark:text-teal-200 dark:border-teal-800",
+  indigo: "bg-indigo-50 text-indigo-800 border-indigo-300 dark:bg-indigo-950/50 dark:text-indigo-200 dark:border-indigo-800",
+  emerald: "bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950/50 dark:text-emerald-200 dark:border-emerald-800",
+  rose: "bg-rose-50 text-rose-800 border-rose-300 dark:bg-rose-950/50 dark:text-rose-200 dark:border-rose-800",
+};
+
+const customStepParamSchema = z.object({
+  key: z.string().trim().min(1).max(60),
+  label: z.string().trim().min(1).max(160),
+  type: z.enum(["number", "text", "boolean"]).default("number"),
+  unit: z.string().trim().max(40).optional().default(""),
+  min: z.string().trim().max(40).optional().default(""),
+  max: z.string().trim().max(40).optional().default(""),
+  required: z.boolean().optional().default(true),
+});
+
+const customStepFlagsSchema = z.object({
+  qc_gate: z.boolean().optional().default(false),
+  dual_sign: z.boolean().optional().default(true),
+  require_line_clearance: z.boolean().optional().default(false),
+  require_material_scan: z.boolean().optional().default(false),
+  require_env_log: z.boolean().optional().default(false),
+  require_yield_reconcile: z.boolean().optional().default(false),
+  require_label_ifu_check: z.boolean().optional().default(false),
+  require_asset: z.boolean().optional().default(false),
+  equipment_group: z.string().trim().max(80).optional().nullable(),
+  extra_asset_ids: z.array(z.string().trim().min(1)).optional().default([]),
+  expected_output: z.string().trim().max(300).optional().default(""),
+});
+
+export const customStepFunctionInputSchema = z.object({
+  key: z.string().trim().min(2, "Mã chức năng phải có ít nhất 2 ký tự").max(60, "Mã chức năng tối đa 60 ký tự"),
+  icon: z.string().trim().min(1).max(12).optional().default("🧩"),
+  shortLabel: z.string().trim().min(2, "Tên ngắn chức năng là bắt buộc").max(80),
+  label: z.string().trim().max(180).optional().default(""),
+  description: z.string().trim().max(400).optional().default(""),
+  colorTheme: z.enum(["slate", "amber", "sky", "violet", "teal", "indigo", "emerald", "rose"]).optional().default("sky"),
+  defaultCategory: z
+    .enum(["PREPARATION", "FORMULATION", "FILLING", "LYOPHILIZATION", "QC", "PACKAGING", "LABELING"])
+    .optional()
+    .default("FORMULATION"),
+  defaultStepCodePrefix: z.string().trim().min(1).max(30).optional().default("STEP-CUSTOM"),
+  defaultStepName: z.string().trim().max(180).optional().default(""),
+  defaultWorkCenter: z.string().trim().max(140).optional().default("Phòng sạch Class 10.000 (ISO 7)"),
+  defaultSop: z.string().trim().max(60).optional().default("SOP-KIT-CUSTOM"),
+  defaultDurationMin: z.coerce.number().int().min(1).max(10080).optional().default(30),
+  defaultInstructions: z.string().trim().max(1200).optional().default(""),
+  defaultFlags: customStepFlagsSchema.optional(),
+  defaultParams: z.array(customStepParamSchema).max(20).optional().default([]),
+});
+
+export interface CustomStepFunctionItem {
+  key: string;
+  icon: string;
+  shortLabel: string;
+  label: string;
+  description: string;
+  badgeClass: string;
+  colorTheme: string;
+  isCustom: true;
+  defaultCategory: string;
+  defaultStepCodePrefix: string;
+  defaultStepName: string;
+  defaultWorkCenter: string;
+  defaultSop: string;
+  defaultDurationMin: number;
+  defaultInstructions: string;
+  defaultFlags: z.infer<typeof customStepFlagsSchema>;
+  defaultParams: z.infer<typeof customStepParamSchema>[];
+}
+
+function normalizeCustomStepKey(rawKey: string): string {
+  const cleaned = String(rawKey || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  if (!cleaned || cleaned.length < 2) {
+    throw invalid("Mã chức năng công đoạn không hợp lệ (chỉ gồm chữ không dấu, số và gạch dưới '_').");
+  }
+  if (BUILTIN_STEP_FUNCTION_KEYS.has(cleaned)) {
+    throw invalid(`Mã chức năng '${cleaned}' là chức năng chuẩn mặc định của hệ thống, không thể ghi đè hoặc xóa.`);
+  }
+  const prefixed = cleaned.startsWith("CUSTOM_") ? cleaned : `CUSTOM_${cleaned}`;
+  if (prefixed.length > 60) {
+    throw invalid("Mã chức năng sau chuẩn hóa (CUSTOM_...) tối đa 60 ký tự.");
+  }
+  return prefixed;
+}
+
+function buildCustomStepFunctionItem(
+  normalizedKey: string,
+  d: z.infer<typeof customStepFunctionInputSchema>
+): CustomStepFunctionItem {
+  const theme = d.colorTheme || "sky";
+  const flags = customStepFlagsSchema.parse(d.defaultFlags ?? {});
+  return {
+    key: normalizedKey,
+    icon: d.icon || "🧩",
+    shortLabel: d.shortLabel,
+    label: d.label || d.shortLabel,
+    description: d.description || "",
+    badgeClass: CUSTOM_STEP_FUNCTION_BADGE_MAP[theme] || CUSTOM_STEP_FUNCTION_BADGE_MAP.sky,
+    colorTheme: theme,
+    isCustom: true,
+    defaultCategory: d.defaultCategory,
+    defaultStepCodePrefix: d.defaultStepCodePrefix.toUpperCase().replace(/\s+/g, "-"),
+    defaultStepName: d.defaultStepName || d.shortLabel,
+    defaultWorkCenter: d.defaultWorkCenter,
+    defaultSop: d.defaultSop,
+    defaultDurationMin: d.defaultDurationMin,
+    defaultInstructions: d.defaultInstructions,
+    defaultFlags: flags,
+    defaultParams: d.defaultParams ?? [],
+  };
+}
+
+function parseStoredCustomStepFunctions(raw: unknown): CustomStepFunctionItem[] {
+  let list: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      list = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  if (list && typeof list === "object" && !Array.isArray(list) && Array.isArray((list as any).items)) {
+    list = (list as any).items;
+  }
+  if (!Array.isArray(list)) return [];
+  const valid: CustomStepFunctionItem[] = [];
+  for (const entry of list) {
+    if (!entry || typeof entry !== "object") continue;
+    const rawKey = typeof (entry as any).key === "string" ? (entry as any).key.trim() : "";
+    if (!rawKey || BUILTIN_STEP_FUNCTION_KEYS.has(rawKey)) continue;
+    const parsed = customStepFunctionInputSchema.safeParse(entry);
+    if (!parsed.success) continue;
+    valid.push(buildCustomStepFunctionItem(rawKey, parsed.data));
+  }
+  return valid;
+}
+
+async function saveCustomStepFunctionsSetting(tx: Tx, actor: AuthzActor, items: CustomStepFunctionItem[]): Promise<void> {
+  await tx.query(
+    `INSERT INTO core.setting (key, value, description, version, updated_at, updated_by)
+     VALUES ($1, $2::jsonb, $3, 1, now(), $4)
+     ON CONFLICT (key) DO UPDATE
+       SET value = EXCLUDED.value,
+           description = EXCLUDED.description,
+           version = core.setting.version + 1,
+           updated_at = now(),
+           updated_by = EXCLUDED.updated_by`,
+    [
+      KIT_CUSTOM_STEP_FUNCTIONS_KEY,
+      JSON.stringify(items),
+      "Danh mục Chức năng Công đoạn tùy chỉnh cho Quy trình Sản xuất Kit (Routing/EBR)",
+      actor.userId,
+    ]
+  );
+}
+
+/** Reads user-defined custom step functions from core.setting with safe empty fallback for minimal schemas. */
+export async function listCustomStepFunctions(tx: Tx): Promise<CustomStepFunctionItem[]> {
+  try {
+    const res = await tx.query("SELECT value FROM core.setting WHERE key = $1", [KIT_CUSTOM_STEP_FUNCTIONS_KEY]);
+    return parseStoredCustomStepFunctions(res.rows[0]?.value);
+  } catch {
+    return [];
+  }
+}
+
+/** Creates or updates a user-defined custom step function in core.setting without overwriting built-in presets. */
+export async function upsertCustomStepFunction(tx: Tx, actor: AuthzActor, rawInput: unknown) {
+  await authorizeAnywhere(tx, actor, "kit.bom.manage");
+  const d = parseInput(customStepFunctionInputSchema, rawInput);
+  const normalizedKey = normalizeCustomStepKey(d.key);
+  const item = buildCustomStepFunctionItem(normalizedKey, d);
+
+  const curRes = await tx.query("SELECT value FROM core.setting WHERE key = $1 FOR UPDATE", [KIT_CUSTOM_STEP_FUNCTIONS_KEY]);
+  const existing = parseStoredCustomStepFunctions(curRes.rows[0]?.value);
+  const idx = existing.findIndex((x) => x.key === normalizedKey);
+  if (idx < 0 && existing.length >= 50) {
+    throw invalid("Số lượng chức năng công đoạn tùy chỉnh đã đạt giới hạn tối đa (50).");
+  }
+  const nextItems = idx >= 0 ? existing.map((x, i) => (i === idx ? item : x)) : [...existing, item];
+  await saveCustomStepFunctionsSetting(tx, actor, nextItems);
+
+  await writeAudit(tx, actor, {
+    entityType: "KIT_CUSTOM_STEP_FUNCTION",
+    entityId: normalizedKey,
+    action: idx >= 0 ? "update" : "create",
+    changes: { item: [idx >= 0 ? existing[idx] : null, item] },
+  });
+
+  return { item, items: nextItems };
+}
+
+/** Deletes a user-defined custom step function preset from core.setting while protecting built-in presets. */
+export async function deleteCustomStepFunction(tx: Tx, actor: AuthzActor, rawKey: string) {
+  await authorizeAnywhere(tx, actor, "kit.bom.manage");
+  const normalizedKey = normalizeCustomStepKey(rawKey);
+  const curRes = await tx.query("SELECT value FROM core.setting WHERE key = $1 FOR UPDATE", [KIT_CUSTOM_STEP_FUNCTIONS_KEY]);
+  const existing = parseStoredCustomStepFunctions(curRes.rows[0]?.value);
+  const target = existing.find((x) => x.key === normalizedKey);
+  if (!target) throw notFound("chức năng công đoạn tùy chỉnh");
+
+  const nextItems = existing.filter((x) => x.key !== normalizedKey);
+  await saveCustomStepFunctionsSetting(tx, actor, nextItems);
+
+  await writeAudit(tx, actor, {
+    entityType: "KIT_CUSTOM_STEP_FUNCTION",
+    entityId: normalizedKey,
+    action: "delete",
+    changes: { item: [target, null] },
+  });
+
+  return { deleted: normalizedKey, items: nextItems };
 }
 
 export interface ListFormulaFilter {

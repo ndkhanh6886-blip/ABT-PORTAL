@@ -553,6 +553,8 @@ export interface ProductionStepRow {
   step_code: string;
   step_name: string;
   category: string;
+  step_function?: string | null;
+  work_center?: string | null;
   instructions: string;
   sop_doc_code: string | null;
   required_training_doc_code: string | null;

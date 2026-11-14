@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActionBar } from "../actions";
 import { api, fmtQty, vnToday } from "../api";
 import { printElementHtml } from "../coa";
@@ -11,16 +11,20 @@ import {
   ACTION_LABELS,
   buildAbtKitLotCode,
   buildEquipmentGroupOptions,
+  buildMergedStepFunctionCatalog,
   CONTAINER_LABELS,
   formatEquipmentGroupLabel,
   type KitOptions,
   matchesEquipmentGroup,
   parseAbtKitLotCode,
+  resolveStepFunctionSpec,
   ROLE_LABELS,
   ROUTING_STANDARD_TEMPLATES,
   type RoutingStepDraft,
   STEP_CATEGORY_LABELS,
   STEP_FUNCTION_CATALOG,
+  STEP_FUNCTION_COLOR_THEMES,
+  type StepFunctionArchetype,
   type StepParamDraft,
   WORK_CENTER_PRESETS,
 } from "./shared";
@@ -325,6 +329,52 @@ export function BomRoutingView({
     ] as StepParamDraft[],
   });
 
+  const [localCustomStepFns, setLocalCustomStepFns] = useState<StepFunctionArchetype[] | null>(null);
+  useEffect(() => {
+    setLocalCustomStepFns(null);
+  }, [options.custom_step_functions]);
+
+  const customStepFunctions = localCustomStepFns ?? options.custom_step_functions ?? [];
+  const mergedStepFunctions = useMemo(
+    () => buildMergedStepFunctionCatalog(customStepFunctions),
+    [customStepFunctions]
+  );
+  const stepFunctionList = useMemo(() => Object.values(mergedStepFunctions), [mergedStepFunctions]);
+
+  const makeEmptyStepFnForm = () => ({
+    editingKey: null as string | null,
+    key: "",
+    icon: "🧩",
+    shortLabel: "",
+    description: "",
+    colorTheme: "sky",
+    defaultCategory: "FORMULATION",
+    defaultStepCodePrefix: "STEP-CUSTOM",
+    defaultStepName: "",
+    defaultWorkCenter: "Phòng sạch Pha chế (Class 10,000 / ISO 7)",
+    defaultSop: "SOP-KIT-CUSTOM",
+    defaultDurationMin: "30",
+    defaultInstructions: "",
+    expectedOutput: "",
+    defaultFlags: {
+      qc_gate: false,
+      dual_sign: true,
+      require_line_clearance: false,
+      require_material_scan: false,
+      require_env_log: false,
+      require_yield_reconcile: false,
+      require_label_ifu_check: false,
+      require_asset: false,
+      equipment_group: "",
+    },
+    defaultParams: [] as StepParamDraft[],
+  });
+
+  const [stepFnManagerHost, setStepFnManagerHost] = useState<"create_bar" | "step_form" | null>(null);
+  const [stepFnForm, setStepFnForm] = useState(makeEmptyStepFnForm);
+  const [savingStepFn, setSavingStepFn] = useState(false);
+  const [stepFnNotice, setStepFnNotice] = useState<string | null>(null);
+
   const equipmentGroupOpts = buildEquipmentGroupOptions(options.assets);
   const workCenterSuggestions = Array.from(
     new Set(
@@ -367,6 +417,571 @@ export function BomRoutingView({
 
   const filterAssetsByGroup = (groupKey?: string | null) =>
     (options.assets || []).filter((a) => matchesEquipmentGroup(a, groupKey));
+
+  const handleOpenStepFnManager = (host: "create_bar" | "step_form") => {
+    setStepFnNotice(null);
+    setStepFnManagerHost((prev) => {
+      if (prev === host) return null;
+      setStepFnForm(makeEmptyStepFnForm());
+      return host;
+    });
+  };
+
+  const handleStartEditCustomStepFn = (fn: StepFunctionArchetype) => {
+    setStepFnNotice(null);
+    setStepFnForm({
+      editingKey: fn.key,
+      key: fn.key,
+      icon: fn.icon || "🧩",
+      shortLabel: fn.shortLabel || "",
+      description: fn.description || "",
+      colorTheme: fn.colorTheme || "sky",
+      defaultCategory: fn.defaultCategory || "FORMULATION",
+      defaultStepCodePrefix: fn.defaultStepCodePrefix || "STEP-CUSTOM",
+      defaultStepName: fn.defaultStepName || "",
+      defaultWorkCenter: fn.defaultWorkCenter || "Phòng sạch Class 10.000 (ISO 7)",
+      defaultSop: fn.defaultSop || "SOP-KIT-CUSTOM",
+      defaultDurationMin: String(fn.defaultDurationMin || 30),
+      defaultInstructions: fn.defaultInstructions || "",
+      expectedOutput: fn.defaultFlags?.expected_output || "",
+      defaultFlags: {
+        qc_gate: Boolean(fn.defaultFlags?.qc_gate),
+        dual_sign: fn.defaultFlags?.dual_sign !== false,
+        require_line_clearance: Boolean(fn.defaultFlags?.require_line_clearance),
+        require_material_scan: Boolean(fn.defaultFlags?.require_material_scan),
+        require_env_log: Boolean(fn.defaultFlags?.require_env_log),
+        require_yield_reconcile: Boolean(fn.defaultFlags?.require_yield_reconcile),
+        require_label_ifu_check: Boolean(fn.defaultFlags?.require_label_ifu_check),
+        require_asset: Boolean(fn.defaultFlags?.require_asset),
+        equipment_group: fn.defaultFlags?.equipment_group || "",
+      },
+      defaultParams: Array.isArray(fn.defaultParams) ? JSON.parse(JSON.stringify(fn.defaultParams)) : [],
+    });
+  };
+
+  const handleSaveCustomStepFunction = async (saveAndApply: boolean) => {
+    setError(null);
+    setStepFnNotice(null);
+    const shortLabel = stepFnForm.shortLabel.trim();
+    const rawKey = (stepFnForm.editingKey || stepFnForm.key || shortLabel).trim();
+    if (!rawKey || !shortLabel) {
+      setError("Vui lòng nhập Mã chức năng và Tên ngắn hiển thị cho chức năng công đoạn mới.");
+      return;
+    }
+    setSavingStepFn(true);
+    try {
+      const res = await api<{ item: StepFunctionArchetype; items: StepFunctionArchetype[] }>(
+        "/api/factory/kit/step-functions",
+        {
+          method: "POST",
+          json: {
+            key: rawKey,
+            icon: stepFnForm.icon.trim() || "🧩",
+            shortLabel,
+            label: shortLabel,
+            description: stepFnForm.description.trim(),
+            colorTheme: stepFnForm.colorTheme,
+            defaultCategory: stepFnForm.defaultCategory,
+            defaultStepCodePrefix: stepFnForm.defaultStepCodePrefix.trim() || "STEP-CUSTOM",
+            defaultStepName: stepFnForm.defaultStepName.trim() || shortLabel,
+            defaultWorkCenter: stepFnForm.defaultWorkCenter.trim() || "Phòng sạch Class 10.000 (ISO 7)",
+            defaultSop: stepFnForm.defaultSop.trim() || "SOP-KIT-CUSTOM",
+            defaultDurationMin: Number(stepFnForm.defaultDurationMin) || 30,
+            defaultInstructions: stepFnForm.defaultInstructions.trim(),
+            defaultFlags: {
+              ...stepFnForm.defaultFlags,
+              equipment_group: stepFnForm.defaultFlags.equipment_group || null,
+              expected_output: stepFnForm.expectedOutput.trim(),
+            },
+            defaultParams: stepFnForm.defaultParams
+              .filter((p) => p.key.trim() && p.label.trim())
+              .map((p) => ({
+                key: p.key.trim(),
+                label: p.label.trim(),
+                type: p.type,
+                unit: p.unit.trim(),
+                min: p.min.trim(),
+                max: p.max.trim(),
+                required: Boolean(p.required),
+              })),
+          },
+        }
+      );
+      setLocalCustomStepFns(res.items);
+      void onRefreshOptions();
+      if (saveAndApply) {
+        if (stepFnManagerHost === "create_bar") {
+          handleAddDraftStepFromFunction(res.item.key, res.item);
+        } else if (stepFnManagerHost === "step_form") {
+          handleSelectStepFunctionInForm(res.item.key, res.item);
+        }
+      }
+      setStepFnNotice(
+        stepFnForm.editingKey
+          ? `Đã cập nhật chức năng "${res.item.shortLabel}" (${res.item.key}).`
+          : `Đã lưu chức năng mới "${res.item.shortLabel}" (${res.item.key}) vào danh mục dùng chung.`
+      );
+      setStepFnForm(makeEmptyStepFnForm());
+    } catch (err) {
+      setError(err);
+    } finally {
+      setSavingStepFn(false);
+    }
+  };
+
+  const handleDeleteCustomStepFunction = async (key: string) => {
+    setError(null);
+    setStepFnNotice(null);
+    setSavingStepFn(true);
+    try {
+      const res = await api<{ deleted: string; items: StepFunctionArchetype[] }>(
+        "/api/factory/kit/step-functions",
+        {
+          method: "POST",
+          json: { operation: "delete", key },
+        }
+      );
+      setLocalCustomStepFns(res.items);
+      if (stepFnForm.editingKey === key) setStepFnForm(makeEmptyStepFnForm());
+      setStepFnNotice(`Đã xóa chức năng tùy chỉnh ${key} khỏi danh mục (các quy trình đã tạo trước đó vẫn giữ nguyên).`);
+      void onRefreshOptions();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setSavingStepFn(false);
+    }
+  };
+
+  const renderStepFunctionManager = () => {
+    const iconChoices = ["🧩", "🧪", "🔬", "🧼", "❄️", "🌡️", "📦", "🏷️", "⚖️", "🛡️"];
+    return (
+      <div className="mt-2.5 p-3 rounded-xl border border-indigo-200 dark:border-indigo-900 bg-indigo-50/40 dark:bg-indigo-950/25 space-y-3">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <div className="text-xs font-bold text-indigo-900 dark:text-indigo-200">
+              ✨ Tạo &amp; Quản lý Chức năng Công đoạn Tùy chỉnh (Lưu dùng chung cho toàn Xưởng)
+            </div>
+            <div className="text-[11px] text-slate-600 dark:text-slate-400">
+              Thêm chức năng công đoạn riêng của nhà máy (kèm SOP, khu vực, cờ EBR &amp; thông số đo mặc định). 9 chức năng chuẩn hệ thống luôn được giữ cố định.
+            </div>
+          </div>
+          <Button type="button" variant="ghost" className="min-h-7 px-2.5 py-1 text-[11px]" onClick={() => setStepFnManagerHost(null)}>
+            Đóng
+          </Button>
+        </div>
+
+        {customStepFunctions.length > 0 && (
+          <div className="p-2 rounded-lg bg-white/90 dark:bg-slate-900/80 border border-indigo-200/70 dark:border-indigo-900/70 space-y-1.5">
+            <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+              Danh mục Chức năng tùy chỉnh đã lưu ({customStepFunctions.length}):
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {customStepFunctions.map((cfn) => (
+                <div
+                  key={cfn.key}
+                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-[11px]"
+                >
+                  <span className="font-semibold text-slate-800 dark:text-slate-100">
+                    {cfn.icon} {cfn.shortLabel}
+                  </span>
+                  <span className="font-mono text-[10px] text-slate-500">({cfn.key})</span>
+                  <button
+                    type="button"
+                    onClick={() => handleStartEditCustomStepFn(cfn)}
+                    className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 hover:bg-sky-200 dark:bg-sky-900/60 dark:text-sky-200 font-semibold"
+                  >
+                    Sửa
+                  </button>
+                  <button
+                    type="button"
+                    disabled={savingStepFn}
+                    onClick={() => handleDeleteCustomStepFunction(cfn.key)}
+                    className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 hover:bg-rose-200 dark:bg-rose-900/60 dark:text-rose-200 font-semibold"
+                  >
+                    Xóa
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="p-2.5 rounded-lg bg-white dark:bg-slate-950 border border-indigo-200/80 dark:border-indigo-900/60 space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[11px] font-bold text-slate-800 dark:text-slate-200">
+              {stepFnForm.editingKey
+                ? `✏️ Đang sửa chức năng: ${stepFnForm.editingKey}`
+                : "➕ Khai báo Chức năng công đoạn mới"}
+            </span>
+            {stepFnForm.editingKey && (
+              <button
+                type="button"
+                onClick={() => setStepFnForm(makeEmptyStepFnForm())}
+                className="text-[11px] font-semibold text-slate-600 hover:underline"
+              >
+                + Chuyển sang tạo mới
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+            <Field label="Mã chức năng (Key, tự thêm CUSTOM_) *">
+              <input
+                className={`${inputClass} font-mono`}
+                placeholder="VD: QC_STERILITY"
+                value={stepFnForm.key}
+                disabled={Boolean(stepFnForm.editingKey)}
+                onChange={(e) => setStepFnForm((p) => ({ ...p, key: e.target.value.toUpperCase() }))}
+              />
+            </Field>
+            <Field label="Tên ngắn hiển thị trên nút *">
+              <input
+                className={inputClass}
+                placeholder="VD: Kiểm tra Độ vô khuẩn / Ổn định"
+                value={stepFnForm.shortLabel}
+                onChange={(e) => setStepFnForm((p) => ({ ...p, shortLabel: e.target.value }))}
+              />
+            </Field>
+            <Field label="Nhóm công đoạn mặc định">
+              <select
+                className={inputClass}
+                value={stepFnForm.defaultCategory}
+                onChange={(e) => setStepFnForm((p) => ({ ...p, defaultCategory: e.target.value }))}
+              >
+                {Object.entries(STEP_CATEGORY_LABELS).map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Màu thẻ Badge">
+              <select
+                className={inputClass}
+                value={stepFnForm.colorTheme}
+                onChange={(e) => setStepFnForm((p) => ({ ...p, colorTheme: e.target.value }))}
+              >
+                {Object.entries(STEP_FUNCTION_COLOR_THEMES).map(([k, t]) => (
+                  <option key={k} value={k}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
+            <div className="md:col-span-2">
+              <Field label="Biểu tượng (Icon)">
+                <div className="flex items-center gap-1">
+                  <input
+                    className={`${inputClass} w-14 text-center`}
+                    value={stepFnForm.icon}
+                    onChange={(e) => setStepFnForm((p) => ({ ...p, icon: e.target.value }))}
+                  />
+                  <div className="flex flex-wrap gap-1">
+                    {iconChoices.map((ic) => (
+                      <button
+                        key={ic}
+                        type="button"
+                        onClick={() => setStepFnForm((p) => ({ ...p, icon: ic }))}
+                        className={`px-1.5 py-0.5 rounded border text-xs ${
+                          stepFnForm.icon === ic
+                            ? "border-indigo-600 bg-indigo-100 dark:bg-indigo-900"
+                            : "border-slate-200 dark:border-slate-700"
+                        }`}
+                      >
+                        {ic}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </Field>
+            </div>
+            <Field label="Tiền tố mã bước">
+              <input
+                className={`${inputClass} font-mono`}
+                placeholder="STEP-CUSTOM"
+                value={stepFnForm.defaultStepCodePrefix}
+                onChange={(e) => setStepFnForm((p) => ({ ...p, defaultStepCodePrefix: e.target.value }))}
+              />
+            </Field>
+            <div className="md:col-span-2">
+              <Field label="Tên bước mặc định (auto nếu để trống)">
+                <input
+                  className={inputClass}
+                  placeholder="Tên hiển thị trên Hồ sơ lô EBR..."
+                  value={stepFnForm.defaultStepName}
+                  onChange={(e) => setStepFnForm((p) => ({ ...p, defaultStepName: e.target.value }))}
+                />
+              </Field>
+            </div>
+            <Field label="Định mức (phút)">
+              <input
+                type="number"
+                min={1}
+                className={inputClass}
+                value={stepFnForm.defaultDurationMin}
+                onChange={(e) => setStepFnForm((p) => ({ ...p, defaultDurationMin: e.target.value }))}
+              />
+            </Field>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+            <Field label="Phòng sạch / Khu vực gợi ý">
+              <input
+                list="kit-custom-stepfn-wc-list"
+                className={inputClass}
+                value={stepFnForm.defaultWorkCenter}
+                onChange={(e) => setStepFnForm((p) => ({ ...p, defaultWorkCenter: e.target.value }))}
+              />
+              <datalist id="kit-custom-stepfn-wc-list">
+                {workCenterSuggestions.map((wc) => (
+                  <option key={wc} value={wc} />
+                ))}
+              </datalist>
+            </Field>
+            <Field label="Mã SOP mặc định">
+              <input
+                className={`${inputClass} font-mono`}
+                value={stepFnForm.defaultSop}
+                onChange={(e) => setStepFnForm((p) => ({ ...p, defaultSop: e.target.value }))}
+              />
+            </Field>
+            <div className="md:col-span-2">
+              <Field label="Đầu ra mong đợi (Expected Output)">
+                <input
+                  className={inputClass}
+                  placeholder="VD: Kết quả đạt tiêu chuẩn vô khuẩn..."
+                  value={stepFnForm.expectedOutput}
+                  onChange={(e) => setStepFnForm((p) => ({ ...p, expectedOutput: e.target.value }))}
+                />
+              </Field>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <Field label="Mô tả ngắn (Tooltip trên nút)">
+              <input
+                className={inputClass}
+                placeholder="Mục đích sử dụng của chức năng công đoạn này..."
+                value={stepFnForm.description}
+                onChange={(e) => setStepFnForm((p) => ({ ...p, description: e.target.value }))}
+              />
+            </Field>
+            <Field label="Hướng dẫn thao tác chuẩn mặc định">
+              <input
+                className={inputClass}
+                placeholder="Nội dung SOP tóm tắt tự điền khi chọn bước..."
+                value={stepFnForm.defaultInstructions}
+                onChange={(e) => setStepFnForm((p) => ({ ...p, defaultInstructions: e.target.value }))}
+              />
+            </Field>
+          </div>
+
+          <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 space-y-2">
+            <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+              Cờ kiểm soát EBR tự động bật cho chức năng này:
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-[11px]">
+              {[
+                ["qc_gate", "🛡️ Chốt chặn QC Gate (IPQC/FQC)"],
+                ["dual_sign", "✍️ Ký duyệt kép 2 người"],
+                ["require_line_clearance", "🧹 Checklist Dọn chuyền & UV"],
+                ["require_material_scan", "📦 Quét đối chiếu Lô NVL FEFO"],
+                ["require_env_log", "🌡️ Ghi nhận Nhiệt độ / Độ ẩm"],
+                ["require_yield_reconcile", "⚖️ Cân bằng lượng & Hao hụt"],
+                ["require_label_ifu_check", "🏷️ Đối chiếu 100% Nhãn & IFU"],
+                ["require_asset", "⚙️ Bắt buộc gắn Thiết bị"],
+              ].map(([flagKey, flagLabel]) => (
+                <label key={flagKey} className="inline-flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean((stepFnForm.defaultFlags as any)[flagKey])}
+                    onChange={(e) =>
+                      setStepFnForm((p) => ({
+                        ...p,
+                        defaultFlags: { ...p.defaultFlags, [flagKey]: e.target.checked },
+                      }))
+                    }
+                  />
+                  <span>{flagLabel}</span>
+                </label>
+              ))}
+            </div>
+            {stepFnForm.defaultFlags.require_asset && (
+              <div className="pt-1 max-w-md">
+                <Field label="Nhóm thiết bị gợi ý mặc định (tùy chọn)">
+                  <select
+                    className={inputClass}
+                    value={stepFnForm.defaultFlags.equipment_group}
+                    onChange={(e) =>
+                      setStepFnForm((p) => ({
+                        ...p,
+                        defaultFlags: { ...p.defaultFlags, equipment_group: e.target.value },
+                      }))
+                    }
+                  >
+                    {renderEquipmentGroupOptions()}
+                  </select>
+                </Field>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                Thông số đo mặc định ({stepFnForm.defaultParams.length}):
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setStepFnForm((p) => ({
+                    ...p,
+                    defaultParams: [
+                      ...p.defaultParams,
+                      {
+                        key: `param_${p.defaultParams.length + 1}`,
+                        label: "Thông số kiểm tra",
+                        type: "number",
+                        unit: "",
+                        min: "",
+                        max: "",
+                        required: true,
+                      },
+                    ],
+                  }))
+                }
+                className="px-2 py-0.5 rounded border border-indigo-300 text-indigo-700 dark:text-indigo-300 text-[11px] font-semibold hover:bg-indigo-50"
+              >
+                + Thêm thông số
+              </button>
+            </div>
+            {stepFnForm.defaultParams.map((pm, pIdx) => (
+              <div key={pIdx} className="grid grid-cols-2 md:grid-cols-12 gap-1.5 items-center">
+                <input
+                  className={`${inputClass} md:col-span-2 font-mono text-xs`}
+                  placeholder="Mã (key)"
+                  value={pm.key}
+                  onChange={(e) =>
+                    setStepFnForm((p) => ({
+                      ...p,
+                      defaultParams: p.defaultParams.map((x, i) => (i === pIdx ? { ...x, key: e.target.value } : x)),
+                    }))
+                  }
+                />
+                <input
+                  className={`${inputClass} md:col-span-4 text-xs`}
+                  placeholder="Tên thông số hiển thị"
+                  value={pm.label}
+                  onChange={(e) =>
+                    setStepFnForm((p) => ({
+                      ...p,
+                      defaultParams: p.defaultParams.map((x, i) => (i === pIdx ? { ...x, label: e.target.value } : x)),
+                    }))
+                  }
+                />
+                <select
+                  className={`${inputClass} md:col-span-2 text-xs`}
+                  value={pm.type}
+                  onChange={(e) =>
+                    setStepFnForm((p) => ({
+                      ...p,
+                      defaultParams: p.defaultParams.map((x, i) =>
+                        i === pIdx ? { ...x, type: e.target.value as "number" | "text" | "boolean" } : x
+                      ),
+                    }))
+                  }
+                >
+                  <option value="number">Số</option>
+                  <option value="text">Chữ</option>
+                  <option value="boolean">Đạt/Không</option>
+                </select>
+                <input
+                  className={`${inputClass} md:col-span-1 text-xs`}
+                  placeholder="ĐV"
+                  value={pm.unit}
+                  onChange={(e) =>
+                    setStepFnForm((p) => ({
+                      ...p,
+                      defaultParams: p.defaultParams.map((x, i) => (i === pIdx ? { ...x, unit: e.target.value } : x)),
+                    }))
+                  }
+                />
+                <input
+                  className={`${inputClass} md:col-span-1 text-xs`}
+                  placeholder="Min"
+                  value={pm.min}
+                  onChange={(e) =>
+                    setStepFnForm((p) => ({
+                      ...p,
+                      defaultParams: p.defaultParams.map((x, i) => (i === pIdx ? { ...x, min: e.target.value } : x)),
+                    }))
+                  }
+                />
+                <input
+                  className={`${inputClass} md:col-span-1 text-xs`}
+                  placeholder="Max"
+                  value={pm.max}
+                  onChange={(e) =>
+                    setStepFnForm((p) => ({
+                      ...p,
+                      defaultParams: p.defaultParams.map((x, i) => (i === pIdx ? { ...x, max: e.target.value } : x)),
+                    }))
+                  }
+                />
+                <button
+                  type="button"
+                  onClick={() =>
+                    setStepFnForm((p) => ({
+                      ...p,
+                      defaultParams: p.defaultParams.filter((_, i) => i !== pIdx),
+                    }))
+                  }
+                  className="md:col-span-1 px-2 py-1 rounded text-xs font-bold text-rose-600 hover:bg-rose-50"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {stepFnNotice && (
+            <div className="px-2.5 py-1.5 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-800 dark:bg-emerald-950/50 dark:border-emerald-800 dark:text-emerald-200 text-[11px] font-semibold">
+              ✅ {stepFnNotice}
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+            {stepFnForm.editingKey ? (
+              <>
+                <Button type="button" variant="ghost" className="min-h-8 px-3 py-1 text-xs" onClick={() => setStepFnForm(makeEmptyStepFnForm())}>
+                  Hủy sửa
+                </Button>
+                <Button type="button" className="min-h-8 px-3 py-1 text-xs" disabled={savingStepFn} onClick={() => handleSaveCustomStepFunction(false)}>
+                  {savingStepFn ? "Đang lưu..." : "💾 Cập nhật chức năng"}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button type="button" variant="ghost" className="min-h-8 px-3 py-1 text-xs" disabled={savingStepFn} onClick={() => handleSaveCustomStepFunction(false)}>
+                  {savingStepFn ? "Đang lưu..." : "💾 Lưu vào danh mục"}
+                </Button>
+                <Button type="button" className="min-h-8 px-3 py-1 text-xs" disabled={savingStepFn} onClick={() => handleSaveCustomStepFunction(true)}>
+                  {savingStepFn
+                    ? "Đang lưu..."
+                    : stepFnManagerHost === "create_bar"
+                      ? "✨ Lưu & Nối ngay bước này"
+                      : "✨ Lưu & Áp dụng vào bước"}
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const loadList = useCallback(async () => {
     setError(null);
@@ -1131,8 +1746,8 @@ export function BomRoutingView({
     }
   };
 
-  const handleAddDraftStepFromFunction = (funcKey: string) => {
-    const spec = STEP_FUNCTION_CATALOG[funcKey] || STEP_FUNCTION_CATALOG.FORMULATION_MIXING;
+  const handleAddDraftStepFromFunction = (funcKey: string, specOverride?: StepFunctionArchetype) => {
+    const spec = specOverride || resolveStepFunctionSpec(funcKey, mergedStepFunctions);
     const nextSeq = rtDraftSteps.length > 0 ? Math.max(...rtDraftSteps.map((s) => Number(s.seq) || 0)) + 10 : 10;
     const newStep: RoutingStepDraft = {
       seq: nextSeq,
@@ -1155,7 +1770,7 @@ export function BomRoutingView({
   };
 
   const handleChangeDraftStepFunction = (idx: number, funcKey: string) => {
-    const spec = STEP_FUNCTION_CATALOG[funcKey];
+    const spec = mergedStepFunctions[funcKey];
     if (!spec) return;
     setRtDraftSteps((prev) =>
       prev.map((step, i) =>
@@ -1232,8 +1847,8 @@ export function BomRoutingView({
     }
   };
 
-  const handleSelectStepFunctionInForm = (funcKey: string) => {
-    const spec = STEP_FUNCTION_CATALOG[funcKey];
+  const handleSelectStepFunctionInForm = (funcKey: string, specOverride?: StepFunctionArchetype) => {
+    const spec = specOverride || mergedStepFunctions[funcKey];
     if (!spec) return;
     setStepForm((prev) => ({
       ...prev,
@@ -1305,7 +1920,7 @@ export function BomRoutingView({
   const handleStartAddNewStep = () => {
     const existingSteps = routingDetail?.steps || [];
     const nextSeq = existingSteps.length > 0 ? Math.max(...existingSteps.map((s: any) => Number(s.seq) || 0)) + 10 : 10;
-    const spec = STEP_FUNCTION_CATALOG.FORMULATION_MIXING;
+    const spec = mergedStepFunctions.FORMULATION_MIXING || STEP_FUNCTION_CATALOG.FORMULATION_MIXING;
     setEditingStepId(null);
     setStepForm({
       seq: String(nextSeq),
@@ -4181,23 +4796,38 @@ export function BomRoutingView({
                       })}
                     </div>
 
-                    {/* Thanh thêm nhanh bước theo 8 chức năng chuẩn */}
+                    {/* Thanh thêm nhanh bước theo chức năng chuẩn & tùy chỉnh */}
                     <div className="pt-2 border-t border-slate-200 dark:border-slate-800">
                       <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1.5">
                         2️⃣ Hoặc bấm để nối thêm Bước mới theo Chức năng Công đoạn chuẩn (Auto-fill SOP, Phòng sạch, Thông số &amp; Cờ EBR):
                       </div>
                       <div className="flex flex-wrap gap-1.5">
-                        {Object.values(STEP_FUNCTION_CATALOG).map((fn) => (
+                        {stepFunctionList.map((fn) => (
                           <button
                             key={fn.key}
                             type="button"
                             onClick={() => handleAddDraftStepFromFunction(fn.key)}
-                            title={fn.description}
-                            className="px-2.5 py-1 rounded-lg text-[11px] font-semibold border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 hover:bg-sky-50 dark:hover:bg-sky-950/50 hover:border-sky-400 transition-colors"
+                            title={fn.description || fn.label}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
+                              fn.isCustom
+                                ? "border-dashed border-indigo-300 dark:border-indigo-700 bg-indigo-50/70 dark:bg-indigo-950/30 text-indigo-900 dark:text-indigo-100 hover:bg-indigo-100 dark:hover:bg-indigo-900/50"
+                                : "border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 hover:bg-sky-50 dark:hover:bg-sky-950/50 hover:border-sky-400"
+                            }`}
                           >
                             + {fn.icon} {fn.shortLabel}
                           </button>
                         ))}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenStepFnManager("create_bar")}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-colors ${
+                            stepFnManagerHost === "create_bar"
+                              ? "border-indigo-600 bg-indigo-600 text-white"
+                              : "border-indigo-300 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-200 hover:bg-indigo-100"
+                          }`}
+                        >
+                          ✨ + Tạo / Quản lý Chức năng công đoạn mới
+                        </button>
                         {rtDraftSteps.length > 0 && (
                           <button
                             type="button"
@@ -4208,6 +4838,7 @@ export function BomRoutingView({
                           </button>
                         )}
                       </div>
+                      {stepFnManagerHost === "create_bar" && renderStepFunctionManager()}
                     </div>
                   </div>
 
@@ -4223,7 +4854,7 @@ export function BomRoutingView({
                     ) : (
                       <div className="space-y-2.5 max-h-[540px] overflow-y-auto pr-1">
                         {rtDraftSteps.map((st, idx) => {
-                          const fnSpec = STEP_FUNCTION_CATALOG[st.step_function] || STEP_FUNCTION_CATALOG.FORMULATION_MIXING;
+                          const fnSpec = resolveStepFunctionSpec(st.step_function, mergedStepFunctions);
                           return (
                             <div
                               key={`${st.seq}-${idx}`}
@@ -4278,9 +4909,12 @@ export function BomRoutingView({
                                       value={st.step_function}
                                       onChange={(e) => handleChangeDraftStepFunction(idx, e.target.value)}
                                     >
-                                      {Object.values(STEP_FUNCTION_CATALOG).map((fn) => (
+                                      {!mergedStepFunctions[st.step_function] && st.step_function && (
+                                        <option value={st.step_function}>🧩 {st.step_function} [Tùy chỉnh đã lưu]</option>
+                                      )}
+                                      {stepFunctionList.map((fn) => (
                                         <option key={fn.key} value={fn.key}>
-                                          {fn.icon} {fn.label}
+                                          {fn.icon} {fn.label}{fn.isCustom ? " [Tùy chỉnh]" : ""}
                                         </option>
                                       ))}
                                     </select>
@@ -4880,7 +5514,7 @@ export function BomRoutingView({
                       <div className="flex flex-wrap items-center gap-1.5">
                         {routingDetail.steps.map((s: any, i: number) => {
                           const fnKey = s.step_function || (s.is_qc ? "IPQC_PH_GATE" : s.category || "FORMULATION_MIXING");
-                          const fnSpec = STEP_FUNCTION_CATALOG[fnKey] || STEP_FUNCTION_CATALOG.FORMULATION_MIXING;
+                          const fnSpec = resolveStepFunctionSpec(fnKey, mergedStepFunctions);
                           return (
                             <React.Fragment key={s.id}>
                               <div
@@ -4959,7 +5593,7 @@ export function BomRoutingView({
                   >
                     {routingDetail.steps.map((s: any, idx: number) => {
                       const fnKey = s.step_function || (s.is_qc ? "IPQC_PH_GATE" : s.category || "FORMULATION_MIXING");
-                      const fnSpec = STEP_FUNCTION_CATALOG[fnKey] || STEP_FUNCTION_CATALOG.FORMULATION_MIXING;
+                      const fnSpec = resolveStepFunctionSpec(fnKey, mergedStepFunctions);
                       const flags = s.functional_flags && typeof s.functional_flags === "object" ? s.functional_flags : {};
                       return (
                         <tr key={s.id} className="align-top">
@@ -5133,30 +5767,45 @@ export function BomRoutingView({
                       </Button>
                     </div>
 
-                    {/* Chọn nhanh chức năng chuẩn */}
+                    {/* Chọn nhanh chức năng chuẩn & tùy chỉnh */}
                     <div className="space-y-1">
                       <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
                         Chọn nhanh Chức năng chuẩn của Bước (Click để nạp cấu hình gợi ý):
                       </div>
                       <div className="flex flex-wrap gap-1.5">
-                        {Object.values(STEP_FUNCTION_CATALOG).map((fn) => {
+                        {stepFunctionList.map((fn) => {
                           const active = stepForm.step_function === fn.key;
                           return (
                             <button
                               key={fn.key}
                               type="button"
                               onClick={() => handleSelectStepFunctionInForm(fn.key)}
+                              title={fn.description || fn.label}
                               className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
                                 active
                                   ? "border-sky-600 bg-sky-600 text-white shadow-2xs"
-                                  : "border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-sky-400"
+                                  : fn.isCustom
+                                    ? "border-dashed border-indigo-300 dark:border-indigo-700 bg-indigo-50/70 dark:bg-indigo-950/30 text-indigo-900 dark:text-indigo-100 hover:border-indigo-500"
+                                    : "border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-sky-400"
                               }`}
                             >
                               {fn.icon} {fn.shortLabel}
                             </button>
                           );
                         })}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenStepFnManager("step_form")}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+                            stepFnManagerHost === "step_form"
+                              ? "border-indigo-600 bg-indigo-600 text-white"
+                              : "border-indigo-300 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-200 hover:bg-indigo-100"
+                          }`}
+                        >
+                          ✨ + Tạo / Quản lý Chức năng mới
+                        </button>
                       </div>
+                      {stepFnManagerHost === "step_form" && renderStepFunctionManager()}
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
