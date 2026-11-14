@@ -66,7 +66,13 @@ export default function FactoryKitModule() {
         {tabs.map((t) => (
           <button
             key={t.key}
-            onClick={() => setTab(t.key)}
+            onClick={() => {
+              setError(null);
+              setTab(t.key);
+              if (options.units.length === 0) {
+                loadOptions();
+              }
+            }}
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${
               tab === t.key
                 ? "bg-sky-700 text-white"

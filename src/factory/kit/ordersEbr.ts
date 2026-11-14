@@ -2498,6 +2498,8 @@ let kitDailyTrackerSchemaEnsured = false;
 
 export async function ensureKitDailyTrackerAndQcGateSchema(tx: Tx) {
   if (kitDailyTrackerSchemaEnsured) return;
+  await tx.query("SELECT pg_advisory_xact_lock(2026111402)");
+  if (kitDailyTrackerSchemaEnsured) return;
   await tx.query(`
     ALTER TABLE kit.production_step
       ADD COLUMN IF NOT EXISTS assigned_to_name text,

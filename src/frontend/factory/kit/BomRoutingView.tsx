@@ -1987,7 +1987,7 @@ export function BomRoutingView({
                       </div>
                     </div>
 
-                    <Table head={["Mã SP / BOM", "Tên sản phẩm & Quy cách", "Phân loại", "Số NVL", "Trạng thái", ""]}>
+                    <Table head={["Mã SP / BOM", "Tên sản phẩm & Phân loại", "Trạng thái", "Thao tác"]}>
                       {pagedBoms.map((b) => {
                         const isSemi = (b.bom_type || (b.product_type === "SEMI_FINISHED" ? "semi_finished" : "finished_good")) === "semi_finished";
                         const isPcr = !isSemi && (b.bom_category || "PCR Kit") === "PCR Kit";
@@ -2006,7 +2006,7 @@ export function BomRoutingView({
                               isSelected ? "bg-sky-500/15 ring-1 ring-inset ring-sky-500/40" : ""
                             }`}
                           >
-                            <td className="px-2.5 py-2 text-xs whitespace-nowrap">
+                            <td className="px-2 py-2 text-xs whitespace-nowrap">
                               <div className="flex items-center gap-1">
                                 <span className="font-mono font-bold text-slate-900 dark:text-slate-100">{b.product_code}</span>
                                 {variantLabel && (
@@ -2019,36 +2019,36 @@ export function BomRoutingView({
                                 {b.code} · v{b.bom_version}
                               </div>
                             </td>
-                            <td className="px-2.5 py-2 text-xs max-w-[260px]">
+                            <td className="px-2 py-2 text-xs min-w-[140px] max-w-[210px]">
                               <div className="font-semibold text-slate-800 dark:text-slate-100 truncate" title={b.name}>
                                 {b.product_name || b.name}
                               </div>
-                              <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                                {b.specification || (isSemi ? `Lô ${b.base_qty ?? 1} ${b.base_uom ?? "mL"}` : `Hộp ${b.tests_per_kit || 50} test`)}
+                              <div className="flex flex-wrap items-center gap-1 mt-0.5 text-[10px] text-slate-500 dark:text-slate-400">
+                                {isSemi ? (
+                                  <span className="inline-block whitespace-nowrap px-1.5 py-0.2 rounded-full font-bold bg-amber-500/15 border border-amber-500/40 text-amber-700 dark:text-amber-300">
+                                    🧪 Bán TP
+                                  </span>
+                                ) : isPcr ? (
+                                  <span className="inline-block whitespace-nowrap px-1.5 py-0.2 rounded-full font-bold bg-indigo-500/20 border border-indigo-400/50 text-indigo-700 dark:text-indigo-200">
+                                    🧬 Kit PCR
+                                  </span>
+                                ) : (
+                                  <span className="inline-block whitespace-nowrap px-1.5 py-0.2 rounded-full font-bold bg-teal-500/15 border border-teal-400/40 text-teal-700 dark:text-teal-200">
+                                    🧪 Tách chiết
+                                  </span>
+                                )}
+                                <span className="truncate">
+                                  · {b.specification || (isSemi ? `Lô ${b.base_qty ?? 1} ${b.base_uom ?? "mL"}` : `${b.tests_per_kit || 50} test`)}
+                                </span>
+                                <span className="font-mono font-semibold text-slate-700 dark:text-slate-300">
+                                  · {b.line_count ?? 0} NVL
+                                </span>
                               </div>
                             </td>
-                            <td className="px-2.5 py-2 text-xs whitespace-nowrap">
-                              {isSemi ? (
-                                <span className="inline-block whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 border border-amber-500/40 text-amber-700 dark:text-amber-300">
-                                  🧪 Bán TP
-                                </span>
-                              ) : isPcr ? (
-                                <span className="inline-block whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 border border-indigo-400/50 text-indigo-700 dark:text-indigo-200">
-                                  🧬 Kit PCR
-                                </span>
-                              ) : (
-                                <span className="inline-block whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/15 border border-teal-400/40 text-teal-700 dark:text-teal-200">
-                                  🧪 Tách chiết
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-2.5 py-2 text-xs font-mono font-semibold text-center whitespace-nowrap">
-                              {b.line_count ?? 0}
-                            </td>
-                            <td className="px-2.5 py-2 whitespace-nowrap">
+                            <td className="px-2 py-2 whitespace-nowrap">
                               <StatusBadge status={b.status} />
                             </td>
-                            <td className="px-2.5 py-2 text-right whitespace-nowrap">
+                            <td className="px-2 py-2 text-right whitespace-nowrap">
                               <div className="inline-flex items-center gap-1">
                                 <button
                                   type="button"

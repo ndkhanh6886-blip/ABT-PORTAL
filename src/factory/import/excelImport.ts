@@ -22,6 +22,8 @@ let importSchemaEnsured = false;
 
 export async function ensureExcelImportSchema(tx: Tx): Promise<void> {
   if (importSchemaEnsured) return;
+  await tx.query("SELECT pg_advisory_xact_lock(2026111405)");
+  if (importSchemaEnsured) return;
   await tx.query(`
     CREATE TABLE IF NOT EXISTS core.excel_import_log (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

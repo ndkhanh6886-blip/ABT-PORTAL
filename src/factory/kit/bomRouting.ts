@@ -999,6 +999,7 @@ function isNonFillablePackagingOrAccessory(code: string, name: string, role: str
 }
 
 export async function syncPackagingFromBomLines(tx: Tx, actor: AuthzActor, bomId: string) {
+  await ensureKitBomRoutingAndIfuSchema(tx);
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as KitBomRow | undefined;
   if (!bom) throw notFound("định mức BOM");
   await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
@@ -1608,6 +1609,9 @@ let kitBomRoutingIfuSchemaEnsured = false;
 
 export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
   if (kitBomRoutingIfuSchemaEnsured) return;
+  await tx.query("SELECT pg_advisory_xact_lock(2026111401)");
+  if (kitBomRoutingIfuSchemaEnsured) return;
+
   await tx.query(`
     ALTER TABLE kit.bom
       ADD COLUMN IF NOT EXISTS label_template_code text,
@@ -1652,10 +1656,27 @@ export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
       ADD COLUMN IF NOT EXISTS qty_per_base_aliquoted numeric,
       ADD COLUMN IF NOT EXISTS is_mix_component boolean DEFAULT true,
       ADD COLUMN IF NOT EXISTS is_demo_fixed_component boolean DEFAULT false,
-      ADD COLUMN IF NOT EXISTS include_in_qc_retention boolean DEFAULT true
+      ADD COLUMN IF NOT EXISTS include_in_qc_retention boolean DEFAULT true,
+      ADD COLUMN IF NOT EXISTS bundle_parent_code text
   `);
 
   await tx.query(`
+    UPDATE kit.bom_line
+       SET component_role = 'REAGENT'
+     WHERE component_role IS NULL
+        OR component_role NOT IN (
+          'MASTER_MIX',
+          'PRIMER_PROBE',
+          'ENZYME',
+          'INTERNAL_CONTROL',
+          'POSITIVE_CONTROL',
+          'NEGATIVE_CONTROL',
+          'EXTRACTION_BUFFER',
+          'PCR_TUBE_STRIP',
+          'PACKAGING',
+          'SEMI_FINISHED',
+          'REAGENT'
+        );
     ALTER TABLE kit.bom_line DROP CONSTRAINT IF EXISTS bom_line_component_role_check;
     ALTER TABLE kit.bom_line ADD CONSTRAINT bom_line_component_role_check
       CHECK (component_role IN (
@@ -1671,6 +1692,19 @@ export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
         'SEMI_FINISHED',
         'REAGENT'
       ));
+    WITH ranked_effective AS (
+      SELECT id,
+             row_number() OVER (
+               PARTITION BY product_item_id, upper(coalesce(nullif(trim(variant_code), ''), 'BASE'))
+               ORDER BY bom_version DESC, updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+             ) AS rn
+        FROM kit.bom
+       WHERE status = 'EFFECTIVE'
+    )
+    UPDATE kit.bom b
+       SET status = 'OBSOLETE'
+      FROM ranked_effective r
+     WHERE b.id = r.id AND r.rn > 1;
     DROP INDEX IF EXISTS kit.kit_bom_one_effective;
     CREATE UNIQUE INDEX IF NOT EXISTS kit_bom_one_effective_variant
       ON kit.bom (product_item_id, upper(coalesce(nullif(trim(variant_code), ''), 'BASE')))

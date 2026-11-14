@@ -17,6 +17,8 @@ import { kitSpecOf, kitSpecToFactorySupplyAndTube } from "@/frontend/utils/packa
 let internalOrderLineColumnsEnsured = false;
 export async function ensureInternalOrderLineKitSpecColumns(tx: Tx) {
   if (internalOrderLineColumnsEnsured) return;
+  await tx.query("SELECT pg_advisory_xact_lock(2026111403)");
+  if (internalOrderLineColumnsEnsured) return;
   await tx.query(`
     ALTER TABLE intake.internal_order_line
       ADD COLUMN IF NOT EXISTS supply_form text,
