@@ -531,6 +531,8 @@ export default function FactoryExcelImportModule() {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [previewRows, setPreviewRows] = useState<Record<string, any>[]>([]);
+  const [previewPage, setPreviewPage] = useState(1);
+  const [importProgress, setImportProgress] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<{
     total_rows: number;
     created_count: number;
@@ -561,6 +563,7 @@ export default function FactoryExcelImportModule() {
     }
     setImportResult(null);
     setParseError(null);
+    setPreviewPage(1);
     setUploadedFileName(`${tpl.key}_Mau_Demo.xlsx`);
     setPreviewRows(tpl.sampleRows.map((r) => ({ ...r })));
   };
@@ -672,6 +675,7 @@ export default function FactoryExcelImportModule() {
       }
 
       setUploadedFileName(file.name);
+      setPreviewPage(1);
       setPreviewRows(parsedRows);
     } catch (e: any) {
       setParseError(`Không thể đọc file Excel: ${e?.message || String(e)}`);
@@ -679,27 +683,82 @@ export default function FactoryExcelImportModule() {
   };
 
   const importMut = useMutation({
-    mutationFn: () =>
-      api<{
+    mutationFn: async () => {
+      type ImportRes = {
         total_rows: number;
         created_count: number;
         updated_count: number;
         error_count: number;
         errors: { row_no: number; code?: string; message: string }[];
-      }>("/api/factory/import", {
-        method: "POST",
-        json: {
-          template_key: activeTemplate.key,
-          template_name: activeTemplate.title,
-          target_dept_code: targetDeptCode,
-          target_warehouse_code: targetWarehouseCode,
-          file_name: uploadedFileName || `${activeTemplate.key}.xlsx`,
-          rows: previewRows,
-        },
-      }),
+      };
+
+      const canChunkByRow = ["INVENTORY_STOCK", "LAB_EQUIPMENT", "QC_METHOD_SPEC", "RD_PROJECT_WBS"].includes(
+        activeTemplate.key
+      );
+      const CHUNK_SIZE = 400;
+
+      if (!canChunkByRow || previewRows.length <= CHUNK_SIZE) {
+        setImportProgress(`Đang đồng bộ ${previewRows.length} dòng...`);
+        return await api<ImportRes>("/api/factory/import", {
+          method: "POST",
+          json: {
+            template_key: activeTemplate.key,
+            template_name: activeTemplate.title,
+            target_dept_code: targetDeptCode,
+            target_warehouse_code: targetWarehouseCode,
+            file_name: uploadedFileName || `${activeTemplate.key}.xlsx`,
+            rows: previewRows,
+          },
+        });
+      }
+
+      let totalCreated = 0;
+      let totalUpdated = 0;
+      let totalErrors = 0;
+      const allErrors: { row_no: number; code?: string; message: string }[] = [];
+
+      for (let offset = 0; offset < previewRows.length; offset += CHUNK_SIZE) {
+        const chunk = previewRows.slice(offset, offset + CHUNK_SIZE);
+        setImportProgress(
+          `Đang đồng bộ lô ${Math.min(offset + chunk.length, previewRows.length)} / ${previewRows.length} dòng...`
+        );
+        const res = await api<ImportRes>("/api/factory/import", {
+          method: "POST",
+          json: {
+            template_key: activeTemplate.key,
+            template_name: activeTemplate.title,
+            target_dept_code: targetDeptCode,
+            target_warehouse_code: targetWarehouseCode,
+            file_name: uploadedFileName || `${activeTemplate.key}.xlsx`,
+            rows: chunk,
+          },
+        });
+        totalCreated += res.created_count || 0;
+        totalUpdated += res.updated_count || 0;
+        totalErrors += res.error_count || 0;
+        for (const err of res.errors || []) {
+          allErrors.push({
+            ...err,
+            row_no: offset + (err.row_no || 1),
+          });
+        }
+      }
+
+      return {
+        total_rows: previewRows.length,
+        created_count: totalCreated,
+        updated_count: totalUpdated,
+        error_count: totalErrors,
+        errors: allErrors,
+      };
+    },
     onSuccess: (res) => {
+      setImportProgress(null);
       setImportResult(res);
       qc.invalidateQueries({ queryKey: ["factory"] });
+    },
+    onError: () => {
+      setImportProgress(null);
     },
   });
 
@@ -715,6 +774,11 @@ export default function FactoryExcelImportModule() {
 
   const validRowCount = previewRows.filter((r) => validateRow(r).length === 0).length;
   const invalidRowCount = previewRows.length - validRowCount;
+  const PAGE_SIZE = 100;
+  const totalPreviewPages = Math.max(1, Math.ceil(previewRows.length / PAGE_SIZE));
+  const safePreviewPage = Math.min(previewPage, totalPreviewPages);
+  const pageStartIdx = (safePreviewPage - 1) * PAGE_SIZE;
+  const visiblePreviewRows = previewRows.slice(pageStartIdx, pageStartIdx + PAGE_SIZE);
   const stats = overview.data?.stats;
 
   return (
@@ -1075,11 +1139,38 @@ export default function FactoryExcelImportModule() {
                 disabled={importMut.isPending || previewRows.length === 0}
               >
                 {importMut.isPending
-                  ? "⏳ Đang đồng bộ vào CSDL..."
+                  ? `⏳ ${importProgress || "Đang đồng bộ vào CSDL..."}`
                   : `🚀 Xác Nhận Nhập ${previewRows.length} Dòng Vào Hệ Thống`}
               </Button>
             </div>
           </div>
+
+          {totalPreviewPages > 1 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 rounded-xl bg-slate-100/80 dark:bg-slate-800/60 text-xs">
+              <span className="text-slate-600 dark:text-slate-300">
+                Đang hiển thị dòng <b>{pageStartIdx + 1}</b> – <b>{Math.min(pageStartIdx + PAGE_SIZE, previewRows.length)}</b> trên tổng số <b>{previewRows.length}</b> dòng (Trang {safePreviewPage}/{totalPreviewPages})
+              </span>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  variant="ghost"
+                  disabled={safePreviewPage <= 1}
+                  onClick={() => setPreviewPage((p) => Math.max(1, p - 1))}
+                >
+                  « Trang trước
+                </Button>
+                <span className="px-2 py-0.5 rounded bg-white dark:bg-slate-900 font-mono font-bold">
+                  {safePreviewPage} / {totalPreviewPages}
+                </span>
+                <Button
+                  variant="ghost"
+                  disabled={safePreviewPage >= totalPreviewPages}
+                  onClick={() => setPreviewPage((p) => Math.min(totalPreviewPages, p + 1))}
+                >
+                  Trang sau »
+                </Button>
+              </div>
+            </div>
+          )}
 
           {previewRows.length === 0 ? (
             <Empty>
@@ -1098,7 +1189,8 @@ export default function FactoryExcelImportModule() {
                 "Xóa",
               ]}
             >
-              {previewRows.map((row, rIdx) => {
+              {visiblePreviewRows.map((row, localIdx) => {
+                const rIdx = pageStartIdx + localIdx;
                 const missingCols = validateRow(row);
                 return (
                   <tr key={rIdx} className="align-top">

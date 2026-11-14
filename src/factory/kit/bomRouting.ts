@@ -1460,6 +1460,28 @@ export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
   `);
 
   await tx.query(`
+    ALTER TABLE kit.bom_line DROP CONSTRAINT IF EXISTS bom_line_component_role_check;
+    ALTER TABLE kit.bom_line ADD CONSTRAINT bom_line_component_role_check
+      CHECK (component_role IN (
+        'MASTER_MIX',
+        'PRIMER_PROBE',
+        'ENZYME',
+        'INTERNAL_CONTROL',
+        'POSITIVE_CONTROL',
+        'NEGATIVE_CONTROL',
+        'EXTRACTION_BUFFER',
+        'PCR_TUBE_STRIP',
+        'PACKAGING',
+        'SEMI_FINISHED',
+        'REAGENT'
+      ));
+    DROP INDEX IF EXISTS kit.kit_bom_one_effective;
+    CREATE UNIQUE INDEX IF NOT EXISTS kit_bom_one_effective_variant
+      ON kit.bom (product_item_id, upper(coalesce(nullif(trim(variant_code), ''), 'BASE')))
+      WHERE status = 'EFFECTIVE';
+  `);
+
+  await tx.query(`
     ALTER TABLE kit.routing_step
       ADD COLUMN IF NOT EXISTS step_function text DEFAULT 'FORMULATION_MIXING',
       ADD COLUMN IF NOT EXISTS work_center text DEFAULT 'Phòng sạch Class 10.000 (ISO 7)',
@@ -1546,7 +1568,7 @@ export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
   for (const ti of stdTubeItems) {
     await tx.query(
       `INSERT INTO master.item (code, name, item_type, base_uom, tracking, storage_condition, receipt_qc_required, is_purchasable, is_saleable, is_manufacturable, status)
-       VALUES ($1, $2, 'PACKAGING', $3, 'LOT', 'RT', false, true, false, false, 'ACTIVE')
+       VALUES ($1, $2, 'CONSUMABLE', $3, 'LOT', 'RT', false, true, false, false, 'ACTIVE')
        ON CONFLICT (code) DO NOTHING`,
       [ti.code, ti.name, tubeBaseUom]
     );

@@ -39,6 +39,8 @@ export async function ensureExcelImportSchema(tx: Tx): Promise<void> {
       actor_name varchar(150),
       created_at timestamptz NOT NULL DEFAULT now()
     );
+    ALTER TABLE master.uom DROP CONSTRAINT IF EXISTS uom_code_check;
+    ALTER TABLE master.uom ALTER COLUMN dimension SET DEFAULT 'COUNT';
   `);
   importSchemaEnsured = true;
 }
@@ -82,18 +84,30 @@ function normDate(v: unknown): string | null {
   return null;
 }
 
-async function ensureUomExists(tx: Tx, rawUom: string): Promise<string> {
-  const code = normStr(rawUom, "pcs").slice(0, 16) || "pcs";
+async function ensureUomExists(tx: Tx, rawUom: string, uomCache?: Map<string, string>): Promise<string> {
+  const code = normStr(rawUom, "pcs").slice(0, 24) || "pcs";
+  const key = code.toLowerCase();
+  if (uomCache?.has(key)) return uomCache.get(key)!;
   const found = (
     await tx.query("SELECT code FROM master.uom WHERE lower(code) = lower($1) LIMIT 1", [code])
   ).rows[0];
-  if (found) return found.code as string;
+  if (found) {
+    const resolved = found.code as string;
+    uomCache?.set(key, resolved);
+    return resolved;
+  }
+  const dim = /^(ml|µl|ul|l|lít|lit)$/i.test(code)
+    ? "VOLUME"
+    : /^(g|mg|kg|µg|ug|gam)$/i.test(code)
+      ? "MASS"
+      : "COUNT";
   await tx.query(
-    `INSERT INTO master.uom (code, name, status)
-     VALUES ($1, $2, 'ACTIVE')
+    `INSERT INTO master.uom (code, name, dimension, status)
+     VALUES ($1, $2, $3, 'ACTIVE')
      ON CONFLICT (code) DO NOTHING`,
-    [code, code]
+    [code, code, dim]
   );
+  uomCache?.set(key, code);
   return code;
 }
 
@@ -122,7 +136,7 @@ function mapItemType(raw: string): string {
   if (s.includes("KIT") || s.includes("THANH PHAM")) return "FINISHED_KIT";
   if (s.includes("BAN THANH PHAM") || s.includes("BTP") || s.includes("SEMI")) return "SEMI_FINISHED";
   if (s.includes("HOA CHAT") || s.includes("REAGENT") || s.includes("ENZYME")) return "REAGENT";
-  if (s.includes("TIEU HAO") || s.includes("ONG") || s.includes("HOP") || s.includes("BAO BI")) return "CONSUMABLE";
+  if (s.includes("TIEU HAO") || s.includes("ONG") || s.includes("HOP") || s.includes("BAO BI") || s.includes("PACKAGING")) return "CONSUMABLE";
   if (s.includes("LINH KIEN") || s.includes("COMPONENT")) return "COMPONENT";
   if (s.includes("THIET BI") || s.includes("MAY")) return "DEVICE";
   return "RAW_MATERIAL";
@@ -140,10 +154,11 @@ async function ensureItemByCode(
     shelf_life_days?: number | null;
     min_stock?: number;
     notes?: string | null;
-  }
+  },
+  uomCache?: Map<string, string>
 ): Promise<{ id: string; code: string; base_uom: string; tracking: string; created: boolean }> {
   const code = normCode(params.code);
-  const uom = await ensureUomExists(tx, params.base_uom || "pcs");
+  const uom = await ensureUomExists(tx, params.base_uom || "pcs", uomCache);
   const itemType = mapItemType(params.item_type || "RAW_MATERIAL");
   const storage = mapStorageCondition(params.storage_condition || "RT");
   const existing = (
@@ -161,7 +176,7 @@ async function ensureItemByCode(
               updated_at = now(),
               updated_by = $7
         WHERE id = $1`,
-      [existing.id, params.name, storage, params.shelf_life_days ?? null, params.min_stock ?? 0, params.notes ?? null, actor.userId]
+      [existing.id, params.name, storage, params.shelf_life_days && params.shelf_life_days > 0 ? params.shelf_life_days : null, Math.max(0, params.min_stock ?? 0), params.notes ?? null, actor.userId]
     );
     return { id: existing.id, code: existing.code, base_uom: existing.base_uom, tracking: existing.tracking, created: false };
   }
@@ -180,8 +195,8 @@ async function ensureItemByCode(
         itemType,
         uom,
         storage,
-        params.shelf_life_days || 365,
-        params.min_stock || 0,
+        Math.max(1, params.shelf_life_days || 365),
+        Math.max(0, params.min_stock || 0),
         ["FINISHED_KIT", "SEMI_FINISHED", "DEVICE"].includes(itemType),
         params.notes ?? null,
         actor.userId,
@@ -192,14 +207,21 @@ async function ensureItemByCode(
   return { id: inserted.id, code: inserted.code, base_uom: inserted.base_uom, tracking: inserted.tracking, created: true };
 }
 
-async function resolveOrgUnitId(tx: Tx, deptCodeOrNull?: string | null): Promise<string> {
+async function resolveOrgUnitId(tx: Tx, deptCodeOrNull?: string | null, orgCache?: Map<string, string>): Promise<string> {
   const code = normStr(deptCodeOrNull).toUpperCase();
+  const cacheKey = code || "__DEFAULT__";
+  if (orgCache?.has(cacheKey)) return orgCache.get(cacheKey)!;
   if (code) {
     const found = (await tx.query("SELECT id FROM core.org_unit WHERE upper(code) = $1 LIMIT 1", [code])).rows[0];
-    if (found) return found.id as string;
+    if (found) {
+      orgCache?.set(cacheKey, found.id as string);
+      return found.id as string;
+    }
   }
   const fallback = (await tx.query("SELECT id FROM core.org_unit WHERE status = 'ACTIVE' ORDER BY code LIMIT 1")).rows[0];
-  return fallback?.id as string;
+  const resolved = fallback?.id as string;
+  if (resolved) orgCache?.set(cacheKey, resolved);
+  return resolved;
 }
 
 async function resolveWarehouseAndLocation(
@@ -207,21 +229,26 @@ async function resolveWarehouseAndLocation(
   actor: AuthzActor,
   warehouseCode?: string | null,
   deptCode?: string | null,
-  preferQuarantine = true
+  preferQuarantine = true,
+  whLocCache?: Map<string, { warehouse_id: string; location_id: string }>,
+  orgCache?: Map<string, string>
 ): Promise<{ warehouse_id: string; location_id: string }> {
   const whCode = normStr(warehouseCode).toUpperCase();
+  const cacheKey = `${whCode}|${normStr(deptCode).toUpperCase()}|${preferQuarantine ? "Q" : "M"}`;
+  if (whLocCache?.has(cacheKey)) return whLocCache.get(cacheKey)!;
+
   let wh = whCode
     ? (await tx.query("SELECT id, code FROM master.warehouse WHERE upper(code) = $1 LIMIT 1", [whCode])).rows[0]
     : null;
   if (!wh && deptCode) {
-    const orgId = await resolveOrgUnitId(tx, deptCode);
+    const orgId = await resolveOrgUnitId(tx, deptCode, orgCache);
     wh = (await tx.query("SELECT id, code FROM master.warehouse WHERE owner_org_unit_id = $1 LIMIT 1", [orgId])).rows[0];
   }
   if (!wh) {
     wh = (await tx.query("SELECT id, code FROM master.warehouse WHERE status = 'ACTIVE' ORDER BY code LIMIT 1")).rows[0];
   }
   if (!wh) {
-    const orgId = await resolveOrgUnitId(tx, deptCode);
+    const orgId = await resolveOrgUnitId(tx, deptCode, orgCache);
     wh = (
       await tx.query(
         `INSERT INTO master.warehouse (code, name, owner_org_unit_id, purpose, access_mode, status, created_by, updated_by)
@@ -260,7 +287,9 @@ async function resolveWarehouseAndLocation(
     }
   }
 
-  return { warehouse_id: wh.id, location_id: loc.id };
+  const res = { warehouse_id: wh.id as string, location_id: loc.id as string };
+  whLocCache?.set(cacheKey, res);
+  return res;
 }
 
 export async function getExcelImportOverview(tx: Tx, _actor: AuthzActor) {
@@ -324,12 +353,10 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
   await ensureQaOpsSchema(tx);
   await ensureRdProjectOpsSchema(tx);
 
-  const actorUserRow = (
-    await tx.query("SELECT COALESCE(NULLIF(full_name, ''), username, 'Admin') AS display_name FROM users WHERE id = $1", [
-      actor.userId,
-    ])
-  ).rows[0];
-  const actorDisplayName = (actorUserRow?.display_name as string) || "Quản trị viên";
+  const actorDisplayName = normStr(actor.name) || "Quản trị viên";
+  const uomCache = new Map<string, string>();
+  const orgCache = new Map<string, string>();
+  const whLocCache = new Map<string, { warehouse_id: string; location_id: string }>();
 
   const templateKey = normStr(input.template_key, "INVENTORY_STOCK").toUpperCase();
   const templateName = normStr(input.template_name, templateKey);
@@ -357,6 +384,8 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
     const canReleaseOpeningLot =
       Boolean(input.is_audited_opening_balance) && (await hasFactoryPermission(tx, actor, "inv.lot.release"));
 
+    const batchDocByWarehouse = new Map<string, { docId: string; lineNo: number }>();
+
     for (let i = 0; i < rawRows.length; i++) {
       const r = rawRows[i];
       const sp = `sp_inv_${i}`;
@@ -367,46 +396,46 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
         if (!itemCode || !itemName) {
           throw new Error("Thiếu Mã vật tư (item_code) hoặc Tên vật tư (item_name)");
         }
-        const itemRes = await ensureItemByCode(tx, actor, {
-          code: itemCode,
-          name: itemName,
-          item_type: normStr(r.item_type || r["Phân loại"] || r["Loại hàng"], "RAW_MATERIAL"),
-          base_uom: normStr(r.base_uom || r["Đơn vị"], "pcs"),
-          storage_condition: normStr(r.storage_condition || r["Bảo quản"], "RT"),
-          shelf_life_days: normNum(r.shelf_life_days || r["Hạn dùng (ngày)"], 365),
-          min_stock: normNum(r.min_stock || r["Tồn tối thiểu"] || r["Định mức (Min)"], 0),
-          notes: normStr(r.notes || r["Ghi chú"]) || null,
-        });
+        const itemRes = await ensureItemByCode(
+          tx,
+          actor,
+          {
+            code: itemCode,
+            name: itemName,
+            item_type: normStr(r.item_type || r["Phân loại"] || r["Loại hàng"], "RAW_MATERIAL"),
+            base_uom: normStr(r.base_uom || r["Đơn vị"], "pcs"),
+            storage_condition: normStr(r.storage_condition || r["Bảo quản"], "RT"),
+            shelf_life_days: normNum(r.shelf_life_days || r["Hạn dùng (ngày)"], 365),
+            min_stock: normNum(r.min_stock || r["Tồn tối thiểu"] || r["Định mức (Min)"], 0),
+            notes: normStr(r.notes || r["Ghi chú"]) || null,
+          },
+          uomCache
+        );
         if (itemRes.created) createdCount++;
         else updatedCount++;
 
-        const qty = normNum(r.qty_on_hand ?? r.qty ?? r["Số lượng tồn"] ?? r["Số lượng tồn kho"], 0);
+        const qty = Math.max(0, normNum(r.qty_on_hand ?? r.qty ?? r["Số lượng tồn"] ?? r["Số lượng tồn kho"], 0));
         const rawLotCode = normStr(r.lot_code || r["Số lô"] || r["Số Lô"]);
-        let lotCode = normCode(rawLotCode && rawLotCode !== "-" ? rawLotCode : `${itemCode}-L01`, `${itemCode}-L01`);
-        if (qty > 0 && itemRes.tracking !== "NONE") {
+        const hasExplicitLot = Boolean(rawLotCode && rawLotCode !== "-");
+        let lotCode = normCode(hasExplicitLot ? rawLotCode : `${itemCode}-L01`, `${itemCode}-L01`);
+        if ((qty > 0 || hasExplicitLot) && itemRes.tracking !== "NONE") {
           const lotStatus = canReleaseOpeningLot ? "RELEASED" : "QUARANTINE";
           const whLoc = await resolveWarehouseAndLocation(
             tx,
             actor,
             normStr(r.warehouse_code || r["Mã kho"]) || targetWarehouseCode,
             normStr(r.dept_code || r["Mã phòng"]) || targetDeptCode,
-            lotStatus === "QUARANTINE"
+            lotStatus === "QUARANTINE",
+            whLocCache,
+            orgCache
           );
-          const mfgDate = normDate(r.mfg_date || r["Ngày SX"] || r["Ngày sản xuất"]);
-          const expiryDate = normDate(r.expiry_date || r["Hạn dùng"] || r["Hạn sử dụng"]) || "2027-12-31";
+          let mfgDate = normDate(r.mfg_date || r["Ngày SX"] || r["Ngày sản xuất"]);
+          let expiryDate = normDate(r.expiry_date || r["Hạn dùng"] || r["Hạn sử dụng"]) || "2027-12-31";
+          if (mfgDate && expiryDate && expiryDate < mfgDate) {
+            expiryDate = mfgDate;
+          }
           const rawMfrLot = normStr(r.mfr_lot_no || r["Lô NSX"] || r["Số lô NSX (Mfg Lot)"]);
           const mfrLot = rawMfrLot && rawMfrLot !== "-" ? rawMfrLot : lotCode;
-
-          // Kiểm tra nếu mã lô bị trùng với vật tư khác (do nhiều vật tư chung số lô NSX), tự động gắn tiền tố mã vật tư
-          const conflictLot = (
-            await tx.query("SELECT item_id FROM inv.lot WHERE upper(code) = upper($1) AND item_id <> $2 LIMIT 1", [
-              lotCode,
-              itemRes.id,
-            ])
-          ).rows[0];
-          if (conflictLot) {
-            lotCode = `${itemCode}-${lotCode}`;
-          }
 
           let lot = (
             await tx.query("SELECT id, status FROM inv.lot WHERE item_id = $1 AND upper(code) = upper($2) LIMIT 1", [
@@ -420,80 +449,82 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
               await tx.query(
                 `INSERT INTO inv.lot (code, item_id, mfr_lot_no, mfg_date, expiry_date, status, origin, created_by, updated_by)
                  VALUES ($1, $2, $3, $4, $5, $6, 'OPENING', $7, $7)
-                 ON CONFLICT (code) DO UPDATE SET expiry_date = EXCLUDED.expiry_date
+                 ON CONFLICT (item_id, code) DO UPDATE
+                   SET expiry_date = COALESCE(EXCLUDED.expiry_date, inv.lot.expiry_date),
+                       mfr_lot_no = COALESCE(EXCLUDED.mfr_lot_no, inv.lot.mfr_lot_no)
                  RETURNING id, status`,
                 [lotCode, itemRes.id, mfrLot, mfgDate, expiryDate, lotStatus, actor.userId]
               )
             ).rows[0];
           }
 
-          const prevBalRow = (
-            await tx.query(
-              `SELECT id, qty_on_hand::float AS qty_on_hand
-                 FROM inv.stock_balance
-                WHERE item_id = $1 AND lot_id = $2 AND container_id IS NULL AND location_id = $3
-                LIMIT 1`,
-              [itemRes.id, lot.id, whLoc.location_id]
-            )
-          ).rows[0];
-          const prevQty = Number(prevBalRow?.qty_on_hand ?? 0);
-          const deltaQty = Math.round((qty - prevQty) * 1e6) / 1e6;
-
-          await tx.query(
-            `INSERT INTO inv.stock_balance (item_id, lot_id, container_id, location_id, qty_on_hand, qty_reserved)
-             VALUES ($1, $2, NULL, $3, $4, 0)
-             ON CONFLICT (item_id, lot_id, container_id, location_id)
-             DO UPDATE SET qty_on_hand = EXCLUDED.qty_on_hand, updated_at = now()`,
-            [itemRes.id, lot.id, whLoc.location_id, qty]
-          );
-
-          if (Math.abs(deltaQty) > 1e-9) {
-            const docCode = await nextNumber(tx, "STOCK_RECEIPT");
-            const docRow = (
+          if (qty > 0) {
+            const prevBalRow = (
               await tx.query(
-                `INSERT INTO inv.stock_document
-                   (code, doc_type, reason_code, warehouse_id, status, posted_at, posted_by, notes, created_by, updated_by)
-                 VALUES ($1, 'RECEIPT', 'INITIAL_BALANCE', $2, 'POSTED', now(), $3, $4, $3, $3)
-                 RETURNING id`,
-                [
-                  docCode,
-                  whLoc.warehouse_id,
-                  actor.userId,
-                  `Nhập tồn kho đầu kỳ từ file Excel (${fileName}) — Lô ${lotCode} (${lot.status})`,
-                ]
+                `SELECT id, qty_on_hand::float AS qty_on_hand
+                   FROM inv.stock_balance
+                  WHERE item_id = $1 AND lot_id = $2 AND container_id IS NULL AND location_id = $3
+                  LIMIT 1`,
+                [itemRes.id, lot.id, whLoc.location_id]
               )
             ).rows[0];
-            const lineRow = (
+            const prevQty = Number(prevBalRow?.qty_on_hand ?? 0);
+            const deltaQty = Math.round((qty - prevQty) * 1e6) / 1e6;
+
+            if (prevBalRow) {
               await tx.query(
-                `INSERT INTO inv.stock_document_line
-                   (document_id, line_no, item_id, lot_id, container_id, to_location_id, qty, uom, qty_base)
-                 VALUES ($1, 1, $2, $3, NULL, $4, $5, $6, $5)
-                 RETURNING id`,
-                [docRow.id, itemRes.id, lot.id, whLoc.location_id, Math.abs(deltaQty), itemRes.base_uom]
-              )
-            ).rows[0];
-            await tx.query(
-              `INSERT INTO inv.stock_ledger
-                 (document_line_id, item_id, lot_id, container_id, location_id, qty_delta_base)
-               VALUES ($1, $2, $3, NULL, $4, $5)`,
-              [lineRow.id, itemRes.id, lot.id, whLoc.location_id, deltaQty]
-            );
+                `UPDATE inv.stock_balance
+                    SET qty_on_hand = $2, updated_at = now()
+                  WHERE id = $1`,
+                [prevBalRow.id, qty]
+              );
+            } else {
+              await tx.query(
+                `INSERT INTO inv.stock_balance (item_id, lot_id, container_id, location_id, qty_on_hand, qty_reserved)
+                 VALUES ($1, $2, NULL, $3, $4, 0)`,
+                [itemRes.id, lot.id, whLoc.location_id, qty]
+              );
+            }
+
+            if (Math.abs(deltaQty) > 1e-9) {
+              let batchDoc = batchDocByWarehouse.get(whLoc.warehouse_id);
+              if (!batchDoc) {
+                const docCode = await nextNumber(tx, "STOCK_RECEIPT");
+                const docRow = (
+                  await tx.query(
+                    `INSERT INTO inv.stock_document
+                       (code, doc_type, reason_code, warehouse_id, status, posted_at, posted_by, notes, created_by, updated_by)
+                     VALUES ($1, 'RECEIPT', 'INITIAL_BALANCE', $2, 'POSTED', now(), $3, $4, $3, $3)
+                     RETURNING id`,
+                    [
+                      docCode,
+                      whLoc.warehouse_id,
+                      actor.userId,
+                      `Nhập tồn kho đầu kỳ từ file Excel (${fileName})`,
+                    ]
+                  )
+                ).rows[0];
+                batchDoc = { docId: docRow.id as string, lineNo: 0 };
+                batchDocByWarehouse.set(whLoc.warehouse_id, batchDoc);
+              }
+              batchDoc.lineNo += 1;
+              const lineRow = (
+                await tx.query(
+                  `INSERT INTO inv.stock_document_line
+                     (document_id, line_no, item_id, lot_id, container_id, to_location_id, qty, uom, qty_base)
+                   VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $6)
+                   RETURNING id`,
+                  [batchDoc.docId, batchDoc.lineNo, itemRes.id, lot.id, whLoc.location_id, Math.abs(deltaQty), itemRes.base_uom]
+                )
+              ).rows[0];
+              await tx.query(
+                `INSERT INTO inv.stock_ledger
+                   (document_line_id, item_id, lot_id, container_id, location_id, qty_delta_base)
+                 VALUES ($1, $2, $3, NULL, $4, $5)`,
+                [lineRow.id, itemRes.id, lot.id, whLoc.location_id, deltaQty]
+              );
+            }
           }
-
-          await writeAudit(tx, actor, {
-            entityType: "stock_balance",
-            entityId: lot.id,
-            action: "initial_balance_receipt",
-            changes: {
-              item_code: [null, itemRes.code],
-              lot_code: [null, lotCode],
-              lot_status: [null, lot.status],
-              qty_on_hand: [prevQty, qty],
-              doc_type: [null, "RECEIPT"],
-              reason_code: [null, "INITIAL_BALANCE"],
-            },
-            reason: `Nhập tồn đầu kỳ từ Excel (${fileName})`,
-          });
         }
         await tx.query(`RELEASE SAVEPOINT ${sp}`);
       } catch (e: any) {
@@ -685,18 +716,32 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
           first.bom_name || first["Tên công thức BOM"],
           `Định mức ${productName}${specStr ? ` (${specStr})` : ""}`
         );
-        const orgUnitId = await resolveOrgUnitId(tx, normStr(first.dept_code) || targetDeptCode || "P-KIT");
+        const orgUnitId = await resolveOrgUnitId(tx, normStr(first.dept_code) || targetDeptCode || "P-KIT", orgCache);
 
-        const prodItem = await ensureItemByCode(tx, actor, {
-          code: productCode,
-          name: productName,
-          item_type: isSemiFinished ? "SEMI_FINISHED" : "FINISHED_KIT",
-          base_uom: baseUomRaw,
-          storage_condition: storageStr,
-          shelf_life_days: shelfLifeDays,
-        });
+        const prodItem = await ensureItemByCode(
+          tx,
+          actor,
+          {
+            code: productCode,
+            name: productName,
+            item_type: isSemiFinished ? "SEMI_FINISHED" : "FINISHED_KIT",
+            base_uom: baseUomRaw,
+            storage_condition: storageStr,
+            shelf_life_days: shelfLifeDays,
+          },
+          uomCache
+        );
 
-        let bom = (await tx.query("SELECT id FROM kit.bom WHERE upper(code) = upper($1) LIMIT 1", [bomCode])).rows[0];
+        let bom = (
+          await tx.query(
+            `SELECT id FROM kit.bom
+              WHERE upper(code) = upper($1)
+                 OR (product_item_id = $2 AND upper(coalesce(nullif(trim(variant_code), ''), 'BASE')) = 'BASE' AND status = 'EFFECTIVE')
+              ORDER BY (upper(code) = upper($1)) DESC
+              LIMIT 1`,
+            [bomCode, prodItem.id]
+          )
+        ).rows[0];
         if (bom) {
           await tx.query(
             `UPDATE kit.bom
@@ -732,6 +777,9 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
           await tx.query("DELETE FROM kit.bom_line WHERE bom_id = $1", [bom.id]);
           updatedCount++;
         } else {
+          const nextVer = Number(
+            (await tx.query("SELECT coalesce(max(bom_version), 0) + 1 AS v FROM kit.bom WHERE product_item_id = $1", [prodItem.id])).rows[0]?.v ?? 1
+          );
           bom = (
             await tx.query(
               `INSERT INTO kit.bom (
@@ -741,7 +789,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
                  storage_condition, qc_retention_qty, ph_min, ph_max, variant_code, supply_form,
                  status, created_by, updated_by
                ) VALUES (
-                 $1, $2, $3, 1, $4, $5, $6,
+                 $1, $2, $3, $21, $4, $5, $6,
                  $7, $8, $9, $10, $11,
                  $12, $13, $14, $15,
                  $16, $17, $18, $19, 'BASE', 'NO_SPLIT_NO_IC',
@@ -769,6 +817,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
                 phMin,
                 phMax,
                 actor.userId,
+                nextVer,
               ]
             )
           ).rows[0];
@@ -796,7 +845,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
           if (!compCode || compCode.toUpperCase() === productCode.toUpperCase()) continue;
           const compName = normStr(l.component_name || l["Tên NVL thành phần"], compCode);
           const compUom = normStr(l.uom || l["Đơn vị"] || l["Đơn vị ND (*)"], "mL");
-          const compUomVerified = await ensureUomExists(tx, compUom);
+          const compUomVerified = await ensureUomExists(tx, compUom, uomCache);
 
           const codeU = compCode.toUpperCase();
           const rawRole = normStr(l.component_role || l["Vai trò thành phần"]).toUpperCase();
@@ -820,18 +869,23 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
                             ? "EXTRACTION_BUFFER"
                             : "REAGENT";
 
-          const compItem = await ensureItemByCode(tx, actor, {
-            code: compCode,
-            name: compName,
-            item_type:
-              inferredRole === "MASTER_MIX" || inferredRole === "EXTRACTION_BUFFER"
-                ? "SEMI_FINISHED"
-                : inferredRole === "PACKAGING" || inferredRole === "PCR_TUBE_STRIP"
-                  ? "CONSUMABLE"
-                  : "REAGENT",
-            base_uom: compUomVerified,
-            storage_condition: storageStr,
-          });
+          const compItem = await ensureItemByCode(
+            tx,
+            actor,
+            {
+              code: compCode,
+              name: compName,
+              item_type:
+                inferredRole === "MASTER_MIX" || inferredRole === "EXTRACTION_BUFFER"
+                  ? "SEMI_FINISHED"
+                  : inferredRole === "PACKAGING" || inferredRole === "PCR_TUBE_STRIP"
+                    ? "CONSUMABLE"
+                    : "REAGENT",
+              base_uom: compUomVerified,
+              storage_condition: storageStr,
+            },
+            uomCache
+          );
           const qtyPerBase = Math.max(0.000001, normNum(l.qty_per_base || l["Định mức/bộ"] || l["Số lượng ND (*)"], 1));
           const scrapPct = normNum(l.scrap_pct || l["Hao hụt (%)"], 0);
           const lineNotes = normStr(l.notes || l["Ghi chú"]) || null;
@@ -892,13 +946,18 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
         const shelfLifeDays = Math.max(1, Math.round(normNum(first.shelf_life_days || first["Hạn dùng (ngày)"], 180)));
         const instructions = normStr(first.instructions || first["Hướng dẫn pha chế SOP"]) || null;
 
-        const outItem = await ensureItemByCode(tx, actor, {
-          code: outputCode,
-          name: outputName,
-          item_type: "SEMI_FINISHED",
-          base_uom: basisUom,
-          shelf_life_days: shelfLifeDays,
-        });
+        const outItem = await ensureItemByCode(
+          tx,
+          actor,
+          {
+            code: outputCode,
+            name: outputName,
+            item_type: "SEMI_FINISHED",
+            base_uom: basisUom,
+            shelf_life_days: shelfLifeDays,
+          },
+          uomCache
+        );
 
         let formula = (
           await tx.query("SELECT id FROM prep.formula WHERE upper(code) = upper($1) LIMIT 1", [formulaCode])
@@ -934,12 +993,17 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
           const ingName = normStr(l.ingredient_name || l["Tên nguyên liệu"], ingCode);
           if (!ingCode) continue;
           const ingUom = normStr(l.ingredient_uom || l["Đơn vị NL"], "mL");
-          const ingItem = await ensureItemByCode(tx, actor, {
-            code: ingCode,
-            name: ingName,
-            item_type: "REAGENT",
-            base_uom: ingUom,
-          });
+          const ingItem = await ensureItemByCode(
+            tx,
+            actor,
+            {
+              code: ingCode,
+              name: ingName,
+              item_type: "REAGENT",
+              base_uom: ingUom,
+            },
+            uomCache
+          );
           const ingQty = Math.max(0.0001, normNum(l.ingredient_qty || l["Lượng dùng"], 1));
           await tx.query(
             `INSERT INTO prep.formula_line (formula_id, line_no, item_id, qty, uom)
@@ -984,14 +1048,19 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
         const catEnum = validCats.includes(category) ? category : "OTHER";
         const warrantyMonths = Math.max(0, Math.round(normNum(first.warranty_months || first["Bảo hành (tháng)"], 24)));
         const price = normNum(first.price || first["Giá niêm yết (VNĐ)"], 35000000);
-        const orgUnitId = await resolveOrgUnitId(tx, normStr(first.dept_code) || targetDeptCode || "P-DEVICE");
+        const orgUnitId = await resolveOrgUnitId(tx, normStr(first.dept_code) || targetDeptCode || "P-DEVICE", orgCache);
 
-        const modelItem = await ensureItemByCode(tx, actor, {
-          code: modelCode,
-          name: modelName,
-          item_type: "DEVICE",
-          base_uom: "pcs",
-        });
+        const modelItem = await ensureItemByCode(
+          tx,
+          actor,
+          {
+            code: modelCode,
+            name: modelName,
+            item_type: "DEVICE",
+            base_uom: "pcs",
+          },
+          uomCache
+        );
 
         let model = (
           await tx.query("SELECT id, current_revision_id FROM device.device_model WHERE upper(code) = upper($1) LIMIT 1", [modelCode])
@@ -1048,12 +1117,17 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
           const partCode = normCode(l.part_code || l["Mã linh kiện"]);
           const partName = normStr(l.part_name || l["Tên linh kiện"], partCode);
           if (!partCode) continue;
-          const partItem = await ensureItemByCode(tx, actor, {
-            code: partCode,
-            name: partName,
-            item_type: "COMPONENT",
-            base_uom: normStr(l.uom || l["Đơn vị"], "pcs"),
-          });
+          const partItem = await ensureItemByCode(
+            tx,
+            actor,
+            {
+              code: partCode,
+              name: partName,
+              item_type: "COMPONENT",
+              base_uom: normStr(l.uom || l["Đơn vị"], "pcs"),
+            },
+            uomCache
+          );
           const qtyPerDevice = Math.max(0.001, normNum(l.qty_per_device || l["Định mức/máy"], 1));
           const stationRaw = normStr(l.station_code || l["Trạm lắp ráp"], "STATION_1_MECH").toUpperCase();
           const station = ["STATION_1_MECH", "STATION_2_PCB", "STATION_3_FW", "STATION_4_FQC"].includes(stationRaw)
@@ -1093,14 +1167,19 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
         const routingName = normStr(first.routing_name || first["Tên quy trình / SOP"], `Quy trình ${routingCode}`);
         const productCode = normCode(first.product_code || first["Mã sản phẩm"], `${routingCode}-PRD`);
         const productName = normStr(first.product_name || first["Tên sản phẩm"], routingName);
-        const orgUnitId = await resolveOrgUnitId(tx, normStr(first.dept_code) || targetDeptCode || "P-KIT");
+        const orgUnitId = await resolveOrgUnitId(tx, normStr(first.dept_code) || targetDeptCode || "P-KIT", orgCache);
 
-        const prodItem = await ensureItemByCode(tx, actor, {
-          code: productCode,
-          name: productName,
-          item_type: "FINISHED_KIT",
-          base_uom: "kit",
-        });
+        const prodItem = await ensureItemByCode(
+          tx,
+          actor,
+          {
+            code: productCode,
+            name: productName,
+            item_type: "FINISHED_KIT",
+            base_uom: "kit",
+          },
+          uomCache
+        );
 
         let routing = (await tx.query("SELECT id FROM kit.routing WHERE upper(code) = upper($1) LIMIT 1", [routingCode])).rows[0];
         if (routing) {
@@ -1114,14 +1193,17 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
           await tx.query("DELETE FROM kit.routing_step WHERE routing_id = $1", [routing.id]);
           updatedCount++;
         } else {
+          const nextVer = Number(
+            (await tx.query("SELECT coalesce(max(routing_version), 0) + 1 AS v FROM kit.routing WHERE product_item_id = $1", [prodItem.id])).rows[0]?.v ?? 1
+          );
           routing = (
             await tx.query(
               `INSERT INTO kit.routing (
                  code, org_unit_id, product_item_id, routing_version, name,
                  status, approved_by, approved_at, created_by, updated_by
-               ) VALUES ($1, $2, $3, 1, $4, 'DRAFT', NULL, NULL, $5, $5)
+               ) VALUES ($1, $2, $3, $6, $4, 'DRAFT', NULL, NULL, $5, $5)
                RETURNING id`,
-              [routingCode, orgUnitId, prodItem.id, routingName, actor.userId]
+              [routingCode, orgUnitId, prodItem.id, routingName, actor.userId, nextVer]
             )
           ).rows[0];
           createdCount++;
@@ -1129,29 +1211,35 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
 
         for (let idx = 0; idx < steps.length; idx++) {
           const s = steps[idx];
-          const stepNo = Math.max(1, Math.round(normNum(s.step_no || s["Thứ tự bước"], idx + 1)));
+          const stepNo = Math.max(1, Math.round(normNum(s.step_no || s["Thứ tự bước"], (idx + 1) * 10)));
           const stepCode = normCode(s.step_code || s["Mã công đoạn"], `STEP-${stepNo}`);
           const stepName = normStr(s.step_name || s["Tên công đoạn"], `Công đoạn ${stepNo}`);
           const instructions = normStr(s.instructions || s["Hướng dẫn thao tác SOP"], stepName);
           const stdMinutes = Math.max(1, Math.round(normNum(s.std_minutes || s["Thời gian chuẩn (phút)"], 30)));
           const qcGate = ["Y", "YES", "TRUE", "1", "CÓ"].includes(normStr(s.ipqc_required || s["Yêu cầu IPQC"], "Y").toUpperCase());
+          const workCenter = normStr(s.work_center || s["Phòng / Khu vực"], "Phòng Sạch Sản Xuất");
 
           await tx.query(
             `INSERT INTO kit.routing_step (
-               routing_id, step_no, code, name, work_center, instructions,
-               expected_duration_min, requires_line_clearance, requires_env_check,
-               ipqc_required, dual_sign_required
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, $9, true)`,
+               routing_id, seq, step_code, step_name, category, work_center, instructions,
+               std_duration_min, is_qc, requires_check_signature, step_function, functional_flags
+             ) VALUES ($1, $2, $3, $4, 'FORMULATION', $5, $6, $7, $8, true, 'FORMULATION_MIXING', $9::jsonb)`,
             [
               routing.id,
               stepNo,
               stepCode,
               stepName,
-              normStr(s.work_center || s["Phòng / Khu vực"], "Phòng Sạch Sản Xuất"),
+              workCenter,
               instructions,
               stdMinutes,
-              idx === 0,
               qcGate,
+              JSON.stringify({
+                qc_gate: qcGate,
+                dual_sign: true,
+                require_line_clearance: idx === 0,
+                require_material_scan: true,
+                require_env_log: true,
+              }),
             ]
           );
         }
