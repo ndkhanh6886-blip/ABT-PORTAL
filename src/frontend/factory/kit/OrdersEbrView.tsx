@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import QRCode from "qrcode";
 import JsBarcode from "jsbarcode";
 import { ActionBar } from "../actions";
@@ -141,6 +142,9 @@ export function OrdersEbrView({
   const didAutoSelectRef = useRef(false);
 
   const [stepParams, setStepParams] = useState<Record<string, Record<string, string>>>({});
+  const [stepExpandOverrides, setStepExpandOverrides] = useState<Record<string, boolean>>({});
+  const [expandAllSteps, setExpandAllSteps] = useState(false);
+  const [editingAssignStepId, setEditingAssignStepId] = useState<string | null>(null);
   const [reconciliationNote, setReconciliationNote] = useState("");
   const [qcForm, setQcForm] = useState({
     good_qty: "",
@@ -204,6 +208,8 @@ export function OrdersEbrView({
   }, [focusOrderId, onClearFocusOrder]);
 
   useEffect(() => {
+    setStepExpandOverrides({});
+    setEditingAssignStepId(null);
     if (selectedOrderId) loadDetail(selectedOrderId);
   }, [selectedOrderId, loadDetail]);
 
@@ -841,6 +847,7 @@ export function OrdersEbrView({
           planned_date: edit.planned_date,
         },
       });
+      setEditingAssignStepId(null);
       await loadOrders();
       if (selectedOrderId === orderId) await loadDetail(orderId);
     } catch (err) {
@@ -2339,267 +2346,511 @@ export function OrdersEbrView({
                 )}
               </Card>
 
-              <Card title={`2. Hồ sơ lô điện tử — EBR (${detail.steps.length} bước công đoạn & Chốt chặn QC xen kẽ)`}>
-                {detail.steps.length === 0 ? (
-                  <Empty>Bấm &ldquo;Xác nhận lệnh &amp; Giữ chỗ nguyên liệu (FEFO)&rdquo; ở trên để hệ thống khởi tạo các bước Hồ sơ lô (EBR) từ Quy trình (Routing).</Empty>
-                ) : (
-                  <div className="space-y-3">
-                    {detail.steps.map((s: any) => {
-                      const schema: any[] = Array.isArray(s.param_schema) ? s.param_schema : [];
-                      const curVals = { ...(s.param_values || {}), ...(stepParams[s.id] || {}) };
-                      const blockingPrevQc = (detail.steps || []).find(
-                        (prev: any) => prev.seq < s.seq && prev.is_qc && prev.qc_gate_status !== "PASSED"
-                      );
-                      const opEdit = operatorEdits[s.id] ?? {
-                        assigned_to_name: s.assigned_to_name ?? "",
-                        shift_code: s.shift_code ?? "CA_SANG",
-                        planned_date: s.planned_date
-                          ? String(s.planned_date).slice(0, 10)
-                          : vnToday(),
-                      };
+              {(() => {
+                const stepsList: any[] = detail.steps || [];
+                const doneCount = stepsList.filter((st) => st.status === "DONE" || st.status === "SKIPPED").length;
+                const defaultOpenIds = new Set<string>();
+                for (const st of stepsList) {
+                  if (
+                    ["IN_PROGRESS", "AWAITING_CHECK", "FAILED"].includes(st.status) ||
+                    isStepActivelyWaitingQc(st, stepsList)
+                  ) {
+                    defaultOpenIds.add(st.id);
+                  }
+                }
+                if (defaultOpenIds.size === 0) {
+                  const firstPending = stepsList.find((st) => st.status === "PENDING");
+                  if (firstPending) defaultOpenIds.add(firstPending.id);
+                }
+                const isStepOpen = (st: any) =>
+                  expandAllSteps
+                    ? (stepExpandOverrides[st.id] ?? true)
+                    : (stepExpandOverrides[st.id] ?? defaultOpenIds.has(st.id));
+                const toggleStep = (stId: string, currentlyOpen: boolean) =>
+                  setStepExpandOverrides((prev) => ({ ...prev, [stId]: !currentlyOpen }));
 
-                      return (
-                        <div
-                          key={s.id}
-                          className={`p-3 rounded-xl border space-y-2.5 ${
-                            s.is_qc
-                              ? "border-amber-300 dark:border-amber-800 bg-amber-50/40 dark:bg-amber-950/20"
-                              : "border-stone-200 dark:border-slate-800 bg-stone-50/60 dark:bg-slate-900/40"
-                          }`}
-                        >
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="text-xs font-bold text-stone-800 dark:text-slate-100 flex flex-wrap items-center gap-1.5">
-                              <span>
-                                Bước {s.seq}: {s.step_code} — {s.step_name}
-                              </span>
-                              <span className="font-normal text-stone-500">
-                                ({STEP_CATEGORY_LABELS[s.category] ?? s.category})
-                              </span>
-                              {s.is_qc && (
-                                <span
-                                  title="Bước Kiểm soát Chất lượng Trung gian Xen kẽ (IPQC Gate): Các bước công đoạn phía sau sẽ bị khóa cho tới khi bước này được QA/QC xác nhận thông qua"
-                                  className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-200/80 text-amber-950 dark:bg-amber-900/70 dark:text-amber-200"
-                                >
-                                  🛡️ BƯỚC QC XEN KẼ (IPQC GATE)
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-2">
-                              {s.deviation_code && (
-                                <span className="px-2 py-0.5 text-[11px] rounded bg-red-100 text-red-800 font-mono">
-                                  Sai lệch: {s.deviation_code}
-                                </span>
-                              )}
-                              <StatusBadge status={s.status} />
-                            </div>
-                          </div>
-
-                          {blockingPrevQc && s.status === "PENDING" && (
-                            <div className="p-2 rounded-lg border border-rose-300 bg-rose-50/80 dark:bg-rose-950/30 dark:border-rose-800 text-xs text-rose-900 dark:text-rose-200 font-medium">
-                              🔒 <b>Đang khóa tự động:</b> Bước này chưa thể bắt đầu vì bước QC xen kẽ phía trước (
-                              <b>
-                                Bước #{blockingPrevQc.seq}: {blockingPrevQc.step_name}
-                              </b>
-                              ) chưa được bộ phận QA/QC xác nhận thông qua.
-                            </div>
-                          )}
-
-                          <div className="text-xs text-stone-600 dark:text-slate-300">{s.instructions}</div>
-
-                          {/* Thanh Phân công Nhân viên & Ca trực cho bước công đoạn */}
-                          <div className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-2 text-xs">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="font-semibold text-slate-700 dark:text-slate-300">
-                                👨‍🔬 Nhân viên phụ trách &amp; Ca trực:
-                              </span>
-                              <input
-                                list={`preset-operators-${s.id}`}
-                                className={`${inputClass} !w-64 !py-1 text-xs`}
-                                placeholder="Nhập hoặc chọn nhân viên thực hiện..."
-                                value={opEdit.assigned_to_name}
-                                onChange={(e) =>
-                                  setOperatorEdits((prev) => ({
-                                    ...prev,
-                                    [s.id]: { ...opEdit, assigned_to_name: e.target.value },
-                                  }))
-                                }
-                              />
-                              <datalist id={`preset-operators-${s.id}`}>
-                                {deptOperatorOptions.map((op) => (
-                                  <option key={op} value={op} />
-                                ))}
-                              </datalist>
-                              <select
-                                className={`${inputClass} !w-44 !py-1 text-xs`}
-                                value={opEdit.shift_code}
-                                onChange={(e) =>
-                                  setOperatorEdits((prev) => ({
-                                    ...prev,
-                                    [s.id]: { ...opEdit, shift_code: e.target.value },
-                                  }))
-                                }
+                return (
+                  <Card
+                    title={`2. Hồ sơ lô điện tử — EBR (${stepsList.length} bước công đoạn & Chốt chặn QC xen kẽ)`}
+                    actions={
+                      stepsList.length > 0 ? (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 text-xs font-bold">
+                            {doneCount}/{stepsList.length} hoàn tất
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setExpandAllSteps((v) => !v);
+                              setStepExpandOverrides({});
+                            }}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-pointer transition-colors"
+                          >
+                            {expandAllSteps ? (
+                              <>
+                                <ChevronUp className="w-3.5 h-3.5" />
+                                <span>Chế độ gọn (Chỉ mở bước đang chạy)</span>
+                              </>
+                            ) : (
+                              <>
+                                <ChevronDown className="w-3.5 h-3.5" />
+                                <span>Mở rộng tất cả các bước</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      ) : undefined
+                    }
+                  >
+                    {stepsList.length === 0 ? (
+                      <Empty>
+                        Bấm &ldquo;Xác nhận lệnh &amp; Giữ chỗ nguyên liệu (FEFO)&rdquo; ở trên để hệ thống khởi tạo các bước Hồ sơ lô (EBR) từ Quy trình (Routing).
+                      </Empty>
+                    ) : (
+                      <div className="space-y-3">
+                        {/* Thanh điều hướng nhanh từng bước theo thứ tự quy trình */}
+                        <div className="flex flex-wrap items-center gap-1.5 pb-1">
+                          {stepsList.map((st: any) => {
+                            const waitingQc = isStepActivelyWaitingQc(st, stepsList);
+                            const isDone = st.status === "DONE" || st.status === "SKIPPED";
+                            const isActive = st.status === "IN_PROGRESS" || st.status === "AWAITING_CHECK";
+                            const isFailed = st.status === "FAILED";
+                            const pillCls = isDone
+                              ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300"
+                              : isFailed
+                                ? "border-rose-300 bg-rose-50 text-rose-800 dark:border-rose-800 dark:bg-rose-950/50 dark:text-rose-300"
+                                : waitingQc || (st.is_qc && isActive)
+                                  ? "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-700 dark:bg-amber-950/50 dark:text-amber-200 font-bold"
+                                  : isActive
+                                    ? "border-sky-400 bg-sky-50 text-sky-900 dark:border-sky-700 dark:bg-sky-950/50 dark:text-sky-200 font-bold"
+                                    : "border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300";
+                            return (
+                              <button
+                                key={st.id}
+                                type="button"
+                                onClick={() => {
+                                  setStepExpandOverrides((prev) => ({ ...prev, [st.id]: true }));
+                                  document.getElementById(`ebr-step-${st.id}`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                                }}
+                                title={`Bước ${st.seq}: ${st.step_name}`}
+                                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[11px] font-semibold cursor-pointer hover:opacity-85 transition-opacity ${pillCls}`}
                               >
-                                {Object.entries(SHIFT_LABELS).map(([k, lbl]) => (
-                                  <option key={k} value={k}>
-                                    {lbl}
-                                  </option>
-                                ))}
-                              </select>
-                              <input
-                                type="date"
-                                className={`${inputClass} !w-36 !py-1 text-xs`}
-                                value={opEdit.planned_date}
-                                onChange={(e) =>
-                                  setOperatorEdits((prev) => ({
-                                    ...prev,
-                                    [s.id]: { ...opEdit, planned_date: e.target.value },
-                                  }))
-                                }
-                              />
-                              <Button
-                                variant="secondary"
-                                title="Lưu phân công nhân viên và ca sản xuất cho bước công đoạn này để theo dõi trên Bảng kế hoạch PO hằng ngày"
-                                onClick={() => handleAssignOperator(detail.order.id, s)}
-                              >
-                                💾 Lưu phân công
-                              </Button>
-                            </div>
-                            <div className="flex flex-wrap gap-3 text-[11px] text-stone-500">
-                              {s.sop_doc_code && <span title="Quy trình thao tác chuẩn (Standard Operating Procedure)">SOP: {s.sop_doc_code}</span>}
-                              {s.asset_code && (
-                                <span>
-                                  Thiết bị: {s.asset_code} ({s.asset_name})
-                                </span>
-                              )}
-                              {s.started_at && <span>Bắt đầu: {fmtDateTime(s.started_at)}</span>}
-                              {s.completed_at && <span>Hoàn tất: {fmtDateTime(s.completed_at)}</span>}
-                              {s.performed_by_name && <span>Người thực hiện: <b>{s.performed_by_name}</b></span>}
-                              {s.checked_by_name && <span>Người kiểm tra chéo: <b>{s.checked_by_name}</b></span>}
-                            </div>
-                          </div>
+                                <span className="font-mono">{st.is_qc ? `🛡️ #${st.seq}` : `#${st.seq}`}</span>
+                                <span className="max-w-[130px] truncate hidden sm:inline">{st.step_name}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
 
-                          {schema.length > 0 && (
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 pt-1">
-                              {schema.map((f: any) => (
-                                <Field
-                                  key={f.key}
-                                  label={`${f.label} (Chuẩn: ${f.min ?? "-"}..${f.max ?? "-"} ${f.unit ?? ""})`}
-                                >
-                                  <input
-                                    className={inputClass}
-                                    disabled={s.status === "DONE"}
-                                    placeholder={`Nhập ${f.label}...`}
-                                    value={String(curVals[f.key] ?? "")}
-                                    onChange={(e) =>
-                                      setStepParams((prev) => ({
-                                        ...prev,
-                                        [s.id]: { ...(prev[s.id] || {}), [f.key]: e.target.value },
-                                      }))
+                        {/* Vùng chứa các thẻ công đoạn tách biệt rõ ràng */}
+                        <div className="p-2.5 sm:p-3 rounded-2xl bg-slate-100/80 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-800 space-y-3.5">
+                          {stepsList.map((s: any) => {
+                            const schema: any[] = Array.isArray(s.param_schema) ? s.param_schema : [];
+                            const curVals = { ...(s.param_values || {}), ...(stepParams[s.id] || {}) };
+                            const blockingPrevQc = stepsList.find(
+                              (prev: any) => prev.seq < s.seq && prev.is_qc && prev.qc_gate_status !== "PASSED"
+                            );
+                            const opEdit = operatorEdits[s.id] ?? {
+                              assigned_to_name: s.assigned_to_name ?? "",
+                              shift_code: s.shift_code ?? "CA_SANG",
+                              planned_date: s.planned_date ? String(s.planned_date).slice(0, 10) : vnToday(),
+                            };
+                            const stepOpen = isStepOpen(s);
+                            const isDone = s.status === "DONE" || s.status === "SKIPPED";
+                            const isActive = s.status === "IN_PROGRESS" || s.status === "AWAITING_CHECK";
+                            const isFailed = s.status === "FAILED";
+
+                            const cardBorderCls = isDone
+                              ? "border-slate-200 dark:border-slate-800 border-l-emerald-500"
+                              : isFailed
+                                ? "border-rose-300 dark:border-rose-800 border-l-rose-600"
+                                : isActive
+                                  ? s.is_qc
+                                    ? "border-amber-300 dark:border-amber-700 border-l-amber-500 ring-1 ring-amber-500/20"
+                                    : "border-sky-300 dark:border-sky-700 border-l-sky-600 ring-1 ring-sky-500/15"
+                                  : s.is_qc
+                                    ? "border-amber-300 dark:border-amber-800 border-l-amber-500"
+                                    : "border-slate-200 dark:border-slate-800 border-l-slate-400";
+
+                            const headerBgCls = isDone
+                              ? "bg-emerald-50/50 dark:bg-emerald-950/20"
+                              : isFailed
+                                ? "bg-rose-50/60 dark:bg-rose-950/20"
+                                : s.is_qc
+                                  ? "bg-amber-50/70 dark:bg-amber-950/25"
+                                  : isActive
+                                    ? "bg-sky-50/60 dark:bg-sky-950/25"
+                                    : "bg-slate-50/80 dark:bg-slate-800/40";
+
+                            const stepNumBadgeCls = isDone
+                              ? "bg-emerald-600 text-white"
+                              : isFailed
+                                ? "bg-rose-600 text-white"
+                                : s.is_qc
+                                  ? "bg-amber-600 text-white"
+                                  : isActive
+                                    ? "bg-sky-700 text-white"
+                                    : "bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-100";
+
+                            const allRequiredParamsFilled = schema.every(
+                              (f: any) =>
+                                !f.required ||
+                                (curVals[f.key] !== undefined && curVals[f.key] !== null && String(curVals[f.key]).trim() !== "")
+                            );
+                            const filteredStepActions = (s.allowed_actions || [])
+                              .filter((a: any) => {
+                                if (a.action === "skip" && !s.allow_skip) return false;
+                                if (a.action === "complete" && Boolean(s.requires_check_signature)) return false;
+                                if (a.action === "complete_for_check" && !s.requires_check_signature) return false;
+                                return true;
+                              })
+                              .map((a: any) =>
+                                allRequiredParamsFilled && (a.action === "complete" || a.action === "complete_for_check")
+                                  ? {
+                                      ...a,
+                                      blockedBy: (a.blockedBy || []).filter(
+                                        (msg: string) => msg !== "Vui lòng nhập đầy đủ các thông số bắt buộc của công đoạn."
+                                      ),
                                     }
-                                  />
-                                </Field>
-                              ))}
-                            </div>
-                          )}
+                                  : a
+                              );
 
-                          {/* Hộp Chốt Chặn Kiểm Soát Chất Lượng Xen Kẽ (IPQC Gate) */}
-                          {s.is_qc && (
-                            <div
-                              className={`p-3 rounded-xl border-2 space-y-2 text-xs ${
-                                s.qc_gate_status === "PASSED"
-                                  ? "border-emerald-400 bg-emerald-50/70 dark:bg-emerald-950/30 dark:border-emerald-800"
-                                  : s.qc_gate_status === "REJECTED"
-                                    ? "border-rose-400 bg-rose-50/70 dark:bg-rose-950/30 dark:border-rose-800"
-                                    : "border-amber-400 bg-amber-50/80 dark:bg-amber-950/30 dark:border-amber-700"
-                              }`}
-                            >
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <div className="font-extrabold flex items-center gap-2">
-                                  <span>🛡️ CỔNG KIỂM SOÁT CHẤT LƯỢNG XEN KẼ (IPQC GATE — CẦN QC XÁC NHẬN THÔNG QUA ĐỂ TIẾP TỤC):</span>
-                                  {s.qc_gate_status === "PASSED" ? (
-                                    <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[11px]">
-                                      ✅ ĐÃ ĐƯỢC QC XÁC NHẬN THÔNG QUA (ĐÃ MỞ KHÓA BƯỚC TIẾP THEO)
+                            return (
+                              <div
+                                key={s.id}
+                                id={`ebr-step-${s.id}`}
+                                className={`rounded-xl border border-l-4 bg-white dark:bg-slate-900 shadow-sm overflow-hidden transition-shadow ${cardBorderCls}`}
+                              >
+                                {/* Thanh tiêu đề tách biệt của từng bước */}
+                                <div
+                                  className={`px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-3 ${headerBgCls} ${
+                                    stepOpen ? "border-b border-slate-200/80 dark:border-slate-800" : ""
+                                  }`}
+                                >
+                                  <div className="flex items-start sm:items-center gap-2.5 min-w-0 flex-1">
+                                    <span className={`px-2.5 py-1 rounded-lg font-mono text-xs font-extrabold shrink-0 ${stepNumBadgeCls}`}>
+                                      Bước {s.seq}
                                     </span>
-                                  ) : s.qc_gate_status === "REJECTED" ? (
-                                    <span className="px-2 py-0.5 rounded-full bg-rose-600 text-white text-[11px]">
-                                      ❌ QC TỪ CHỐI THÔNG QUA — YÊU CẦU PHA CHỈNH LẠI
-                                    </span>
-                                  ) : (
-                                    <span className="px-2 py-0.5 rounded-full bg-amber-600 text-white text-[11px]">
-                                      ⏳ ĐANG CHỜ QC XÁC NHẬN THÔNG QUA
-                                    </span>
-                                  )}
-                                </div>
-                                {s.qc_verified_by_name ? (
-                                  <div className="text-[11px] font-medium text-slate-700 dark:text-slate-300">
-                                    Người xác nhận QC: <b>{s.qc_verified_by_name}</b> ({fmtDateTime(s.qc_verified_at)})
+                                    <div className="min-w-0">
+                                      <div className="flex flex-wrap items-center gap-1.5">
+                                        <span className="text-xs sm:text-[13px] font-extrabold text-slate-900 dark:text-slate-100">
+                                          {s.step_name}
+                                        </span>
+                                        {s.is_qc && (
+                                          <span
+                                            title="Bước Kiểm soát Chất lượng Trung gian Xen kẽ (IPQC Gate): Các bước công đoạn phía sau sẽ bị khóa cho tới khi bước này được QA/QC xác nhận thông qua"
+                                            className="inline-block px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-200/90 text-amber-950 dark:bg-amber-900/70 dark:text-amber-200"
+                                          >
+                                            🛡️ IPQC GATE
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                                        <span className="font-mono">{s.step_code}</span>
+                                        <span>· {STEP_CATEGORY_LABELS[s.category] ?? s.category}</span>
+                                        {s.sop_doc_code && (
+                                          <span className="font-mono" title="Quy trình thao tác chuẩn (SOP)">
+                                            · SOP: {s.sop_doc_code}
+                                          </span>
+                                        )}
+                                        {s.asset_code && (
+                                          <span>
+                                            · TB: <b>{s.asset_code}</b>
+                                          </span>
+                                        )}
+                                        {(s.performed_by_name || s.assigned_to_name) && (
+                                          <span>
+                                            · 👨‍🔬 <b>{s.performed_by_name || s.assigned_to_name}</b>
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
                                   </div>
-                                ) : (
-                                  <div className="text-[11px] font-medium text-slate-700 dark:text-slate-300">
-                                    QA phụ trách giám sát:{" "}
-                                    <b>{s.qa_assignee_name ?? detail.order.qa_assignee_name ?? "Chưa phân công (Phòng QA/QC phân bổ)"}</b>
+
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    {s.deviation_code && (
+                                      <span className="px-2 py-0.5 text-[11px] rounded bg-red-100 text-red-800 font-mono">
+                                        Sai lệch: {s.deviation_code}
+                                      </span>
+                                    )}
+                                    <StatusBadge status={s.status} />
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleStep(s.id, stepOpen)}
+                                      aria-expanded={stepOpen}
+                                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-[11px] font-semibold text-slate-700 dark:text-slate-200 cursor-pointer transition-colors"
+                                    >
+                                      {stepOpen ? (
+                                        <>
+                                          <span>Thu gọn</span>
+                                          <ChevronUp className="w-3.5 h-3.5" />
+                                        </>
+                                      ) : (
+                                        <>
+                                          <span>Chi tiết</span>
+                                          <ChevronDown className="w-3.5 h-3.5" />
+                                        </>
+                                      )}
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {stepOpen && (
+                                  <div className="px-3.5 py-3 space-y-2.5">
+                                    {blockingPrevQc && s.status === "PENDING" && (
+                                      <div className="px-2.5 py-1.5 rounded-lg border border-rose-300 bg-rose-50/80 dark:bg-rose-950/30 dark:border-rose-800 text-xs text-rose-900 dark:text-rose-200 font-medium">
+                                        🔒 <b>Đang khóa tự động:</b> Chưa thể bắt đầu vì bước QC xen kẽ phía trước (
+                                        <b>
+                                          Bước #{blockingPrevQc.seq}: {blockingPrevQc.step_name}
+                                        </b>
+                                        ) chưa được QA/QC xác nhận thông qua.
+                                      </div>
+                                    )}
+
+                                    {s.instructions && (
+                                      <div className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">{s.instructions}</div>
+                                    )}
+
+                                    {/* Thanh tóm tắt Nhân viên phụ trách, ca trực & lịch sử thực hiện (bấm nút mới mở form chỉnh sửa) */}
+                                    <div className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/50 space-y-2 text-xs">
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-600 dark:text-slate-300">
+                                          <span>
+                                            👨‍🔬 Phụ trách:{" "}
+                                            <b className="text-slate-900 dark:text-slate-100">
+                                              {s.assigned_to_name || "Chưa phân công"}
+                                            </b>{" "}
+                                            ({SHIFT_LABELS[s.shift_code] ?? "🌅 Ca sáng (07:30–16:30)"} ·{" "}
+                                            {fmtDate(s.planned_date || vnToday())})
+                                          </span>
+                                          {s.asset_code && (
+                                            <span>
+                                              Thiết bị: <b>{s.asset_code}</b> ({s.asset_name})
+                                            </span>
+                                          )}
+                                          {s.started_at && (
+                                            <span>
+                                              ⏱️ Bắt đầu: <b>{fmtDateTime(s.started_at)}</b>
+                                            </span>
+                                          )}
+                                          {s.completed_at && (
+                                            <span>
+                                              ✅ Hoàn tất: <b>{fmtDateTime(s.completed_at)}</b>
+                                            </span>
+                                          )}
+                                          {s.performed_by_name && (
+                                            <span>
+                                              Người TH: <b>{s.performed_by_name}</b>
+                                            </span>
+                                          )}
+                                          {s.checked_by_name && (
+                                            <span>
+                                              Kiểm tra chéo: <b>{s.checked_by_name}</b>
+                                            </span>
+                                          )}
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => setEditingAssignStepId((cur) => (cur === s.id ? null : s.id))}
+                                          className="px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-[11px] font-semibold text-sky-700 dark:text-sky-300 cursor-pointer shrink-0"
+                                        >
+                                          {editingAssignStepId === s.id ? "Đóng" : "✏️ Phân công / Đổi ca"}
+                                        </button>
+                                      </div>
+
+                                      {editingAssignStepId === s.id && (
+                                        <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex flex-wrap items-center gap-2">
+                                          <input
+                                            list={`preset-operators-${s.id}`}
+                                            className={`${inputClass} !w-64 !py-1 text-xs`}
+                                            placeholder="Nhập hoặc chọn nhân viên thực hiện..."
+                                            value={opEdit.assigned_to_name}
+                                            onChange={(e) =>
+                                              setOperatorEdits((prev) => ({
+                                                ...prev,
+                                                [s.id]: { ...opEdit, assigned_to_name: e.target.value },
+                                              }))
+                                            }
+                                          />
+                                          <datalist id={`preset-operators-${s.id}`}>
+                                            {deptOperatorOptions.map((op) => (
+                                              <option key={op} value={op} />
+                                            ))}
+                                          </datalist>
+                                          <select
+                                            className={`${inputClass} !w-44 !py-1 text-xs`}
+                                            value={opEdit.shift_code}
+                                            onChange={(e) =>
+                                              setOperatorEdits((prev) => ({
+                                                ...prev,
+                                                [s.id]: { ...opEdit, shift_code: e.target.value },
+                                              }))
+                                            }
+                                          >
+                                            {Object.entries(SHIFT_LABELS).map(([k, lbl]) => (
+                                              <option key={k} value={k}>
+                                                {lbl}
+                                              </option>
+                                            ))}
+                                          </select>
+                                          <input
+                                            type="date"
+                                            className={`${inputClass} !w-36 !py-1 text-xs`}
+                                            value={opEdit.planned_date}
+                                            onChange={(e) =>
+                                              setOperatorEdits((prev) => ({
+                                                ...prev,
+                                                [s.id]: { ...opEdit, planned_date: e.target.value },
+                                              }))
+                                            }
+                                          />
+                                          <Button
+                                            variant="secondary"
+                                            title="Lưu phân công nhân viên và ca sản xuất cho bước công đoạn này để theo dõi trên Bảng kế hoạch PO hằng ngày"
+                                            onClick={() => handleAssignOperator(detail.order.id, s)}
+                                          >
+                                            💾 Lưu phân công
+                                          </Button>
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    {schema.length > 0 && (
+                                      <div className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 space-y-1.5">
+                                        <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                                          📐 Thông số ghi nhận tại công đoạn
+                                        </div>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                                          {schema.map((f: any) => (
+                                            <Field
+                                              key={f.key}
+                                              label={`${f.label} (Chuẩn: ${f.min ?? "-"}..${f.max ?? "-"} ${f.unit ?? ""})`}
+                                            >
+                                              <input
+                                                className={inputClass}
+                                                disabled={s.status === "DONE"}
+                                                placeholder={`Nhập ${f.label}...`}
+                                                value={String(curVals[f.key] ?? "")}
+                                                onChange={(e) =>
+                                                  setStepParams((prev) => ({
+                                                    ...prev,
+                                                    [s.id]: { ...(prev[s.id] || {}), [f.key]: e.target.value },
+                                                  }))
+                                                }
+                                              />
+                                            </Field>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* Hộp Chốt Chặn Kiểm Soát Chất Lượng Xen Kẽ (IPQC Gate) */}
+                                    {s.is_qc && (
+                                      <div
+                                        className={`p-2.5 rounded-xl border space-y-2 text-xs ${
+                                          s.qc_gate_status === "PASSED"
+                                            ? "border-emerald-400 bg-emerald-50/70 dark:bg-emerald-950/30 dark:border-emerald-800"
+                                            : s.qc_gate_status === "REJECTED"
+                                              ? "border-rose-400 bg-rose-50/70 dark:bg-rose-950/30 dark:border-rose-800"
+                                              : "border-amber-400 bg-amber-50/80 dark:bg-amber-950/30 dark:border-amber-700"
+                                        }`}
+                                      >
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                          <div className="font-extrabold flex flex-wrap items-center gap-2">
+                                            <span>🛡️ Cổng Kiểm soát Chất lượng Xen kẽ (IPQC Gate)</span>
+                                            {s.qc_gate_status === "PASSED" ? (
+                                              <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[11px]">
+                                                ✅ Đã thông qua (Mở khóa bước tiếp theo)
+                                              </span>
+                                            ) : s.qc_gate_status === "REJECTED" ? (
+                                              <span className="px-2 py-0.5 rounded-full bg-rose-600 text-white text-[11px]">
+                                                ❌ Đã từ chối — Yêu cầu pha chỉnh lại
+                                              </span>
+                                            ) : (
+                                              <span className="px-2 py-0.5 rounded-full bg-amber-600 text-white text-[11px]">
+                                                ⏳ Chờ QC xác nhận thông qua
+                                              </span>
+                                            )}
+                                          </div>
+                                          {s.qc_verified_by_name ? (
+                                            <div className="text-[11px] font-medium text-slate-700 dark:text-slate-300">
+                                              Người xác nhận QC: <b>{s.qc_verified_by_name}</b> ({fmtDateTime(s.qc_verified_at)})
+                                            </div>
+                                          ) : (
+                                            <div className="text-[11px] font-medium text-slate-700 dark:text-slate-300">
+                                              QA giám sát:{" "}
+                                              <b>{s.qa_assignee_name ?? detail.order.qa_assignee_name ?? "Chưa phân công"}</b>
+                                            </div>
+                                          )}
+                                        </div>
+
+                                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 items-end">
+                                          <div className="lg:col-span-6">
+                                            <Field label="Nhận xét / Kết luận IPQC">
+                                              <input
+                                                className={inputClass}
+                                                placeholder="VD: Độ pH đạt 8.32, tín hiệu khuếch đại đạt yêu cầu..."
+                                                value={qcGateNotes[s.id] ?? s.qc_gate_note ?? ""}
+                                                onChange={(e) =>
+                                                  setQcGateNotes((prev) => ({ ...prev, [s.id]: e.target.value }))
+                                                }
+                                              />
+                                            </Field>
+                                          </div>
+                                          <div className="lg:col-span-6 flex flex-wrap items-center lg:justify-end gap-1.5">
+                                            {s.qc_gate_status !== "PASSED" && (
+                                              <Button
+                                                variant="secondary"
+                                                title="Tổ Sản xuất gửi mẫu bán thành phẩm và thông báo đẩy sang Phòng Đảm bảo & Kiểm soát Chất lượng (QA/QC) để yêu cầu xác nhận thông qua bước này"
+                                                onClick={() => handleVerifyQcGate(detail.order.id, s, "REQUEST_QC", curVals)}
+                                              >
+                                                📤 Gửi mẫu chờ QC
+                                              </Button>
+                                            )}
+                                            <Button
+                                              title="Chuyên viên QA/QC xác nhận bán thành phẩm ĐẠT chất lượng trung gian (IPQC), tự động hoàn tất bước này và mở khóa cho phép chạy bước công đoạn kế tiếp"
+                                              onClick={() => handleVerifyQcGate(detail.order.id, s, "PASS", curVals)}
+                                            >
+                                              🛡️ QC Xác nhận Thông qua
+                                            </Button>
+                                            <Button
+                                              variant="danger"
+                                              title="Chuyên viên QA/QC từ chối thông qua do thông số chưa đạt chuẩn, giữ khóa bước tiếp theo và yêu cầu Tổ Sản xuất pha chỉnh lại"
+                                              onClick={() => handleVerifyQcGate(detail.order.id, s, "REJECT", curVals)}
+                                            >
+                                              ❌ QC Từ chối
+                                            </Button>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {filteredStepActions.length > 0 && (
+                                      <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                                        <ActionBar
+                                          endpoint={`/api/factory/kit/steps/${s.id}/actions`}
+                                          version={s.version}
+                                          actions={filteredStepActions}
+                                          labels={ACTION_LABELS}
+                                          extraPayload={{ param_values: curVals }}
+                                          onDone={() => {
+                                            loadDetail(detail.order.id);
+                                            loadOrders();
+                                          }}
+                                        />
+                                      </div>
+                                    )}
                                   </div>
                                 )}
                               </div>
-
-                              <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-end">
-                                <div className="md:col-span-5">
-                                  <Field label="Nhận xét / Kết luận kiểm tra của QC hoặc Tổ Sản xuất">
-                                    <input
-                                      className={inputClass}
-                                      placeholder="VD: Độ pH đạt 8.32, tín hiệu khuếch đại chuẩn đạt yêu cầu, cho phép chia lẻ..."
-                                      value={qcGateNotes[s.id] ?? s.qc_gate_note ?? ""}
-                                      onChange={(e) =>
-                                        setQcGateNotes((prev) => ({ ...prev, [s.id]: e.target.value }))
-                                      }
-                                    />
-                                  </Field>
-                                </div>
-                                <div className="md:col-span-7 flex flex-wrap gap-1.5">
-                                  {s.qc_gate_status !== "PASSED" && (
-                                    <Button
-                                      variant="secondary"
-                                      title="Tổ Sản xuất gửi mẫu bán thành phẩm và thông báo đẩy sang Phòng Đảm bảo & Kiểm soát Chất lượng (QA/QC) để yêu cầu xác nhận thông qua bước này"
-                                      onClick={() => handleVerifyQcGate(detail.order.id, s, "REQUEST_QC", curVals)}
-                                    >
-                                      📤 Gửi mẫu yêu cầu QC xác nhận thông qua
-                                    </Button>
-                                  )}
-                                  <Button
-                                    title="Chuyên viên QA/QC xác nhận bán thành phẩm ĐẠT chất lượng trung gian (IPQC), tự động hoàn tất bước này và mở khóa cho phép chạy bước công đoạn kế tiếp"
-                                    onClick={() => handleVerifyQcGate(detail.order.id, s, "PASS", curVals)}
-                                  >
-                                    🛡️ QC Xác nhận Thông qua (Cho phép chạy bước kế tiếp)
-                                  </Button>
-                                  <Button
-                                    variant="danger"
-                                    title="Chuyên viên QA/QC từ chối thông qua do thông số chưa đạt chuẩn, giữ khóa bước tiếp theo và yêu cầu Tổ Sản xuất pha chỉnh lại"
-                                    onClick={() => handleVerifyQcGate(detail.order.id, s, "REJECT", curVals)}
-                                  >
-                                    ❌ QC Từ chối Thông qua (Yêu cầu chỉnh lại)
-                                  </Button>
-                                </div>
-                              </div>
-                            </div>
-                          )}
-
-                          <ActionBar
-                            endpoint={`/api/factory/kit/steps/${s.id}/actions`}
-                            version={s.version}
-                            actions={s.allowed_actions}
-                            labels={ACTION_LABELS}
-                            extraPayload={{ param_values: curVals }}
-                            onDone={() => {
-                              loadDetail(detail.order.id);
-                              loadOrders();
-                            }}
-                          />
+                            );
+                          })}
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </Card>
+                      </div>
+                    )}
+                  </Card>
+                );
+              })()}
 
               <Card
                 title={`3. Làm lại một phần / Thay thế Hộp thành phần (${detail.reworks.length})`}
