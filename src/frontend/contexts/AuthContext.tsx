@@ -42,6 +42,7 @@ function mapDbRole(dbRole: string): string {
     return dbRole === "admin" ? "Director"
         : dbRole === "sales_head" ? "Head of Sales"
         : dbRole === "sales_rep" ? "Sales Specialist"
+        : dbRole === "sales_admin" ? "Sales Admin"
         : dbRole === "app_head" ? "Head of Application"
         : dbRole === "app_rep" ? "Application Specialist"
         : dbRole === "warehouse_lead" ? "Warehouse Manager"

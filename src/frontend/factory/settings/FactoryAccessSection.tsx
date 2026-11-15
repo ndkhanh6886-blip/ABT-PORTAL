@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Factory } from "lucide-react";
 import { api, useFactoryMe } from "../api";
@@ -36,15 +36,15 @@ interface Permission {
 
 /** Khối Kỹ thuật – Nhà máy: each department / function and the permission modules that open its tab. */
 export const FACTORY_DEPTS: { key: string; short: string; name: string; modules: string[]; unit: string | null }[] = [
-  { key: "rd", short: "Nghiên cứu R&D", name: "Phòng Nghiên cứu & Phát triển", modules: ["rd", "work"], unit: "RD" },
-  { key: "kit", short: "Sản xuất Kit", name: "Phòng Sản xuất Kit Chẩn đoán", modules: ["kit"], unit: "KIT" },
-  { key: "oligo", short: "Tổng hợp Oligo", name: "Phòng Tổng hợp Oligo", modules: ["oligo", "prep", "plan"], unit: "OLIGO" },
-  { key: "device", short: "Kỹ thuật – Thiết bị", name: "Phòng Kỹ thuật – Thiết bị", modules: ["device", "asset"], unit: "DEVICE" },
-  { key: "qa", short: "QA/QC", name: "Phòng Đảm bảo & Kiểm soát Chất lượng", modules: ["qms"], unit: "QA" },
-  { key: "wh", short: "Kho Nhà máy", name: "Kho Vật tư & Thành phẩm Nhà máy", modules: ["inv", "master"], unit: "WH" },
-  { key: "purchase", short: "Mua hàng Nhà máy", name: "Mua hàng & Nhà cung cấp Nhà máy", modules: ["purchase"], unit: null },
-  { key: "intake", short: "Đơn Nội Bộ", name: "Tiếp nhận & điều phối đơn nội bộ", modules: ["intake"], unit: null },
-  { key: "core", short: "Quản trị Nhà máy", name: "Vai trò, ủy quyền, nhật ký kiểm toán", modules: ["core"], unit: null },
+  { key: "rd", short: "Nghiên cứu R&D", name: "Phòng Nghiên cứu & Phát triển (P-RD)", modules: ["rd", "work"], unit: "RD" },
+  { key: "kit", short: "Sản xuất Kit", name: "Phòng Sản xuất Kit IVD (P-KIT)", modules: ["kit"], unit: "KIT" },
+  { key: "oligo", short: "Tổng hợp Oligo", name: "Phòng Tổng hợp Oligo (P-OLIGO)", modules: ["oligo", "prep", "plan"], unit: "OLIGO" },
+  { key: "device", short: "KTCN – Thiết bị", name: "Phòng Kỹ thuật Công nghệ & Thiết bị (P-DEVICE)", modules: ["device", "asset"], unit: "DEVICE" },
+  { key: "qa", short: "QC/QA Nhà máy", name: "Phòng Đảm bảo & Kiểm soát Chất lượng ISO 13485 (P-QA)", modules: ["qms"], unit: "QA" },
+  { key: "wh", short: "Kho Nhà máy (P-KHO)", name: "Kho NVL, Hóa chất, BTP & Thành phẩm SX (Khối Kỹ thuật)", modules: ["inv", "master"], unit: "WH" },
+  { key: "purchase", short: "Cung ứng Kỹ thuật (P-KHO)", name: "Mua sắm NVL / Hóa chất Sản xuất & NCC Kỹ thuật", modules: ["purchase"], unit: null },
+  { key: "intake", short: "Đơn Nội Bộ (KD ↔ NM)", name: "Tiếp nhận & Điều phối Đơn đặt hàng nội bộ", modules: ["intake"], unit: null },
+  { key: "core", short: "Quản trị Nhà máy", name: "Vai trò 21 CFR Part 11, Ủy quyền & Nhật ký kiểm toán", modules: ["core"], unit: null },
 ];
 
 const inDept = (d: (typeof FACTORY_DEPTS)[number], code: string) => d.modules.includes(code.split(".")[0]);
@@ -60,7 +60,8 @@ function useFactoryAccess(userId: number, username: string) {
   const units = useQuery({ queryKey: ["factory", "org-units"], queryFn: () => api<OrgUnit[]>("/api/factory/org-units"), retry: false });
   const catalogue = useQuery({ queryKey: ["factory", "permissions"], queryFn: () => api<Permission[]>("/api/factory/permissions"), retry: false });
 
-  const user = users.data?.find((u) => u.id === userId);
+  const matchedUser = users.data?.find((u) => Number(u.id) === Number(userId) || u.username?.toLowerCase() === username?.toLowerCase());
+  const user: FactoryUser | undefined = matchedUser ?? (users.data ? { id: userId, username, grants: [] } : undefined);
   const roleById = useMemo(() => new Map((roles.data ?? []).map((r) => [r.id, r])), [roles.data]);
   // permission code → where it is held ("toàn công ty" / department names)
   const held = useMemo(() => {
@@ -79,7 +80,7 @@ function useFactoryAccess(userId: number, username: string) {
     catalogue: catalogue.data,
     held,
     error: users.error ?? roles.error ?? units.error ?? catalogue.error,
-    ready: Boolean(user && roles.data && catalogue.data),
+    ready: Boolean(users.data && roles.data && catalogue.data),
   };
 }
 
@@ -124,7 +125,7 @@ export function FactoryAccessSection({ userId, username, isRootAdmin }: { userId
             </span>
           </h4>
           <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-            Bấm vào phòng để cấp / thu hồi vai trò (có hiệu lực ngay, ghi nhật ký kiểm toán). Tính năng chi tiết của từng phòng xem ở phần bên dưới.
+            Bấm vào phòng để cấp / thu hồi vai trò (có hiệu lực ngay, ghi nhật ký kiểm toán). Lưu ý: <strong>Kho Nhà máy &amp; Cung ứng Kỹ thuật (P-KHO)</strong> quản lý NVL, enzyme, bán thành phẩm, lô sản xuất &amp; cấp phát FEFO theo GMP/ISO 13485 — tách biệt hoàn toàn với <strong>Kho Kinh Doanh &amp; Cung Ứng Kinh Doanh</strong> ở trên. Tính năng chi tiết của từng phòng xem ở phần bên dưới.
           </p>
         </div>
       </div>
@@ -252,8 +253,39 @@ export function FactoryAccessSection({ userId, username, isRootAdmin }: { userId
  * the portal groups. Read-only ticks: a factory feature is held through a role, and each feature names the roles
  * that carry it so the administrator knows which one to grant above.
  */
-export function FactoryFeatureGroups({ userId, username, isRootAdmin, startIndex }: { userId: number; username: string; isRootAdmin: boolean; startIndex: number }) {
+export function FactoryFeatureGroups({
+  userId,
+  username,
+  isRootAdmin,
+  startIndex,
+  onSummaryChange,
+}: {
+  userId: number;
+  username: string;
+  isRootAdmin: boolean;
+  startIndex: number;
+  onSummaryChange?: (summary: { active: number; total: number }) => void;
+}) {
   const { roles, catalogue, held, error, ready } = useFactoryAccess(userId, username);
+
+  const summary = useMemo(() => {
+    if (!ready || !catalogue) return null;
+    let total = 0;
+    let active = 0;
+    for (const d of FACTORY_DEPTS) {
+      const perms = catalogue.filter((p) => d.modules.includes(p.module));
+      total += perms.length;
+      active += isRootAdmin ? perms.length : perms.filter((p) => held.has(p.code)).length;
+    }
+    return { active, total };
+  }, [ready, catalogue, held, isRootAdmin]);
+
+  useEffect(() => {
+    if (ready && summary) {
+      onSummaryChange?.(summary);
+    }
+  }, [ready, summary, onSummaryChange]);
+
   if (error) return <ErrorNote error={error} />;
   if (!ready || !catalogue || !roles) return <div className="text-xs text-slate-400">Đang tải tính năng Khối Kỹ thuật – Nhà máy…</div>;
 

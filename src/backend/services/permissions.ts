@@ -24,15 +24,15 @@ export interface DepartmentModule {
   defaultPermissions: Record<string, boolean>; // Bộ quyền đề xuất khi bật phòng ban này
 }
 
-// Danh mục 7 Phân hệ / Phòng ban chính có Tab trên thanh điều hướng
+// Danh mục Phân hệ / Phòng ban Khối Kinh Doanh & Văn Phòng có Tab trên thanh điều hướng
 export const DEPARTMENT_MODULES: DepartmentModule[] = [
   {
     key: "procurement.view",
     tab: "procurement",
-    name: "Phòng Mua Hàng & Cung Ứng",
-    shortName: "Cung Ứng",
+    name: "Cung Ứng Thương Mại & XNK (Khối Kinh Doanh)",
+    shortName: "Cung Ứng Kinh Doanh",
     code: "PROCUREMENT",
-    desc: "Quản lý chuỗi cung ứng, đơn mua PO từ hãng, đề xuất mua hàng PR & theo dõi tiến độ hàng về",
+    desc: "Mua hàng thương mại & XNK (Khối Kinh Doanh): đề xuất PR, đơn mua PO từ hãng, CO/CQ & tiến độ hàng về Kho Kinh Doanh (tách biệt với Mua hàng NVL Nhà máy)",
     deptMatch: ["kinh doanh", "mua hàng", "procurement", "purchasing", "thu mua"],
     roleMatch: ["procurement", "cung ứng", "mua hàng", "thu mua", "purchasing"],
     defaultPermissions: {
@@ -50,7 +50,7 @@ export const DEPARTMENT_MODULES: DepartmentModule[] = [
   {
     key: "sales.view",
     tab: "sales",
-    name: "Phòng Kinh Doanh & Phân Phối",
+    name: "Phòng Kinh Doanh & Phân Phối (Khối Kinh Doanh)",
     shortName: "Kinh Doanh",
     code: "SALES",
     desc: "Lập báo giá thiết bị & hóa chất, đơn hàng bán buôn/lẻ, đặt hàng nhà máy, hợp đồng & chiết khấu",
@@ -78,10 +78,10 @@ export const DEPARTMENT_MODULES: DepartmentModule[] = [
   {
     key: "warehouse.view",
     tab: "warehouse",
-    name: "Phòng Kho Vận & Chuỗi Lạnh",
-    shortName: "Quản Lý Kho",
+    name: "Kho Kinh Doanh & Chuỗi Lạnh (Khối Kinh Doanh)",
+    shortName: "Kho Kinh Doanh",
     code: "WAREHOUSE",
-    desc: "Kiểm soát thẻ kho, số Lô & HSD (EXP), giám sát chuỗi lạnh âm sâu, nhập/xuất kho & in barcode",
+    desc: "Kho hàng thương mại & thành phẩm giao khách (Khối Kinh Doanh): thẻ kho, Lô & HSD, chuỗi lạnh, nhập PO thương mại / xuất đơn SO (tách biệt với Kho Nhà Máy)",
     deptMatch: ["kinh doanh", "kho vận", "warehouse", "logistics"],
     roleMatch: ["warehouse", "kho", "thủ kho", "logistics"],
     defaultPermissions: {
@@ -101,8 +101,8 @@ export const DEPARTMENT_MODULES: DepartmentModule[] = [
   {
     key: "application.view",
     tab: "application",
-    name: "Phòng Kỹ Thuật & Application",
-    shortName: "Application",
+    name: "Phòng Ứng Dụng Lâm Sàng – APP (Khối Kinh Doanh)",
+    shortName: "Application (APP)",
     code: "APPLICATION",
     desc: "Điều phối kỹ sư FSE, máy xét nghiệm demo tại bệnh viện, nghiệm thu kỹ thuật và chạy thử mẫu",
     deptMatch: ["app", "ứng dụng", "application", "fse", "lab"],
@@ -122,7 +122,7 @@ export const DEPARTMENT_MODULES: DepartmentModule[] = [
   {
     key: "legal.view",
     tab: "legal",
-    name: "Phòng Pháp Chế & Thầu",
+    name: "Phòng Pháp Chế & Thầu (Khối Văn Phòng)",
     shortName: "Pháp Chế",
     code: "LEGAL",
     desc: "Thẩm định pháp lý hợp đồng kinh tế, hồ sơ công bố lưu hành thiết bị IVD, bảo lãnh và hồ sơ thầu",
@@ -171,16 +171,16 @@ export const DEPARTMENT_MODULES: DepartmentModule[] = [
 export const PERMISSION_GROUPS: PermissionGroup[] = [
   {
     module: "procurement",
-    title: "1. Mua Hàng & Cung Ứng (Procurement)",
+    title: "1. Cung Ứng Kinh Doanh — Mua Hàng Thương Mại & XNK (Khối Kinh Doanh)",
     permissions: [
-      { key: "procurement.view", label: "Truy Cập Tab Cung Ứng", desc: "Xem đơn hàng PO mua vào, theo dõi tiến độ hàng nhập từ hãng" },
-      { key: "procurement.create_pr", label: "Tạo Đề Xuất Mua Hàng PR", desc: "Tạo yêu cầu mua sắm bù tồn kho an toàn hoặc hàng đặt khách" },
-      { key: "procurement.approve_po", label: "Phê Duyệt Đơn Mua PO", desc: "Ký duyệt đơn đặt hàng gửi nhà sản xuất (Lead / Trưởng phòng)" },
+      { key: "procurement.view", label: "Truy Cập Tab Cung Ứng Kinh Doanh", desc: "Xem đơn hàng PO mua vào thương mại, theo dõi tiến độ hàng nhập từ hãng" },
+      { key: "procurement.create_pr", label: "Tạo Đề Xuất Mua Hàng PR Thương Mại", desc: "Tạo yêu cầu mua sắm bù tồn kho thương mại hoặc hàng đặt khách" },
+      { key: "procurement.approve_po", label: "Phê Duyệt Đơn Mua PO Thương Mại", desc: "Ký duyệt đơn đặt hàng gửi nhà sản xuất (Lead / Trưởng phòng)" },
     ]
   },
   {
     module: "sales",
-    title: "2. Kinh Doanh & Đơn Hàng / Báo Giá",
+    title: "2. Kinh Doanh — Báo Giá & Đơn Hàng Thương Mại (Khối Kinh Doanh)",
     permissions: [
       { key: "sales.view", label: "Truy Cập Tab Kinh Doanh", desc: "Tra cứu danh sách báo giá, đơn hàng kinh doanh" },
       { key: "sales.create", label: "Tạo Báo Giá Mới", desc: "Soạn thảo báo giá thiết bị & hóa chất gửi khách hàng" },
@@ -196,20 +196,20 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   },
   {
     module: "warehouse",
-    title: "3. Quản Lý Kho & Hàng Hóa",
+    title: "3. Kho Kinh Doanh & Chuỗi Lạnh Giao Hàng SO (Khối Kinh Doanh)",
     permissions: [
-      { key: "warehouse.view", label: "Truy Cập Tab Quản Lý Kho", desc: "Tra cứu số lượng tồn, số lô, hạn dùng EXP Kho Trung Tâm" },
-      { key: "warehouse.inbound", label: "Tạo Phiếu Nhập Kho", desc: "Nhập hàng từ hãng hoặc nhập hoàn trả" },
+      { key: "warehouse.view", label: "Truy Cập Tab Kho Kinh Doanh", desc: "Tra cứu số lượng tồn, số lô, hạn dùng EXP Kho Kinh Doanh / hàng thương mại" },
+      { key: "warehouse.inbound", label: "Tạo Phiếu Nhập Kho Thương Mại", desc: "Nhập hàng thương mại từ hãng, nhập thành phẩm từ Nhà máy hoặc nhập hoàn trả" },
       { key: "warehouse.edit_inbound", label: "Chỉnh Sửa / Bổ Sung Phiếu Nhập Kho", desc: "Sửa hoặc bổ sung thông tin chứng từ, nhà cung cấp, số lô, hạn dùng (EXP), vị trí kệ trên phiếu nhập kho (PNK)" },
-      { key: "warehouse.outbound", label: "Tạo Phiếu Xuất Kho", desc: "Lập phiếu xuất hàng giao bệnh viện, phòng khám" },
-      { key: "warehouse.reserve", label: "Khóa Giữ Chỗ Hàng Hóa", desc: "Khóa giữ tồn kho lô hàng phục vụ chào thầu" },
+      { key: "warehouse.outbound", label: "Tạo Phiếu Xuất Kho Giao Khách (SO)", desc: "Lập phiếu xuất hàng giao bệnh viện, phòng khám từ Kho Kinh Doanh" },
+      { key: "warehouse.reserve", label: "Khóa Giữ Chỗ Hàng Hóa", desc: "Khóa giữ tồn kho lô hàng thương mại phục vụ chào thầu & đơn SO" },
       { key: "warehouse.view_cost_price", label: "Xem Giá Vốn / Giá Nhập", desc: "Xem đơn giá nhập khẩu bí mật từ nhà sản xuất" },
       { key: "warehouse.print_barcode", label: "In Tem Barcode & QR Code", desc: "Tạo và in tem nhãn dán kiện hàng" },
     ]
   },
   {
     module: "application",
-    title: "4. Application & Kỹ Thuật (FSE)",
+    title: "4. Ứng Dụng Lâm Sàng – APP & Demo Thiết Bị (Khối Kinh Doanh)",
     permissions: [
       { key: "application.view", label: "Truy Cập Tab Application", desc: "Tra cứu máy xét nghiệm đang đặt tại bệnh viện" },
       { key: "application.create", label: "Đăng Ký Mượn Máy Demo", desc: "Tạo đề xuất xuất máy demo phục vụ hội thảo/bác sĩ" },
@@ -219,7 +219,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   },
   {
     module: "legal",
-    title: "5. Pháp Chế & Thầu",
+    title: "5. Pháp Chế, Hợp Đồng & Hồ Sơ Thầu (Khối Văn Phòng)",
     permissions: [
       { key: "legal.view", label: "Truy Cập Tab Pháp Chế", desc: "Tra cứu hồ sơ pháp lý, chứng từ bảo lãnh thầu" },
       { key: "legal.create", label: "Soạn Thảo Hợp Đồng", desc: "Tạo mới hợp đồng kinh tế mua bán thiết bị y tế" },
@@ -228,7 +228,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   },
   {
     module: "settings",
-    title: "6. Cấu Hình & Quản Trị Hệ Thống",
+    title: "6. Cấu Hình & Quản Trị Hệ Thống (Điều Hành)",
     permissions: [
       { key: "settings.view", label: "Truy Cập Tab Cấu Hình", desc: "Mở menu Cấu hình & Nhật ký hệ thống" },
       { key: "settings.manage_users", label: "Quản Lý Tài Khoản & Phân Quyền", desc: "Tạo tài khoản, đổi pass, phân quyền chi tiết cá nhân" },
@@ -237,7 +237,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   },
   {
     module: "communication",
-    title: "7. Trao Đổi & Điều Hành Di Động",
+    title: "7. Trao Đổi Nội Bộ & Zalo Điều Hành",
     permissions: [
       { key: "chat.view", label: "Chat & Trao Đổi Nội Bộ", desc: "Mở tính năng chat trực tuyến cho toàn bộ nhân viên công ty" },
       { key: "zalo.view", label: "Điều Hành Zalo OA 4.0", desc: "Quản trị Zalo OA, cấu hình webhook, duyệt báo giá chiết khấu cao (Ban Giám Đốc / Quản Lý)" },

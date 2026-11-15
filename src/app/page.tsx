@@ -123,14 +123,14 @@ export default function Home() {
     }
   }, [user]);
 
-  const [settingsSubTab, setSettingsSubTab] = useState<"personnel" | "users" | "departments" | "audit" | "notifications">("users");
+  const [settingsSubTab, setSettingsSubTab] = useState<"personnel" | "users" | "departments" | "audit" | "notifications" | "finance" | "factory">("users");
 
   useEffect(() => {
     const handleNav = (e: any) => {
       if (e.detail && e.detail.tab) {
         setActiveTab(e.detail.tab as MainTab);
         if (e.detail.tab === "settings" && e.detail.subTab) {
-          const validSubTabs = ["personnel", "users", "departments", "audit", "notifications"];
+          const validSubTabs = ["personnel", "users", "departments", "audit", "notifications", "finance", "factory"];
           if (validSubTabs.includes(e.detail.subTab)) {
             setSettingsSubTab(e.detail.subTab);
           }
