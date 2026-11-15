@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { createUser, grant } from "../../__tests__/helpers";
 import { closeFactoryPool, getFactoryPool, withTransaction } from "../../core/db";
 import { createAsset } from "../service";
-import { configureSlots, listSlots, logSlotUsage, setSlotBottle } from "../slots";
+import { configureSlots, deleteSlot, listSlots, logSlotUsage, reportSlotBottleEmpty, setSlotBottle } from "../slots";
 import { makeItem, makeSite, stockedLot } from "../../inv/__tests__/fixtures";
 import { addSequences, createOligoOrder } from "../../oligo/orders";
 import { savePostProcess, startPostProcess } from "../../oligo/postProcess";
@@ -63,5 +63,79 @@ describe("instrument reagent positions (HPLC)", () => {
     const v = (await db().query("SELECT version FROM oligo.post_process WHERE sequence_id = $1", [seqs[0]])).rows[0].version;
     await withTransaction((tx) => savePostProcess(tx, lead, seqs[0], { version: v, a260: 0.2, stock_volume_ul: 500, dilution_factor: 50 }));
     await withTransaction((tx) => logStep(tx, lead, { sequence_ids: [seqs[0]], step_no: 2, values: {} }));
+  });
+
+  it("supports 2 independent HPLC machines, 4-category breakdown (RUN/PURGE/MAINTENANCE/LOSS), reportSlotBottleEmpty, and deleteSlot", async () => {
+    const site = await makeSite();
+    await db().query("UPDATE core.org_unit SET module_key = 'OLIGO' WHERE id = $1", [site.dept]);
+    const lead = await createUser("Quản lý Lab Oligo");
+    await grant(lead, ["oligo.view", "asset.manage", "asset.operate", "asset.view"], site.dept);
+
+    const solventA = await makeItem(site, { name: "ACN Gradient Multi-HPLC", base_uom: "mL" });
+    const solventB = await makeItem(site, { name: "TEAA Buffer Multi-HPLC", base_uom: "mL" });
+    const lotM1 = await stockedLot(site, solventA.id, 1000, "2031-06-01", { uom: "mL" });
+    const lotM2 = await stockedLot(site, solventA.id, 2000, "2031-09-01", { uom: "mL" });
+
+    const hplc1 = await withTransaction((tx) => createAsset(tx, lead, { name: "HPLC Máy 1", asset_type: "HPLC", owner_org_unit_id: site.dept }));
+    const hplc2 = await withTransaction((tx) => createAsset(tx, lead, { name: "HPLC Máy 2", asset_type: "HPLC", owner_org_unit_id: site.dept }));
+
+    await withTransaction((tx) =>
+      configureSlots(tx, lead, hplc1.id, {
+        slots: [{ slot_no: 1, label: "Kênh A Máy 1", item_id: solventA.id, bottle_volume_base: 1000, std_qty_per_run: 20, std_qty_per_purge: 30, bottle_price_vnd: 2000000 }],
+      })
+    );
+    await withTransaction((tx) =>
+      configureSlots(tx, lead, hplc2.id, {
+        slots: [
+          { slot_no: 1, label: "Kênh A Máy 2", item_id: solventA.id, bottle_volume_base: 2000, std_qty_per_run: 15, std_qty_per_purge: 25, bottle_price_vnd: 3000000 },
+          { slot_no: 2, label: "Kênh B Máy 2", item_id: solventB.id, bottle_volume_base: 1000 },
+        ],
+      })
+    );
+
+    await withTransaction((tx) => setSlotBottle(tx, lead, hplc1.id, 1, { lot_id: lotM1.id }));
+    await withTransaction((tx) => setSlotBottle(tx, lead, hplc2.id, 1, { lot_id: lotM2.id }));
+
+    // Log direct RUN, process overhead PURGE, and wash MAINTENANCE on HPLC-1 only
+    await withTransaction((tx) => logSlotUsage(tx, lead, hplc1.id, 1, { kind: "RUN", qty: 900 }));
+    await withTransaction((tx) => logSlotUsage(tx, lead, hplc1.id, 1, { kind: "PURGE", qty: 60 }));
+    await withTransaction((tx) => logSlotUsage(tx, lead, hplc1.id, 1, { kind: "MAINTENANCE", qty: 30, notes: "Rửa cột cuối tuần" }));
+
+    // Verify HPLC-2 remains completely untouched
+    expect(await onHand(lotM2.id)).toBe(2000);
+    const hplc2Before = await withTransaction((tx) => listSlots(tx, lead, hplc2.id));
+    expect(hplc2Before.slots).toHaveLength(2);
+    expect(hplc2Before.slots[0].current_breakdown).toMatchObject({
+      run_qty: 0,
+      purge_qty: 0,
+      maintenance_qty: 0,
+      loss_qty: 0,
+      total_qty: 0,
+    });
+
+    // Report empty ("✓ Báo hết") on HPLC-1 slot 1 -> remaining 10 mL written off as LOSS, stock 0, bottle detached
+    const emptyRes = await withTransaction((tx) => reportSlotBottleEmpty(tx, lead, hplc1.id, 1, { notes: "Hết chai thực tế trên máy 1" }));
+    expect(emptyRes.loss_qty).toBeCloseTo(10, 6);
+    expect(await onHand(lotM1.id)).toBeCloseTo(0, 6);
+    expect(await onHand(lotM2.id)).toBe(2000);
+
+    const hplc1View = await withTransaction((tx) => listSlots(tx, lead, hplc1.id));
+    expect(hplc1View.slots[0].current_lot_id).toBeNull();
+    expect(hplc1View.slots[0].remaining_in_bottle).toBe(0);
+    expect(hplc1View.slots[0].all_time_breakdown).toMatchObject({
+      run_qty: 900,
+      purge_qty: 60,
+      maintenance_qty: 30,
+      loss_qty: 10,
+      total_qty: 1000,
+      total_vnd: 2000000,
+    });
+
+    // Deleting slot 2 on HPLC-2 only removes slot 2 on HPLC-2 without touching HPLC-1
+    await withTransaction((tx) => deleteSlot(tx, lead, hplc2.id, 2));
+    const hplc2After = await withTransaction((tx) => listSlots(tx, lead, hplc2.id));
+    expect(hplc2After.slots.map((s: any) => s.slot_no)).toEqual([1]);
+    const hplc1StillThere = await withTransaction((tx) => listSlots(tx, lead, hplc1.id));
+    expect(hplc1StillThere.slots.map((s: any) => s.slot_no)).toEqual([1]);
   });
 });

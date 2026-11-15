@@ -13,7 +13,12 @@ import { getItem, toBaseQty } from "../master/service";
 registerPermissions([{ code: "asset.operate", description: "Vận hành thiết bị: lắp / thay chai hóa chất, ghi tiêu hao (chạy mẫu, rửa máy, bảo trì, hao hụt)" }]);
 
 export const USAGE_KINDS = ["RUN", "PURGE", "MAINTENANCE", "LOSS"] as const;
-const USAGE_LABEL: Record<(typeof USAGE_KINDS)[number], string> = { RUN: "Chạy mẫu", PURGE: "Rửa / cân bằng máy", MAINTENANCE: "Bảo trì", LOSS: "Hao hụt" };
+const USAGE_LABEL: Record<(typeof USAGE_KINDS)[number], string> = {
+  RUN: "Tiêu hao trực tiếp (Chạy mẫu)",
+  PURGE: "Hao hụt quy trình (Overhead)",
+  MAINTENANCE: "Hao hụt rửa / Bảo trì máy",
+  LOSS: "Chênh lệch thanh lý (Loss)",
+};
 
 let hplcSlotSchemaEnsured = false;
 
@@ -174,9 +179,11 @@ export async function ensureHplcReagentSlotsAndColumnsSeed(tx: Tx) {
       },
     ];
 
-    const hplcAssets = (
-      await tx.query("SELECT id, code FROM asset.asset WHERE owner_org_unit_id = $1 AND asset_type = 'HPLC' ORDER BY code", [oligoUnit.id])
-    ).rows;
+    const shouldSeedPrimaryHplcSlots =
+      allowDemoSeed && hplcAsset
+        ? Number((await tx.query("SELECT count(*)::int AS c FROM asset.reagent_slot WHERE asset_id = $1", [hplcAsset.id])).rows[0]?.c || 0) === 0 &&
+          Number((await tx.query("SELECT count(*)::int AS c FROM asset.slot_event WHERE asset_id = $1", [hplcAsset.id])).rows[0]?.c || 0) === 0
+        : false;
 
     for (const r of hplcReagentSeeds) {
       let item = (await tx.query("SELECT id FROM master.item WHERE code = $1 LIMIT 1", [r.item_code])).rows[0];
@@ -223,14 +230,14 @@ export async function ensureHplcReagentSlotsAndColumnsSeed(tx: Tx) {
         }
       }
 
-      for (const ha of hplcAssets) {
+      if (shouldSeedPrimaryHplcSlots && hplcAsset) {
         await tx.query(
           `INSERT INTO asset.reagent_slot
              (asset_id, slot_no, label, item_id, current_lot_id, installed_at, bottle_volume_base, std_qty_per_run, std_qty_per_purge, bottle_price_vnd, design_runs)
            VALUES ($1, $2, $3, $4, $5, CASE WHEN $5::uuid IS NOT NULL THEN now() - interval '5 days' ELSE NULL END, $6, $7, $8, $9, $10)
            ON CONFLICT (asset_id, slot_no) DO NOTHING`,
           [
-            ha.id,
+            hplcAsset.id,
             r.slot_no,
             r.label,
             item.id,
@@ -242,28 +249,25 @@ export async function ensureHplcReagentSlotsAndColumnsSeed(tx: Tx) {
             r.design_runs,
           ]
         );
-        if (allowDemoSeed && lot && ha.id === hplcAsset?.id) {
-          const evCount = Number((await tx.query("SELECT count(*)::int AS c FROM asset.slot_event WHERE asset_id = $1 AND slot_no = $2", [ha.id, r.slot_no])).rows[0]?.c || 0);
-          if (evCount === 0) {
+        if (lot) {
+          await tx.query(
+            `INSERT INTO asset.slot_event (asset_id, slot_no, event, lot_id, notes, created_at)
+             VALUES ($1, $2, 'INSTALL', $3, 'Lắp chai hóa chất HPLC mới lên kênh', now() - interval '5 days')`,
+            [hplcAsset.id, r.slot_no, lot.id]
+          );
+          if (r.initial_used_run_qty > 0) {
             await tx.query(
-              `INSERT INTO asset.slot_event (asset_id, slot_no, event, lot_id, notes, created_at)
-               VALUES ($1, $2, 'INSTALL', $3, 'Lắp chai hóa chất HPLC mới lên kênh', now() - interval '5 days')`,
-              [ha.id, r.slot_no, lot.id]
+              `INSERT INTO asset.slot_event (asset_id, slot_no, event, lot_id, usage_kind, qty_base, source_ref, notes, created_at)
+               VALUES ($1, $2, 'USAGE', $3, 'RUN', $4, 'Mẻ tinh sạch Probe/Amplicon', 'Chạy 10 mẫu tinh sạch Oligo theo định mức kênh', now() - interval '2 days')`,
+              [hplcAsset.id, r.slot_no, lot.id, r.initial_used_run_qty]
             );
-            if (r.initial_used_run_qty > 0) {
-              await tx.query(
-                `INSERT INTO asset.slot_event (asset_id, slot_no, event, lot_id, usage_kind, qty_base, source_ref, notes, created_at)
-                 VALUES ($1, $2, 'USAGE', $3, 'RUN', $4, 'Mẻ tinh sạch Probe/Amplicon', 'Chạy 10 mẫu tinh sạch Oligo theo định mức kênh', now() - interval '2 days')`,
-                [ha.id, r.slot_no, lot.id, r.initial_used_run_qty]
-              );
-            }
-            if (r.initial_used_purge_qty > 0) {
-              await tx.query(
-                `INSERT INTO asset.slot_event (asset_id, slot_no, event, lot_id, usage_kind, qty_base, source_ref, notes, created_at)
-                 VALUES ($1, $2, 'USAGE', $3, 'PURGE', $4, 'Cân bằng đầu ngày', 'Purge đuổi bọt khí & cân bằng đường ống HPLC', now() - interval '1 day')`,
-                [ha.id, r.slot_no, lot.id, r.initial_used_purge_qty]
-              );
-            }
+          }
+          if (r.initial_used_purge_qty > 0) {
+            await tx.query(
+              `INSERT INTO asset.slot_event (asset_id, slot_no, event, lot_id, usage_kind, qty_base, source_ref, notes, created_at)
+               VALUES ($1, $2, 'USAGE', $3, 'PURGE', $4, 'Cân bằng đầu ngày', 'Purge đuổi bọt khí & cân bằng đường ống HPLC', now() - interval '1 day')`,
+              [hplcAsset.id, r.slot_no, lot.id, r.initial_used_purge_qty]
+            );
           }
         }
       }
@@ -379,10 +383,122 @@ export async function setSlotBottle(tx: Tx, actor: AuthzActor, assetId: string, 
     if (!(await lotCandidates(tx, a, slot.item_id, lot_id)).length) throw invalid(`Lô ${lot.code} không còn tồn khả dụng trong kho của phòng.`, undefined, "INSUFFICIENT_STOCK");
   }
   if (slot.current_lot_id) await event(tx, actor, assetId, slotNo, "REMOVE", { lot_id: slot.current_lot_id });
-  await tx.query("UPDATE asset.reagent_slot SET current_lot_id = $3, installed_at = now(), installed_by = $4, version = version + 1 WHERE asset_id = $1 AND slot_no = $2", [
-    assetId, slotNo, lot_id, actor.userId,
-  ]);
+  await tx.query(
+    `UPDATE asset.reagent_slot
+        SET current_lot_id = $3,
+            installed_at = CASE WHEN $3::uuid IS NULL THEN NULL ELSE now() END,
+            installed_by = $4,
+            version = version + 1
+      WHERE asset_id = $1 AND slot_no = $2`,
+    [assetId, slotNo, lot_id, lot_id ? actor.userId : null]
+  );
   if (lot_id) await event(tx, actor, assetId, slotNo, "INSTALL", { lot_id });
+}
+
+const reportEmptySchema = z.object({
+  loss_qty: z.coerce.number().min(0, "lượng thanh lý phải >= 0").optional(),
+  notes: z.string().trim().max(500).optional().nullable(),
+});
+
+/**
+ * Báo hết chai đang gắn trên kênh HPLC: tự động ghi nhận phần dư còn lại trên chai (hoặc lượng nhập tay)
+ * vào Chênh lệch thanh lý (LOSS), xuất kho thanh lý và tháo chai khỏi vị trí.
+ */
+export async function reportSlotBottleEmpty(tx: Tx, actor: AuthzActor, assetId: string, slotNo: number, input: unknown) {
+  const d = parseInput(reportEmptySchema, input ?? {});
+  const a = await asset(tx, assetId);
+  await authorize(tx, actor, "asset.operate", a.owner_org_unit_id);
+  const slot = await lockSlot(tx, assetId, slotNo);
+  if (!slot.current_lot_id) {
+    throw invalid(`Vị trí ${slot.label} hiện chưa gắn chai/lô nào để báo hết.`, undefined, "SLOT_EMPTY");
+  }
+
+  const usedRow = (
+    await tx.query(
+      `SELECT coalesce(sum(qty_base), 0)::float AS used
+         FROM asset.slot_event
+        WHERE asset_id = $1 AND slot_no = $2 AND lot_id = $3 AND event = 'USAGE'
+          AND ($4::timestamptz IS NULL OR created_at >= $4)`,
+      [assetId, slotNo, slot.current_lot_id, slot.installed_at]
+    )
+  ).rows[0];
+  const bottleVol = Math.max(0, Number(slot.bottle_volume_base || 0));
+  const theoreticalRemainder = Math.max(0, Math.round((bottleVol - Number(usedRow?.used || 0)) * 1e6) / 1e6);
+
+  const cands = await lotCandidates(tx, a, slot.item_id, slot.current_lot_id, true);
+  const lotAvailable = Math.round(cands.reduce((sum, c) => sum + Number(c.available || 0), 0) * 1e6) / 1e6;
+
+  let lossQty: number;
+  if (d.loss_qty !== undefined) {
+    if (d.loss_qty > lotAvailable + 1e-9) {
+      throw invalid(
+        `Lượng thanh lý (${d.loss_qty}) vượt tồn khả dụng của lô (${lotAvailable}).`,
+        undefined,
+        "INSUFFICIENT_STOCK"
+      );
+    }
+    lossQty = Math.round(d.loss_qty * 1e6) / 1e6;
+  } else {
+    lossQty = Math.round(Math.min(theoreticalRemainder, lotAvailable) * 1e6) / 1e6;
+  }
+
+  if (lossQty > 1e-9) {
+    const item = await getItem(tx, slot.item_id);
+    const plan = allocate(cands, lossQty);
+    const doc = await issueFrom(tx, actor, plan.picks, slot.item_id, item.base_uom, "EQUIPMENT_LOSS", { type: "ASSET", id: assetId });
+    await event(tx, actor, assetId, slotNo, "USAGE", {
+      lot_id: slot.current_lot_id,
+      usage_kind: "LOSS",
+      qty: lossQty,
+      doc,
+      source_ref: "Báo hết chai dung môi HPLC (Thanh lý phần dư)",
+      notes: d.notes ?? null,
+    });
+  }
+
+  await event(tx, actor, assetId, slotNo, "REMOVE", {
+    lot_id: slot.current_lot_id,
+    notes: d.notes ?? "Báo hết chai hóa chất",
+  });
+  await tx.query(
+    "UPDATE asset.reagent_slot SET current_lot_id = NULL, installed_at = NULL, installed_by = NULL, version = version + 1 WHERE asset_id = $1 AND slot_no = $2",
+    [assetId, slotNo]
+  );
+
+  await writeAudit(tx, actor, {
+    entityType: "asset",
+    entityId: assetId,
+    action: "report_slot_bottle_empty",
+    changes: {
+      slot_no: [slotNo, slotNo],
+      lot_id: [slot.current_lot_id, null],
+      loss_qty: [0, lossQty],
+    },
+    reason: d.notes || "Báo hết chai dung môi HPLC",
+  });
+
+  return { ok: true, loss_qty: lossQty, detached_lot_id: slot.current_lot_id as string };
+}
+
+/** Xóa 1 kênh hóa chất độc lập trên máy HPLC. */
+export async function deleteSlot(tx: Tx, actor: AuthzActor, assetId: string, slotNo: number) {
+  const a = await asset(tx, assetId);
+  await authorize(tx, actor, "asset.manage", a.owner_org_unit_id);
+  const slot = await lockSlot(tx, assetId, slotNo);
+  if (slot.current_lot_id) {
+    await event(tx, actor, assetId, slotNo, "REMOVE", {
+      lot_id: slot.current_lot_id,
+      notes: "Xóa kênh hóa chất khỏi máy HPLC",
+    });
+  }
+  await tx.query("DELETE FROM asset.reagent_slot WHERE asset_id = $1 AND slot_no = $2", [assetId, slotNo]);
+  await writeAudit(tx, actor, {
+    entityType: "asset",
+    entityId: assetId,
+    action: "delete_slot",
+    changes: { slot_no: [slotNo, null], label: [slot.label, null] },
+  });
+  return { ok: true };
 }
 
 async function lotCandidates(tx: Tx, a: { owner_org_unit_id: string }, itemId: string, lotId: string, lock = false): Promise<Candidate[]> {
@@ -564,13 +680,14 @@ export async function listSlots(tx: Tx, actor: AuthzActor, assetId: string) {
         ).rows.map((r) => ({ kind: r.usage_kind, label: USAGE_LABEL[r.usage_kind as keyof typeof USAGE_LABEL], qty: r.qty }))
       : [];
 
-    // Tính toán chi tiết Sử dụng & Khấu hao cho từng loại hóa chất HPLC trên kênh này
+    // Tính toán chi tiết Sử dụng & Khấu hao tách 4 nhóm (Trực tiếp RUN, Quy trình PURGE, Rửa/Bảo trì MAINTENANCE, Thanh lý LOSS)
     const allTimeStats = (
       await tx.query(
         `SELECT coalesce(sum(qty_base), 0)::float AS total_qty,
                 coalesce(sum(CASE WHEN usage_kind = 'RUN' THEN qty_base ELSE 0 END), 0)::float AS run_qty,
                 coalesce(sum(CASE WHEN usage_kind = 'PURGE' THEN qty_base ELSE 0 END), 0)::float AS purge_qty,
-                coalesce(sum(CASE WHEN usage_kind IN ('MAINTENANCE', 'LOSS') THEN qty_base ELSE 0 END), 0)::float AS loss_qty,
+                coalesce(sum(CASE WHEN usage_kind = 'MAINTENANCE' THEN qty_base ELSE 0 END), 0)::float AS maintenance_qty,
+                coalesce(sum(CASE WHEN usage_kind = 'LOSS' THEN qty_base ELSE 0 END), 0)::float AS loss_qty,
                 count(*) FILTER (WHERE usage_kind = 'RUN')::int AS run_events
            FROM asset.slot_event
           WHERE asset_id = $1 AND slot_no = $2 AND event = 'USAGE'`,
@@ -581,28 +698,63 @@ export async function listSlots(tx: Tx, actor: AuthzActor, assetId: string) {
     const bottleVol = Math.max(1, Number(s.bottle_volume_base || 2500));
     const bottlePrice = Math.max(0, Number(s.bottle_price_vnd || 0));
     const stdRun = Math.max(0.1, Number(s.std_qty_per_run || 15));
-    const usedCurrentBottle = (s.usage as { kind: string; qty: number }[]).reduce((sum, u) => sum + Number(u.qty || 0), 0);
-    const runQtyCurrentBottle = (s.usage as { kind: string; qty: number }[])
-      .filter((u) => u.kind === "RUN")
-      .reduce((sum, u) => sum + Number(u.qty || 0), 0);
-
     const costPerMl = bottlePrice / bottleVol;
     const costPerRun = Math.round(costPerMl * stdRun);
-    const runsCurrentBottle = Math.round(runQtyCurrentBottle / stdRun);
-    const runsTotal = Math.max(Number(allTimeStats?.run_events || 0), Math.round(Number(allTimeStats?.run_qty || 0) / stdRun));
-    const remainingInBottle = Math.max(0, Math.round((bottleVol - usedCurrentBottle) * 100) / 100);
-    const depreciatedCurrentVnd = Math.min(bottlePrice, Math.round(usedCurrentBottle * costPerMl));
-    const depreciatedTotalVnd = Math.round(Number(allTimeStats?.total_qty || 0) * costPerMl);
+
+    const qtyByKind = (kind: (typeof USAGE_KINDS)[number]) =>
+      (s.usage as { kind: string; qty: number }[])
+        .filter((u) => u.kind === kind)
+        .reduce((sum, u) => sum + Number(u.qty || 0), 0);
+
+    const makeBreakdown = (runQty: number, purgeQty: number, maintenanceQty: number, lossQty: number, capVnd?: number) => {
+      const totalQty = Math.round((runQty + purgeQty + maintenanceQty + lossQty) * 100) / 100;
+      const runVnd = Math.round(runQty * costPerMl);
+      const purgeVnd = Math.round(purgeQty * costPerMl);
+      const maintenanceVnd = Math.round(maintenanceQty * costPerMl);
+      const lossVnd = Math.round(lossQty * costPerMl);
+      const rawTotalVnd = Math.round(totalQty * costPerMl);
+      return {
+        run_qty: Math.round(runQty * 100) / 100,
+        purge_qty: Math.round(purgeQty * 100) / 100,
+        maintenance_qty: Math.round(maintenanceQty * 100) / 100,
+        loss_qty: Math.round(lossQty * 100) / 100,
+        total_qty: totalQty,
+        run_vnd: runVnd,
+        purge_vnd: purgeVnd,
+        maintenance_vnd: maintenanceVnd,
+        loss_vnd: lossVnd,
+        total_vnd: capVnd !== undefined ? Math.min(capVnd, rawTotalVnd) : rawTotalVnd,
+      };
+    };
+
+    const curRun = qtyByKind("RUN");
+    const curPurge = qtyByKind("PURGE");
+    const curMaint = qtyByKind("MAINTENANCE");
+    const curLoss = qtyByKind("LOSS");
+    const currentBreakdown = makeBreakdown(curRun, curPurge, curMaint, curLoss, bottlePrice);
+
+    const allRun = Number(allTimeStats?.run_qty || 0);
+    const allPurge = Number(allTimeStats?.purge_qty || 0);
+    const allMaint = Number(allTimeStats?.maintenance_qty || 0);
+    const allLoss = Number(allTimeStats?.loss_qty || 0);
+    const allTimeBreakdown = makeBreakdown(allRun, allPurge, allMaint, allLoss);
+
+    const usedCurrentBottle = currentBreakdown.total_qty;
+    const runsCurrentBottle = Math.round(curRun / stdRun);
+    const runsTotal = Math.max(Number(allTimeStats?.run_events || 0), Math.round(allRun / stdRun));
+    const remainingInBottle = s.current_lot_id ? Math.max(0, Math.round((bottleVol - usedCurrentBottle) * 100) / 100) : 0;
 
     s.used_current_bottle = usedCurrentBottle;
     s.remaining_in_bottle = remainingInBottle;
     s.runs_current_bottle = runsCurrentBottle;
     s.runs_total = runsTotal;
-    s.total_used_qty = Number(allTimeStats?.total_qty || 0);
+    s.total_used_qty = allTimeBreakdown.total_qty;
     s.cost_per_ml = Math.round(costPerMl * 100) / 100;
     s.cost_per_run = costPerRun;
-    s.depreciated_current_bottle_vnd = depreciatedCurrentVnd;
-    s.depreciated_total_vnd = depreciatedTotalVnd;
+    s.depreciated_current_bottle_vnd = currentBreakdown.total_vnd;
+    s.depreciated_total_vnd = allTimeBreakdown.total_vnd;
+    s.current_breakdown = currentBreakdown;
+    s.all_time_breakdown = allTimeBreakdown;
   }
   const events = (
     await tx.query(
