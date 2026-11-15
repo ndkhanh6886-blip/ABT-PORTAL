@@ -2,7 +2,9 @@ import { afterAll, describe, expect, it } from "vitest";
 import { createUser, grant } from "../../__tests__/helpers";
 import { closeFactoryPool, getFactoryPool, withTransaction } from "../../core/db";
 import { makeItem, makeSite, stockedLot } from "../../inv/__tests__/fixtures";
-import { cancelPreparation, prepare, saveFormula } from "../service";
+import { cancelPrepOrder, createPrepOrder } from "../orders";
+import { cancelPreparation, deleteFormula, listFormulas, prepare, saveFormula } from "../service";
+import { ensureLegacyOligoDataSeeded } from "../../oligo/legacySync";
 import "../../modules";
 
 afterAll(closeFactoryPool);
@@ -60,5 +62,101 @@ describe("reagent preparation", () => {
     expect(p.qc_needed).toBe(true);
     const bal = (await db().query("SELECT b.location_id, l.status FROM inv.stock_balance b JOIN inv.lot l ON l.id = b.lot_id WHERE b.lot_id = $1", [p.lot_id])).rows[0];
     expect(bal).toEqual({ location_id: site.quarantine, status: "QUARANTINE" });
+  });
+
+  it("allows only Admin to delete unused formulas, writes audit log, blocks in-use formulas, and never re-seeds deleted legacy codes", async () => {
+    const site = await makeSite();
+    const lead = await createUser("Trưởng phòng pha chế");
+    await grant(lead, ["prep.formula.manage", "prep.execute"], site.dept);
+    const rootAdmin = { ...(await createUser("Root Admin")), isRootAdmin: true };
+
+    const ing = await makeItem(site, { name: "Acetonitrile", base_uom: "mL" });
+    const out = await makeItem(site, { name: "Wash ACN", base_uom: "mL" });
+    await stockedLot(site, ing.id, 1000, "2030-01-01", { uom: "mL" });
+
+    // 1. Unused formula: non-admin cannot delete even with prep.formula.manage + prep.execute
+    const unused = await withTransaction((tx) =>
+      saveFormula(tx, lead, null, {
+        code: `DEL-${rnd()}`,
+        name: "Công thức nháp",
+        output_item_id: out.id,
+        basis_qty: 100,
+        basis_uom: "mL",
+        lines: [{ item_id: ing.id, qty: 100, uom: "mL" }],
+      })
+    );
+    await expect(
+      withTransaction((tx) => deleteFormula(tx, lead, unused.id, { reason: "Thử xóa không phải admin" }))
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    // 2. Admin rejects missing/short reason
+    await expect(
+      withTransaction((tx) => deleteFormula(tx, rootAdmin, unused.id, { reason: "x" }))
+    ).rejects.toThrow(/lý do/i);
+
+    // 3. Formula with PLANNED order is blocked; once cancelled (no prep lot made), Admin can delete it cleanly
+    const order = await withTransaction((tx) =>
+      createPrepOrder(tx, lead, {
+        formula_id: unused.id,
+        qty: 100,
+        uom: "mL",
+        warehouse_id: site.warehouse,
+        to_location_id: site.shelf,
+        planned_date: "2026-12-01",
+      })
+    );
+    await expect(
+      withTransaction((tx) => deleteFormula(tx, rootAdmin, unused.id, { reason: "Xóa khi đang có lệnh chờ" }))
+    ).rejects.toMatchObject({ code: "FORMULA_HAS_OPEN_ORDER" });
+
+    await withTransaction((tx) => cancelPrepOrder(tx, lead, order.id, "Hủy lệnh chờ để xóa công thức"));
+    const delRes = await withTransaction((tx) =>
+      deleteFormula(tx, rootAdmin, unused.id, { reason: "Công thức nhập nhầm" })
+    );
+    expect(delRes.deleted).toBe(true);
+    expect((await db().query("SELECT id FROM prep.formula WHERE id = $1", [unused.id])).rowCount).toBe(0);
+    expect((await db().query("SELECT 1 FROM prep.formula_line WHERE formula_id = $1", [unused.id])).rowCount).toBe(0);
+    const audit = (
+      await db().query(
+        "SELECT action, reason, changes FROM core.audit_log WHERE entity_type = 'prep_formula' AND entity_id = $1 AND action = 'delete'",
+        [unused.id]
+      )
+    ).rows[0];
+    expect(audit).toBeTruthy();
+    expect(audit.reason).toBe("Công thức nhập nhầm");
+    expect(audit.changes.code).toEqual([unused.code, null]);
+
+    // 4. Formula with preparation history is permanently protected against hard delete
+    const inUse = await withTransaction((tx) =>
+      saveFormula(tx, lead, null, {
+        code: `USE-${rnd()}`,
+        name: "Công thức đã pha",
+        output_item_id: out.id,
+        basis_qty: 100,
+        basis_uom: "mL",
+        lines: [{ item_id: ing.id, qty: 100, uom: "mL" }],
+      })
+    );
+    await withTransaction((tx) =>
+      prepare(tx, lead, { formula_id: inUse.id, qty: 100, uom: "mL", warehouse_id: site.warehouse, to_location_id: site.shelf })
+    );
+    await expect(
+      withTransaction((tx) => deleteFormula(tx, rootAdmin, inUse.id, { reason: "Thử xóa công thức đã pha" }))
+    ).rejects.toMatchObject({ code: "FORMULA_IN_USE" });
+
+    // 5. Legacy seeded formula (e.g., AMA) deleted by Admin is NOT resurrected on next listFormulas/seed (isolated via SAVEPOINT)
+    await withTransaction(async (tx) => {
+      await tx.query("SAVEPOINT sp_legacy_delete_test");
+      await tx.query("UPDATE core.org_unit SET module_key = 'OLIGO' WHERE id = $1", [site.dept]);
+      await ensureLegacyOligoDataSeeded(tx, false);
+      const formulasBefore = await listFormulas(tx, rootAdmin);
+      const ama = formulasBefore.find((x: { code: string }) => x.code === "AMA");
+      expect(ama).toBeDefined();
+      await deleteFormula(tx, rootAdmin, ama!.id, { reason: "Không dùng AMA mặc định" });
+      await ensureLegacyOligoDataSeeded(tx, false);
+      const formulasAfter = await listFormulas(tx, rootAdmin);
+      expect(formulasAfter.some((x: { code: string }) => x.code === "AMA")).toBe(false);
+      await tx.query("ROLLBACK TO SAVEPOINT sp_legacy_delete_test");
+    });
   });
 });

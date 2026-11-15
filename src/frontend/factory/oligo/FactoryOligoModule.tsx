@@ -83,7 +83,13 @@ export function FactoryOligoModule() {
           <InstrumentsView mode="reagents" canManage={perms.has("asset.manage")} canOperate={perms.has("asset.operate")} />
         </div>
       )}
-      {tab === "prep" && <PreparationView canManage={perms.has("prep.formula.manage")} canExecute={perms.has("prep.execute")} />}
+      {tab === "prep" && (
+        <PreparationView
+          canManage={perms.has("prep.formula.manage")}
+          canExecute={perms.has("prep.execute")}
+          canDelete={Boolean(me.data?.is_root || perms.has("prep.formula.delete"))}
+        />
+      )}
       {tab === "catalog" && <CatalogView canManage={perms.has("oligo.catalog.manage")} />}
       {tab === "pricing" && <PricingConfigView canManage={perms.has("oligo.catalog.manage") || perms.has("oligo.order.manage")} />}
     </div>

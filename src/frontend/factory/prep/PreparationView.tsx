@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as XLSX from "xlsx";
-import { api, fmtDate, fmtQty } from "../api";
+import { api, fmtDate, fmtQty, useFactoryMe } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { openExcelImportTemplate } from "../import/FactoryExcelImportModule";
 import { ItemPicker } from "../oligo/EquipmentView";
@@ -241,12 +241,23 @@ function PrepareForm({ formula, onDone }: { formula: Formula; onDone: () => void
 }
 
 /** "Pha chế hóa chất" (as OligoFlow): formulas, the preparation order and the preparation log. */
-export function PreparationView({ canManage, canExecute }: { canManage: boolean; canExecute: boolean }) {
+export function PreparationView({ canManage, canExecute, canDelete }: { canManage: boolean; canExecute: boolean; canDelete?: boolean }) {
   const qc = useQueryClient();
+  const me = useFactoryMe();
+  const allowDelete = canDelete ?? Boolean(me.data?.is_root || me.data?.permissions?.includes("prep.formula.delete"));
   const formulas = useQuery({ queryKey: ["factory", "prep-formulas"], queryFn: () => api<Formula[]>("/api/factory/prep/formulas") });
   const preps = useQuery({ queryKey: ["factory", "prep-log"], queryFn: () => api<Prep[]>("/api/factory/prep/preparations") });
   const [editing, setEditing] = useState<{ item?: Formula; isClone?: boolean } | null>(null);
   const [preparing, setPreparing] = useState<Formula | null>(null);
+  const removeFormula = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      api(`/api/factory/prep/formulas/${id}`, { method: "DELETE", json: { reason } }),
+    onSuccess: (_res, vars) => {
+      if (editing?.item?.id === vars.id) setEditing(null);
+      if (preparing?.id === vars.id) setPreparing(null);
+      qc.invalidateQueries({ queryKey: ["factory", "prep-formulas"] });
+    },
+  });
   const refresh = () => ["prep-log", "prep-orders"].forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k] }));
   const cancel = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) => api(`/api/factory/prep/preparations/${id}/cancel`, { method: "POST", json: { reason } }),
@@ -308,7 +319,7 @@ export function PreparationView({ canManage, canExecute }: { canManage: boolean;
           />
         )}
         {preparing && <PrepareForm key={preparing.id} formula={preparing} onDone={refresh} />}
-        <ErrorNote error={formulas.error} />
+        <ErrorNote error={formulas.error ?? removeFormula.error} />
         {formulas.data?.length === 0 && !editing && <Empty>Chưa có công thức (ví dụ: Deblock 3% TCA/DCM, Cap A/B, Oxidizer, pha loãng amidite 0.1 M, đệm HPLC).</Empty>}
         {formulas.data && formulas.data.length > 0 && (
           <Table head={["Mã", "Tên / nhóm", "Thành phẩm", "Mẻ chuẩn", "Nguyên liệu", "Hạn / QC", ""]}>
@@ -321,13 +332,30 @@ export function PreparationView({ canManage, canExecute }: { canManage: boolean;
                 <td className="py-1.5 pr-3 text-xs">{f.lines.map((l) => `${l.item_code} ${fmtQty(l.qty)} ${l.uom}`).join(" · ")}</td>
                 <td className="py-1.5 pr-3 text-xs">{f.shelf_life_days ? `${f.shelf_life_days} ngày` : "—"}{f.requires_qc && " · cần QC"}{f.incubation_days > 0 && ` · ủ ${f.incubation_days} ngày`}</td>
                 <td className="py-1.5 pr-3 text-right whitespace-nowrap">
-                  {canExecute && f.status === "ACTIVE" && <Button type="button" variant="ghost" onClick={() => setPreparing(preparing?.id === f.id ? null : f)}>Pha</Button>}
-                  {canManage && (
-                    <>
-                      <Button type="button" variant="ghost" onClick={() => setEditing({ item: f })}>Sửa</Button>
-                      <Button type="button" variant="ghost" onClick={() => setEditing({ item: f, isClone: true })}>Nhân bản</Button>
-                    </>
-                  )}
+                  <div className="inline-flex flex-wrap justify-end gap-1">
+                    {canExecute && f.status === "ACTIVE" && <Button type="button" variant="ghost" onClick={() => setPreparing(preparing?.id === f.id ? null : f)}>Pha</Button>}
+                    {canManage && (
+                      <>
+                        <Button type="button" variant="ghost" onClick={() => setEditing({ item: f })}>Sửa</Button>
+                        <Button type="button" variant="ghost" onClick={() => setEditing({ item: f, isClone: true })}>Nhân bản</Button>
+                      </>
+                    )}
+                    {allowDelete && (
+                      <Button
+                        type="button"
+                        variant="danger"
+                        disabled={removeFormula.isPending}
+                        onClick={() => {
+                          const reason = window.prompt(`Nhập lý do xóa công thức ${f.code} (${f.name}):`);
+                          if (reason && reason.trim()) {
+                            removeFormula.mutate({ id: f.id, reason: reason.trim() });
+                          }
+                        }}
+                      >
+                        Xóa
+                      </Button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}

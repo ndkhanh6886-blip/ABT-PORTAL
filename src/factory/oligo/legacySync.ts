@@ -39,8 +39,14 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
   };
 
   if (legacyOligoDataEnsured && !force) {
-    const hasFormulas = (await tx.query("SELECT 1 FROM prep.formula LIMIT 1")).rowCount ?? 0;
-    if (hasFormulas > 0) return counts;
+    const hasSeeded =
+      (
+        await tx.query(
+          `SELECT 1 WHERE EXISTS (SELECT 1 FROM prep.formula)
+                       OR EXISTS (SELECT 1 FROM core.audit_log WHERE entity_type = 'prep_formula' AND action = 'delete')`
+        )
+      ).rowCount ?? 0;
+    if (hasSeeded > 0) return counts;
   }
 
   await ensureOligoPricingSchema(tx);
@@ -588,7 +594,22 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
       },
     ];
 
+    const deletedFormulaCodes = force
+      ? new Set<string>()
+      : new Set<string>(
+          (
+            await tx.query(
+              `SELECT DISTINCT upper(changes->'code'->>0) AS code
+                 FROM core.audit_log
+                WHERE entity_type = 'prep_formula'
+                  AND action = 'delete'
+                  AND changes->'code'->>0 IS NOT NULL`
+            )
+          ).rows.map((r) => String(r.code))
+        );
+
     for (const fm of legacyFormulas) {
+      if (deletedFormulaCodes.has(fm.code.toUpperCase())) continue;
       const outId = itemByCode.get(fm.output_code);
       if (!outId) continue;
       const ex = (await tx.query("SELECT id FROM prep.formula WHERE upper(code) = upper($1) LIMIT 1", [fm.code])).rows[0];

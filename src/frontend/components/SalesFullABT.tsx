@@ -18154,8 +18154,6 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const matchesCat =
                 commercialCategoryFilter === "all"
                     ? true
-                    : commercialCategoryFilter === "GROUP:OLIGO_MTO"
-                    ? (isDetailedOligoSkuCode(p.code) || isOligoMtoProduct(p))
                     : commercialCategoryFilter.startsWith("GROUP:")
                     ? getCommercialCategoryGroup(p) === commercialCategoryFilter.slice(6)
                     : actualCat === commercialCategoryFilter ||
@@ -25395,18 +25393,6 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             >
                                 <Download className="w-3.5 h-3.5" />
                                 Xuất Excel
-                            </button>
-                            <button
-                                onClick={() => setCommercialCategoryFilter(prev => prev === "GROUP:OLIGO_MTO" ? "all" : "GROUP:OLIGO_MTO")}
-                                className={cn(
-                                    "px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors shadow cursor-pointer border",
-                                    commercialCategoryFilter === "GROUP:OLIGO_MTO"
-                                        ? "bg-emerald-600 text-white border-emerald-400"
-                                        : "bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border-emerald-700/60"
-                                )}
-                                title="Lọc nhanh 130 mã danh mục Oligo chi tiết ABT (PRI, PUR, PRE, LNA, BIOTIN, NH2, Inosine, Probe, Dye Primer, DNA Synthesis)"
-                            >
-                                <span>🧬 {commercialCategoryFilter === "GROUP:OLIGO_MTO" ? "Đang lọc: Danh mục Oligo (Bỏ lọc)" : `Danh mục Oligo (${commercialProducts.filter(p => isDetailedOligoSkuCode(p.code) || isOligoMtoProduct(p)).length} mã)`}</span>
                             </button>
                             <button
                                 onClick={openAddCommercialModal}

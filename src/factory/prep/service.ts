@@ -15,6 +15,7 @@ import { ensureLegacyOligoDataSeeded } from "../oligo/legacySync";
 
 registerPermissions([
   { code: "prep.formula.manage", description: "Soạn / sửa công thức pha chế hóa chất" },
+  { code: "prep.formula.delete", description: "Xóa công thức pha chế hóa chất (dành cho Admin)", gxpCritical: true },
   { code: "prep.execute", description: "Thực hiện pha chế: trừ nguyên liệu, tạo lô hóa chất pha (trong kho của phòng)" },
 ]);
 
@@ -109,6 +110,62 @@ export async function listFormulas(tx: Tx, actor: AuthzActor) {
   });
   const ids = (await tx.query("SELECT id FROM prep.formula ORDER BY status, code")).rows;
   return Promise.all(ids.map((r) => getFormula(tx, r.id)));
+}
+
+/** Deletes an unused preparation formula (Admin only, audited, blocks when preparations or planned orders exist). */
+export async function deleteFormula(tx: Tx, actor: AuthzActor, id: string, input: unknown) {
+  await authorizeAnywhere(tx, actor, "prep.formula.delete");
+  const formulaId = parseInput(z.string().uuid("ID công thức không hợp lệ."), id);
+  const raw = (input ?? {}) as Record<string, unknown>;
+  const reason = parseInput(
+    z.string().trim().min(3, "Nhập lý do xóa công thức (tối thiểu 3 ký tự).").max(500),
+    raw.reason
+  );
+
+  const cur = (await tx.query("SELECT * FROM prep.formula WHERE id = $1 FOR UPDATE", [formulaId])).rows[0];
+  if (!cur) throw notFound("công thức");
+
+  const prepCount = Number(
+    (await tx.query("SELECT count(*)::int AS c FROM prep.preparation WHERE formula_id = $1", [formulaId])).rows[0]?.c ?? 0
+  );
+  if (prepCount > 0) {
+    throw conflict(
+      `Công thức ${cur.code} đã phát sinh ${prepCount} lô pha chế trong nhật ký nên không thể xóa vĩnh viễn (hãy bấm Sửa → chuyển trạng thái sang Ngừng).`,
+      "FORMULA_IN_USE"
+    );
+  }
+
+  const openOrderCount = Number(
+    (await tx.query("SELECT count(*)::int AS c FROM prep.prep_order WHERE formula_id = $1 AND status = 'PLANNED'", [formulaId])).rows[0]?.c ?? 0
+  );
+  if (openOrderCount > 0) {
+    throw conflict(
+      `Công thức ${cur.code} đang có ${openOrderCount} lệnh pha chế chờ thực hiện (đang giữ chỗ nguyên liệu). Hãy hủy lệnh chờ trước khi xóa.`,
+      "FORMULA_HAS_OPEN_ORDER"
+    );
+  }
+
+  await tx.query(
+    "DELETE FROM prep.prep_order WHERE formula_id = $1 AND status = 'CANCELLED' AND preparation_id IS NULL",
+    [formulaId]
+  );
+
+  const before = (
+    await tx.query("SELECT item_id, qty::float AS qty, uom FROM prep.formula_line WHERE formula_id = $1 ORDER BY line_no", [formulaId])
+  ).rows;
+
+  await tx.query("DELETE FROM prep.formula_line WHERE formula_id = $1", [formulaId]);
+  await tx.query("DELETE FROM prep.formula WHERE id = $1", [formulaId]);
+
+  await writeAudit(tx, actor, {
+    entityType: "prep_formula",
+    entityId: formulaId,
+    action: "delete",
+    changes: { code: [cur.code, null], name: [cur.name, null], lines: [JSON.stringify(before), null] },
+    reason,
+  });
+
+  return { deleted: true, id: formulaId, code: cur.code };
 }
 
 const prepareSchema = z.object({
