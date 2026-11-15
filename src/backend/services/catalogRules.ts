@@ -1,3 +1,49 @@
+import { isDetailedOligoSkuCode } from "@/shared/oligoCatalog";
+
+/** 7 mã Oligo/đặt riêng tự tạo trước đây — đã thay thế bằng danh mục 130 mã Oligo chi tiết. */
+export const LEGACY_DEMO_OLIGO_CODES = [
+  "OLIGO-PRIMER",
+  "OLIGO-PROBE",
+  "OLIGO-BASE",
+  "OLIGO-MOD",
+  "OLIGO-PUR",
+  "OLIGO-SVC",
+  "CUSTOM-ORDER",
+] as const;
+
+const LEGACY_DEMO_OLIGO_SET = new Set<string>(LEGACY_DEMO_OLIGO_CODES);
+
+export function isLegacyDemoOligoCode(code?: string | null): boolean {
+  if (!code) return false;
+  return LEGACY_DEMO_OLIGO_SET.has(String(code).trim().toUpperCase());
+}
+
+/**
+ * Kiểm tra mặt hàng thuộc danh mục Oligo đặt tổng hợp theo trình tự (Make-to-Order):
+ * giữ nguyên giá bán trong Kinh doanh nhưng không sinh tồn kho ảo hay cảnh báo thiếu tồn ở Kho.
+ */
+export function isOligoMtoProduct(item?: {
+  code?: string | null;
+  product_code?: string | null;
+  name?: string | null;
+  product_name?: string | null;
+  category?: string | null;
+} | null): boolean {
+  if (!item) return false;
+  const cUp = String(item.code ?? item.product_code ?? "").trim().toUpperCase();
+  if (isDetailedOligoSkuCode(cUp) || cUp.startsWith("OLIGO-")) {
+    return true;
+  }
+  const catLow = normalizeVnCategoryText(item.category ?? "").toLowerCase();
+  return catLow === "oligo";
+}
+
+/** Trạng thái sản phẩm chưa mở bán thương mại chính thức (không cảnh báo thiếu giá). */
+export function isNonPricedPipelineStatus(statusText?: string | null): boolean {
+  if (!statusText) return false;
+  return /coming soon|đang chuyển giao|đang nghiên cứu/i.test(String(statusText));
+}
+
 /** Chuẩn hóa chính tả tiếng Việt cho tên phân loại (đồng nhất oá/óa, uý/úy, Kít/Kit, NFC). */
 export function normalizeVnCategoryText(raw?: string | null): string {
   if (!raw) return "";

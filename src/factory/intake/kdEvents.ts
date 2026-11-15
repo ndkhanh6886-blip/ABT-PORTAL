@@ -119,6 +119,77 @@ async function resolveOrCreateMasterItemForPoLine(
   return null;
 }
 
+const MOD_BRACKET_TOKEN_RE = /^(FAM|HEX|TET|JOE|VIC|ROX|TXR|TAMRA|CY3|CY5|CY5\.5|CY7|AF\d+|BHQ[0-3]?|MGB|BIOTIN|NH2|5'|3')$/i;
+
+function extractOligoLabelAndSeq(specRaw: unknown, notesRaw: unknown): { seqLabel: string; rawSeq: string } {
+  const spec = String(specRaw || "").trim();
+  const notes = String(notesRaw || "").trim();
+  const combined = [spec, notes].filter(Boolean).join(" | ");
+
+  let seqLabel = "";
+  const startBracket = spec.match(/^\[([^\[\]]{1,40})\]/);
+  if (startBracket && !MOD_BRACKET_TOKEN_RE.test(startBracket[1].trim())) {
+    seqLabel = startBracket[1].trim();
+  } else {
+    const labeledMatch = combined.match(/trình\s*tự\s*\[([^\[\]]{1,40})\]/i);
+    if (labeledMatch && !MOD_BRACKET_TOKEN_RE.test(labeledMatch[1].trim())) {
+      seqLabel = labeledMatch[1].trim();
+    }
+  }
+
+  let rawSeq = "";
+  const explicitMatch = combined.match(/Trình\s*tự\s*:\s*([^|\r\n;]+)/i);
+  const candidates = explicitMatch
+    ? [explicitMatch[1].trim()]
+    : combined
+        .replace(/^\[([^\[\]]{1,40})\]\s*/, "")
+        .split(/[|\r\n;]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+  for (const cand of candidates) {
+    const cleaned = cand
+      .replace(/\[[^\]]+\]/g, "")
+      .replace(/\/[^/]+\//g, "")
+      .replace(/5['’`´]?/g, "")
+      .replace(/3['’`´]?/g, "")
+      .replace(/[-+\s()]/g, "");
+    if (/^[ACGTUIRYSWKMBDHVN]{6,}$/i.test(cleaned)) {
+      rawSeq = cand.replace(/\s+/g, "");
+      break;
+    }
+  }
+
+  return { seqLabel, rawSeq };
+}
+
+function inferOligoScaleNmol(skus: string[], text: string): number | null {
+  for (const sku of skus) {
+    const m = String(sku || "").match(/\.(50|100|200|250|500|1000)$/i);
+    if (m) return Number(m[1]);
+  }
+  const nmMatch = text.match(/\b(50|100|200|250|500|1000)\s*nmol\b/i);
+  return nmMatch ? Number(nmMatch[1]) : null;
+}
+
+function inferOligoPurification(skus: string[], text: string): "DESALT" | "OPC" | "HPLC" | "PAGE" {
+  const hasHplcSku = skus.some((s) =>
+    /^(PUR-02|[A-Za-z0-9-]+-Primer\.|FAM\.100|HEX\.100|TEX\.100|CY5\.100|Cy3-BHQ2\.|ROX-BHQ2\.|VIC-BHQ1\.|AF568-BHQ2\.|AF647-BHQ2\.|FAM-TAMRA\.|HEX-TAMRA\.|VIC-TAMRA\.|FAM-MGB\.|HEX-MGB\.|VIC-MGB\.)/i.test(
+      s
+    )
+  );
+  if (hasHplcSku || /\bHPLC\b/i.test(text)) return "HPLC";
+  if (skus.some((s) => /^PUR-03$/i.test(s)) || /\bPAGE\b/i.test(text)) return "PAGE";
+  if (skus.some((s) => /^PUR-01$/i.test(s)) || /\bOPC\b/i.test(text)) return "OPC";
+  return "DESALT";
+}
+
+function inferOligoFormat(skus: string[], text: string): "LYOPHILIZED" | "LIQUID" {
+  const hasLyoSku = skus.some((s) => /^PRE-01$/i.test(s));
+  if (!hasLyoSku && /\b(liquid|dung\s*dịch|pha\s*loãng)\b/i.test(text)) return "LIQUID";
+  return "LYOPHILIZED";
+}
+
 async function ensureDownstreamDepartmentOrder(
   tx: Tx,
   factoryUnit: (typeof FACTORY_UNITS)[number],
@@ -129,19 +200,103 @@ async function ensureDownstreamDepartmentOrder(
     const existingOligo = (
       await tx.query("SELECT id FROM oligo.oligo_order WHERE internal_order_id = $1 LIMIT 1", [order.id])
     ).rows[0];
-    if (!existingOligo) {
+    let oligoOrderId: string | undefined = existingOligo?.id;
+    if (!oligoOrderId) {
       const firstLine = (
         await tx.query("SELECT * FROM intake.internal_order_line WHERE order_id = $1 ORDER BY line_no LIMIT 1", [order.id])
       ).rows[0];
       const reqDate = order.requested_date ? String(order.requested_date).slice(0, 10) : addDays(vnToday(), 7);
       const dueDate = reqDate >= vnToday() ? reqDate : addDays(vnToday(), 7);
-      await createOligoOrder(tx, SYSTEM_ACTOR, {
-        org_unit_id: unit.id,
-        internal_order_id: order.id,
-        customer_label: `${order.kd_po_code} — ${firstLine?.kd_item_name || "Đơn tổng hợp Oligo"}`,
-        due_date: dueDate,
-        notes: order.notes || `Đơn Tổng hợp Oligo tự động chuyển từ PO Kinh doanh ${order.kd_po_code} (Đơn nội bộ ${order.code})`,
-      });
+      const createdOligo = await createOligoOrder(
+        tx,
+        SYSTEM_ACTOR,
+        {
+          org_unit_id: unit.id,
+          internal_order_id: order.id,
+          customer_label: `${order.kd_po_code} — ${firstLine?.kd_item_name || "Đơn tổng hợp Oligo"}`,
+          due_date: dueDate,
+          notes: order.notes || `Đơn Tổng hợp Oligo tự động chuyển từ PO Kinh doanh ${order.kd_po_code} (Đơn nội bộ ${order.code})`,
+        },
+        { trustedSystem: true }
+      );
+      oligoOrderId = createdOligo.id;
+    }
+
+    const existingSeqCount = Number(
+      (await tx.query("SELECT count(*)::int AS c FROM oligo.oligo_sequence WHERE order_id = $1", [oligoOrderId])).rows[0]?.c ?? 0
+    );
+    if (existingSeqCount === 0 && oligoOrderId) {
+      const poLines = (
+        await tx.query(
+          "SELECT line_no, kd_item_code, kd_item_name, specification, line_notes FROM intake.internal_order_line WHERE order_id = $1 ORDER BY line_no",
+          [order.id]
+        )
+      ).rows;
+      const groups = new Map<string, { label: string; fallbackName: string; rawSeq: string; skus: string[]; textParts: string[] }>();
+      for (const ln of poLines) {
+        const sku = String(ln.kd_item_code || "").trim();
+        const { seqLabel, rawSeq } = extractOligoLabelAndSeq(ln.specification, ln.line_notes);
+        if (!seqLabel && !rawSeq) continue;
+        const key = seqLabel ? `LBL:${seqLabel.toUpperCase()}` : `SEQ:${rawSeq.toUpperCase()}`;
+        const cur = groups.get(key) ?? {
+          label: seqLabel,
+          fallbackName: String(ln.kd_item_name || sku || `Oligo ${ln.line_no}`).trim(),
+          rawSeq: "",
+          skus: [],
+          textParts: [],
+        };
+        if (sku) cur.skus.push(sku);
+        if (!cur.rawSeq && rawSeq) cur.rawSeq = rawSeq;
+        if (ln.specification) cur.textParts.push(String(ln.specification));
+        if (ln.line_notes) cur.textParts.push(String(ln.line_notes));
+        groups.set(key, cur);
+      }
+
+      const seqGroups = [...groups.values()].filter((g) => Boolean(g.rawSeq));
+      if (seqGroups.length > 0) {
+        await tx.query("SAVEPOINT sp_kd_oligo_seqs");
+        try {
+          const activeScales = (
+            await tx.query("SELECT code, synth_nmol FROM oligo.scale WHERE status = 'ACTIVE' ORDER BY sort_order ASC, synth_nmol ASC")
+          ).rows;
+          if (activeScales.length > 0) {
+            const defaultScale =
+              activeScales.find((s) => String(s.code).toUpperCase() === "100NMOL")?.code || String(activeScales[0].code);
+            const linesText = seqGroups
+              .map((g, idx) => {
+                const combined = g.textParts.join(" | ");
+                const wantNmol = inferOligoScaleNmol(g.skus, combined);
+                const matchedScale = wantNmol
+                  ? activeScales.find(
+                      (s) => Number(s.synth_nmol) === wantNmol || String(s.code).toUpperCase().startsWith(`${wantNmol}NMOL`)
+                    )?.code
+                  : undefined;
+                const scaleCode = matchedScale || defaultScale;
+                const purif = inferOligoPurification(g.skus, combined);
+                const format = inferOligoFormat(g.skus, combined);
+                const seqName = (g.label || g.fallbackName || `Oligo ${idx + 1}`).replace(/[;\t\r\n]+/g, " ").slice(0, 120);
+                const cleanSeq = g.rawSeq.replace(/[;\t\r\n]+/g, "");
+                return `${seqName}; ${cleanSeq}; ${scaleCode}; ${purif}; ${format}`;
+              })
+              .join("\n");
+
+            await addSequences(
+              tx,
+              SYSTEM_ACTOR,
+              oligoOrderId,
+              {
+                text: linesText,
+                defaults: { scale_code: defaultScale, purification: "DESALT", format: "LYOPHILIZED" },
+              },
+              { trustedSystem: true }
+            );
+          }
+          await tx.query("RELEASE SAVEPOINT sp_kd_oligo_seqs");
+        } catch (err) {
+          await tx.query("ROLLBACK TO SAVEPOINT sp_kd_oligo_seqs").catch(() => {});
+          console.warn("[kdEvents] Skipped auto-populating oligo sequences:", err);
+        }
+      }
     }
   } else if (factoryUnit === "DEVICE") {
     const linesRows = (

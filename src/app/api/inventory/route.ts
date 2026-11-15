@@ -22,7 +22,14 @@ const WRITE_PERMISSIONS: Record<string, string[]> = {
 import { syncPersonnelToZaloBindings } from "@/backend/db/zaloDb";
 import { generateDocumentCode } from "@/backend/services/codeGenerator";
 import { syncCatalogSuppliersAndProducts, unmarkSupplierDeleted } from "@/backend/services/supplierCatalogSync";
-import { resolveActualProductCategory, isServiceProduct } from "@/backend/services/catalogStore";
+import {
+  resolveActualProductCategory,
+  isServiceProduct,
+  isOligoMtoProduct,
+  isLegacyDemoOligoCode,
+  LEGACY_DEMO_OLIGO_CODES,
+} from "@/backend/services/catalogStore";
+import { isDetailedOligoSkuCode } from "@/shared/oligoCatalog";
 import { applyPOReceipt, reconcileHistoricalPOsWithInbound, markPOReconcileDirty } from "@/backend/services/poReceipt";
 import { isPcrKitProduct, packagingFormOfLot } from "@/frontend/utils/packagingForm";
 import {
@@ -375,6 +382,13 @@ export async function GET(req: NextRequest) {
                     OR name ILIKE 'Dịch vụ%'
                     OR name ILIKE '%dịch vụ sửa chữa%'
               )
+              OR (
+                COALESCE(quantity_on_hand, 0) <= 0
+                AND COALESCE(quantity_allocated, 0) <= 0
+                AND product_code IN (
+                  SELECT code FROM products WHERE LOWER(TRIM(COALESCE(category, ''))) = 'oligo'
+                )
+              )
         `).catch(() => {});
 
         await query(`
@@ -385,6 +399,7 @@ export async function GET(req: NextRequest) {
              AND UPPER(TRIM(p.code)) NOT IN ('DVSC', 'OLIGO-SVC')
              AND UPPER(TRIM(p.code)) NOT LIKE 'DV-%'
              AND UPPER(TRIM(p.code)) NOT LIKE 'SVC-%'
+             AND LOWER(TRIM(COALESCE(p.category, ''))) <> 'oligo'
              AND COALESCE(p.category, '') NOT ILIKE '%Dịch vụ%'
              AND COALESCE(p.name, '') NOT ILIKE 'Dịch vụ%'
              AND COALESCE(p.name, '') NOT ILIKE '%dịch vụ sửa chữa%'
@@ -1656,7 +1671,7 @@ export async function POST(req: NextRequest) {
         const numOrNull = (v: string) => {
           if (v === "") return null;
           const s = String(v).trim();
-          if (!s || /^([-—]+|n\/?a|none|null|chưa có|chua co|liên hệ|lien he|không|khong)$/i.test(s)) return null;
+          if (!s || /^([-—]+|n\/?a|none|null|chưa có(\s+giá)?|chua co(\s+gia)?|liên hệ|lien he|không|khong)$/i.test(s)) return null;
           // Hỗ trợ cả số chuẩn Excel (265000000 / 265000000.5), số có dấu phẩy + chấm thập phân (193,200.000),
           // hoặc số phân cách hàng nghìn bằng dấu chấm (265.000.000) mà không nhân nhầm 1000 lần.
           if (/^-?\d+(\.\d+)?$/.test(s)) {
@@ -1688,8 +1703,8 @@ export async function POST(req: NextRequest) {
         };
         const MAX_MIN_STOCK = 1_000_000;
         const PRICE_COLS = ["Giá vốn nhập (VNĐ)", "Giá vốn", "cost_price", "Giá vốn (VNĐ)"];
-        const STD_PRICE_COLS = ["Giá niêm yết End-User (VNĐ)", "Giá niêm yết", "standard_price", "Giá bán"];
-        const MIN_STOCK_COLS = ["Mức tồn tối thiểu", "min_stock_level", "Tồn tối thiểu"];
+        const STD_PRICE_COLS = ["Giá niêm yết End-User (VNĐ)", "Giá niêm yết", "standard_price", "Giá bán", "Giá Bán Lẻ (VNĐ)", "Giá Bán Lẻ", "Giá End User (VNĐ)"];
+        const MIN_STOCK_COLS = ["Mức tồn tối thiểu", "min_stock_level", "Tồn tối thiểu", "Tồn kho tối thiểu"];
 
         const safePriceOrNull = (v: string) => {
           const n = numOrNull(v);
@@ -1700,13 +1715,16 @@ export async function POST(req: NextRequest) {
           return n !== null && Number.isInteger(n) && n >= 0 && n <= MAX_MIN_STOCK ? n : null;
         };
 
+        let importedDetailedOligo = false;
         for (const r of safeRows) {
           const getVal = createGetVal(r);
           // Hỗ trợ cả file Excel không có dòng tiêu đề chuẩn (cột __EMPTY..__EMPTY_12 theo đúng thứ tự mẫu 13 cột)
-          const isHeaderlessAbtRow = r["__EMPTY"] !== undefined && r["__EMPTY_1"] !== undefined && !getVal(["Mã SKU (*)", "Mã SKU", "code", "Mã hàng", "SKU"]);
-          const rawCode = isHeaderlessAbtRow ? String(r["__EMPTY"] || "").trim() : getVal(["Mã SKU (*)", "Mã SKU", "code", "Mã hàng", "SKU", "CODE"]);
+          const isHeaderlessAbtRow = r["__EMPTY"] !== undefined && r["__EMPTY_1"] !== undefined && !getVal(["Mã SKU (*)", "Mã SKU", "Mã SP", "code", "Mã hàng", "SKU"]);
+          const rawCode = isHeaderlessAbtRow ? String(r["__EMPTY"] || "").trim() : getVal(["Mã SKU (*)", "Mã SKU", "Mã SP", "code", "Mã hàng", "SKU", "CODE"]);
           const pCode = String(rawCode || autoCode("SKU")).trim();
-          const pName = orNull(isHeaderlessAbtRow ? String(r["__EMPTY_1"] || "").trim() : getVal(["Tên sản phẩm (*)", "Tên sản phẩm", "Tên Hàng Hóa Thương Mại", "name", "Tên hàng", "Tên hàng hóa, dịch vụ", "PRODUCT"]));
+          if (isLegacyDemoOligoCode(pCode)) continue;
+          if (isDetailedOligoSkuCode(pCode)) importedDetailedOligo = true;
+          const pName = orNull(isHeaderlessAbtRow ? String(r["__EMPTY_1"] || "").trim() : getVal(["Tên sản phẩm (*)", "Tên sản phẩm", "Tên Sản Phẩm", "Tên Hàng Hóa Thương Mại", "name", "Tên hàng", "Tên hàng hóa, dịch vụ", "PRODUCT"]));
           const supplierCol = orNull(getVal(["Nhà cung cấp (*)", "Nhà cung cấp", "Nhà Cung Cấp", "supplier", "Đơn vị cung cấp"]));
           // Hãng sản xuất và Nhà cung cấp là hai thông tin khác nhau: không lấy cái này điền cho cái kia
           const brand = orNull(isHeaderlessAbtRow ? String(r["__EMPTY_2"] || "").trim() : getVal(["Hãng sản xuất (*)", "Hãng sản xuất", "Hãng Sản Xuất", "manufacturer", "Hãng SX", "Hãng", "Brand"]));
@@ -1715,15 +1733,19 @@ export async function POST(req: NextRequest) {
             "Phân loại", "category", "Category", "Ngành hàng", "Nhóm hàng", "Danh mục",
             "Danh mục (Category)", "Danh mục (PCR Kit/..)", "Chủng loại", "CHỦNG LOẠI", "Loại Kit"
           ]));
+          const subCatCol = orNull(getVal(["Nhóm Hàng Con", "Nhóm hàng con", "subCategory"]));
           const cat = resolveActualProductCategory({ code: pCode, name: pName || pCode, category: rawCat || "" });
-          const spec = orNull(isHeaderlessAbtRow ? String(r["__EMPTY_4"] || "").trim() : getVal(["Quy cách đóng gói", "specification", "Quy cách", "SIZE"]));
-          const unit = orNull(isHeaderlessAbtRow ? String(r["__EMPTY_5"] || "").trim() : getVal(["Đơn vị tính", "unit", "ĐVT"]));
+          const spec = orNull(isHeaderlessAbtRow ? String(r["__EMPTY_4"] || "").trim() : getVal(["Quy cách đóng gói", "Quy cách", "specification", "SIZE"]));
+          const unit = orNull(isHeaderlessAbtRow ? String(r["__EMPTY_5"] || "").trim() : getVal(["Đơn vị tính", "Đơn Vị Tính", "unit", "ĐVT"]));
           const cost = safePriceOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_6"] ?? "") : getVal(PRICE_COLS));
           const stdPrice = safePriceOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_7"] ?? "") : getVal(STD_PRICE_COLS));
-          const dealer1Price = safePriceOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_8"] ?? "") : getVal(["Giá Đại lý Cấp 1 (VNĐ)", "Giá Dealer Cấp 1 (VNĐ)", "Giá Dealer 1"]));
-          const dealer2Price = safePriceOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_9"] ?? "") : getVal(["Giá Đại lý Cấp 2 (VNĐ)", "Giá Dealer Cấp 2 (VNĐ)", "Giá Dealer 2"]));
+          const hasDealerCols = Boolean(r && Object.keys(r).some((k) => /dealer|đại lý/i.test(k)));
+          const dealer1Price = safePriceOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_8"] ?? "") : getVal(["Giá Đại lý Cấp 1 (VNĐ)", "Giá Dealer Cấp 1 (VNĐ)", "Giá Dealer 1 (VNĐ)", "Giá Dealer 1"]));
+          const dealer2Price = safePriceOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_9"] ?? "") : getVal(["Giá Đại lý Cấp 2 (VNĐ)", "Giá Dealer Cấp 2 (VNĐ)", "Giá Dealer 2 (VNĐ)", "Giá Dealer 2"]));
           const minStock = safeMinStockOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_10"] ?? "") : getVal(MIN_STOCK_COLS));
-          const prodNotes = orNull(isHeaderlessAbtRow ? String(r["__EMPTY_11"] || "").trim() : getVal(["Ghi chú", "Ghi chú kỹ thuật", "THÔNG TIN KỸ THUẬT", "notes"]));
+          const techInfo = orNull(getVal(["Tinh Sạch / Thông Tin Kỹ Thuật", "Tinh Sạch Mặc Định", "Thông Tin Kỹ Thuật"]));
+          const statusCol = orNull(getVal(["Tình Trạng Hàng", "Tình trạng", "leadTime"]));
+          const prodNotes = orNull(isHeaderlessAbtRow ? String(r["__EMPTY_11"] || "").trim() : getVal(["Ghi chú", "Ghi Chú", "Ghi chú kỹ thuật", "Ghi chú (Ver 04_2026)", "THÔNG TIN KỸ THUẬT", "notes"]));
           const storageCondition = (isHeaderlessAbtRow ? String(r["__EMPTY_12"] || "").trim() : getVal([
             "Điều kiện bảo quản chuẩn (*)", 
             "Điều kiện bảo quản chuẩn", 
@@ -1734,6 +1756,10 @@ export async function POST(req: NextRequest) {
             "Nhiệt độ bảo quản", 
             "storage_condition"
           ])) || null;
+
+          const isSvc = isServiceProduct({ code: pCode, name: pName || pCode, category: cat || "" });
+          const isOligo = isOligoMtoProduct({ code: pCode, name: pName || pCode, category: cat || "" });
+          const effectiveMinStock = isSvc || isOligo ? 0 : minStock;
 
           // Giá phải ép kiểu ::numeric: "COALESCE($8, 0)" khiến PostgreSQL suy tham số là integer theo số 0,
           // nên giá từ 2.147.483.648 đ trở lên (ví dụ 2.650.000.000) báo "out of range for type integer".
@@ -1751,13 +1777,17 @@ export async function POST(req: NextRequest) {
                  standard_price = COALESCE($8, products.standard_price),
                  min_stock_level = COALESCE($9, products.min_stock_level),
                  storage_condition = COALESCE($10::text, products.storage_condition)`,
-            [pCode, pName, brand, cat, spec, unit, cost, stdPrice, minStock, storageCondition]
+            [pCode, pName, brand, cat, spec, unit, cost, stdPrice, effectiveMinStock, storageCondition]
           );
 
-          const isSvc = isServiceProduct({ code: pCode, name: pName || pCode, category: cat || "" });
           if (isSvc) {
             await query("DELETE FROM inventory_lots WHERE product_code = $1", [pCode]).catch(() => {});
             await query("DELETE FROM inventory_items WHERE product_code = $1", [pCode]).catch(() => {});
+          } else if (isOligo) {
+            await query(
+              "DELETE FROM inventory_items WHERE product_code = $1 AND COALESCE(quantity_on_hand, 0) <= 0 AND COALESCE(quantity_allocated, 0) <= 0",
+              [pCode]
+            ).catch(() => {});
           } else {
             // Ensure inventory item & heal placeholder name if it was created as "Sản phẩm <SKU>"
             await query(
@@ -1779,6 +1809,7 @@ export async function POST(req: NextRequest) {
             code: pCode,
             name: pName || pCode,
             category: cat || "Hàng Thương Mại",
+            subCategory: subCatCol || undefined,
             brand: brand || "TBR Phân Phối",
             supplier: supplierCol || "",
             origin: "Chính hãng",
@@ -1786,14 +1817,30 @@ export async function POST(req: NextRequest) {
             specification: spec || "",
             costPrice: cost ?? 0,
             price: stdPrice ?? 0,
-            priceDealer1: dealer1Price ?? (stdPrice ? Math.round(stdPrice * 0.85) : 0),
-            priceDealer2: dealer2Price ?? (stdPrice ? Math.round(stdPrice * 0.8) : 0),
+            priceDealer1: hasDealerCols
+              ? (dealer1Price ?? 0)
+              : (dealer1Price ?? (stdPrice ? Math.round(stdPrice * 0.85) : 0)),
+            priceDealer2: hasDealerCols
+              ? (dealer2Price ?? 0)
+              : (dealer2Price ?? (stdPrice ? Math.round(stdPrice * 0.8) : 0)),
+            explicitDealerPrices: hasDealerCols,
             storageCondition: storageCondition || "",
-            leadTime: "Có sẵn kho",
-            notes: prodNotes || "",
+            leadTime: statusCol || (isOligo ? "Đặt tổng hợp 3-7 ngày" : "Có sẵn kho"),
+            notes: prodNotes || techInfo || "",
             overwriteCatalogMeta: true,
           });
           importedCount++;
+        }
+
+        if (importedDetailedOligo) {
+          for (const legacyCode of LEGACY_DEMO_OLIGO_CODES) {
+            await query("DELETE FROM catalog_items WHERE UPPER(TRIM(code)) = $1", [legacyCode]).catch(() => {});
+            await query(
+              "DELETE FROM inventory_items WHERE UPPER(TRIM(product_code)) = $1 AND COALESCE(quantity_on_hand, 0) <= 0 AND COALESCE(quantity_allocated, 0) <= 0",
+              [legacyCode]
+            ).catch(() => {});
+            await query("DELETE FROM products WHERE UPPER(TRIM(code)) = $1", [legacyCode]).catch(() => {});
+          }
         }
 
         // Process Sheet 2: Định mức phụ kiện / linh kiện BOM đính kèm nếu có

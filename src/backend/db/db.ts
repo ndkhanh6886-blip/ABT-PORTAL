@@ -973,6 +973,60 @@ async function runIntegrityMigrations() {
            );
       `);
     });
+    // Dọn 7 mã Oligo khung / CUSTOM-ORDER tự tạo trước đây đã thay bằng danh mục 130 mã Oligo chi tiết
+    await step("purge_legacy_oligo_template_codes_v2", async () => {
+      const legacyCodes = [
+        "OLIGO-PRIMER",
+        "OLIGO-PROBE",
+        "OLIGO-BASE",
+        "OLIGO-MOD",
+        "OLIGO-PUR",
+        "OLIGO-SVC",
+        "CUSTOM-ORDER",
+      ];
+      await client.query(
+        `DELETE FROM catalog_items WHERE UPPER(TRIM(code)) = ANY($1::text[])`,
+        [legacyCodes]
+      );
+      await client.query(`
+        UPDATE app_kv_store
+           SET value = COALESCE(
+             (
+               SELECT jsonb_agg(elem)
+                 FROM jsonb_array_elements(
+                   CASE WHEN jsonb_typeof(value) = 'array' THEN value ELSE '[]'::jsonb END
+                 ) elem
+                WHERE UPPER(TRIM(COALESCE(elem->>'code', ''))) <> ALL($1::text[])
+             ),
+             '[]'::jsonb
+           ),
+           updated_at = now()
+         WHERE key = 'sales_commercial_products'
+           AND jsonb_typeof(value) = 'array'
+      `, [legacyCodes]);
+      await client.query(
+        `DELETE FROM inventory_items
+          WHERE UPPER(TRIM(product_code)) = ANY($1::text[])
+            AND COALESCE(quantity_on_hand, 0) <= 0
+            AND COALESCE(quantity_allocated, 0) <= 0`,
+        [legacyCodes]
+      );
+      for (const code of legacyCodes) {
+        await client.query("SAVEPOINT sp_del_legacy_oligo");
+        try {
+          await client.query(`DELETE FROM products WHERE UPPER(TRIM(code)) = $1`, [code]);
+          await client.query("RELEASE SAVEPOINT sp_del_legacy_oligo");
+        } catch {
+          await client.query("ROLLBACK TO SAVEPOINT sp_del_legacy_oligo");
+          await client.query("RELEASE SAVEPOINT sp_del_legacy_oligo");
+        }
+      }
+      await client.query(`
+        UPDATE products SET min_stock_level = 0
+         WHERE LOWER(TRIM(COALESCE(category, ''))) = 'oligo'
+           AND COALESCE(min_stock_level, 0) <> 0
+      `);
+    });
   } finally {
     if (locked) {
       await client.query("SELECT pg_advisory_unlock($1)", [INTEGRITY_MIGRATION_LOCK_KEY]).catch((e) =>

@@ -60,6 +60,82 @@ export interface PriceConfig {
 }
 
 /**
+ * Ánh xạ mặc định giữa các line key trong bảng tính giá sản xuất Oligo
+ * sang bộ 130 mã SKU chi tiết chính thức của Phòng Kinh Doanh (Ver 04_2026).
+ */
+export const DEFAULT_ABT_OLIGO_ITEM_CODES: Record<string, string> = (() => {
+  const scales = ["50nmol", "100nmol", "200nmol", "250nmol", "500nmol", "1000nmol"] as const;
+  const map: Record<string, string> = {};
+
+  for (const sc of scales) {
+    const n = sc.replace("nmol", "");
+    map[`std|${sc}|6-14`] = `PRI-01.${n}`;
+    map[`std|${sc}|15-34`] = `PRI-02.${n}`;
+    map[`std|${sc}|35-60`] = `PRI-03.${n}`;
+    map[`std|${sc}|61-120`] = `PRI-05.${n}`;
+
+    const lnaScale = n === "50" ? "100" : n;
+    for (const tk of ["+A", "+C", "+G", "+T", "+U"]) {
+      map[`modbase|${sc}|${tk}`] = `LNA.${lnaScale}`;
+    }
+    map[`modbase|${sc}|I`] = `Inosine.${n}`;
+    map[`fb|modbase|I|${sc}`] = `Inosine.${n}`;
+
+    map[`pur|OPC|${sc}`] = "PUR-01";
+    map[`pur|HPLC|${sc}`] = "PUR-02";
+    map[`pur|PAGE|${sc}`] = "PUR-03";
+    map[`lyo|${sc}`] = "PRE-01";
+
+    for (const kind of ["m5", "mi"] as const) {
+      map[`${kind}|BIOTIN|${sc}`] = `BIOTIN.${n}`;
+      map[`${kind}|NH2|${sc}`] = `NH2.${n}`;
+    }
+
+    const dyeMap: Record<string, string> = {
+      FAM: `FAM-Primer.${n}`,
+      HEX: `HEX-Primer.${n}`,
+      TXR: `Texasred-Primer.${n}`,
+      CY5: `Cy5-Primer.${n}`,
+      CY3: `Cy3-Primer.${n}`,
+      ROX: `ROX-Primer.${n}`,
+      VIC: `VIC-Primer.${n}`,
+      AF568: `AF568-Primer.${n}`,
+      AF647: `AF647-Primer.${n}`,
+    };
+    for (const [mod, sku] of Object.entries(dyeMap)) {
+      map[`m5|${mod}|${sc}`] = sku;
+      map[`fb|m5|${mod}|${sc}`] = sku;
+    }
+
+    const dualMap: Record<string, string> = {
+      "FAM/BHQ1": "FAM.100",
+      "HEX/BHQ1": "HEX.100",
+      "TXR/BHQ2": "TEX.100",
+      "CY5/BHQ2": "CY5.100",
+      "CY3/BHQ2": "Cy3-BHQ2.100",
+      "ROX/BHQ2": "ROX-BHQ2.100",
+      "VIC/BHQ1": "VIC-BHQ1.100",
+      "AF568/BHQ2": "AF568-BHQ2.100",
+      "AF647/BHQ2": "AF647-BHQ2.100",
+      "FAM/TAMRA": "FAM-TAMRA.100",
+      "HEX/TAMRA": "HEX-TAMRA.100",
+      "VIC/TAMRA": "VIC-TAMRA.100",
+      "FAM/MGB": "FAM-MGB.100",
+      "HEX/MGB": "HEX-MGB.100",
+      "VIC/MGB": "VIC-MGB.100",
+    };
+    for (const [pair, sku] of Object.entries(dualMap)) {
+      map[`dual|${pair}|${sc}`] = sku;
+    }
+  }
+
+  map["lyo"] = "PRE-01";
+  map["amp|Amplicon (Linear)"] = "LinearDNA";
+  map["amp|Amplicon (Plasmid)"] = "CircleDNA";
+  return map;
+})();
+
+/**
  * Bảng giá chuẩn sao chép nguyên bản 100% từ phần mềm OligoFlow cũ (price_config.json)
  */
 export const DEFAULT_PRICE_CONFIG: PriceConfig = {
@@ -176,6 +252,7 @@ export const DEFAULT_PRICE_CONFIG: PriceConfig = {
     LNA: { default_purification: "Desalt", enforce_hplc: false },
     "2-OMe": { default_purification: "Desalt", enforce_hplc: false },
   },
+  item_codes: DEFAULT_ABT_OLIGO_ITEM_CODES,
 };
 
 export const FALLBACK_ITEM_CODE = "OLG-CHUA-CAU-HINH";
@@ -310,7 +387,7 @@ export function defaultItemCode(key: string): string {
 }
 
 export function itemCodeFor(key: string, config?: Partial<PriceConfig> | null): string {
-  const code = config?.item_codes?.[key];
+  const code = config?.item_codes?.[key] ?? DEFAULT_ABT_OLIGO_ITEM_CODES[key];
   return code && String(code).trim() ? String(code).trim() : defaultItemCode(key);
 }
 
@@ -473,7 +550,10 @@ function addLine(lines: PriceLine[], config: PriceConfig, key: string, name: str
   }
   lines.push({
     key,
-    code: key.startsWith("fb|") ? FALLBACK_ITEM_CODE : itemCodeFor(key, config),
+    code:
+      key.startsWith("fb|") && !(config?.item_codes?.[key] ?? DEFAULT_ABT_OLIGO_ITEM_CODES[key])
+        ? FALLBACK_ITEM_CODE
+        : itemCodeFor(key, config),
     name,
     unit,
     qty,
@@ -1011,14 +1091,30 @@ export async function ensureOligoPricingSchema(tx: Tx): Promise<void> {
 export async function loadPriceConfig(tx: Tx): Promise<PriceConfig> {
   const row = (await tx.query("SELECT config FROM oligo.price_config WHERE id = 1")).rows[0];
   if (!row?.config) return DEFAULT_PRICE_CONFIG;
-  return { ...DEFAULT_PRICE_CONFIG, ...(row.config as Partial<PriceConfig>) };
+  const saved = row.config as Partial<PriceConfig>;
+  return {
+    ...DEFAULT_PRICE_CONFIG,
+    ...saved,
+    item_codes: {
+      ...DEFAULT_ABT_OLIGO_ITEM_CODES,
+      ...(saved.item_codes ?? {}),
+    },
+  };
 }
 
 export async function getPricingConfigResponse(tx: Tx, actor: AuthzActor) {
   await ensureOligoPricingSchema(tx);
   await authorize(tx, actor, "oligo.view");
   const row = (await tx.query("SELECT config, version, updated_at FROM oligo.price_config WHERE id = 1")).rows[0];
-  const config: PriceConfig = { ...DEFAULT_PRICE_CONFIG, ...(row?.config ?? {}) };
+  const saved = (row?.config ?? {}) as Partial<PriceConfig>;
+  const config: PriceConfig = {
+    ...DEFAULT_PRICE_CONFIG,
+    ...saved,
+    item_codes: {
+      ...DEFAULT_ABT_OLIGO_ITEM_CODES,
+      ...(saved.item_codes ?? {}),
+    },
+  };
   return {
     config,
     version: row?.version ?? 1,

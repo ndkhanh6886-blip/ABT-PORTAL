@@ -2,7 +2,24 @@
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
-import { isServiceProduct } from "@/backend/services/catalogRules";
+import { isServiceProduct, isOligoMtoProduct, isLegacyDemoOligoCode, isNonPricedPipelineStatus } from "@/backend/services/catalogRules";
+import {
+    ABT_OLIGO_130_CATALOG,
+    ABT_OLIGO_SCALES,
+    PROBE_CATALOG_OPTIONS,
+    DYE_PRIMER_FAMILIES,
+    PURIFICATION_OPTIONS,
+    getOligoCatalogEntry,
+    isDetailedOligoSkuCode,
+    isOligoAddonSku,
+    isOligoPrimarySku,
+    parseOligoSequenceDetails,
+    buildOligoSkuCombination,
+    type OligoProductMode,
+    type OligoScale,
+    type OligoPrimerFamily,
+    type OligoExtraSkuInput,
+} from "@/frontend/utils/oligoCatalogPricing";
 import { packagingFormOfLot, normalizePackagingForm, normalizeIcForm, normalizeTubeType, withPackagingNote, isPcrKitProduct, PACKAGING_LABEL, IC_LABEL, PCR_TUBE_CODES, kitSpecOf, kitSpecLabel, lotKitSpec, lotMatchesKitSpec, kitSpecMismatches, missingKitSpec, hasKitSpec, type KitSpec } from "@/frontend/utils/packagingForm";
 import {
     Wallet,
@@ -3448,144 +3465,32 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         "EQ-AUTOCLAVE-01", "EQ-CENT-01", "EQ-VORTEX-01", "EQ-RESELL-01", "DG-SCAN-01",
         "DG-LIMS-01", "EQ-PIPETTE-SET", "CS-TIP-FILTER-1000", "CS-TIP-FILTER-200",
         "CS-PCR-TUBE-02", "CS-PCR-PLATE-96", "CH-TAQ-POLY-01", "CH-AGAROSE-500",
-        "CH-DNA-LADDER-1KB"
+        "CH-DNA-LADDER-1KB",
+        "OLIGO-PRIMER", "OLIGO-PROBE", "OLIGO-BASE", "OLIGO-MOD", "OLIGO-PUR", "OLIGO-SVC", "CUSTOM-ORDER"
     ]);
 
-    const DEFAULT_COMMERCIAL_PRODUCTS: CommercialProduct[] = [
-        {
-            code: "OLIGO-PRIMER",
-            name: "Đoạn mồi Oligo Primer tổng hợp theo trình tự (5'→3')",
-            category: "Hóa chất & Sinh phẩm",
-            subCategory: "Oligo / Primer & Probe",
-            brand: "IDT / Macrogen / PhuSa",
-            origin: "Tổng hợp theo trình tự đặt hàng",
-            unit: "Tube",
-            specification: "Nhập trình tự 5'-...-3' | Scale (25/50/100 nmol) | Tinh sạch (DSL/HPLC/PAGE)",
-            costPrice: 120000,
-            price: 180000,
-            priceDealer1: 165000,
-            priceDealer2: 150000,
-            warranty: "Theo COA từng tube",
-            leadTime: "Đặt tổng hợp 3-7 ngày",
-            storageCondition: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)",
-            supplier: "Nhà cung cấp tổng hợp Oligo",
-            notes: "Mặt hàng đặt 1 lần theo trình tự riêng từng dòng"
-        },
-        {
-            code: "OLIGO-PROBE",
-            name: "Đầu dò huỳnh quang TaqMan / Real-time PCR Probe theo trình tự (5'→3')",
-            category: "Hóa chất & Sinh phẩm",
-            subCategory: "Oligo / Primer & Probe",
-            brand: "IDT / Macrogen / PhuSa",
-            origin: "Tổng hợp theo trình tự đặt hàng",
-            unit: "Tube",
-            specification: "Nhập trình tự 5'[Reporter]-...-[Quencher]3' (VD: FAM-BHQ1 / HEX-BHQ1 / CY5-BHQ2 | HPLC)",
-            costPrice: 950000,
-            price: 1450000,
-            priceDealer1: 1350000,
-            priceDealer2: 1250000,
-            warranty: "Theo COA từng tube",
-            leadTime: "Đặt tổng hợp 5-10 ngày",
-            storageCondition: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)",
-            supplier: "Nhà cung cấp tổng hợp Oligo",
-            notes: "Mặt hàng đặt 1 lần theo trình tự huỳnh quang riêng từng dòng"
-        },
-        {
-            code: "OLIGO-BASE",
-            name: "Tổng hợp chuỗi Nucleotide chuẩn theo trình tự (5'→3')",
-            category: "Hóa chất & Sinh phẩm",
-            subCategory: "Oligo / Primer & Probe",
-            brand: "IDT / Macrogen / PhuSa",
-            origin: "Tổng hợp theo trình tự đặt hàng",
-            unit: "Base",
-            specification: "[Tên trình tự] 5'-...-3' (Số base | Scale 25/50/100 nmol)",
-            costPrice: 5500,
-            price: 8000,
-            priceDealer1: 7500,
-            priceDealer2: 7000,
-            warranty: "Theo COA từng tube",
-            leadTime: "Đặt tổng hợp 3-7 ngày",
-            storageCondition: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)",
-            supplier: "Nhà cung cấp tổng hợp Oligo",
-            notes: "Mã khung thành phần 1: Tính theo số Base của chuỗi trình tự chuẩn"
-        },
-        {
-            code: "OLIGO-MOD",
-            name: "Đánh dấu biến đổi Oligo (5'/3'/Internal Modification: FAM, HEX, VIC, CY5, BHQ1/2, MGB...)",
-            category: "Hóa chất & Sinh phẩm",
-            subCategory: "Oligo / Primer & Probe",
-            brand: "IDT / Macrogen / PhuSa",
-            origin: "Tổng hợp theo trình tự đặt hàng",
-            unit: "Nhãn",
-            specification: "[Tên trình tự] Nhãn biến đổi 5'/3' (VD: 5'-FAM / 3'-BHQ1)",
-            costPrice: 450000,
-            price: 650000,
-            priceDealer1: 600000,
-            priceDealer2: 550000,
-            warranty: "Theo COA từng tube",
-            leadTime: "Đặt tổng hợp 5-10 ngày",
-            storageCondition: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)",
-            supplier: "Nhà cung cấp tổng hợp Oligo",
-            notes: "Mã khung thành phần 2: Tính theo nhãn biến đổi huỳnh quang / quencher gắn vào trình tự"
-        },
-        {
-            code: "OLIGO-PUR",
-            name: "Dịch vụ tinh sạch Oligo chuyên sâu (HPLC / PAGE / Cartridge / Desalt)",
-            category: "Hóa chất & Sinh phẩm",
-            subCategory: "Oligo / Primer & Probe",
-            brand: "IDT / Macrogen / PhuSa",
-            origin: "Tổng hợp theo trình tự đặt hàng",
-            unit: "Tube",
-            specification: "[Tên trình tự] Tinh sạch: HPLC / PAGE / Cartridge / Desalt",
-            costPrice: 200000,
-            price: 300000,
-            priceDealer1: 280000,
-            priceDealer2: 260000,
-            warranty: "Theo COA từng tube",
-            leadTime: "Đặt tổng hợp 3-7 ngày",
-            storageCondition: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)",
-            supplier: "Nhà cung cấp tổng hợp Oligo",
-            notes: "Mã khung thành phần 3: Phí dịch vụ tinh sạch Oligo (HPLC / PAGE / Cartridge / Desalt)"
-        },
-        {
-            code: "OLIGO-SVC",
-            name: "Dịch vụ điều chế Oligo (Đông khô / Pha sẵn chuẩn 100 µM TE Buffer / Chia aliquot)",
-            category: "Hóa chất & Sinh phẩm",
-            subCategory: "Oligo / Primer & Probe",
-            brand: "IDT / Macrogen / PhuSa",
-            origin: "Tổng hợp theo trình tự đặt hàng",
-            unit: "Tube",
-            specification: "[Tên trình tự] Dịch vụ điều chế: Đông khô / Pha sẵn chuẩn 100 µM",
-            costPrice: 80000,
-            price: 150000,
-            priceDealer1: 135000,
-            priceDealer2: 120000,
-            warranty: "Theo COA từng tube",
-            leadTime: "Đặt tổng hợp 3-7 ngày",
-            storageCondition: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)",
-            supplier: "Nhà cung cấp tổng hợp Oligo",
-            notes: "Mã khung thành phần 4: Phí dịch vụ đông khô hoặc pha sẵn chuẩn nồng độ (100 µM / 10 µM)"
-        },
-        {
-            code: "CUSTOM-ORDER",
-            name: "Hàng hóa / Sinh phẩm đặt riêng theo thông số đặc thù (Make-to-Order)",
-            category: "Hóa chất & Sinh phẩm",
-            subCategory: "Hàng đặt theo yêu cầu",
-            brand: "Theo đơn đặt",
-            origin: "Chính hãng",
-            unit: "Bộ",
-            specification: "Nhập quy cách / đặc tính kỹ thuật riêng của lần đặt hàng này",
-            costPrice: 0,
-            price: 0,
-            priceDealer1: 0,
-            priceDealer2: 0,
-            warranty: "Theo tiêu chuẩn hãng",
-            leadTime: "Đặt hàng theo đơn",
-            storageCondition: "2-8°C (Mát - Hóa chất, Mẫu test)",
-            supplier: "Nhà cung cấp chỉ định",
-            notes: "Mặt hàng đặt 1 lần theo đặc tính riêng"
-        }
-    ];
+    const DEFAULT_COMMERCIAL_PRODUCTS: CommercialProduct[] = ABT_OLIGO_130_CATALOG.map((entry) => ({
+        code: entry.code,
+        name: entry.name,
+        category: "Hóa chất & Sinh phẩm",
+        subCategory: "Oligo tổng hợp theo trình tự",
+        brand: "ABT",
+        origin: "Việt Nam",
+        unit: entry.unit || "Tube",
+        specification: entry.spec || "",
+        costPrice: 0,
+        price: entry.price || 0,
+        priceDealer1: entry.priceDealer1 || 0,
+        priceDealer2: entry.priceDealer2 || 0,
+        warranty: "Theo COA từng lô/tube",
+        leadTime: entry.status === "Available" ? "Available (3-7 ngày)" : entry.status,
+        storageCondition: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)",
+        supplier: "Phòng Tổng hợp Oligo",
+        notes: [
+            entry.purification ? `Tinh sạch mặc định: ${entry.purification}` : "",
+            entry.notes || "",
+        ].filter(Boolean).join(" | "),
+    }));
 
     const normalizeVnCategoryText = (raw?: string | null): string => {
         if (!raw) return "";
@@ -3609,6 +3514,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const cUp = String(item?.code || "").trim().toUpperCase();
         const nLow = normalizeVnCategoryText(`${item?.name || ""} ${item?.subCategory || ""}`).toLowerCase();
         const catLow = cat.toLowerCase();
+
+        if (catLow === "oligo" || catLow.startsWith("oligo ") || isDetailedOligoSkuCode(cUp)) {
+            return "Hóa chất & Sinh phẩm";
+        }
+        if (catLow.includes("giải pháp tự pha")) {
+            return "Hóa chất & Sinh phẩm";
+        }
 
         const isGeneric =
             !catLow ||
@@ -3753,9 +3665,6 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         } else if (resolvedCat.includes("Hóa chất") || p.code === "LBC-021") {
                             sc = "2-8°C (Mát - Hóa chất, Mẫu test)";
                         }
-                    }
-                    if (p.code === "OLIGO-SVC" && String(p.name || "").includes("tinh sạch")) {
-                        return { ...def, ...p, name: def?.name || p.name, specification: def?.specification || p.specification, notes: def?.notes || p.notes, category: resolvedCat, storageCondition: sc || "15-25°C (Nhiệt độ phòng)" };
                     }
                     return { ...p, category: resolvedCat, storageCondition: sc || "15-25°C (Nhiệt độ phòng)" };
                 });
@@ -4000,7 +3909,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [commercialStorageFilter, setCommercialStorageFilter] = useState<string>("all");
     const [commercialPriceFilter, setCommercialPriceFilter] = useState<"all" | "unpriced" | "priced">("all");
     const unpricedProducts = useMemo(() => {
-        return commercialProducts.filter(p => (!p.price || Number(p.price) === 0) && !isServiceProduct(p));
+        return commercialProducts.filter(
+            p => (!p.price || Number(p.price) === 0) &&
+                !isServiceProduct(p) &&
+                !isNonPricedPipelineStatus(`${p.leadTime || ""} ${p.notes || ""}`)
+        );
     }, [commercialProducts]);
     const [dbProductComponents, setDbProductComponents] = useState<any[]>([]);
     const [dbMasterProducts, setDbMasterProducts] = useState<any[]>([]);
@@ -4111,8 +4024,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             unit: p.unit || "Hộp",
             supplier: p.supplier || "",
             price: p.price,
-            priceDealer1: p.priceDealer1 || Math.round(p.price * 0.9),
-            priceDealer2: p.priceDealer2 || Math.round(p.price * 0.85),
+            priceDealer1: p.priceDealer1 !== undefined && p.priceDealer1 !== null ? Number(p.priceDealer1) || 0 : Math.round(p.price * 0.9),
+            priceDealer2: p.priceDealer2 !== undefined && p.priceDealer2 !== null ? Number(p.priceDealer2) || 0 : Math.round(p.price * 0.85),
             specification: p.specification || p.unit || "",
             category: p.category,
             category2: p.subCategory || "Khác",
@@ -4123,7 +4036,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             isEquipment: p.isEquipment || (p.category ? p.category.includes("Thiết bị") : false),
             configurations: p.configurations || [],
             isCommercial: true,
-            badge: (p.brand === "ABT" || (p.code && (p.code.startsWith("SQH") || p.code.startsWith("EXS") || p.code.startsWith("LBC")))) ? "🧪 TBR / ABT" : `🛒 ${p.brand || "Thương mại"}`
+            badge: isDetailedOligoSkuCode(p.code)
+                ? "🧬 Oligo ABT"
+                : (p.brand === "ABT" || (p.code && (p.code.startsWith("SQH") || p.code.startsWith("EXS") || p.code.startsWith("LBC"))))
+                ? "🧪 TBR / ABT"
+                : `🛒 ${p.brand || "Thương mại"}`
         }));
         const mfg = biolabProducts
             .filter(p => !commCodes.has(p.code))
@@ -8516,188 +8433,63 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }));
     };
 
-    // --- OLIGO SEQUENCE BUILDER (Hỗ trợ cả 2 chế độ: Tách 4 mã thành phần HOẶC Gộp 1 dòng theo trình tự) ---
-    interface OligoPresetItem {
-        id: string;
-        category: "MOD" | "PUR" | "SVC";
-        label: string;
-        spec: string;
-        defaultPrice: number;
-        defaultQty: number;
-    }
-
-    const DEFAULT_OLIGO_PRESETS: OligoPresetItem[] = [
-        // 1. Loại đánh dấu biến đổi (OLIGO-MOD)
-        { id: "mod-fam-bhq1", category: "MOD", label: "FAM-BHQ1", spec: "5'-FAM / 3'-BHQ1", defaultPrice: 650000, defaultQty: 1 },
-        { id: "mod-hex-bhq1", category: "MOD", label: "HEX-BHQ1", spec: "5'-HEX / 3'-BHQ1", defaultPrice: 650000, defaultQty: 1 },
-        { id: "mod-vic-bhq1", category: "MOD", label: "VIC-BHQ1", spec: "5'-VIC / 3'-BHQ1", defaultPrice: 750000, defaultQty: 1 },
-        { id: "mod-cy5-bhq2", category: "MOD", label: "CY5-BHQ2", spec: "5'-CY5 / 3'-BHQ2", defaultPrice: 850000, defaultQty: 1 },
-        { id: "mod-rox-bhq2", category: "MOD", label: "ROX-BHQ2", spec: "5'-ROX / 3'-BHQ2", defaultPrice: 750000, defaultQty: 1 },
-        { id: "mod-fam-mgb", category: "MOD", label: "FAM-MGB (TaqMan)", spec: "5'-FAM / 3'-MGBNFQ", defaultPrice: 1450000, defaultQty: 1 },
-        { id: "mod-vic-mgb", category: "MOD", label: "VIC-MGB (TaqMan)", spec: "5'-VIC / 3'-MGBNFQ", defaultPrice: 1550000, defaultQty: 1 },
-        { id: "mod-fam-zen", category: "MOD", label: "FAM-ZEN-IBFQ", spec: "5'-6-FAM / ZEN / 3'-IBFQ", defaultPrice: 950000, defaultQty: 1 },
-        { id: "mod-biotin-5", category: "MOD", label: "5'-Biotin", spec: "5'-Biotin", defaultPrice: 450000, defaultQty: 1 },
-        { id: "mod-fam-single", category: "MOD", label: "5'-FAM (Đơn nhãn)", spec: "5'-6-FAM", defaultPrice: 400000, defaultQty: 1 },
-        { id: "mod-phos-5", category: "MOD", label: "5'-Phosphate", spec: "5'-Phosphate (5'-P)", defaultPrice: 250000, defaultQty: 1 },
-        { id: "mod-amine-c6", category: "MOD", label: "5'-Amine (C6)", spec: "5'-Amino Modifier C6", defaultPrice: 350000, defaultQty: 1 },
-        // 2. Phương pháp tinh sạch (OLIGO-PUR)
-        { id: "pur-hplc", category: "PUR", label: "HPLC", spec: "Tinh sạch HPLC", defaultPrice: 300000, defaultQty: 1 },
-        { id: "pur-page", category: "PUR", label: "PAGE", spec: "Tinh sạch PAGE", defaultPrice: 450000, defaultQty: 1 },
-        { id: "pur-opc", category: "PUR", label: "OPC (Cartridge)", spec: "Tinh sạch Cartridge (OPC)", defaultPrice: 200000, defaultQty: 1 },
-        { id: "pur-desalt", category: "PUR", label: "Desalt (Cơ bản)", spec: "Tinh sạch Desalt", defaultPrice: 100000, defaultQty: 1 },
-        // 3. Dịch vụ Đông khô / Pha sẵn (OLIGO-SVC)
-        { id: "svc-lyo", category: "SVC", label: "Đông khô", spec: "Đông khô (Lyophilized)", defaultPrice: 150000, defaultQty: 1 },
-        { id: "svc-te100", category: "SVC", label: "Pha 100 µM (TE)", spec: "Pha sẵn chuẩn 100 µM (TE Buffer)", defaultPrice: 150000, defaultQty: 1 },
-        { id: "svc-h2o10", category: "SVC", label: "Pha 10 µM (H2O)", spec: "Pha sẵn chuẩn 10 µM (Nuclease-free H2O)", defaultPrice: 150000, defaultQty: 1 },
-        { id: "svc-aliquot", category: "SVC", label: "Đông khô + Chia tube", spec: "Đông khô + Chia 2 tube (Aliquot)", defaultPrice: 200000, defaultQty: 1 },
-    ];
-
-    const [oligoPresets, setOligoPresets] = useState<OligoPresetItem[]>(() => {
-        if (typeof window !== "undefined") {
-            try {
-                const raw = localStorage.getItem("sales_oligo_presets_v1");
-                if (raw) {
-                    const parsed = JSON.parse(raw);
-                    if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-                }
-            } catch (e) {}
-        }
-        return DEFAULT_OLIGO_PRESETS;
-    });
-    const [showOligoPresetSettings, setShowOligoPresetSettings] = useState<boolean>(false);
-    const [oligoPresetTab, setOligoPresetTab] = useState<"MOD" | "PUR" | "SVC">("MOD");
-    const [newPresetLabel, setNewPresetLabel] = useState("");
-    const [newPresetSpec, setNewPresetSpec] = useState("");
-    const [newPresetPrice, setNewPresetPrice] = useState<number>(650000);
-    const [newPresetQty, setNewPresetQty] = useState<number>(1);
-
-    useEffect(() => {
-        if (typeof window === "undefined") return;
-        fetch("/api/storage?key=sales_oligo_presets_v1")
-            .then(r => r.ok ? r.json() : null)
-            .then(res => {
-                if (res && Array.isArray(res.data) && res.data.length > 0) {
-                    setOligoPresets(res.data);
-                    try { localStorage.setItem("sales_oligo_presets_v1", JSON.stringify(res.data)); } catch (e) {}
-                }
-            })
-            .catch(() => {});
-    }, []);
-
-    const saveOligoPresetsList = (nextList: OligoPresetItem[]) => {
-        setOligoPresets(nextList);
-        try { localStorage.setItem("sales_oligo_presets_v1", JSON.stringify(nextList)); } catch (e) {}
-        fetch("/api/storage", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ key: "sales_oligo_presets_v1", data: nextList })
-        }).catch(() => {});
-    };
-
-    const handleAddOligoPreset = (cat: "MOD" | "PUR" | "SVC") => {
-        const cleanLabel = newPresetLabel.trim() || newPresetSpec.trim();
-        const cleanSpec = newPresetSpec.trim() || newPresetLabel.trim();
-        if (!cleanLabel) {
-            showToast("Vui lòng nhập Tên loại đánh dấu / quy cách cần thêm!", "error");
-            return;
-        }
-        const newItem: OligoPresetItem = {
-            id: `${cat.toLowerCase()}-${Date.now()}`,
-            category: cat,
-            label: cleanLabel,
-            spec: cleanSpec,
-            defaultPrice: Math.max(0, Number(newPresetPrice) || 0),
-            defaultQty: Math.max(1, Number(newPresetQty) || 1)
-        };
-        const nextList = [...oligoPresets, newItem];
-        saveOligoPresetsList(nextList);
-        // Nếu thêm loại đánh dấu thì điền luôn vào ô đang chọn để tiện dùng ngay
-        if (cat === "MOD") {
-            setOligoHasMod(true);
-            setOligoModSpec(newItem.spec);
-            setOligoModPrice(newItem.defaultPrice);
-            setOligoModQty(newItem.defaultQty);
-        } else if (cat === "PUR") {
-            setOligoHasPur(true);
-            setOligoPurSpec(newItem.spec);
-            setOligoPurPrice(newItem.defaultPrice);
-            setOligoPurQty(newItem.defaultQty);
-        } else if (cat === "SVC") {
-            setOligoHasSvc(true);
-            setOligoSvcSpec(newItem.spec);
-            setOligoSvcPrice(newItem.defaultPrice);
-            setOligoSvcQty(newItem.defaultQty);
-        }
-        setNewPresetLabel("");
-        setNewPresetSpec("");
-        showToast(`✅ Đã thêm "${newItem.label}" vào danh mục cài đặt!`, "success");
-    };
-
-    const handleQuickSaveCurrentPreset = (cat: "MOD" | "PUR" | "SVC") => {
-        const specVal = cat === "MOD" ? oligoModSpec.trim() : cat === "PUR" ? oligoPurSpec.trim() : oligoSvcSpec.trim();
-        const priceVal = cat === "MOD" ? oligoModPrice : cat === "PUR" ? oligoPurPrice : oligoSvcPrice;
-        const qtyVal = cat === "MOD" ? oligoModQty : cat === "PUR" ? oligoPurQty : oligoSvcQty;
-        if (!specVal) {
-            showToast("Vui lòng nhập nội dung vào ô trước khi lưu mẫu!", "error");
-            return;
-        }
-        const existingIdx = oligoPresets.findIndex(p => p.category === cat && (p.spec.toLowerCase() === specVal.toLowerCase() || p.label.toLowerCase() === specVal.toLowerCase()));
-        if (existingIdx >= 0) {
-            const updated = [...oligoPresets];
-            updated[existingIdx] = {
-                ...updated[existingIdx],
-                spec: specVal,
-                defaultPrice: Math.max(0, Number(priceVal) || 0),
-                defaultQty: Math.max(1, Number(qtyVal) || 1)
-            };
-            saveOligoPresetsList(updated);
-            showToast(`💾 Đã cập nhật đơn giá mẫu "${updated[existingIdx].label}" (${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(priceVal)}đ)!`, "success");
-        } else {
-            const newItem: OligoPresetItem = {
-                id: `${cat.toLowerCase()}-${Date.now()}`,
-                category: cat,
-                label: specVal.length > 22 ? specVal.slice(0, 22) : specVal,
-                spec: specVal,
-                defaultPrice: Math.max(0, Number(priceVal) || 0),
-                defaultQty: Math.max(1, Number(qtyVal) || 1)
-            };
-            saveOligoPresetsList([...oligoPresets, newItem]);
-            showToast(`💾 Đã lưu "${specVal}" (${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(priceVal)}đ) vào danh sách mẫu!`, "success");
-        }
-    };
-
+    // --- ABT 130-SKU OLIGO SEQUENCE COMBINATOR (Phối hợp nhiều mã Oligo chi tiết cho cùng 1 trình tự) ---
     const [openOligoBuilderTarget, setOpenOligoBuilderTarget] = useState<"QUOTE" | "ORDER" | null>(null);
     const [oligoSeqName, setOligoSeqName] = useState("");
     const [oligoSeqRaw, setOligoSeqRaw] = useState("");
-    const [oligoScale, setOligoScale] = useState("25 nmol");
+    const [oligoMode, setOligoMode] = useState<OligoProductMode>("UNMODIFIED");
+    const [oligoScale, setOligoScale] = useState<OligoScale>("100 nmol");
     const [oligoTubeCount, setOligoTubeCount] = useState<number>(1);
-    const [oligoBaseCount, setOligoBaseCount] = useState<number>(20);
-    const [oligoBasePrice, setOligoBasePrice] = useState<number>(8000);
-    // 2. Mã đánh dấu biến đổi (OLIGO-MOD)
-    const [oligoHasMod, setOligoHasMod] = useState<boolean>(false);
-    const [oligoModSpec, setOligoModSpec] = useState("5'-FAM / 3'-BHQ1");
-    const [oligoModQty, setOligoModQty] = useState<number>(1);
-    const [oligoModPrice, setOligoModPrice] = useState<number>(650000);
-    // 3. Mã tinh sạch chuyên sâu (OLIGO-PUR)
-    const [oligoHasPur, setOligoHasPur] = useState<boolean>(false);
-    const [oligoPurSpec, setOligoPurSpec] = useState("Tinh sạch HPLC");
-    const [oligoPurQty, setOligoPurQty] = useState<number>(1);
-    const [oligoPurPrice, setOligoPurPrice] = useState<number>(300000);
-    // 4. Mã dịch vụ Đông khô / Pha sẵn (OLIGO-SVC)
-    const [oligoHasSvc, setOligoHasSvc] = useState<boolean>(false);
-    const [oligoSvcSpec, setOligoSvcSpec] = useState("Đông khô (Lyophilized)");
-    const [oligoSvcQty, setOligoSvcQty] = useState<number>(1);
-    const [oligoSvcPrice, setOligoSvcPrice] = useState<number>(150000);
+    const [oligoBaseCountOverride, setOligoBaseCountOverride] = useState<string>("");
+    const [oligoPrimerFamily, setOligoPrimerFamily] = useState<OligoPrimerFamily>("AUTO");
+    const [oligoSelectedCode, setOligoSelectedCode] = useState<string>("FAM.100");
+    const [oligoPurCode, setOligoPurCode] = useState<"" | "PUR-01" | "PUR-02" | "PUR-03">("");
+    const [oligoLyophilized, setOligoLyophilized] = useState<boolean>(false);
+    const [oligoGeneCode, setOligoGeneCode] = useState<"LinearDNA" | "CircleDNA">("LinearDNA");
+    const [oligoPlasmidCode, setOligoPlasmidCode] = useState<"" | "Plasmid.1" | "Plasmid.2">("");
+    const [oligoIncludeLna, setOligoIncludeLna] = useState<boolean>(false);
+    const [oligoLnaQty, setOligoLnaQty] = useState<number>(1);
+    const [oligoIncludeInosine, setOligoIncludeInosine] = useState<boolean>(false);
+    const [oligoInosineQty, setOligoInosineQty] = useState<number>(1);
+    const [oligoExtraSkus, setOligoExtraSkus] = useState<OligoExtraSkuInput[]>([]);
+    const [oligoExtraSearch, setOligoExtraSearch] = useState<string>("");
+    const [oligoExtraCodeSelect, setOligoExtraCodeSelect] = useState<string>("PUR-02");
+    const [oligoExtraQty, setOligoExtraQty] = useState<number>(1);
+    const [oligoPriceOverrides, setOligoPriceOverrides] = useState<Record<string, number>>({});
 
     const countNucleotideBases = (rawSeq: string): { cleanSeq: string; count: number } => {
-        // Loại bỏ phần ghi chú trong ngoặc [...], (...), ký hiệu 5', 3' ở đầu/cuối rồi lấy các ký tự IUPAC nucleotide
-        const stripped = String(rawSeq || "")
-            .replace(/\[[^\]]*\]/g, "")
-            .replace(/\([^\)]*\)/g, "")
-            .replace(/5'|3'|5’|3’/gi, "")
-            .toUpperCase()
-            .replace(/[^ATGCURYSWKMBDHVNI]/g, "");
-        return { cleanSeq: stripped, count: stripped.length };
+        const d = parseOligoSequenceDetails(rawSeq);
+        return { cleanSeq: d.cleanSeq, count: d.baseCount };
+    };
+
+    const handleSelectOligoMode = (nextMode: OligoProductMode) => {
+        setOligoMode(nextMode);
+        if (nextMode === "BIOTIN_NH2" && !["BIOTIN", "NH2"].includes(oligoSelectedCode)) {
+            setOligoSelectedCode("BIOTIN");
+        } else if (nextMode === "DYE_PRIMER" && !DYE_PRIMER_FAMILIES.some((f) => f.prefix === oligoSelectedCode)) {
+            setOligoSelectedCode("FAM-Primer");
+        } else if (nextMode === "PROBE") {
+            setOligoScale("100 nmol");
+            if (!PROBE_CATALOG_OPTIONS.some((p) => p.code === oligoSelectedCode)) {
+                setOligoSelectedCode("FAM.100");
+            }
+        }
+    };
+
+    const handleOligoRawSeqChange = (val: string) => {
+        setOligoSeqRaw(val);
+        const details = parseOligoSequenceDetails(val);
+        setOligoIncludeLna(details.lnaCount > 0);
+        if (details.lnaCount > 0) setOligoLnaQty(details.lnaCount);
+        setOligoIncludeInosine(details.inosineCount > 0);
+        if (details.inosineCount > 0) setOligoInosineQty(details.inosineCount);
+        if (details.detectedMode && details.detectedDyeOrProbeCode) {
+            setOligoMode(details.detectedMode);
+            setOligoSelectedCode(details.detectedDyeOrProbeCode);
+            if (details.detectedMode === "PROBE") {
+                setOligoScale("100 nmol");
+            }
+        }
     };
 
     const handleOpenOligoBuilder = (target: "QUOTE" | "ORDER") => {
@@ -8705,287 +8497,35 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             setOpenOligoBuilderTarget(null);
             return;
         }
-        const baseProd = commercialProducts.find(p => p.code === "OLIGO-BASE");
-        const modProd = commercialProducts.find(p => p.code === "OLIGO-MOD");
-        const purProd = commercialProducts.find(p => p.code === "OLIGO-PUR");
-        const svcProd = commercialProducts.find(p => p.code === "OLIGO-SVC");
-        const tier = target === "QUOTE" ? quotePriceTier : "price";
-        if (baseProd) setOligoBasePrice(Number((baseProd as any)[tier] || baseProd.price || 8000));
-        if (modProd) setOligoModPrice(Number((modProd as any)[tier] || modProd.price || 650000));
-        if (purProd) setOligoPurPrice(Number((purProd as any)[tier] || purProd.price || 300000));
-        if (svcProd) setOligoSvcPrice(Number((svcProd as any)[tier] || svcProd.price || 150000));
+        setOligoPriceOverrides({});
         setOpenOligoBuilderTarget(target);
     };
 
-    const handleInsertOligoSequence = (mode: "SPLIT_CODES" | "BUNDLED_SEQUENCE", target: "QUOTE" | "ORDER") => {
-        const seqLabel = oligoSeqName.trim() || `Seq-${Math.floor(100 + Math.random() * 900)}`;
-        const { cleanSeq } = countNucleotideBases(oligoSeqRaw);
-        const formattedSeq = cleanSeq ? `5'-${cleanSeq}-3'` : (oligoSeqRaw.trim() || "5'-...-3'");
-        const bases = Math.max(1, Number(oligoBaseCount) || cleanSeq.length || 20);
-        const tubes = Math.max(1, Number(oligoTubeCount) || 1);
-        const bPrice = Math.max(0, Number(oligoBasePrice) || 0);
-        const mQty = Math.max(1, Number(oligoModQty) || 1);
-        const mPrice = Math.max(0, Number(oligoModPrice) || 0);
-        const pQty = Math.max(1, Number(oligoPurQty) || 1);
-        const pPrice = Math.max(0, Number(oligoPurPrice) || 0);
-        const sQty = Math.max(1, Number(oligoSvcQty) || 1);
-        const sPrice = Math.max(0, Number(oligoSvcPrice) || 0);
-
-        const baseSpec = `[${seqLabel}] ${formattedSeq} (${bases} bp | Scale ${oligoScale}${tubes > 1 ? ` | ${tubes} Tube` : ""})`;
-        const modSpecText = `[${seqLabel}] Nhãn biến đổi: ${oligoModSpec.trim() || "5'/3' Modification"} (${formattedSeq})`;
-        const purSpecText = `[${seqLabel}] Tinh sạch: ${oligoPurSpec.trim() || "Tinh sạch HPLC"} (${formattedSeq})`;
-        const svcSpecText = `[${seqLabel}] Dịch vụ điều chế: ${oligoSvcSpec.trim() || "Đông khô / Pha sẵn chuẩn 100 µM"} (${formattedSeq})`;
-
-        if (target === "QUOTE") {
-            const newRows: any[] = [];
-            if (mode === "SPLIT_CODES") {
-                const finBase = computeQuoteItemFinances(bPrice, bases * tubes, 8, 0);
-                newRows.push({
-                    productCode: "OLIGO-BASE",
-                    productName: "Tổng hợp chuỗi Nucleotide chuẩn theo trình tự (5'→3')",
-                    unit: "Base",
-                    manufacturer: "IDT / Macrogen / PhuSa",
-                    specification: baseSpec,
-                    notes: `Đặt tổng hợp theo trình tự [${seqLabel}] (${bases} base/tube x ${tubes} tube)`,
-                    quantity: bases * tubes,
-                    price: bPrice,
-                    ...financesToQuoteFields(finBase)
-                });
-                if (oligoHasMod) {
-                    const finMod = computeQuoteItemFinances(mPrice, mQty * tubes, 8, 0);
-                    newRows.push({
-                        productCode: "OLIGO-MOD",
-                        productName: "Đánh dấu biến đổi Oligo (5'/3'/Internal Modification)",
-                        unit: "Nhãn",
-                        manufacturer: "IDT / Macrogen / PhuSa",
-                        specification: modSpecText,
-                        notes: `Gắn nhãn biến đổi cho trình tự [${seqLabel}]`,
-                        quantity: mQty * tubes,
-                        price: mPrice,
-                        ...financesToQuoteFields(finMod)
-                    });
-                }
-                if (oligoHasPur) {
-                    const finPur = computeQuoteItemFinances(pPrice, pQty * tubes, 8, 0);
-                    newRows.push({
-                        productCode: "OLIGO-PUR",
-                        productName: "Dịch vụ tinh sạch Oligo chuyên sâu (HPLC / PAGE / Cartridge / Desalt)",
-                        unit: "Tube",
-                        manufacturer: "IDT / Macrogen / PhuSa",
-                        specification: purSpecText,
-                        notes: `Tinh sạch cho trình tự [${seqLabel}]`,
-                        quantity: pQty * tubes,
-                        price: pPrice,
-                        ...financesToQuoteFields(finPur)
-                    });
-                }
-                if (oligoHasSvc) {
-                    const finSvc = computeQuoteItemFinances(sPrice, sQty * tubes, 8, 0);
-                    newRows.push({
-                        productCode: "OLIGO-SVC",
-                        productName: "Dịch vụ điều chế Oligo (Đông khô / Pha sẵn chuẩn 100 µM TE Buffer / Chia aliquot)",
-                        unit: "Tube",
-                        manufacturer: "IDT / Macrogen / PhuSa",
-                        specification: svcSpecText,
-                        notes: `Dịch vụ đông khô / pha sẵn cho trình tự [${seqLabel}]`,
-                        quantity: sQty * tubes,
-                        price: sPrice,
-                        ...financesToQuoteFields(finSvc)
-                    });
-                }
-            } else {
-                const bundledCode = oligoHasMod ? "OLIGO-PROBE" : "OLIGO-PRIMER";
-                const bundledName = oligoHasMod
-                    ? "Đầu dò huỳnh quang TaqMan / Real-time PCR Probe theo trình tự (5'→3')"
-                    : "Đoạn mồi Oligo Primer tổng hợp theo trình tự (5'→3')";
-                const perTubePrice = (bases * bPrice) + (oligoHasMod ? mQty * mPrice : 0) + (oligoHasPur ? pQty * pPrice : 0) + (oligoHasSvc ? sQty * sPrice : 0);
-                const fullParts = [
-                    `${formattedSeq} (${bases} bp | ${oligoScale})`,
-                    oligoHasMod ? `Mod: ${oligoModSpec.trim()}` : "",
-                    oligoHasPur ? `Tinh sạch: ${oligoPurSpec.trim()}` : "",
-                    oligoHasSvc ? `DV: ${oligoSvcSpec.trim()}` : ""
-                ].filter(Boolean).join(" | ");
-                const bundledSpec = `[${seqLabel}] ${fullParts}`;
-                const finBundled = computeQuoteItemFinances(perTubePrice, tubes, 8, 0);
-                const breakdownConfigs: any[] = [
-                    {
-                        id: `cfg-base-${Date.now()}`,
-                        name: `Tổng hợp chuỗi Nucleotide chuẩn ${formattedSeq} (${bases} base x ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(bPrice)}đ)`,
-                        model: "OLIGO-BASE",
-                        brandOrigin: `Scale ${oligoScale}`,
-                        quantity: bases * tubes,
-                        unit: "Base",
-                        isStandard: true,
-                        isIncluded: true,
-                        notes: `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(bases * tubes * bPrice)}đ`
-                    }
-                ];
-                if (oligoHasMod) {
-                    breakdownConfigs.push({
-                        id: `cfg-mod-${Date.now() + 1}`,
-                        name: `Đánh dấu biến đổi Oligo: ${oligoModSpec.trim()} (${mQty} nhãn x ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(mPrice)}đ)`,
-                        model: "OLIGO-MOD",
-                        brandOrigin: "Modification",
-                        quantity: mQty * tubes,
-                        unit: "Nhãn",
-                        isStandard: true,
-                        isIncluded: true,
-                        notes: `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(mQty * tubes * mPrice)}đ`
-                    });
-                }
-                if (oligoHasPur) {
-                    breakdownConfigs.push({
-                        id: `cfg-pur-${Date.now() + 2}`,
-                        name: `Dịch vụ tinh sạch Oligo: ${oligoPurSpec.trim()} (${pQty} x ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(pPrice)}đ)`,
-                        model: "OLIGO-PUR",
-                        brandOrigin: "Purification",
-                        quantity: pQty * tubes,
-                        unit: "Tube",
-                        isStandard: true,
-                        isIncluded: true,
-                        notes: `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(pQty * tubes * pPrice)}đ`
-                    });
-                }
-                if (oligoHasSvc) {
-                    breakdownConfigs.push({
-                        id: `cfg-svc-${Date.now() + 3}`,
-                        name: `Dịch vụ Đông khô / Pha sẵn: ${oligoSvcSpec.trim()} (${sQty} x ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(sPrice)}đ)`,
-                        model: "OLIGO-SVC",
-                        brandOrigin: "Formulation/Service",
-                        quantity: sQty * tubes,
-                        unit: "Tube",
-                        isStandard: true,
-                        isIncluded: true,
-                        notes: `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(sQty * tubes * sPrice)}đ`
-                    });
-                }
-                newRows.push({
-                    productCode: bundledCode,
-                    productName: bundledName,
-                    unit: "Tube",
-                    manufacturer: "IDT / Macrogen / PhuSa",
-                    specification: bundledSpec,
-                    notes: `Trình tự [${seqLabel}] hoàn chỉnh (${bases} bp${oligoHasMod ? ` + ${oligoModSpec.trim()}` : ""}${oligoHasPur ? ` + ${oligoPurSpec.trim()}` : ""}${oligoHasSvc ? ` + ${oligoSvcSpec.trim()}` : ""})`,
-                    quantity: tubes,
-                    price: perTubePrice,
-                    configurations: breakdownConfigs,
-                    ...financesToQuoteFields(finBundled)
-                });
-            }
-
-            setQuoteItems(prev => {
-                const cleaned = prev.length === 1 && !prev[0].productCode ? [] : prev;
-                return [...cleaned, ...newRows];
-            });
-            showToast(
-                mode === "SPLIT_CODES"
-                    ? `🧬 Đã chèn trình tự [${seqLabel}] tách thành ${newRows.length} mã thành phần vào Báo giá!`
-                    : `🧬 Đã chèn trình tự [${seqLabel}] gộp 1 dòng hoàn chỉnh vào Báo giá!`,
-                "success"
-            );
-        } else {
-            const newOrderRows: any[] = [];
-            if (mode === "SPLIT_CODES") {
-                newOrderRows.push({
-                    productCode: "OLIGO-BASE",
-                    productName: "Tổng hợp chuỗi Nucleotide chuẩn theo trình tự (5'→3')",
-                    unit: "Base",
-                    specification: baseSpec,
-                    notes: `Đặt tổng hợp trình tự [${seqLabel}] (${bases} base/tube x ${tubes} tube)`,
-                    quantity: bases * tubes,
-                    unitPrice: bPrice,
-                    vatRate: 8,
-                    vat: 8,
-                    targetAllocations: [],
-                    needsInvoice: true
-                });
-                if (oligoHasMod) {
-                    newOrderRows.push({
-                        productCode: "OLIGO-MOD",
-                        productName: "Đánh dấu biến đổi Oligo (5'/3'/Internal Modification)",
-                        unit: "Nhãn",
-                        specification: modSpecText,
-                        notes: `Nhãn biến đổi cho trình tự [${seqLabel}]`,
-                        quantity: mQty * tubes,
-                        unitPrice: mPrice,
-                        vatRate: 8,
-                        vat: 8,
-                        targetAllocations: [],
-                        needsInvoice: true
-                    });
-                }
-                if (oligoHasPur) {
-                    newOrderRows.push({
-                        productCode: "OLIGO-PUR",
-                        productName: "Dịch vụ tinh sạch Oligo chuyên sâu (HPLC / PAGE / Cartridge / Desalt)",
-                        unit: "Tube",
-                        specification: purSpecText,
-                        notes: `Tinh sạch cho trình tự [${seqLabel}]`,
-                        quantity: pQty * tubes,
-                        unitPrice: pPrice,
-                        vatRate: 8,
-                        vat: 8,
-                        targetAllocations: [],
-                        needsInvoice: true
-                    });
-                }
-                if (oligoHasSvc) {
-                    newOrderRows.push({
-                        productCode: "OLIGO-SVC",
-                        productName: "Dịch vụ điều chế Oligo (Đông khô / Pha sẵn chuẩn 100 µM TE Buffer / Chia aliquot)",
-                        unit: "Tube",
-                        specification: svcSpecText,
-                        notes: `Dịch vụ đông khô / pha sẵn cho trình tự [${seqLabel}]`,
-                        quantity: sQty * tubes,
-                        unitPrice: sPrice,
-                        vatRate: 8,
-                        vat: 8,
-                        targetAllocations: [],
-                        needsInvoice: true
-                    });
-                }
-            } else {
-                const bundledCode = oligoHasMod ? "OLIGO-PROBE" : "OLIGO-PRIMER";
-                const bundledName = oligoHasMod
-                    ? "Đầu dò huỳnh quang TaqMan / Real-time PCR Probe theo trình tự (5'→3')"
-                    : "Đoạn mồi Oligo Primer tổng hợp theo trình tự (5'→3')";
-                const perTubePrice = (bases * bPrice) + (oligoHasMod ? mQty * mPrice : 0) + (oligoHasPur ? pQty * pPrice : 0) + (oligoHasSvc ? sQty * sPrice : 0);
-                const fullParts = [
-                    `${formattedSeq} (${bases} bp | ${oligoScale})`,
-                    oligoHasMod ? `Mod: ${oligoModSpec.trim()}` : "",
-                    oligoHasPur ? `Tinh sạch: ${oligoPurSpec.trim()}` : "",
-                    oligoHasSvc ? `DV: ${oligoSvcSpec.trim()}` : ""
-                ].filter(Boolean).join(" | ");
-                newOrderRows.push({
-                    productCode: bundledCode,
-                    productName: bundledName,
-                    unit: "Tube",
-                    specification: `[${seqLabel}] ${fullParts}`,
-                    notes: `Gộp giá 1 tube hoàn chỉnh: ${bases}bp x ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(bPrice)}đ${oligoHasMod ? ` + Mod ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(mQty * mPrice)}đ` : ""}${oligoHasPur ? ` + Tinh sạch ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(pQty * pPrice)}đ` : ""}${oligoHasSvc ? ` + DV ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(sQty * sPrice)}đ` : ""}`,
-                    quantity: tubes,
-                    unitPrice: perTubePrice,
-                    vatRate: 8,
-                    vat: 8,
-                    targetAllocations: [],
-                    needsInvoice: true
-                });
-            }
-
-            setFactoryOrderItems(prev => {
-                const cleaned = prev.length === 1 && !prev[0].productCode ? [] : prev;
-                return [...cleaned, ...newOrderRows];
-            });
-            showToast(
-                mode === "SPLIT_CODES"
-                    ? `🧬 Đã chèn trình tự [${seqLabel}] tách thành ${newOrderRows.length} mã thành phần vào Đơn hàng SO!`
-                    : `🧬 Đã chèn trình tự [${seqLabel}] gộp 1 dòng hoàn chỉnh vào Đơn hàng SO!`,
-                "success"
-            );
-        }
-
-        // Reset tên và chuỗi để nhập nhanh trình tự tiếp theo, giữ nguyên đơn giá và cấu hình
-        setOligoSeqName("");
-        setOligoSeqRaw("");
+    const computeOligoCombo = (target: "QUOTE" | "ORDER") => {
+        const parsedOverride = Number(oligoBaseCountOverride);
+        const priceTier = target === "QUOTE" ? quotePriceTier : "price";
+        return buildOligoSkuCombination({
+            seqName: oligoSeqName,
+            rawSequence: oligoSeqRaw,
+            mode: oligoMode,
+            scale: oligoScale,
+            tubes: oligoTubeCount,
+            baseCountOverride: oligoBaseCountOverride.trim() !== "" && parsedOverride > 0 ? parsedOverride : undefined,
+            primerFamily: oligoPrimerFamily,
+            dyeOrProbeCode: oligoSelectedCode,
+            purificationCode: oligoPurCode,
+            lyophilized: oligoLyophilized,
+            geneCode: oligoGeneCode,
+            plasmidCode: oligoPlasmidCode,
+            includeLna: oligoIncludeLna,
+            lnaCountOverride: oligoLnaQty,
+            includeInosine: oligoIncludeInosine,
+            inosineCountOverride: oligoInosineQty,
+            extraSkus: oligoExtraSkus,
+            priceTier,
+            liveCatalog: commercialProducts,
+            priceOverrides: oligoPriceOverrides,
+        });
     };
 
     const financesToQuoteFields = (fin: ReturnType<typeof computeQuoteItemFinances>) => ({
@@ -8998,266 +8538,239 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         vatAmount: fin.vatAmount
     });
 
+    const handleInsertOligoSequence = (target: "QUOTE" | "ORDER", closeAfter = false) => {
+        const combo = computeOligoCombo(target);
+        if (combo.items.length === 0) {
+            showToast("Chưa có mã Oligo nào để chèn!", "warning");
+            return;
+        }
+        const oligoGroupId = `OLG-GRP-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        const makeRowSpec = (comp: (typeof combo.items)[number]) =>
+            [
+                `[${combo.seqLabel}] ${combo.formattedSeq}`,
+                `${comp.specification || combo.effectiveScale}`,
+                comp.purification || "",
+                combo.tubes > 1 ? `${combo.tubes} Tube` : "",
+            ].filter(Boolean).join(" | ");
+
+        if (target === "QUOTE") {
+            const newRows = combo.items.map((comp) => {
+                const fin = computeQuoteItemFinances(comp.unitPrice, comp.totalQty, 8, 0);
+                return {
+                    productCode: comp.code,
+                    productName: comp.name,
+                    unit: comp.unit,
+                    manufacturer: "ABT",
+                    specification: makeRowSpec(comp),
+                    sequence: combo.formattedSeq,
+                    oligoGroupId,
+                    oligoSeqLabel: combo.seqLabel,
+                    oligoRole: comp.role,
+                    notes: `${comp.reason} (Nhóm trình tự: ${combo.seqLabel})`,
+                    quantity: comp.totalQty,
+                    price: comp.unitPrice,
+                    ...financesToQuoteFields(fin),
+                };
+            });
+            setQuoteItems((prev) => {
+                const cleaned = prev.length === 1 && !prev[0].productCode ? [] : prev;
+                return [...cleaned, ...newRows];
+            });
+            showToast(
+                `🧬 Đã chèn trình tự [${combo.seqLabel}] (${newRows.length} mã phối hợp: ${newRows.map((r) => r.productCode).join(" + ")}) vào Báo giá!`,
+                "success"
+            );
+        } else {
+            const newOrderRows = combo.items.map((comp) => ({
+                productCode: comp.code,
+                productName: comp.name,
+                unit: comp.unit,
+                specification: makeRowSpec(comp),
+                sequence: combo.formattedSeq,
+                oligoGroupId,
+                oligoSeqLabel: combo.seqLabel,
+                oligoRole: comp.role,
+                notes: `${comp.reason} (Nhóm trình tự: ${combo.seqLabel})`,
+                quantity: comp.totalQty,
+                unitPrice: comp.unitPrice,
+                vatRate: 8,
+                vat: 8,
+                targetAllocations: [],
+                needsInvoice: true,
+            }));
+            setFactoryOrderItems((prev) => {
+                const cleaned = prev.length === 1 && !prev[0].productCode ? [] : prev;
+                return [...cleaned, ...newOrderRows];
+            });
+            showToast(
+                `🧬 Đã chèn trình tự [${combo.seqLabel}] (${newOrderRows.length} mã phối hợp: ${newOrderRows.map((r) => r.productCode).join(" + ")}) vào Đơn hàng SO!`,
+                "success"
+            );
+        }
+
+        // Reset sequence inputs so rep can type next oligo quickly while keeping preferred mode/scale
+        setOligoSeqName("");
+        setOligoSeqRaw("");
+        setOligoBaseCountOverride("");
+        setOligoIncludeLna(false);
+        setOligoLnaQty(1);
+        setOligoIncludeInosine(false);
+        setOligoInosineQty(1);
+        setOligoExtraSkus([]);
+        setOligoPriceOverrides({});
+        if (closeAfter) {
+            setOpenOligoBuilderTarget(null);
+        }
+    };
+
+    const syncOligoSequenceAcrossRows = (
+        list: any[],
+        targetIndex: number,
+        newSeq: string,
+        isQuoteRow: boolean
+    ): any[] => {
+        const targetRow = list[targetIndex];
+        if (!targetRow) return list;
+        const groupId = (targetRow as any).oligoGroupId;
+        const oldDetails = parseOligoSequenceDetails(String((targetRow as any).sequence || ""));
+        const newDetails = parseOligoSequenceDetails(newSeq);
+
+        return list.map((it, idx) => {
+            const belongsToGroup = idx === targetIndex || (Boolean(groupId) && (it as any).oligoGroupId === groupId);
+            if (!belongsToGroup) return it;
+
+            const updated: any = { ...it, sequence: newSeq };
+            const curSpec = String(it.specification || "").trim();
+            const seqLabel = String((it as any).oligoSeqLabel || "").trim();
+            if (curSpec && oldDetails.formattedSeq && curSpec.includes(oldDetails.formattedSeq) && newDetails.formattedSeq) {
+                updated.specification = curSpec.replace(oldDetails.formattedSeq, newDetails.formattedSeq);
+            } else if (!curSpec && seqLabel && newDetails.formattedSeq) {
+                updated.specification = `[${seqLabel}] ${newDetails.formattedSeq}`;
+            }
+
+            const prod = allSalesProducts.find((p) => p.code === it.productCode);
+            const rowUnit = String(it.unit || prod?.unit || "").toLowerCase();
+            if (rowUnit === "base" && newDetails.baseCount > 0) {
+                const oldQty = Number(it.quantity) || 0;
+                const tubesMult = oldDetails.baseCount > 0 ? Math.max(1, Math.round(oldQty / oldDetails.baseCount)) : 1;
+                const nextQty = newDetails.baseCount * tubesMult;
+                updated.quantity = nextQty;
+                if (isQuoteRow) {
+                    const price = Number(updated.price) || 0;
+                    const vat = updated.vatRate !== undefined ? Number(updated.vatRate) : 8;
+                    const disc = Number(updated.discountRate) || 0;
+                    Object.assign(updated, financesToQuoteFields(computeQuoteItemFinances(price, nextQty, vat, disc)));
+                } else {
+                    const uPrice = Number(updated.unitPrice) || 0;
+                    updated.totalPrice = Boolean(updated.isGift) ? 0 : nextQty * uPrice;
+                }
+            }
+            return updated;
+        });
+    };
+
+    const handleAttachAddonToSoGroup = (primaryIndex: number, addonCode: string) => {
+        if (!addonCode) return;
+        const entry = getOligoCatalogEntry(addonCode);
+        const liveProd = commercialProducts.find((p) => p.code.toUpperCase() === addonCode.toUpperCase());
+        if (!entry && !liveProd) return;
+
+        setFactoryOrderItems((prev) => {
+            const primary = prev[primaryIndex];
+            if (!primary) return prev;
+            const groupId = primary.oligoGroupId || `OLG-GRP-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+            const seqLabel = primary.oligoSeqLabel || `Seq-${primaryIndex + 1}`;
+            const seq = String(primary.sequence || "").trim();
+            const code = entry?.code || liveProd!.code;
+            const unit = liveProd?.unit || entry?.unit || "Tube";
+            const unitPrice = Number(liveProd?.price !== undefined ? liveProd.price : entry?.price ?? 0) || 0;
+            const addonSpec = [
+                seq ? `[${seqLabel}] ${seq}` : `[${seqLabel}]`,
+                liveProd?.specification || entry?.spec || "",
+                entry?.purification || "",
+            ].filter(Boolean).join(" | ");
+
+            const updated = prev.map((it, idx) =>
+                idx === primaryIndex
+                    ? {
+                        ...it,
+                        oligoGroupId: groupId,
+                        oligoSeqLabel: seqLabel,
+                        oligoRole: it.oligoRole || "PRIMARY",
+                    }
+                    : it
+            );
+            const addonRow = {
+                productCode: code,
+                productName: liveProd?.name || entry?.name || code,
+                unit,
+                specification: addonSpec,
+                sequence: seq || undefined,
+                oligoGroupId: groupId,
+                oligoSeqLabel: seqLabel,
+                oligoRole: "ADDON",
+                notes: `Mã phối hợp cho trình tự [${seqLabel}]`,
+                quantity: 1,
+                unitPrice,
+                vatRate: 8,
+                vat: 8,
+                targetAllocations: [],
+                needsInvoice: primary.needsInvoice !== false,
+            };
+            const next = [...updated];
+            next.splice(primaryIndex + 1, 0, addonRow);
+            return next;
+        });
+        showToast(`➕ Đã phối hợp thêm mã ${addonCode} vào cùng trình tự!`, "success");
+    };
+
     const renderOligoBuilderPanel = (target: "QUOTE" | "ORDER") => {
         if (openOligoBuilderTarget !== target) return null;
-        const bases = Math.max(1, Number(oligoBaseCount) || 1);
-        const tubes = Math.max(1, Number(oligoTubeCount) || 1);
-        const baseSub = bases * (Number(oligoBasePrice) || 0);
-        const modSub = oligoHasMod ? (Math.max(1, Number(oligoModQty) || 1) * (Number(oligoModPrice) || 0)) : 0;
-        const purSub = oligoHasPur ? (Math.max(1, Number(oligoPurQty) || 1) * (Number(oligoPurPrice) || 0)) : 0;
-        const svcSub = oligoHasSvc ? (Math.max(1, Number(oligoSvcQty) || 1) * (Number(oligoSvcPrice) || 0)) : 0;
-        const singleTubeTotal = baseSub + modSub + purSub + svcSub;
-        const grandTotal = singleTubeTotal * tubes;
+        const combo = computeOligoCombo(target);
+        const searchLow = oligoExtraSearch.trim().toLowerCase();
+        const extraCatalogChoices = ABT_OLIGO_130_CATALOG.filter((entry) => {
+            if (!searchLow) return true;
+            return (
+                entry.code.toLowerCase().includes(searchLow) ||
+                entry.name.toLowerCase().includes(searchLow) ||
+                entry.group.toLowerCase().includes(searchLow)
+            );
+        });
 
-        const modPresets = oligoPresets.filter(p => p.category === "MOD");
-        const purPresets = oligoPresets.filter(p => p.category === "PUR");
-        const svcPresets = oligoPresets.filter(p => p.category === "SVC");
-        const activeTabPresets = oligoPresets.filter(p => p.category === oligoPresetTab);
+        const modeTabs: Array<{ id: OligoProductMode; label: string; hint: string }> = [
+            { id: "UNMODIFIED", label: "1. Primer thường (PRI-01..05)", hint: "Tính theo Base + Tùy chọn Tinh sạch / Đông khô" },
+            { id: "BIOTIN_NH2", label: "2. Primer Biotin / NH2", hint: "Base nền PRI + BIOTIN.* hoặc NH2.*" },
+            { id: "DYE_PRIMER", label: "3. Primer gắn 5'-Huỳnh quang", hint: "FAM/HEX/VIC/ROX/Cy3/Cy5/TxR/AF*-Primer.* (đã gồm HPLC & Đông khô)" },
+            { id: "PROBE", label: "4. Probe đầu dò 2 nhãn (100 nmol)", hint: "FAM/HEX/TEX/CY5/VIC/ROX/AF*-BHQ/TAMRA/MGB (đã gồm Base, HPLC & Đông khô)" },
+            { id: "GENE_SYNTHESIS", label: "5. Tổng hợp Gene DNA / Plasmid", hint: "LinearDNA / CircleDNA + Vector Plasmid.1 / Plasmid.2" },
+        ];
 
         return (
-            <div className="mt-2 p-3.5 bg-gradient-to-br from-emerald-950/40 via-slate-900/90 to-cyan-950/30 border border-emerald-600/50 rounded-xl space-y-3 shadow-lg">
+            <div className="mt-2 p-3.5 bg-gradient-to-br from-emerald-950/40 via-slate-900/95 to-cyan-950/35 border border-emerald-600/60 rounded-xl space-y-3 shadow-xl">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-800/50 pb-2">
                     <div className="flex items-center gap-2">
                         <span className="text-base">🧬</span>
                         <div>
                             <h5 className="text-xs font-bold text-emerald-300 uppercase tracking-wide">
-                                Bảng tính & Chèn nhanh trình tự Oligo (Primer / Probe)
+                                Bộ Phối Hợp Mã Oligo Theo Trình Tự (Danh Mục 130 Mã Chi Tiết ABT)
                             </h5>
                             <p className="text-[10px] text-slate-400">
-                                Hỗ trợ tự động đếm số Base (5&apos; → 3&apos;) và xuất ra Báo giá / Hóa đơn theo <strong>Tách từng mã thành phần (Chuỗi chuẩn, Biến đổi, Tinh sạch, Đông khô/Pha sẵn)</strong> hoặc <strong>Gộp 1 dòng theo trình tự</strong>
+                                Dán trình tự 5&apos; → 3&apos; (tự nhận diện base, +A LNA, I Inosine, nhãn huỳnh quang/Biotin) để tự động phối hợp đúng tổ hợp mã SKU cho 1 trình tự
                             </p>
                         </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setOligoPresetTab("MOD");
-                                setShowOligoPresetSettings(prev => !prev);
-                            }}
-                            className={`text-xs px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 cursor-pointer border transition-colors ${
-                                showOligoPresetSettings
-                                    ? "bg-amber-600 text-white border-amber-400"
-                                    : "bg-amber-950/70 hover:bg-amber-900/80 text-amber-300 border-amber-700/60"
-                            }`}
-                            title="Cài đặt bổ sung / chỉnh sửa các loại Đánh dấu biến đổi (OLIGO-MOD), Tinh sạch (OLIGO-PUR) và Đông khô / Pha sẵn (OLIGO-SVC)"
-                        >
-                            <span>⚙️ {showOligoPresetSettings ? "Đóng cài đặt mẫu" : `Cài đặt loại Đánh dấu (${modPresets.length}) & Dịch vụ`}</span>
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setOpenOligoBuilderTarget(null)}
-                            className="text-xs text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-800/80 cursor-pointer"
-                        >
-                            ✕ Đóng
-                        </button>
-                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setOpenOligoBuilderTarget(null)}
+                        className="text-xs text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-800/80 cursor-pointer"
+                    >
+                        ✕ Đóng
+                    </button>
                 </div>
 
-                {/* KHUNG CÀI ĐẶT BỔ SUNG LOẠI ĐÁNH DẤU / TINH SẠCH / ĐÔNG KHÔ */}
-                {showOligoPresetSettings && (
-                    <div className="p-3 rounded-xl bg-slate-950/95 border border-amber-600/60 space-y-3 shadow-inner">
-                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                                <button
-                                    type="button"
-                                    onClick={() => { setOligoPresetTab("MOD"); setNewPresetPrice(650000); }}
-                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
-                                        oligoPresetTab === "MOD"
-                                            ? "bg-amber-600 text-white"
-                                            : "bg-slate-900 text-amber-300 hover:bg-slate-800 border border-slate-700"
-                                    }`}
-                                >
-                                    🏷️ Loại Đánh dấu (OLIGO-MOD) ({modPresets.length})
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => { setOligoPresetTab("PUR"); setNewPresetPrice(300000); }}
-                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
-                                        oligoPresetTab === "PUR"
-                                            ? "bg-cyan-600 text-white"
-                                            : "bg-slate-900 text-cyan-300 hover:bg-slate-800 border border-slate-700"
-                                    }`}
-                                >
-                                    🧪 Phương pháp Tinh sạch (OLIGO-PUR) ({purPresets.length})
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => { setOligoPresetTab("SVC"); setNewPresetPrice(150000); }}
-                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
-                                        oligoPresetTab === "SVC"
-                                            ? "bg-purple-600 text-white"
-                                            : "bg-slate-900 text-purple-300 hover:bg-slate-800 border border-slate-700"
-                                    }`}
-                                >
-                                    ❄️ Đông khô / Pha sẵn (OLIGO-SVC) ({svcPresets.length})
-                                </button>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    saveOligoPresetsList(DEFAULT_OLIGO_PRESETS);
-                                    showToast("↺ Đã khôi phục danh sách mẫu Đánh dấu / Tinh sạch / Dịch vụ về mặc định!", "info");
-                                }}
-                                className="text-[10px] text-slate-400 hover:text-amber-300 underline cursor-pointer"
-                            >
-                                ↺ Khôi phục mặc định
-                            </button>
-                        </div>
-
-                        {/* Form thêm nhanh loại mới */}
-                        <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-end bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
-                            <div className="md:col-span-3">
-                                <label className="block text-[10px] font-bold uppercase text-amber-300 mb-1">
-                                    {oligoPresetTab === "MOD" ? "Tên gọi tắt trong menu *" : oligoPresetTab === "PUR" ? "Tên phương pháp tinh sạch *" : "Tên dịch vụ *"}
-                                </label>
-                                <input
-                                    type="text"
-                                    value={newPresetLabel}
-                                    onChange={(e) => {
-                                        const val = e.target.value;
-                                        setNewPresetLabel(val);
-                                        if (!newPresetSpec) setNewPresetSpec(val);
-                                    }}
-                                    placeholder={oligoPresetTab === "MOD" ? "VD: Cy5.5-BHQ3, VIC-MGB..." : oligoPresetTab === "PUR" ? "VD: Dual-HPLC..." : "VD: Pha 50 µM TE..."}
-                                    className="w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-white font-mono"
-                                />
-                            </div>
-                            <div className="md:col-span-4">
-                                <label className="block text-[10px] font-bold uppercase text-slate-300 mb-1">
-                                    Quy cách in trên Báo giá / Hóa đơn *
-                                </label>
-                                <input
-                                    type="text"
-                                    value={newPresetSpec}
-                                    onChange={(e) => setNewPresetSpec(e.target.value)}
-                                    placeholder={oligoPresetTab === "MOD" ? "VD: 5'-Cy5.5 / 3'-BHQ3" : oligoPresetTab === "PUR" ? "VD: Tinh sạch Dual-HPLC" : "VD: Pha sẵn 50 µM TE Buffer"}
-                                    className="w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-amber-200 font-mono"
-                                />
-                            </div>
-                            <div className="md:col-span-2">
-                                <label className="block text-[10px] font-bold uppercase text-slate-300 mb-1">
-                                    Đơn giá mặc định (đ)
-                                </label>
-                                <FormattedNumberInput
-                                    value={newPresetPrice}
-                                    onChangeValue={(v) => setNewPresetPrice(v)}
-                                    className="w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-emerald-300 font-mono font-bold text-right"
-                                />
-                            </div>
-                            <div className="md:col-span-1">
-                                <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
-                                    SL
-                                </label>
-                                <input
-                                    type="number"
-                                    min={1}
-                                    value={newPresetQty}
-                                    onChange={(e) => setNewPresetQty(Math.max(1, Number(e.target.value) || 1))}
-                                    className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-white font-mono text-center"
-                                />
-                            </div>
-                            <div className="md:col-span-2">
-                                <button
-                                    type="button"
-                                    onClick={() => handleAddOligoPreset(oligoPresetTab)}
-                                    className="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs py-1.5 px-3 rounded-lg cursor-pointer transition-colors shadow"
-                                >
-                                    + Bổ sung mới
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Danh sách hiện có (cho phép sửa trực tiếp Tên, Quy cách, Đơn giá hoặc Xóa) */}
-                        <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
-                            {activeTabPresets.map((item, idx) => (
-                                <div key={item.id} className="grid grid-cols-12 gap-2 items-center bg-slate-900/50 hover:bg-slate-900 px-2.5 py-1.5 rounded-lg border border-slate-800/80 text-xs">
-                                    <div className="col-span-3 flex items-center gap-1.5">
-                                        <span className="text-[10px] text-slate-500 font-mono w-4">{idx + 1}.</span>
-                                        <input
-                                            type="text"
-                                            value={item.label}
-                                            onChange={(e) => {
-                                                const val = e.target.value;
-                                                const next = oligoPresets.map(p => p.id === item.id ? { ...p, label: val } : p);
-                                                saveOligoPresetsList(next);
-                                            }}
-                                            className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded px-2 py-1 text-[11px] text-amber-300 font-mono font-bold"
-                                            title="Tên hiển thị trong menu chọn mẫu"
-                                        />
-                                    </div>
-                                    <div className="col-span-5">
-                                        <input
-                                            type="text"
-                                            value={item.spec}
-                                            onChange={(e) => {
-                                                const val = e.target.value;
-                                                const next = oligoPresets.map(p => p.id === item.id ? { ...p, spec: val } : p);
-                                                saveOligoPresetsList(next);
-                                            }}
-                                            className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded px-2 py-1 text-[11px] text-white font-mono"
-                                            title="Quy cách hiển thị trên Báo giá / Đơn hàng"
-                                        />
-                                    </div>
-                                    <div className="col-span-2">
-                                        <FormattedNumberInput
-                                            value={item.defaultPrice}
-                                            onChangeValue={(v) => {
-                                                const next = oligoPresets.map(p => p.id === item.id ? { ...p, defaultPrice: v } : p);
-                                                saveOligoPresetsList(next);
-                                            }}
-                                            className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded px-2 py-1 text-[11px] text-emerald-300 font-mono font-bold text-right"
-                                        />
-                                    </div>
-                                    <div className="col-span-2 flex items-center justify-end gap-1.5">
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                if (item.category === "MOD") {
-                                                    setOligoHasMod(true);
-                                                    setOligoModSpec(item.spec);
-                                                    if (item.defaultPrice > 0) setOligoModPrice(item.defaultPrice);
-                                                    if (item.defaultQty > 0) setOligoModQty(item.defaultQty);
-                                                } else if (item.category === "PUR") {
-                                                    setOligoHasPur(true);
-                                                    setOligoPurSpec(item.spec);
-                                                    if (item.defaultPrice > 0) setOligoPurPrice(item.defaultPrice);
-                                                    if (item.defaultQty > 0) setOligoPurQty(item.defaultQty);
-                                                } else if (item.category === "SVC") {
-                                                    setOligoHasSvc(true);
-                                                    setOligoSvcSpec(item.spec);
-                                                    if (item.defaultPrice > 0) setOligoSvcPrice(item.defaultPrice);
-                                                    if (item.defaultQty > 0) setOligoSvcQty(item.defaultQty);
-                                                }
-                                                showToast(`⚡ Đã chọn mẫu "${item.label}"!`, "info");
-                                            }}
-                                            className="px-2 py-0.5 rounded bg-emerald-900/60 hover:bg-emerald-700 text-emerald-200 text-[10px] font-bold cursor-pointer"
-                                            title="Áp dụng ngay mẫu này vào bảng tính bên dưới"
-                                        >
-                                            Chọn
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                const next = oligoPresets.filter(p => p.id !== item.id);
-                                                saveOligoPresetsList(next);
-                                                showToast(`🗑️ Đã xóa mẫu "${item.label}"`, "info");
-                                            }}
-                                            className="px-1.5 py-0.5 rounded bg-rose-950/70 hover:bg-rose-700 text-rose-300 text-[10px] cursor-pointer"
-                                            title="Xóa mẫu này khỏi danh sách"
-                                        >
-                                            ✕
-                                        </button>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {/* Dòng 1: Tên mồi/Probe + Chuỗi trình tự 5'->3' + Scale + Số Tube */}
+                {/* Hàng 1: Nhập Tên, Trình tự 5'->3', Scale, Số Tube & Số Base */}
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5">
-                    <div className="md:col-span-3">
+                    <div className="md:col-span-2">
                         <label className="block text-[10px] font-bold uppercase text-emerald-300 mb-1">
                             Tên Mồi / Probe *
                         </label>
@@ -9265,428 +8778,427 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             type="text"
                             value={oligoSeqName}
                             onChange={(e) => setOligoSeqName(e.target.value)}
-                            placeholder="VD: HBV-F1, SARS-Probe..."
+                            placeholder="VD: SARS-F1, HBV-P..."
                             className="w-full bg-slate-950 border border-emerald-700/60 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono font-bold focus:border-emerald-400 focus:outline-none"
                         />
                     </div>
                     <div className="md:col-span-5">
-                        <label className="block text-[10px] font-bold uppercase text-emerald-300 mb-1 flex justify-between">
+                        <label className="text-[10px] font-bold uppercase text-emerald-300 mb-1 flex justify-between gap-2">
                             <span>Chuỗi trình tự (5&apos; → 3&apos;) *</span>
-                            <span className="text-cyan-300 font-mono">Tự đếm: {countNucleotideBases(oligoSeqRaw).count} base</span>
+                            <span className="text-cyan-300 font-mono">
+                                Đếm: {combo.parsed.baseCount} base
+                                {combo.parsed.lnaCount > 0 ? ` · ${combo.parsed.lnaCount} LNA` : ""}
+                                {combo.parsed.inosineCount > 0 ? ` · ${combo.parsed.inosineCount} Inosine` : ""}
+                            </span>
                         </label>
                         <input
                             type="text"
                             value={oligoSeqRaw}
-                            onChange={(e) => {
-                                const val = e.target.value;
-                                setOligoSeqRaw(val);
-                                const { count } = countNucleotideBases(val);
-                                if (count > 0) setOligoBaseCount(count);
-                            }}
-                            placeholder="Dán chuỗi 5'-ATG GGA TCC TGC ACC GAA-3'..."
+                            onChange={(e) => handleOligoRawSeqChange(e.target.value)}
+                            placeholder="VD: 5'-[FAM]-ACG+ATGGGA(I)CC-[BHQ1]-3' hoặc ATG..."
                             className="w-full bg-slate-950 border border-emerald-700/60 rounded-lg px-2.5 py-1.5 text-xs text-amber-200 font-mono focus:border-emerald-400 focus:outline-none"
                         />
                     </div>
                     <div className="md:col-span-2">
                         <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
-                            Scale tổng hợp
+                            Quy mô (Scale)
                         </label>
                         <select
-                            value={oligoScale}
-                            onChange={(e) => setOligoScale(e.target.value)}
-                            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white font-mono focus:border-emerald-400 focus:outline-none"
+                            value={combo.effectiveScale}
+                            disabled={oligoMode === "PROBE"}
+                            onChange={(e) => setOligoScale(e.target.value as OligoScale)}
+                            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white font-mono focus:border-emerald-400 focus:outline-none disabled:opacity-60"
                         >
-                            <option value="25 nmol">25 nmol</option>
-                            <option value="50 nmol">50 nmol</option>
-                            <option value="100 nmol">100 nmol</option>
-                            <option value="200 nmol">200 nmol</option>
-                            <option value="1 µmol">1 µmol</option>
+                            {ABT_OLIGO_SCALES.map((sc) => (
+                                <option key={sc} value={sc}>{sc}</option>
+                            ))}
                         </select>
                     </div>
-                    <div className="md:col-span-2">
+                    <div className="md:col-span-1">
                         <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
-                            Số Tube đặt
+                            Số Tube
                         </label>
                         <input
                             type="number"
                             min={1}
                             value={oligoTubeCount}
                             onChange={(e) => setOligoTubeCount(Math.max(1, Number(e.target.value) || 1))}
-                            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono font-bold text-center focus:border-emerald-400 focus:outline-none"
+                            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white font-mono font-bold text-center focus:border-emerald-400 focus:outline-none"
+                        />
+                    </div>
+                    <div className="md:col-span-2">
+                        <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
+                            Số Base / bp (nếu ghi tay)
+                        </label>
+                        <input
+                            type="number"
+                            min={1}
+                            value={oligoBaseCountOverride}
+                            onChange={(e) => setOligoBaseCountOverride(e.target.value)}
+                            placeholder={`Tự động: ${combo.bases}`}
+                            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-cyan-200 font-mono text-center focus:border-emerald-400 focus:outline-none"
                         />
                     </div>
                 </div>
 
-                {/* Dòng 2: 4 Thành phần cấu thành giá (OLIGO-BASE, OLIGO-MOD, OLIGO-PUR, OLIGO-SVC) */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2.5">
-                    {/* 1. Mã trình tự chuẩn OLIGO-BASE */}
-                    <div className="p-2.5 rounded-lg bg-slate-950/90 border border-slate-800 space-y-2">
-                        <div className="flex items-center justify-between">
-                            <span className="text-[11px] font-bold text-sky-300 font-mono">1. OLIGO-BASE (Chuỗi chuẩn)</span>
-                            <span className="text-[10px] font-mono text-emerald-400 font-bold">
-                                {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(baseSub)}đ
-                            </span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                            <div>
-                                <label className="block text-[9px] text-slate-400 uppercase mb-0.5">Số Base (bp)</label>
-                                <input
-                                    type="number"
-                                    min={1}
-                                    value={oligoBaseCount}
-                                    onChange={(e) => setOligoBaseCount(Math.max(1, Number(e.target.value) || 1))}
-                                    className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white font-mono font-bold"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-[9px] text-slate-400 uppercase mb-0.5">Đơn giá / Base</label>
-                                <FormattedNumberInput
-                                    value={oligoBasePrice}
-                                    onChangeValue={(v) => setOligoBasePrice(v)}
-                                    className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-emerald-300 font-mono font-bold text-right"
-                                />
-                            </div>
-                        </div>
+                {/* Hàng 2: Chọn Loai / Chế độ Oligo */}
+                <div className="space-y-2">
+                    <div className="flex flex-wrap gap-1.5">
+                        {modeTabs.map((m) => (
+                            <button
+                                key={m.id}
+                                type="button"
+                                onClick={() => handleSelectOligoMode(m.id)}
+                                title={m.hint}
+                                className={cn(
+                                    "px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer border transition-colors",
+                                    oligoMode === m.id
+                                        ? "bg-emerald-600 text-white border-emerald-400 shadow"
+                                        : "bg-slate-950/80 hover:bg-slate-800 text-slate-300 border-slate-700"
+                                )}
+                            >
+                                {m.label}
+                            </button>
+                        ))}
                     </div>
 
-                    {/* 2. Mã đánh dấu biến đổi OLIGO-MOD */}
-                    <div className={`p-2.5 rounded-lg border space-y-2 transition-colors ${oligoHasMod ? "bg-slate-950/90 border-amber-600/60" : "bg-slate-950/40 border-slate-800/70 opacity-75"}`}>
-                        <div className="flex items-center justify-between">
-                            <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                                <input
-                                    type="checkbox"
-                                    checked={oligoHasMod}
-                                    onChange={(e) => {
-                                        const checked = e.target.checked;
-                                        setOligoHasMod(checked);
-                                        if (checked && !oligoHasPur) setOligoHasPur(true);
-                                    }}
-                                    className="w-3.5 h-3.5 rounded accent-amber-500 cursor-pointer"
-                                />
-                                <span className="text-[11px] font-bold text-amber-300 font-mono">2. OLIGO-MOD (Đánh dấu)</span>
-                            </label>
-                            <div className="flex items-center gap-1">
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setOligoPresetTab("MOD");
-                                        setShowOligoPresetSettings(true);
-                                    }}
-                                    className="text-[10px] px-1.5 py-0.5 rounded bg-amber-950/80 hover:bg-amber-800 text-amber-300 border border-amber-700/60 cursor-pointer"
-                                    title="Mở cài đặt để bổ sung / chỉnh sửa các loại đánh dấu biến đổi"
-                                >
-                                    ⚙️ Cài đặt
-                                </button>
-                                <span className="text-[10px] font-mono text-amber-300 font-bold">
-                                    {oligoHasMod ? `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(modSub)}đ` : "Không dùng"}
-                                </span>
-                            </div>
-                        </div>
-                        <div className="space-y-1.5">
-                            <div className="flex gap-1">
-                                <input
-                                    type="text"
-                                    disabled={!oligoHasMod}
-                                    value={oligoModSpec}
-                                    onChange={(e) => setOligoModSpec(e.target.value)}
-                                    placeholder="VD: 5'-FAM / 3'-BHQ1"
-                                    className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-white font-mono"
-                                />
-                                <button
-                                    type="button"
-                                    disabled={!oligoHasMod}
-                                    onClick={() => handleQuickSaveCurrentPreset("MOD")}
-                                    className="px-1.5 py-1 rounded bg-slate-800 hover:bg-amber-700 text-[10px] text-amber-300 hover:text-white border border-slate-700 cursor-pointer"
-                                    title="Lưu nhanh loại đánh dấu và đơn giá đang nhập vào danh sách Mẫu"
-                                >
-                                    💾
-                                </button>
+                    {/* Tùy chọn chi tiết theo chế độ đang chọn */}
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 p-2.5 rounded-lg bg-slate-950/75 border border-slate-800 items-end">
+                        {(oligoMode === "UNMODIFIED" || oligoMode === "BIOTIN_NH2") && (
+                            <div className="md:col-span-3">
+                                <label className="block text-[10px] font-bold uppercase text-sky-300 mb-1">
+                                    Nhóm mã Base nền (PRI-*)
+                                </label>
                                 <select
-                                    value=""
-                                    onChange={(e) => {
-                                        const val = e.target.value;
-                                        if (val === "__ADD_NEW__") {
-                                            setOligoPresetTab("MOD");
-                                            setShowOligoPresetSettings(true);
-                                            return;
-                                        }
-                                        const found = modPresets.find(p => p.id === val);
-                                        if (found) {
-                                            if (!oligoHasMod) {
-                                                setOligoHasMod(true);
-                                                if (!oligoHasPur) setOligoHasPur(true);
-                                            }
-                                            setOligoModSpec(found.spec);
-                                            if (found.defaultPrice > 0) setOligoModPrice(found.defaultPrice);
-                                            if (found.defaultQty > 0) setOligoModQty(found.defaultQty);
-                                        }
-                                    }}
-                                    className="w-24 bg-slate-900 border border-slate-700 rounded px-1 py-1 text-[10px] text-amber-300 cursor-pointer"
-                                    title="Chọn loại đánh dấu biến đổi hoặc bấm '+ Cài đặt thêm loại mới...'"
+                                    value={oligoPrimerFamily}
+                                    onChange={(e) => setOligoPrimerFamily(e.target.value as OligoPrimerFamily)}
+                                    className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white font-mono"
                                 >
-                                    <option value="">Mẫu ({modPresets.length})...</option>
-                                    {modPresets.map(p => (
-                                        <option key={p.id} value={p.id}>
-                                            {p.label} ({new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(p.defaultPrice)}đ)
-                                        </option>
-                                    ))}
-                                    <option value="__ADD_NEW__">➕ + Cài đặt / Thêm loại đánh dấu...</option>
+                                    <option value="AUTO">Tự chọn theo số base ({combo.bases} bp)</option>
+                                    <option value="PRI-01">PRI-01.* (Short 6-14 base)</option>
+                                    <option value="PRI-02">PRI-02.* (Standard 15-34 base)</option>
+                                    <option value="PRI-03">PRI-03.* (Long Cartridge 35-60 base)</option>
+                                    <option value="PRI-04">PRI-04.* (Long HPLC 35-60 base - Coming soon)</option>
+                                    <option value="PRI-05">PRI-05.* (Long Oligo 61-120 base)</option>
                                 </select>
                             </div>
-                            <div className="grid grid-cols-2 gap-2">
-                                <div>
-                                    <input
-                                        type="number"
-                                        min={1}
-                                        disabled={!oligoHasMod}
-                                        value={oligoModQty}
-                                        onChange={(e) => setOligoModQty(Math.max(1, Number(e.target.value) || 1))}
-                                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white font-mono text-center"
-                                        title="Số lượng gói/nhãn biến đổi"
-                                    />
-                                </div>
-                                <div>
-                                    <FormattedNumberInput
-                                        value={oligoModPrice}
-                                        onChangeValue={(v) => setOligoModPrice(v)}
-                                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-amber-300 font-mono font-bold text-right"
-                                    />
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                        )}
 
-                    {/* 3. Mã tinh sạch riêng OLIGO-PUR */}
-                    <div className={`p-2.5 rounded-lg border space-y-2 transition-colors ${oligoHasPur ? "bg-slate-950/90 border-cyan-600/60" : "bg-slate-950/40 border-slate-800/70 opacity-75"}`}>
-                        <div className="flex items-center justify-between">
-                            <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                                <input
-                                    type="checkbox"
-                                    checked={oligoHasPur}
-                                    onChange={(e) => setOligoHasPur(e.target.checked)}
-                                    className="w-3.5 h-3.5 rounded accent-cyan-500 cursor-pointer"
-                                />
-                                <span className="text-[11px] font-bold text-cyan-300 font-mono">3. OLIGO-PUR (Tinh sạch)</span>
-                            </label>
-                            <div className="flex items-center gap-1">
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setOligoPresetTab("PUR");
-                                        setShowOligoPresetSettings(true);
-                                    }}
-                                    className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950/80 hover:bg-cyan-800 text-cyan-300 border border-cyan-700/60 cursor-pointer"
-                                    title="Mở cài đặt để bổ sung / chỉnh sửa phương pháp tinh sạch"
-                                >
-                                    ⚙️
-                                </button>
-                                <span className="text-[10px] font-mono text-cyan-300 font-bold">
-                                    {oligoHasPur ? `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(purSub)}đ` : "Không dùng"}
-                                </span>
-                            </div>
-                        </div>
-                        <div className="space-y-1.5">
-                            <div className="flex gap-1">
-                                <input
-                                    type="text"
-                                    disabled={!oligoHasPur}
-                                    value={oligoPurSpec}
-                                    onChange={(e) => setOligoPurSpec(e.target.value)}
-                                    placeholder="VD: Tinh sạch HPLC"
-                                    className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-white font-mono"
-                                />
-                                <button
-                                    type="button"
-                                    disabled={!oligoHasPur}
-                                    onClick={() => handleQuickSaveCurrentPreset("PUR")}
-                                    className="px-1.5 py-1 rounded bg-slate-800 hover:bg-cyan-700 text-[10px] text-cyan-300 hover:text-white border border-slate-700 cursor-pointer"
-                                    title="Lưu nhanh phương pháp tinh sạch và đơn giá đang nhập vào danh sách Mẫu"
-                                >
-                                    💾
-                                </button>
+                        {oligoMode === "BIOTIN_NH2" && (
+                            <div className="md:col-span-2">
+                                <label className="block text-[10px] font-bold uppercase text-amber-300 mb-1">
+                                    Nhãn biến đổi 5&apos; *
+                                </label>
                                 <select
-                                    value=""
-                                    onChange={(e) => {
-                                        const val = e.target.value;
-                                        if (val === "__ADD_NEW__") {
-                                            setOligoPresetTab("PUR");
-                                            setShowOligoPresetSettings(true);
-                                            return;
-                                        }
-                                        const found = purPresets.find(p => p.id === val);
-                                        if (found) {
-                                            if (!oligoHasPur) setOligoHasPur(true);
-                                            setOligoPurSpec(found.spec);
-                                            if (found.defaultPrice > 0) setOligoPurPrice(found.defaultPrice);
-                                            if (found.defaultQty > 0) setOligoPurQty(found.defaultQty);
-                                        }
-                                    }}
-                                    className="w-24 bg-slate-900 border border-slate-700 rounded px-1 py-1 text-[10px] text-cyan-300 cursor-pointer"
-                                    title="Chọn phương pháp tinh sạch Oligo"
+                                    value={oligoSelectedCode === "NH2" ? "NH2" : "BIOTIN"}
+                                    onChange={(e) => setOligoSelectedCode(e.target.value)}
+                                    className="w-full bg-slate-900 border border-amber-700/60 rounded px-2 py-1.5 text-xs text-amber-200 font-mono font-bold"
                                 >
-                                    <option value="">Mẫu ({purPresets.length})...</option>
-                                    {purPresets.map(p => (
-                                        <option key={p.id} value={p.id}>
-                                            {p.label} ({new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(p.defaultPrice)}đ)
-                                        </option>
-                                    ))}
-                                    <option value="__ADD_NEW__">➕ + Cài đặt thêm...</option>
+                                    <option value="BIOTIN">BIOTIN.{combo.effectiveScale.split(" ")[0]}</option>
+                                    <option value="NH2">NH2.{combo.effectiveScale.split(" ")[0]}</option>
                                 </select>
                             </div>
-                            <div className="grid grid-cols-2 gap-2">
-                                <div>
-                                    <input
-                                        type="number"
-                                        min={1}
-                                        disabled={!oligoHasPur}
-                                        value={oligoPurQty}
-                                        onChange={(e) => setOligoPurQty(Math.max(1, Number(e.target.value) || 1))}
-                                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white font-mono text-center"
-                                        title="Số lượng dịch vụ tinh sạch"
-                                    />
-                                </div>
-                                <div>
-                                    <FormattedNumberInput
-                                        value={oligoPurPrice}
-                                        onChangeValue={(v) => setOligoPurPrice(v)}
-                                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-cyan-300 font-mono font-bold text-right"
-                                    />
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                        )}
 
-                    {/* 4. Mã dịch vụ Đông khô / Pha sẵn riêng OLIGO-SVC */}
-                    <div className={`p-2.5 rounded-lg border space-y-2 transition-colors ${oligoHasSvc ? "bg-slate-950/90 border-purple-600/60" : "bg-slate-950/40 border-slate-800/70 opacity-75"}`}>
-                        <div className="flex items-center justify-between">
-                            <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                        {oligoMode === "DYE_PRIMER" && (
+                            <div className="md:col-span-5">
+                                <label className="block text-[10px] font-bold uppercase text-amber-300 mb-1">
+                                    Mã Primer gắn huỳnh quang 5&apos; *
+                                </label>
+                                <select
+                                    value={DYE_PRIMER_FAMILIES.some((f) => f.prefix === oligoSelectedCode) ? oligoSelectedCode : "FAM-Primer"}
+                                    onChange={(e) => setOligoSelectedCode(e.target.value)}
+                                    className="w-full bg-slate-900 border border-amber-700/60 rounded px-2 py-1.5 text-xs text-amber-200 font-mono font-bold"
+                                >
+                                    {DYE_PRIMER_FAMILIES.map((f) => (
+                                        <option key={f.prefix} value={f.prefix}>
+                                            {f.prefix}.{combo.effectiveScale.split(" ")[0]} — {f.label}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+
+                        {oligoMode === "PROBE" && (
+                            <div className="md:col-span-5">
+                                <label className="block text-[10px] font-bold uppercase text-fuchsia-300 mb-1">
+                                    Mã Probe huỳnh quang 2 nhãn (100 nmol) *
+                                </label>
+                                <select
+                                    value={PROBE_CATALOG_OPTIONS.some((p) => p.code === oligoSelectedCode) ? oligoSelectedCode : "FAM.100"}
+                                    onChange={(e) => setOligoSelectedCode(e.target.value)}
+                                    className="w-full bg-slate-900 border border-fuchsia-700/60 rounded px-2 py-1.5 text-xs text-fuchsia-200 font-mono font-bold"
+                                >
+                                    {PROBE_CATALOG_OPTIONS.map((p) => (
+                                        <option key={p.code} value={p.code}>
+                                            {p.code} — {p.name} ({p.price.toLocaleString("vi-VN")}đ)
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+
+                        {oligoMode === "GENE_SYNTHESIS" && (
+                            <>
+                                <div className="md:col-span-3">
+                                    <label className="block text-[10px] font-bold uppercase text-indigo-300 mb-1">
+                                        Loại Gene / Amplicon *
+                                    </label>
+                                    <select
+                                        value={oligoGeneCode}
+                                        onChange={(e) => setOligoGeneCode(e.target.value as "LinearDNA" | "CircleDNA")}
+                                        className="w-full bg-slate-900 border border-indigo-700/60 rounded px-2 py-1.5 text-xs text-white font-mono font-bold"
+                                    >
+                                        <option value="LinearDNA">LinearDNA — Tổng hợp mạch thẳng</option>
+                                        <option value="CircleDNA">CircleDNA — Tổng hợp mạch vòng (Plasmid)</option>
+                                    </select>
+                                </div>
+                                <div className="md:col-span-3">
+                                    <label className="block text-[10px] font-bold uppercase text-indigo-300 mb-1">
+                                        Vector Plasmid đi kèm (nếu có)
+                                    </label>
+                                    <select
+                                        value={oligoPlasmidCode}
+                                        onChange={(e) => setOligoPlasmidCode(e.target.value as any)}
+                                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white font-mono"
+                                    >
+                                        <option value="">Không dùng vector riêng</option>
+                                        <option value="Plasmid.1">Plasmid.1 — Standard Cloning Vector</option>
+                                        <option value="Plasmid.2">Plasmid.2 — Customer Provided Vector</option>
+                                    </select>
+                                </div>
+                            </>
+                        )}
+
+                        <div className="md:col-span-3">
+                            <label className="block text-[10px] font-bold uppercase text-cyan-300 mb-1">
+                                Tinh sạch nâng cấp thêm (PUR-*)
+                            </label>
+                            <select
+                                value={oligoPurCode}
+                                onChange={(e) => setOligoPurCode(e.target.value as any)}
+                                className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-cyan-200 font-mono"
+                            >
+                                <option value="">Theo tinh sạch mặc định</option>
+                                {PURIFICATION_OPTIONS.map((p) => (
+                                    <option key={p.code} value={p.code}>
+                                        {p.code} — {p.name} ({p.price.toLocaleString("vi-VN")}đ)
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div className="md:col-span-4 flex flex-wrap items-center gap-3 pb-1">
+                            <label className="inline-flex items-center gap-1.5 text-[11px] text-purple-200 font-semibold cursor-pointer">
                                 <input
                                     type="checkbox"
-                                    checked={oligoHasSvc}
-                                    onChange={(e) => setOligoHasSvc(e.target.checked)}
+                                    checked={oligoLyophilized}
+                                    onChange={(e) => setOligoLyophilized(e.target.checked)}
                                     className="w-3.5 h-3.5 rounded accent-purple-500 cursor-pointer"
                                 />
-                                <span className="text-[11px] font-bold text-purple-300 font-mono">4. OLIGO-SVC (Đông khô/Pha)</span>
+                                <span>PRE-01 Đông khô</span>
                             </label>
-                            <div className="flex items-center gap-1">
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setOligoPresetTab("SVC");
-                                        setShowOligoPresetSettings(true);
-                                    }}
-                                    className="text-[10px] px-1.5 py-0.5 rounded bg-purple-950/80 hover:bg-purple-800 text-purple-300 border border-purple-700/60 cursor-pointer"
-                                    title="Mở cài đặt để bổ sung / chỉnh sửa dịch vụ Đông khô / Pha sẵn"
-                                >
-                                    ⚙️
-                                </button>
-                                <span className="text-[10px] font-mono text-purple-300 font-bold">
-                                    {oligoHasSvc ? `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(svcSub)}đ` : "Không dùng"}
-                                </span>
-                            </div>
-                        </div>
-                        <div className="space-y-1.5">
-                            <div className="flex gap-1">
-                                <input
-                                    type="text"
-                                    disabled={!oligoHasSvc}
-                                    value={oligoSvcSpec}
-                                    onChange={(e) => setOligoSvcSpec(e.target.value)}
-                                    placeholder="VD: Đông khô / Pha sẵn 100 µM"
-                                    className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-white font-mono"
-                                />
-                                <button
-                                    type="button"
-                                    disabled={!oligoHasSvc}
-                                    onClick={() => handleQuickSaveCurrentPreset("SVC")}
-                                    className="px-1.5 py-1 rounded bg-slate-800 hover:bg-purple-700 text-[10px] text-purple-300 hover:text-white border border-slate-700 cursor-pointer"
-                                    title="Lưu nhanh dịch vụ Đông khô / Pha sẵn và đơn giá đang nhập vào danh sách Mẫu"
-                                >
-                                    💾
-                                </button>
-                                <select
-                                    value=""
-                                    onChange={(e) => {
-                                        const val = e.target.value;
-                                        if (val === "__ADD_NEW__") {
-                                            setOligoPresetTab("SVC");
-                                            setShowOligoPresetSettings(true);
-                                            return;
-                                        }
-                                        const found = svcPresets.find(p => p.id === val);
-                                        if (found) {
-                                            if (!oligoHasSvc) setOligoHasSvc(true);
-                                            setOligoSvcSpec(found.spec);
-                                            if (found.defaultPrice > 0) setOligoSvcPrice(found.defaultPrice);
-                                            if (found.defaultQty > 0) setOligoSvcQty(found.defaultQty);
-                                        }
-                                    }}
-                                    className="w-24 bg-slate-900 border border-slate-700 rounded px-1 py-1 text-[10px] text-purple-300 cursor-pointer"
-                                    title="Chọn mẫu dịch vụ đông khô hoặc pha sẵn"
-                                >
-                                    <option value="">Mẫu ({svcPresets.length})...</option>
-                                    {svcPresets.map(p => (
-                                        <option key={p.id} value={p.id}>
-                                            {p.label} ({new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(p.defaultPrice)}đ)
-                                        </option>
-                                    ))}
-                                    <option value="__ADD_NEW__">➕ + Cài đặt thêm...</option>
-                                </select>
-                            </div>
-                            <div className="grid grid-cols-2 gap-2">
-                                <div>
-                                    <input
-                                        type="number"
-                                        min={1}
-                                        disabled={!oligoHasSvc}
-                                        value={oligoSvcQty}
-                                        onChange={(e) => setOligoSvcQty(Math.max(1, Number(e.target.value) || 1))}
-                                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white font-mono text-center"
-                                        title="Số lượng dịch vụ đông khô / pha sẵn"
-                                    />
-                                </div>
-                                <div>
-                                    <FormattedNumberInput
-                                        value={oligoSvcPrice}
-                                        onChangeValue={(v) => setOligoSvcPrice(v)}
-                                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-purple-300 font-mono font-bold text-right"
-                                    />
-                                </div>
-                            </div>
+                            {oligoMode !== "GENE_SYNTHESIS" && (
+                                <>
+                                    <label className="inline-flex items-center gap-1 text-[11px] text-amber-200 font-semibold cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={oligoIncludeLna}
+                                            onChange={(e) => setOligoIncludeLna(e.target.checked)}
+                                            className="w-3.5 h-3.5 rounded accent-amber-500 cursor-pointer"
+                                        />
+                                        <span>LNA</span>
+                                        {oligoIncludeLna && (
+                                            <input
+                                                type="number"
+                                                min={1}
+                                                value={oligoLnaQty}
+                                                onChange={(e) => setOligoLnaQty(Math.max(1, Number(e.target.value) || 1))}
+                                                className="w-12 bg-slate-900 border border-amber-600/60 rounded px-1 py-0.5 text-[10px] text-center font-mono text-white"
+                                                title="Số base LNA"
+                                            />
+                                        )}
+                                    </label>
+                                    <label className="inline-flex items-center gap-1 text-[11px] text-sky-200 font-semibold cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={oligoIncludeInosine}
+                                            onChange={(e) => setOligoIncludeInosine(e.target.checked)}
+                                            className="w-3.5 h-3.5 rounded accent-sky-500 cursor-pointer"
+                                        />
+                                        <span>Inosine</span>
+                                        {oligoIncludeInosine && (
+                                            <input
+                                                type="number"
+                                                min={1}
+                                                value={oligoInosineQty}
+                                                onChange={(e) => setOligoInosineQty(Math.max(1, Number(e.target.value) || 1))}
+                                                className="w-12 bg-slate-900 border border-sky-600/60 rounded px-1 py-0.5 text-[10px] text-center font-mono text-white"
+                                                title="Số base Inosine"
+                                            />
+                                        )}
+                                    </label>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>
 
-                {/* Dòng 3: Tổng hợp giá & 2 nút chọn chế độ xuất Báo giá / Bảng kê Hóa đơn */}
+                {/* Cảnh báo nghiệp vụ (Probe 100 nmol, Coming soon, trùng tinh sạch...) */}
+                {combo.warnings.length > 0 && (
+                    <div className="p-2 rounded-lg bg-amber-950/60 border border-amber-600/50 text-[11px] text-amber-200 space-y-0.5">
+                        {combo.warnings.map((w, wi) => (
+                            <div key={wi}>⚠️ {w}</div>
+                        ))}
+                    </div>
+                )}
+
+                {/* Bảng xem trước Tổ hợp mã Oligo sẽ sinh cho trình tự này */}
+                <div className="overflow-x-auto border border-slate-800 rounded-lg bg-slate-950/90">
+                    <table className="w-full text-left text-[11px] border-collapse">
+                        <thead>
+                            <tr className="border-b border-slate-800 bg-slate-900/90 text-[10px] uppercase text-slate-400">
+                                <th className="p-2">Vai trò</th>
+                                <th className="p-2">Mã SKU</th>
+                                <th className="p-2">Tên hàng hóa / Diễn giải phối hợp</th>
+                                <th className="p-2 text-center">ĐVT</th>
+                                <th className="p-2 text-center">SL/Tube</th>
+                                <th className="p-2 text-center">Tổng SL ({combo.tubes} tube)</th>
+                                <th className="p-2 text-right">Đơn giá (đ — sửa trực tiếp)</th>
+                                <th className="p-2 text-right">Thành tiền</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/70">
+                            {combo.items.map((comp) => (
+                                <tr key={`${comp.code}-${comp.role}`} className="hover:bg-slate-900/50">
+                                    <td className="p-2">
+                                        <span className={cn(
+                                            "px-1.5 py-0.5 rounded text-[9px] font-mono font-bold border",
+                                            comp.role === "PRIMARY"
+                                                ? "bg-emerald-950/80 text-emerald-300 border-emerald-700/60"
+                                                : "bg-sky-950/80 text-sky-300 border-sky-700/60"
+                                        )}>
+                                            {comp.role === "PRIMARY" ? "CHÍNH" : "+ PHỐI HỢP"}
+                                        </span>
+                                    </td>
+                                    <td className="p-2 font-mono font-bold text-cyan-300">{comp.code}</td>
+                                    <td className="p-2">
+                                        <div className="text-white font-medium">{comp.name}</div>
+                                        <div className="text-[10px] text-slate-400">{comp.reason}{comp.purification ? ` · Mặc định: ${comp.purification}` : ""}</div>
+                                    </td>
+                                    <td className="p-2 text-center text-slate-300 font-mono">{comp.unit}</td>
+                                    <td className="p-2 text-center font-mono text-white">{comp.qtyPerTube}</td>
+                                    <td className="p-2 text-center font-mono font-bold text-amber-300">{comp.totalQty}</td>
+                                    <td className="p-2 w-32">
+                                        <FormattedNumberInput
+                                            value={comp.unitPrice}
+                                            onChangeValue={(v) =>
+                                                setOligoPriceOverrides((prev) => ({ ...prev, [comp.code]: v }))
+                                            }
+                                            className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-emerald-300 font-mono font-bold text-right"
+                                        />
+                                    </td>
+                                    <td className="p-2 text-right font-mono font-bold text-emerald-400">
+                                        {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(comp.subtotal)}đ
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+
+                {/* Phối hợp thêm bất kỳ mã nào từ Danh mục 130 mã Oligo */}
+                <div className="flex flex-wrap items-center gap-2 p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
+                    <span className="text-[10px] font-bold uppercase text-cyan-300">
+                        + Phối hợp thêm mã khác (130 mã):
+                    </span>
+                    <input
+                        type="text"
+                        value={oligoExtraSearch}
+                        onChange={(e) => setOligoExtraSearch(e.target.value)}
+                        placeholder="Lọc mã (PUR, PRE, LNA, BIOTIN, Plasmid...)"
+                        className="w-48 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-white font-mono"
+                    />
+                    <select
+                        value={oligoExtraCodeSelect}
+                        onChange={(e) => setOligoExtraCodeSelect(e.target.value)}
+                        className="flex-1 min-w-[240px] bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-white font-mono"
+                    >
+                        {extraCatalogChoices.map((entry) => (
+                            <option key={entry.code} value={entry.code}>
+                                {entry.code} — {entry.name} ({entry.scale} | {entry.price > 0 ? `${entry.price.toLocaleString("vi-VN")}đ/${entry.unit}` : entry.status})
+                            </option>
+                        ))}
+                    </select>
+                    <input
+                        type="number"
+                        min={1}
+                        value={oligoExtraQty}
+                        onChange={(e) => setOligoExtraQty(Math.max(1, Number(e.target.value) || 1))}
+                        className="w-16 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-white font-mono text-center"
+                        title="Số lượng mỗi Tube"
+                    />
+                    <button
+                        type="button"
+                        onClick={() => {
+                            if (!oligoExtraCodeSelect) return;
+                            setOligoExtraSkus((prev) => [...prev, { code: oligoExtraCodeSelect, qtyPerTube: oligoExtraQty }]);
+                        }}
+                        className="px-2.5 py-1 rounded bg-cyan-700 hover:bg-cyan-600 text-white text-[11px] font-bold cursor-pointer"
+                    >
+                        + Gắn vào trình tự
+                    </button>
+                    {oligoExtraSkus.length > 0 && (
+                        <div className="w-full flex flex-wrap gap-1.5 pt-1">
+                            {oligoExtraSkus.map((ext, ei) => (
+                                <span
+                                    key={`${ext.code}-${ei}`}
+                                    className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-cyan-950 border border-cyan-700/60 text-[10px] font-mono text-cyan-200"
+                                >
+                                    <span>{ext.code} ×{ext.qtyPerTube || 1}/tube</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setOligoExtraSkus((prev) => prev.filter((_, idx) => idx !== ei))}
+                                        className="text-rose-400 hover:text-rose-200 font-bold cursor-pointer"
+                                    >
+                                        ✕
+                                    </button>
+                                </span>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                {/* Footer tổng tiền & Chèn dòng */}
                 <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800">
-                    <div className="text-xs text-slate-300 flex flex-wrap items-center gap-3">
+                    <div className="text-xs text-slate-300 flex flex-wrap items-center gap-4">
                         <span>
-                            Đơn giá 1 Tube hoàn chỉnh:{" "}
-                            <strong className="text-emerald-400 font-mono">{new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(singleTubeTotal)} đ/Tube</strong>
+                            Đơn giá 1 Tube hoàn chỉnh ({combo.items.length} mã phối hợp):{" "}
+                            <strong className="text-emerald-400 font-mono">
+                                {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(combo.totalPerTube)} đ/Tube
+                            </strong>
                         </span>
-                        {tubes > 1 && (
-                            <span>
-                                Tổng ({tubes} Tube):{" "}
-                                <strong className="text-amber-300 font-mono">{new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(grandTotal)} đ</strong>
-                            </span>
-                        )}
+                        <span>
+                            Thành tiền ({combo.tubes} Tube):{" "}
+                            <strong className="text-amber-300 font-mono">
+                                {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(combo.totalAmount)} đ
+                            </strong>
+                        </span>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                         <button
                             type="button"
-                            onClick={() => handleInsertOligoSequence("SPLIT_CODES", target)}
-                            className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold flex items-center gap-1.5 shadow cursor-pointer transition-colors"
-                            title="Tách thành các dòng mã OLIGO-BASE, OLIGO-MOD, OLIGO-PUR, OLIGO-SVC riêng biệt (Dành cho KH yêu cầu báo giá & bảng kê hóa đơn theo từng mã)"
+                            onClick={() => handleInsertOligoSequence(target, false)}
+                            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 shadow cursor-pointer transition-colors"
                         >
-                            <span>📑 Chèn TÁCH THEO TỪNG MÃ ({1 + (oligoHasMod ? 1 : 0) + (oligoHasPur ? 1 : 0) + (oligoHasSvc ? 1 : 0)} dòng)</span>
+                            <span>🧬 Chèn {combo.items.length} mã &amp; Nhập trình tự tiếp</span>
                         </button>
                         <button
                             type="button"
-                            onClick={() => handleInsertOligoSequence("BUNDLED_SEQUENCE", target)}
-                            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 shadow cursor-pointer transition-colors"
-                            title="Gộp thành 1 dòng hoàn chỉnh theo trình tự (Dành cho KH yêu cầu báo giá & hóa đơn gộp 1 Tube theo trình tự)"
+                            onClick={() => handleInsertOligoSequence(target, true)}
+                            className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold flex items-center gap-1.5 shadow cursor-pointer transition-colors"
                         >
-                            <span>🧪 Chèn GỘP THEO TRÌNH TỰ (1 dòng = {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(singleTubeTotal)}đ)</span>
+                            <span>✓ Chèn &amp; Đóng</span>
                         </button>
                     </div>
                 </div>
@@ -9959,8 +9471,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 productCode: item.productCode,
                 parentCode: parentCode,
                 productName: prod?.name || item.productCode,
+                unit: (item as any).unit || prod?.unit || undefined,
                 manufacturer: mfg,
                 specification: spec,
+                sequence: String((item as any).sequence || "").trim() || undefined,
+                oligoGroupId: (item as any).oligoGroupId || undefined,
+                oligoSeqLabel: (item as any).oligoSeqLabel || undefined,
+                oligoRole: (item as any).oligoRole || undefined,
+                isGift: Boolean((item as any).isGift) || undefined,
                 quantity: qty,
                 price: price, // Đơn giá sau VAT (báo khách)
                 vatRate: finances.vatRate, // % VAT
@@ -10921,31 +10439,128 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             try {
                 const data = new Uint8Array(evt.target?.result as ArrayBuffer);
                 const workbook = XLSX.read(data, { type: "array" });
-                const firstSheetName = workbook.SheetNames[0];
-                const worksheet = workbook.Sheets[firstSheetName];
-                const json: any[] = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
 
-                if (!Array.isArray(json) || json.length === 0) {
+                const normalizeSheetKey = (s: string) =>
+                    String(s || "")
+                        .normalize("NFD")
+                        .replace(/[\u0300-\u036f]/g, "")
+                        .toLowerCase()
+                        .replace(/[^a-z0-9]+/g, "_")
+                        .replace(/^_+|_+$/g, "");
+
+                const readSheetRowsSmart = (ws: XLSX.WorkSheet): any[] => {
+                    const direct = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: "" });
+                    if (direct.length === 0) return [];
+                    const firstKeys = Object.keys(direct[0] || {}).map((k) => normalizeSheetKey(k));
+                    const hasSkuHeader = firstKeys.some((k) =>
+                        ["ma_sku", "ma_hang", "ma_sp", "ma_san_pham", "code"].some((h) => k.includes(h))
+                    );
+                    if (hasSkuHeader) return direct;
+
+                    // Scan first 10 rows for delayed header row (e.g. raw sheets with title banner)
+                    const aoa = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, defval: "" });
+                    const headerIdx = aoa.slice(0, 10).findIndex((row) =>
+                        Array.isArray(row) &&
+                        row.some((cell) => {
+                            const ck = normalizeSheetKey(String(cell || ""));
+                            return ck === "ma_sp" || ck === "ma_sku" || ck === "ma_hang" || ck.startsWith("ma_sku_") || ck.startsWith("ma_hang_hoa");
+                        })
+                    );
+                    if (headerIdx >= 0) {
+                        return XLSX.utils.sheet_to_json<Record<string, any>>(ws, { range: headerIdx, defval: "" });
+                    }
+                    return direct;
+                };
+
+                const isBomSheet = (name: string, rows: any[]): boolean => {
+                    const k = normalizeSheetKey(name);
+                    if (["phu_kien", "bom", "thanh_phan", "dinh_muc", "component"].some((kw) => k.includes(kw))) {
+                        return true;
+                    }
+                    const first = rows[0];
+                    if (!first || typeof first !== "object") return false;
+                    return Object.keys(first).some((col) => {
+                        const ck = normalizeSheetKey(col);
+                        return ck.includes("sku_cha") || ck.includes("parent_product_code") || ck === "parent_code";
+                    });
+                };
+
+                const isGuideOrNoticeSheet = (name: string): boolean => {
+                    const k = normalizeSheetKey(name);
+                    return (
+                        k.includes("huong_dan") ||
+                        k.includes("thong_bao") ||
+                        k.includes("guide") ||
+                        k.includes("notice")
+                    );
+                };
+
+                // Collect sheets carefully so Danh_Muc_San_Pham_KD or multi-sheet Bang_Gia_ABT both work
+                let secondaryRows: any[] = [];
+                const primarySheets: Array<{ name: string; rows: any[] }> = [];
+
+                const consolidatedSheet = workbook.SheetNames.find((s) => {
+                    const k = normalizeSheetKey(s);
+                    return k === "danh_muc_san_pham_kd" || k === "danh_muc_san_pham";
+                });
+
+                for (const sName of workbook.SheetNames) {
+                    const ws = workbook.Sheets[sName];
+                    if (!ws) continue;
+                    const rows = readSheetRowsSmart(ws);
+                    if (isBomSheet(sName, rows)) {
+                        secondaryRows = secondaryRows.concat(rows);
+                        continue;
+                    }
+                    if (consolidatedSheet) {
+                        if (sName === consolidatedSheet) primarySheets.push({ name: sName, rows });
+                        continue;
+                    }
+                    if (isGuideOrNoticeSheet(sName)) continue;
+                    const sk = normalizeSheetKey(sName);
+                    if (sk.includes("danh_muc_oligo_130") && workbook.SheetNames.some((n) => normalizeSheetKey(n) === "oligo")) {
+                        continue;
+                    }
+                    if (rows.length > 0) primarySheets.push({ name: sName, rows });
+                }
+
+                if (primarySheets.length === 0 && workbook.SheetNames.length > 0) {
+                    const fallbackName = workbook.SheetNames[0];
+                    const ws = workbook.Sheets[fallbackName];
+                    if (ws) primarySheets.push({ name: fallbackName, rows: readSheetRowsSmart(ws) });
+                }
+
+                const json: Array<{ row: any; sheetName: string }> = [];
+                for (const s of primarySheets) {
+                    for (const row of s.rows) {
+                        json.push({ row, sheetName: s.name });
+                    }
+                }
+
+                if (json.length === 0) {
                     showToast("File Excel không có dữ liệu hợp lệ!", "warning");
                     return;
                 }
 
-                // Check for Sheet 2: Phụ kiện & Định mức BOM
-                let secondaryRows: any[] = [];
-                if (workbook.SheetNames.length > 1) {
-                    const secSheetName = workbook.SheetNames.find(s => 
-                        s.toLowerCase().includes("phu_kien") || 
-                        s.toLowerCase().includes("bom") || 
-                        s.toLowerCase().includes("thanh_phan") || 
-                        s.toLowerCase().includes("dinh_muc") ||
-                        s.toLowerCase().includes("component")
-                    ) || (workbook.SheetNames[1] && !workbook.SheetNames[1].toLowerCase().includes("huong_dan") ? workbook.SheetNames[1] : "");
-
-                    if (secSheetName) {
-                        const secWs = workbook.Sheets[secSheetName];
-                        secondaryRows = XLSX.utils.sheet_to_json(secWs, { defval: "" });
+                const findColEntry = (row: any, candidates: string[], partialKeywords: string[] = []): { found: boolean; value: any } => {
+                    if (!row || typeof row !== "object") return { found: false, value: undefined };
+                    for (const c of candidates) {
+                        if (Object.prototype.hasOwnProperty.call(row, c)) {
+                            return { found: true, value: row[c] };
+                        }
                     }
-                }
+                    const entries = Object.entries(row);
+                    for (const [k, v] of entries) {
+                        const normK = k.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+                        for (const c of candidates) {
+                            if (normK === c.toLowerCase()) return { found: true, value: v };
+                        }
+                        for (const pk of partialKeywords) {
+                            if (normK.includes(pk.toLowerCase())) return { found: true, value: v };
+                        }
+                    }
+                    return { found: false, value: undefined };
+                };
 
                 const getColVal = (row: any, candidates: string[], partialKeywords: string[] = []): any => {
                     if (!row || typeof row !== "object") return undefined;
@@ -10970,6 +10585,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     if (typeof val === "number") return Number.isFinite(val) ? val : 0;
                     if (!val) return 0;
                     const s = String(val).trim();
+                    const low = s.toLowerCase();
+                    if (!s || low.includes("chưa có giá") || low.includes("lien he") || low.includes("liên hệ")) return 0;
                     if (/^-?\d+(\.\d+)?$/.test(s)) {
                         const num = Number(s);
                         return Number.isFinite(num) ? num : 0;
@@ -10977,6 +10594,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     const hasComma = s.includes(",");
                     const hasDot = s.includes(".");
                     let norm = s.replace(/[^0-9.,-]/g, "");
+                    if (!norm || norm === "-") return 0;
                     if (hasComma && hasDot) {
                         if (norm.lastIndexOf(".") > norm.lastIndexOf(",")) norm = norm.replace(/,/g, "");
                         else norm = norm.replace(/\./g, "").replace(/,/g, ".");
@@ -10999,15 +10617,48 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     return nl === cl || nl === `sản phẩm ${cl}` || nl.startsWith("sản phẩm ") || nl === "hàng hóa nhập khẩu";
                 };
 
-                const importedAll: CommercialProduct[] = json.map((row, idx) => {
-                    const isHeaderlessRow = row["__EMPTY"] !== undefined && row["__EMPTY_1"] !== undefined && !getColVal(row, ["Mã SKU (*)", "Mã Hàng Hóa (SKU)", "Mã SKU", "Mã hàng", "MÃ HÀNG", "Code"], ["mã sku", "mã hàng"]);
+                const sheetDefaultMeta = (sheetName: string) => {
+                    const sk = normalizeSheetKey(sheetName);
+                    if (sk.includes("thiet_bi")) {
+                        return { category: "Thiết bị Phòng Lab", subCategory: "Thiết bị & Máy móc Lab", supplier: "Phòng Kỹ thuật - Thiết bị", storage: "15-25°C (Nhiệt độ phòng)" };
+                    }
+                    if (sk === "oligo" || sk.includes("oligo")) {
+                        return { category: "Hóa chất & Sinh phẩm", subCategory: "Oligo tổng hợp theo trình tự", supplier: "Phòng Tổng hợp Oligo", storage: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)" };
+                    }
+                    if (sk.includes("kit")) {
+                        return { category: "PCR Kit", subCategory: "Kit xét nghiệm & Tách chiết", supplier: "Phòng Sản xuất Kit", storage: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)" };
+                    }
+                    if (sk.includes("hoa_chat")) {
+                        return { category: "Hóa chất & Sinh phẩm", subCategory: "Hóa chất & Dung dịch", supplier: "Phòng Sản xuất Kit", storage: "15-25°C (Nhiệt độ phòng)" };
+                    }
+                    if (sk.includes("vat_tu")) {
+                        return { category: "Vật tư tiêu hao", subCategory: "Vật tư tiêu hao phòng Lab", supplier: "Phòng Sản xuất Kit", storage: "15-25°C (Nhiệt độ phòng)" };
+                    }
+                    if (sk.includes("giai_phap")) {
+                        return { category: "Hóa chất & Sinh phẩm", subCategory: "Giải pháp tự pha / MasterMix", supplier: "Phòng Sản xuất Kit", storage: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)" };
+                    }
+                    return { category: "", subCategory: "", supplier: "", storage: "15-25°C (Nhiệt độ phòng)" };
+                };
+
+                const hasAnyDealerColumn = json.some(({ row }) =>
+                    findColEntry(row, ["Giá Đại lý Cấp 1 (VNĐ)", "Giá Dealer Cấp 1 (VNĐ)", "Giá Dealer 1"], ["đại lý cấp 1", "dealer cấp 1", "dealer 1"]).found ||
+                    findColEntry(row, ["Giá Đại lý Cấp 2 (VNĐ)", "Giá Dealer Cấp 2 (VNĐ)", "Giá Dealer 2"], ["đại lý cấp 2", "dealer cấp 2", "dealer 2"]).found
+                );
+
+                const mappedEntries: Array<{ product: CommercialProduct; apiRow: any }> = [];
+                json.forEach(({ row, sheetName }, idx) => {
+                    const sheetMeta = sheetDefaultMeta(sheetName);
+                    const isHeaderlessRow = row["__EMPTY"] !== undefined && row["__EMPTY_1"] !== undefined && !getColVal(row, ["Mã SKU (*)", "Mã Hàng Hóa (SKU)", "Mã SKU", "Mã hàng", "MÃ HÀNG", "Mã SP", "Code"], ["mã sku", "mã hàng", "mã sp"]);
                     const code = String(
-                        getColVal(row, ["Mã SKU (*)", "Mã Hàng Hóa (SKU)", "Mã SKU", "Mã hàng", "MÃ HÀNG", "Code"], ["mã sku", "mã hàng", "mã sản phẩm"]) ||
+                        getColVal(row, ["Mã SKU (*)", "Mã Hàng Hóa (SKU)", "Mã SKU", "Mã hàng", "MÃ HÀNG", "Mã SP", "Code"], ["mã sku", "mã hàng", "mã sản phẩm", "mã sp"]) ||
                         (isHeaderlessRow ? row["__EMPTY"] : "") ||
                         `COMM-IMP-${idx + 1}`
                     ).trim();
+                    if (!code || code.startsWith("COMM-IMP-") || DEMO_COMMERCIAL_CODES.has(code.toUpperCase()) || isLegacyDemoOligoCode(code)) {
+                        return;
+                    }
                     const name = String(
-                        getColVal(row, ["Tên sản phẩm (*)", "Tên Hàng Hóa Thương Mại", "Tên hàng", "TÊN HÀNG HÓA", "Name"], ["tên sản phẩm", "tên hàng"]) ||
+                        getColVal(row, ["Tên sản phẩm (*)", "Tên Hàng Hóa Thương Mại", "Tên hàng", "TÊN HÀNG HÓA", "Tên Sản Phẩm", "Name"], ["tên sản phẩm", "tên hàng"]) ||
                         (isHeaderlessRow ? row["__EMPTY_1"] : "") ||
                         "Hàng hóa nhập khẩu"
                     ).trim();
@@ -11018,51 +10669,96 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             "Danh mục (PCR Kit/..)", "Chủng loại", "CHỦNG LOẠI", "Loại Kit", "Category", "category"
                         ], ["nhóm ngành hàng", "phân loại", "danh mục", "chủng loại"]) ||
                         (isHeaderlessRow ? row["__EMPTY_2"] : "") ||
+                        sheetMeta.category ||
                         ""
                     ).trim();
-                    const subCat = String(getColVal(row, ["Nhóm Hàng Con", "Nhóm"], ["nhóm hàng con"]) || "").trim();
-                    const category = resolveActualProductCategory({
-                        code,
-                        name,
-                        category: rawCategory,
-                        subCategory: subCat,
-                    }) as any;
-                    const price = parseMoneyVal(getColVal(row, ["Giá niêm yết End-User (VNĐ)", "Giá End User (VNĐ)", "Giá bán", "Price"], ["giá niêm yết", "giá end", "giá bán"]) ?? (isHeaderlessRow ? row["__EMPTY_7"] : 0));
+                    const subCat = String(getColVal(row, ["Nhóm Hàng Con", "Nhóm"], ["nhóm hàng con"]) || sheetMeta.subCategory || "").trim();
+                    const category = (rawCategory.toLowerCase() === "thiết bị" && sheetMeta.category === "Thiết bị Phòng Lab"
+                        ? "Thiết bị Phòng Lab"
+                        : resolveActualProductCategory({
+                            code,
+                            name,
+                            category: rawCategory,
+                            subCategory: subCat,
+                        })) as any;
+
+                    const price = parseMoneyVal(getColVal(row, ["Giá niêm yết End-User (VNĐ)", "Giá End User (VNĐ)", "Giá Bán Lẻ", "Giá bán", "Price"], ["giá niêm yết", "giá end", "giá bán"]) ?? (isHeaderlessRow ? row["__EMPTY_7"] : 0));
                     const costPrice = parseMoneyVal(getColVal(row, ["Giá vốn nhập (VNĐ)", "Giá Vốn (VNĐ)", "Cost"], ["giá vốn"]) ?? (isHeaderlessRow ? row["__EMPTY_6"] : 0));
-                    const priceDealer1 = parseMoneyVal(getColVal(row, ["Giá Đại lý Cấp 1 (VNĐ)", "Giá Dealer Cấp 1 (VNĐ)", "Giá Dealer 1"], ["đại lý cấp 1", "dealer cấp 1"])) || (price > 0 ? Math.round(price * 0.9) : 0);
-                    const priceDealer2 = parseMoneyVal(getColVal(row, ["Giá Đại lý Cấp 2 (VNĐ)", "Giá Dealer Cấp 2 (VNĐ)", "Giá Dealer 2"], ["đại lý cấp 2", "dealer cấp 2"])) || (price > 0 ? Math.round(price * 0.85) : 0);
+                    const d1Entry = findColEntry(row, ["Giá Đại lý Cấp 1 (VNĐ)", "Giá Dealer Cấp 1 (VNĐ)", "Giá Dealer 1"], ["đại lý cấp 1", "dealer cấp 1", "dealer 1"]);
+                    const d2Entry = findColEntry(row, ["Giá Đại lý Cấp 2 (VNĐ)", "Giá Dealer Cấp 2 (VNĐ)", "Giá Dealer 2"], ["đại lý cấp 2", "dealer cấp 2", "dealer 2"]);
+                    const priceDealer1 = d1Entry.found
+                        ? parseMoneyVal(d1Entry.value)
+                        : (!hasAnyDealerColumn && price > 0 ? Math.round(price * 0.9) : 0);
+                    const priceDealer2 = d2Entry.found
+                        ? parseMoneyVal(d2Entry.value)
+                        : (!hasAnyDealerColumn && price > 0 ? Math.round(price * 0.85) : 0);
+
                     const storageCondition = String(
                         getColVal(row, [
                             "Điều kiện bảo quản chuẩn (*)", "Điều kiện bảo quản chuẩn", "Điều kiện bảo quản tiêu chuẩn",
                             "Điều kiện bảo quản", "Điều Kiện Bảo Quản", "Nhiệt độ bảo quản", "storage_condition"
                         ], ["điều kiện bảo quản", "nhiệt độ bảo quản"]) ||
                         (isHeaderlessRow ? row["__EMPTY_8"] : "") ||
+                        sheetMeta.storage ||
                         "15-25°C (Nhiệt độ phòng)"
                     ).trim();
 
-                    return {
+                    const brand = String(getColVal(row, ["Hãng sản xuất (*)", "Hãng Sản Xuất", "Hãng", "Brand"], ["hãng sản xuất"]) || (isHeaderlessRow ? row["__EMPTY_3"] : "") || (sheetName ? "ABT" : "")).trim() || undefined;
+                    const origin = String(getColVal(row, ["Xuất Xứ", "Origin"], ["xuất xứ"]) || "").trim() || undefined;
+                    const unit = String(getColVal(row, ["Đơn vị tính", "Đơn Vị Tính", "ĐVT"], ["đơn vị tính", "đvt"]) || (isHeaderlessRow ? row["__EMPTY_4"] : "") || "Hộp").trim();
+                    const specification = String(getColVal(row, ["Quy cách đóng gói", "Quy Cách / Model", "Quy Cách / Thông Số", "Thông số", "Model"], ["quy cách", "thông số"]) || (isHeaderlessRow ? row["__EMPTY_5"] : "") || "").trim() || undefined;
+                    const warranty = String(getColVal(row, ["Bảo Hành"], ["bảo hành"]) || "").trim() || undefined;
+                    const leadTime = String(getColVal(row, ["Tình Trạng Hàng", "Tình trạng"], ["tình trạng"]) || "Available").trim();
+                    const supplier = String(getColVal(row, ["Nhà Cung Cấp"], ["nhà cung cấp"]) || sheetMeta.supplier || "").trim() || undefined;
+                    const purif = String(getColVal(row, ["Tinh Sạch Mặc Định"], ["tinh sạch"]) || "").trim();
+                    const rawNote = String(getColVal(row, ["Ghi Chú", "Ghi chú"], ["ghi chú"]) || "").trim();
+                    const notes = [purif ? `Tinh sạch mặc định: ${purif}` : "", rawNote].filter(Boolean).join(" | ") || undefined;
+
+                    const product: CommercialProduct = {
                         code,
                         name,
                         category,
                         subCategory: subCat || undefined,
-                        brand: String(getColVal(row, ["Hãng sản xuất (*)", "Hãng Sản Xuất", "Hãng", "Brand"], ["hãng sản xuất"]) || (isHeaderlessRow ? row["__EMPTY_3"] : "") || "").trim() || undefined,
-                        origin: String(getColVal(row, ["Xuất Xứ", "Origin"], ["xuất xứ"]) || "").trim() || undefined,
-                        unit: String(getColVal(row, ["Đơn vị tính", "Đơn Vị Tính", "ĐVT"], ["đơn vị tính", "đvt"]) || (isHeaderlessRow ? row["__EMPTY_4"] : "") || "Hộp").trim(),
-                        specification: String(getColVal(row, ["Quy cách đóng gói", "Quy Cách / Model", "Model"], ["quy cách"]) || (isHeaderlessRow ? row["__EMPTY_5"] : "") || "").trim() || undefined,
+                        brand,
+                        origin,
+                        unit,
+                        specification,
                         costPrice,
                         price,
                         priceDealer1,
                         priceDealer2,
-                        warranty: String(getColVal(row, ["Bảo Hành"], ["bảo hành"]) || "").trim() || undefined,
-                        leadTime: String(getColVal(row, ["Tình Trạng Hàng"], ["tình trạng hàng"]) || "Có sẵn kho").trim(),
+                        warranty,
+                        leadTime,
                         storageCondition,
-                        supplier: String(getColVal(row, ["Nhà Cung Cấp"], ["nhà cung cấp"]) || "").trim() || undefined,
-                        notes: String(getColVal(row, ["Ghi Chú", "Ghi chú"], ["ghi chú"]) || "").trim() || undefined
+                        supplier,
+                        notes,
                     };
-                }).filter(p => p.code && !p.code.startsWith("COMM-IMP-"));
+
+                    const apiRow: Record<string, any> = {
+                        ...row,
+                        "Mã SKU (*)": code,
+                        "Tên sản phẩm (*)": name,
+                        "Nhóm ngành hàng (*)": category,
+                        "Nhóm Hàng Con": subCat,
+                        "Hãng sản xuất (*)": brand || "",
+                        "Đơn vị tính": unit,
+                        "Quy cách đóng gói": specification || "",
+                        "Giá vốn nhập (VNĐ)": costPrice,
+                        "Giá niêm yết End-User (VNĐ)": price,
+                        "Giá Đại lý Cấp 1 (VNĐ)": priceDealer1,
+                        "Giá Đại lý Cấp 2 (VNĐ)": priceDealer2,
+                        "Điều kiện bảo quản chuẩn (*)": storageCondition,
+                        "Tình Trạng Hàng": leadTime,
+                        "Nhà Cung Cấp": supplier || "",
+                        "Ghi Chú": notes || "",
+                    };
+
+                    mappedEntries.push({ product, apiRow });
+                });
+
+                const importedAll = mappedEntries.map((e) => e.product);
 
                 // Hỏi trước khi ghi: (1) mã SKU lặp lại trong file, (2) mã đã có trong danh mục sẽ bị ghi đè.
-                // Lưu ý: các mã đang có tên tạm "Sản phẩm <SKU>" (do nhập kho tạo tự động trước đó) luôn được cập nhật tên chuẩn.
                 const lastIdx = new Map<string, number>();
                 const dupCodes = new Set<string>();
                 importedAll.forEach((p, i) => {
@@ -11093,10 +10789,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     const ex = existingMap.get(k);
                     return ex && !isPlaceholderProdName(ex.name, k);
                 });
+                let overwrite = true;
                 if (overlap.length > 0) {
                     const newOrHealedCount = lastIdx.size - overlap.length;
                     const bomNote = secondaryRows.length > 0 ? `\n(Lưu ý: ${secondaryRows.length} dòng định mức phụ kiện BOM ở Sheet 2 vẫn sẽ được cập nhật đầy đủ).` : "";
-                    const overwrite = window.confirm(
+                    overwrite = window.confirm(
                         `${overlap.length} mã trong file ĐÃ CÓ trong danh mục:\n${listCodes(overlap)}\n\n` +
                         `OK: CẬP NHẬT thông tin các mã này theo file (nếu cột Giá trong file để trống thì giữ nguyên giá đang có).${bomNote}\n` +
                         `Cancel: chỉ thêm mã mới & cập nhật phụ kiện BOM.`
@@ -11121,15 +10818,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     const ex = existingMap.get(item.code);
                     if (ex) {
                         if (!item.costPrice && ex.costPrice) item.costPrice = ex.costPrice;
-                        if (!item.price && ex.price) {
+                        if (!item.price && ex.price && !isNonPricedPipelineStatus(item.leadTime)) {
                             item.price = ex.price;
-                            item.priceDealer1 = ex.priceDealer1 || Math.round(ex.price * 0.9);
-                            item.priceDealer2 = ex.priceDealer2 || Math.round(ex.price * 0.85);
+                            item.priceDealer1 = item.priceDealer1 || ex.priceDealer1 || (hasAnyDealerColumn ? 0 : Math.round(ex.price * 0.9));
+                            item.priceDealer2 = item.priceDealer2 || ex.priceDealer2 || (hasAnyDealerColumn ? 0 : Math.round(ex.price * 0.85));
                         }
                     }
                     return item;
                 });
-                const rowsToSend = keptIdx.length > 0 ? keptIdx.map(i => json[i]) : json;
+                const rowsToSend = keptIdx.length > 0 ? keptIdx.map(i => mappedEntries[i].apiRow) : mappedEntries.map(e => e.apiRow);
                 if (imported.length === 0 && secondaryRows.length === 0) {
                     showToast("Không có mã nào để nhập.", "info");
                     return;
@@ -11152,7 +10849,6 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     if (res.ok && resData.success) {
                         const secMsg = secondaryRows.length > 0 ? ` kèm ${secondaryRows.length} phụ kiện định mức (BOM)` : "";
                         showToast(`Đã import thành công ${imported.length} sản phẩm${secMsg} vào cơ sở dữ liệu!`, "success");
-                        // Tải lại ngay danh sách phụ kiện BOM & sản phẩm gốc từ server (bỏ qua cache)
                         fetch("/api/inventory?action=overview", { headers: { "x-no-cache": "1" } })
                             .then(r => r.json())
                             .then(ov => {
@@ -11174,8 +10870,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                 if (imported.length > 0) {
                     setCommercialProducts(prev => {
+                        const cleanedPrev = prev.filter(p => p && !DEMO_COMMERCIAL_CODES.has(String(p.code || "").toUpperCase()) && !isLegacyDemoOligoCode(p.code));
                         const importedByCode = new Map(imported.map(p => [String(p.code).trim(), p]));
-                        const updatedPrev = prev.map(p => {
+                        const updatedPrev = cleanedPrev.map(p => {
                             const k = String(p.code || "").trim();
                             const imp = importedByCode.get(k);
                             if (!imp) return p;
@@ -11184,9 +10881,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 ...p,
                                 ...imp,
                                 costPrice: imp.costPrice || p.costPrice || 0,
-                                price: imp.price || p.price || 0,
-                                priceDealer1: imp.priceDealer1 || p.priceDealer1 || 0,
-                                priceDealer2: imp.priceDealer2 || p.priceDealer2 || 0,
+                                price: imp.price || (isNonPricedPipelineStatus(imp.leadTime) ? 0 : (p.price || 0)),
+                                priceDealer1: hasAnyDealerColumn ? (imp.priceDealer1 ?? 0) : (imp.priceDealer1 || p.priceDealer1 || 0),
+                                priceDealer2: hasAnyDealerColumn ? (imp.priceDealer2 ?? 0) : (imp.priceDealer2 || p.priceDealer2 || 0),
                             };
                         });
                         const brandNew = Array.from(importedByCode.values());
@@ -11350,7 +11047,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return {
                 productCode: it.productCode,
                 productName: it.productName || prod?.name || it.productCode,
+                unit: it.unit || prod?.unit || "Hộp",
                 specification: it.specification !== undefined ? it.specification : (prod?.specification || ""),
+                sequence: String(it.sequence || "").trim() || undefined,
+                oligoGroupId: it.oligoGroupId || undefined,
+                oligoSeqLabel: it.oligoSeqLabel || undefined,
+                oligoRole: it.oligoRole || undefined,
                 notes: it.notes || "",
                 quantity: Number(it.quantity) || 1,
                 unitPrice: unitPrice,
@@ -11379,7 +11081,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return {
                 productCode: it.productCode,
                 productName: it.productName || it.productCode,
+                unit: it.unit || "Hộp",
                 specification: it.specification || "",
+                sequence: String(it.sequence || "").trim() || undefined,
+                oligoGroupId: it.oligoGroupId || undefined,
+                oligoSeqLabel: it.oligoSeqLabel || undefined,
+                oligoRole: it.oligoRole || undefined,
                 notes: it.notes || "",
                 quantity: Number(it.callOffQty) || 1,
                 unitPrice: Number(it.unitPrice) || 0,
@@ -11462,6 +11169,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 productName: it.productName || prod?.name || it.productCode,
                 unit: it.unit || prod?.unit || "Hộp",
                 specification: it.specification !== undefined ? it.specification : (prod?.specification || ""),
+                sequence: String(it.sequence || "").trim() || undefined,
+                oligoGroupId: it.oligoGroupId || undefined,
+                oligoSeqLabel: it.oligoSeqLabel || undefined,
+                oligoRole: it.oligoRole || undefined,
                 notes: it.notes || (isGift ? "Hàng tặng theo chính sách" : ""),
                 quantity: qty,
                 unitPrice: price,
@@ -13077,6 +12788,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 sourceType: it.sourceType || it.source_type,
                 specification: it.specification !== undefined ? it.specification : (prod?.specification || ""),
                 sequence: it.sequence || undefined,
+                oligoGroupId: it.oligoGroupId || it.oligo_group_id || undefined,
+                oligoSeqLabel: it.oligoSeqLabel || it.oligo_seq_label || undefined,
+                oligoRole: it.oligoRole || it.oligo_role || undefined,
                 notes: it.notes || "",
                 ...kitSpecFields(it),
                 quantity: it.quantity || 1,
@@ -13336,6 +13050,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 brand: prod?.brand || (isComm ? "Mua ngoài" : "ABT"),
                 specification: customSpec,
                 sequence: String((item as any).sequence || quoteItem?.sequence || "").trim() || undefined,
+                oligoGroupId: (item as any).oligoGroupId || quoteItem?.oligoGroupId || undefined,
+                oligoSeqLabel: (item as any).oligoSeqLabel || quoteItem?.oligoSeqLabel || undefined,
+                oligoRole: (item as any).oligoRole || quoteItem?.oligoRole || undefined,
                 notes: customNotes || undefined,
                 ...kitSpecFields(item),
                 targetAllocations: item.targetAllocations || [],
@@ -14423,11 +14140,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return { progressMap, priorReservedMap, priorReservedDetailMap };
     }, [factoryOrders, deliverySlips, procurementOrders, purchaseRequests]);
 
-    /** Dòng hàng là primer / probe / oligo đặt tổng hợp theo trình tự riêng. */
+    /** Dòng hàng là primer / probe / oligo / gene đặt tổng hợp theo trình tự riêng (hỗ trợ đủ 130 mã ABT). */
     const isOligoLikeItem = (it: any, prod?: any): boolean => {
         const code = String(it?.productCode || it?.product_code || it?.code || "").trim();
         const name = `${it?.productName || it?.product_name || it?.name || ""} ${prod?.name || ""}`;
-        return /^(OLIGO|PRI|PRB|PROBE|PRIMER)\b|^(OLIGO|PRI|PRB)[-_.]/i.test(code) ||
+        const category = String(prod?.category || it?.category || "");
+        return isDetailedOligoSkuCode(code) ||
+            isOligoMtoProduct({ code, name, category }) ||
+            /^(OLIGO|PRI|PRB|PROBE|PRIMER)\b|^(OLIGO|PRI|PRB)[-_.]/i.test(code) ||
             /primer|probe|oligo|đoạn mồi|đầu dò|bhq|taqman|5['’]\s*-?\s*(fam|hex|rox|cy5|vic|tet|joe)/i.test(name);
     };
     const itemSequence = (it: any): string => {
@@ -14437,6 +14157,27 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         if (!noteRaw) return "";
         if (/5['’`´]?\s*-\s*[ACGTUacgtuYRWSKMDVHBXN]|[ACGTU]{10,}/i.test(noteRaw)) {
             return noteRaw;
+        }
+        return "";
+    };
+    const resolveItemGroupSequence = (items: any[], targetIt: any): string => {
+        const direct = itemSequence(targetIt);
+        if (direct) return direct;
+        const grpId = String(targetIt?.oligoGroupId || targetIt?.oligo_group_id || "").trim();
+        if (grpId) {
+            const sibling = (items || []).find((s: any) =>
+                String(s?.oligoGroupId || s?.oligo_group_id || "").trim() === grpId && Boolean(itemSequence(s))
+            );
+            if (sibling) return itemSequence(sibling);
+        }
+        const seqLabel = String(targetIt?.oligoSeqLabel || targetIt?.oligo_seq_label || "").trim();
+        if (seqLabel) {
+            const bracket = `[${seqLabel}]`;
+            const sibling = (items || []).find((s: any) =>
+                (String(s?.oligoSeqLabel || s?.oligo_seq_label || "").trim() === seqLabel || String(s?.specification || "").includes(bracket)) &&
+                Boolean(itemSequence(s))
+            );
+            if (sibling) return itemSequence(sibling);
         }
         return "";
     };
@@ -14972,8 +14713,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const prItems = displayItems.map((it: any, idx: number) => {
             const lineKey = `${it.productCode}__${idx}`;
             if (singleProcureExcludedKeys[lineKey] || singleProcureExcludedKeys[it.productCode]) return null;
-            const itCodeLower = String(it.productCode || it.code || "").trim().toLowerCase();
-            const lineSeq = String(singleProcureItemSequences[lineKey] !== undefined ? singleProcureItemSequences[lineKey] : itemSequence(it)).trim();
+            const itCode = String(it.productCode || it.code || "").trim();
+            const itCodeLower = itCode.toLowerCase();
+            const groupSeq = resolveItemGroupSequence(displayItems, it);
+            const lineSeq = String(singleProcureItemSequences[lineKey] !== undefined ? singleProcureItemSequences[lineKey] : groupSeq).trim();
             const ib: any = (prStockAnalysis.itemsBreakdown || []).find((b: any) => String(b.code || "").toLowerCase() === itCodeLower);
             const qty = singleProcureItemQuantities[lineKey] !== undefined
                 ? Number(singleProcureItemQuantities[lineKey])
@@ -14987,13 +14730,20 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 : (singleProcureItemNotes[it.productCode] !== undefined ? singleProcureItemNotes[it.productCode] : (it.notes || ""));
             const ks = kitSpecOf(it);
             const baseSpec = specWithSequence(it.specification || it.brand || "Theo đơn hàng", lineSeq);
+            const seqLabel = String(it.oligoSeqLabel || it.oligo_seq_label || "").trim();
+            const oligoGroupId = String(it.oligoGroupId || it.oligo_group_id || "").trim();
+            const oligoRole = String(it.oligoRole || it.oligo_role || "").trim();
+            const needsSeq = isOligoLikeItem(it) && !(isOligoAddonSku(itCode) && (oligoRole === "ADDON" || Boolean(oligoGroupId)));
             return {
                 is_custom: false,
-                product_code: it.productCode || it.code || "",
+                product_code: itCode,
                 product_name: it.productName || it.name || it.productCode || "Mặt hàng mua ngoài",
                 specification: hasKitSpec(ks) ? withPackagingNote(baseSpec, ks) : baseSpec,
                 sequence: lineSeq || undefined,
-                needs_sequence: isOligoLikeItem(it) || undefined,
+                oligo_group_id: oligoGroupId || undefined,
+                oligo_seq_label: seqLabel || undefined,
+                oligo_role: oligoRole || undefined,
+                needs_sequence: needsSeq || undefined,
                 ...kitSpecFields(it),
                 unit: it.unit || "Hộp",
                 quantity: qty > 0 ? qty : 1,
@@ -18405,7 +18155,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 commercialCategoryFilter === "all"
                     ? true
                     : commercialCategoryFilter === "GROUP:OLIGO_MTO"
-                    ? (String(p.code || "").toUpperCase().startsWith("OLIGO-") || String(p.code || "").toUpperCase() === "CUSTOM-ORDER")
+                    ? (isDetailedOligoSkuCode(p.code) || isOligoMtoProduct(p))
                     : commercialCategoryFilter.startsWith("GROUP:")
                     ? getCommercialCategoryGroup(p) === commercialCategoryFilter.slice(6)
                     : actualCat === commercialCategoryFilter ||
@@ -18416,9 +18166,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
             if (!matchesSearch || !matchesCat || !matchesBrand || !matchesAvail) return false;
 
-            // Filter by price status (dịch vụ sửa chữa định giá theo phát sinh thực tế nên không tính vào nhóm lỗi chưa có giá)
-            if (commercialPriceFilter === "unpriced" && ((p.price && Number(p.price) > 0) || isServiceProduct(p))) return false;
-            if (commercialPriceFilter === "priced" && (!p.price || Number(p.price) === 0) && !isServiceProduct(p)) return false;
+            // Filter by price status (dịch vụ & mã Coming soon / Đang chuyển giao không tính vào nhóm lỗi thiếu giá)
+            const skipPriceWarn = isServiceProduct(p) || isNonPricedPipelineStatus(`${p.leadTime || ""} ${p.notes || ""}`);
+            if (commercialPriceFilter === "unpriced" && ((p.price && Number(p.price) > 0) || skipPriceWarn)) return false;
+            if (commercialPriceFilter === "priced" && (!p.price || Number(p.price) === 0) && !skipPriceWarn) return false;
 
             // Filter by components / accessories
             const comps = getProductComponentsList(p);
@@ -25653,9 +25404,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         ? "bg-emerald-600 text-white border-emerald-400"
                                         : "bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border-emerald-700/60"
                                 )}
-                                title="Lọc nhanh 7 mã khung Oligo (OLIGO-BASE, OLIGO-MOD, OLIGO-PUR, OLIGO-SVC, OLIGO-PRIMER, OLIGO-PROBE) và Hàng đặt riêng (CUSTOM-ORDER) để xem & chỉnh sửa đơn giá chuẩn"
+                                title="Lọc nhanh 130 mã danh mục Oligo chi tiết ABT (PRI, PUR, PRE, LNA, BIOTIN, NH2, Inosine, Probe, Dye Primer, DNA Synthesis)"
                             >
-                                <span>🧬 {commercialCategoryFilter === "GROUP:OLIGO_MTO" ? "Đang lọc: Mã khung Oligo (Bỏ lọc)" : "Mã khung Oligo / Đặt riêng (7 mã)"}</span>
+                                <span>🧬 {commercialCategoryFilter === "GROUP:OLIGO_MTO" ? "Đang lọc: Danh mục Oligo (Bỏ lọc)" : `Danh mục Oligo (${commercialProducts.filter(p => isDetailedOligoSkuCode(p.code) || isOligoMtoProduct(p)).length} mã)`}</span>
                             </button>
                             <button
                                 onClick={openAddCommercialModal}
@@ -28694,6 +28445,46 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 </div>
                                             </div>
 
+                                            {/* Trình tự Oligo / Probe gắn theo nhóm (tự đồng bộ các mã phối hợp & tính lại số base) */}
+                                            {(() => {
+                                                const quoteItemProd = allSalesProducts.find((p) => p.code === item.productCode) || biolabProducts.find((p) => p.code === item.productCode);
+                                                const seqVal = String((item as any).sequence || "");
+                                                const seqLabel = String((item as any).oligoSeqLabel || "").trim();
+                                                const oligoRole = String((item as any).oligoRole || "").trim();
+                                                if (!(item.productCode && (isOligoLikeItem(item, quoteItemProd) || seqVal || seqLabel))) return null;
+                                                const parsedSeq = parseOligoSequenceDetails(seqVal);
+                                                return (
+                                                    <div className="mt-2 flex flex-wrap items-start gap-2 px-2.5 py-1.5 rounded-lg bg-violet-950/40 border border-violet-700/50">
+                                                        <div className="flex items-center gap-1.5 pt-1.5">
+                                                            {seqLabel && (
+                                                                <span className="px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-600/50 text-[10px] font-mono font-bold text-emerald-300">
+                                                                    [{seqLabel}]
+                                                                </span>
+                                                            )}
+                                                            {oligoRole && (
+                                                                <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${oligoRole === "PRIMARY" ? "bg-violet-900/80 text-violet-200 border border-violet-500/40" : "bg-cyan-950/80 text-cyan-300 border border-cyan-600/40"}`}>
+                                                                    {oligoRole === "PRIMARY" ? "Mã chính" : "Phối hợp"}
+                                                                </span>
+                                                            )}
+                                                            <span className="text-[11px] font-bold text-violet-300 whitespace-nowrap">🧬 Trình tự 5&apos;→3&apos;:</span>
+                                                        </div>
+                                                        <textarea
+                                                            rows={1}
+                                                            value={seqVal}
+                                                            onChange={(e) => {
+                                                                const v = e.target.value;
+                                                                setQuoteItems(prev => syncOligoSequenceAcrossRows(prev, index, v, true));
+                                                            }}
+                                                            placeholder="VD: 5'-ACGTTGCAAGT...-3' (sửa 1 ô tự cập nhật các mã phối hợp cùng trình tự)"
+                                                            className="flex-1 min-w-[240px] min-h-[30px] bg-slate-950 border border-violet-700/60 rounded px-2 py-1 text-xs font-mono text-violet-100 placeholder-slate-500 focus:border-violet-400 focus:outline-none resize-y"
+                                                        />
+                                                        <span className={`text-[10px] font-mono whitespace-nowrap pt-1.5 ${seqVal ? "text-violet-300" : "text-rose-400"}`}>
+                                                            {seqVal ? `${parsedSeq.baseCount} base` : "Chưa nhập"}
+                                                        </span>
+                                                    </div>
+                                                );
+                                            })()}
+
                                             {/* Live Stock Intelligence & Available Quantity Banner for Selected Product */}
                                             {item.productCode && (() => {
                                                 const stockIntel = getProductLiveStockIntelligence(item.productCode);
@@ -29201,9 +28992,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 type="button"
                                 onClick={() => handleOpenOligoBuilder("QUOTE")}
                                 className="text-xs bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-600/60 text-emerald-300 px-2.5 py-1 rounded-lg font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
-                                title="Mở công cụ tính & chèn nhanh trình tự Oligo (Hỗ trợ cả Tách 4 mã thành phần hoặc Gộp 1 dòng theo trình tự)"
+                                title="Mở bộ phối hợp 130 mã Oligo ABT cho từng trình tự 5'→3'"
                             >
-                                <span>🧬 + Thêm trình tự Oligo (Tách 4 mã / Gộp 1 dòng)</span>
+                                <span>🧬 + Phối hợp mã Oligo theo trình tự (130 mã)</span>
                             </button>
                         </div>
                         {renderOligoBuilderPanel("QUOTE")}
@@ -31352,14 +31143,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 <div
                                                                     key={p.code}
                                                                     onClick={() => {
-                                                                        setFactoryOrderItems(prev => prev.map((it, i) => i === index ? {
-                                                                            ...it,
-                                                                            productCode: p.code,
-                                                                            productName: p.name || p.code,
-                                                                            specification: it.specification && it.productCode === p.code ? it.specification : (p.specification || ""),
-                                                                            unitPrice: Boolean((it as any).isGift || (it as any).is_gift) ? 0 : (p.price || 0),
-                                                                            isGift: Boolean((it as any).isGift || (it as any).is_gift)
-                                                                        } : it));
+                                                                        setFactoryOrderItems(prev => prev.map((it, i) => {
+                                                                            if (i !== index) return it;
+                                                                            const seqStr = String((it as any).sequence || "").trim();
+                                                                            const seqDetails = seqStr ? parseOligoSequenceDetails(seqStr) : null;
+                                                                            const nextUnit = p.unit || (it as any).unit || "Hộp";
+                                                                            const autoBaseQty = nextUnit.toLowerCase() === "base" && seqDetails && seqDetails.baseCount > 0
+                                                                                ? seqDetails.baseCount
+                                                                                : (it.quantity || 1);
+                                                                            return {
+                                                                                ...it,
+                                                                                productCode: p.code,
+                                                                                productName: p.name || p.code,
+                                                                                unit: nextUnit,
+                                                                                quantity: autoBaseQty,
+                                                                                specification: it.specification && it.productCode === p.code ? it.specification : (p.specification || ""),
+                                                                                unitPrice: Boolean((it as any).isGift || (it as any).is_gift) ? 0 : (p.price || 0),
+                                                                                isGift: Boolean((it as any).isGift || (it as any).is_gift)
+                                                                            };
+                                                                        }));
                                                                         setProductSearchQueries(prev => {
                                                                             const next = { ...prev };
                                                                             delete next[index];
@@ -31531,25 +31333,60 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         </div>
                                     )}
 
-                                    {item.productCode && (isOligoLikeItem(item, currentProd) || itemSequence(item)) && (() => {
+                                    {item.productCode && (isOligoLikeItem(item, currentProd) || itemSequence(item) || (item as any).oligoSeqLabel) && (() => {
                                         const seqVal = String((item as any).sequence || "");
+                                        const seqLabel = String((item as any).oligoSeqLabel || "").trim();
+                                        const oligoRole = String((item as any).oligoRole || "").trim();
                                         const baseCount = seqVal ? countNucleotideBases(seqVal).count : 0;
+                                        const canQuickAttachAddon = oligoRole !== "ADDON" && !isOligoAddonSku(item.productCode);
+                                        const addonOptions = ABT_OLIGO_130_CATALOG.filter((e) => isOligoAddonSku(e.code));
                                         return (
-                                            <div className="flex items-start gap-2 px-2.5 py-1.5 rounded-lg bg-violet-950/40 border border-violet-700/50">
-                                                <span className="text-[11px] font-bold text-violet-300 whitespace-nowrap pt-1.5">🧬 Trình tự 5'→3' *</span>
+                                            <div className="flex flex-wrap items-start gap-2 px-2.5 py-1.5 rounded-lg bg-violet-950/40 border border-violet-700/50">
+                                                <div className="flex items-center gap-1.5 pt-1.5">
+                                                    {seqLabel && (
+                                                        <span className="px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-600/50 text-[10px] font-mono font-bold text-emerald-300">
+                                                            [{seqLabel}]
+                                                        </span>
+                                                    )}
+                                                    {oligoRole && (
+                                                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${oligoRole === "PRIMARY" ? "bg-violet-900/80 text-violet-200 border border-violet-500/40" : "bg-cyan-950/80 text-cyan-300 border border-cyan-600/40"}`}>
+                                                            {oligoRole === "PRIMARY" ? "Mã chính" : "Phối hợp"}
+                                                        </span>
+                                                    )}
+                                                    <span className="text-[11px] font-bold text-violet-300 whitespace-nowrap">🧬 Trình tự 5'→3' *</span>
+                                                </div>
                                                 <textarea
                                                     rows={1}
                                                     value={seqVal}
                                                     onChange={(e) => {
                                                         const v = e.target.value;
-                                                        setFactoryOrderItems(prev => prev.map((it, i) => i === index ? { ...it, sequence: v } : it));
+                                                        setFactoryOrderItems(prev => syncOligoSequenceAcrossRows(prev, index, v, false));
                                                     }}
-                                                    placeholder="VD: 5'-ACGTTGCAAGT...-3' (probe ghi kèm nhãn: 5'FAM ... 3'BHQ1)"
-                                                    className="flex-1 min-h-[30px] bg-slate-950 border border-violet-700/60 rounded px-2 py-1 text-xs font-mono text-violet-100 placeholder-slate-500 focus:border-violet-400 focus:outline-none resize-y"
+                                                    placeholder="VD: 5'-ACGTTGCAAGT...-3' (sửa 1 ô tự đồng bộ các mã phối hợp cùng trình tự)"
+                                                    className="flex-1 min-w-[220px] min-h-[30px] bg-slate-950 border border-violet-700/60 rounded px-2 py-1 text-xs font-mono text-violet-100 placeholder-slate-500 focus:border-violet-400 focus:outline-none resize-y"
                                                 />
-                                                <span className={`text-[10px] font-mono whitespace-nowrap pt-1.5 ${seqVal ? "text-violet-300" : "text-rose-400"}`}>
-                                                    {seqVal ? `${baseCount} base` : "Chưa nhập"}
-                                                </span>
+                                                <div className="flex items-center gap-2 pt-1">
+                                                    <span className={`text-[10px] font-mono whitespace-nowrap ${seqVal ? "text-violet-300" : "text-rose-400"}`}>
+                                                        {seqVal ? `${baseCount} base` : "Chưa nhập"}
+                                                    </span>
+                                                    {canQuickAttachAddon && (
+                                                        <select
+                                                            value=""
+                                                            onChange={(e) => {
+                                                                if (e.target.value) handleAttachAddonToSoGroup(index, e.target.value);
+                                                            }}
+                                                            title="Phối hợp thêm mã phụ (Tinh sạch, Đông khô, Biotin, NH2, LNA, Inosine, Vector...) cho cùng trình tự này"
+                                                            className="bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-600/60 rounded px-1.5 py-1 text-[10px] font-bold text-emerald-200 focus:border-emerald-400 focus:outline-none cursor-pointer"
+                                                        >
+                                                            <option value="">+ Phối hợp mã phụ...</option>
+                                                            {addonOptions.map((opt) => (
+                                                                <option key={opt.code} value={opt.code}>
+                                                                    {opt.code} — {opt.name}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                    )}
+                                                </div>
                                             </div>
                                         );
                                     })()}
@@ -31796,9 +31633,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     type="button"
                                     onClick={() => handleOpenOligoBuilder("ORDER")}
                                     className="text-xs bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-600/60 text-emerald-300 px-2.5 py-1 rounded-lg font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
-                                    title="Mở công cụ tính & chèn nhanh trình tự Oligo (Hỗ trợ cả Tách 4 mã thành phần hoặc Gộp 1 dòng theo trình tự)"
+                                    title="Mở bộ phối hợp 130 mã Oligo ABT cho từng trình tự 5'→3'"
                                 >
-                                    <span>🧬 + Thêm trình tự Oligo (Tách 4 mã / Gộp 1 dòng)</span>
+                                    <span>🧬 + Phối hợp mã Oligo theo trình tự (130 mã)</span>
                                 </button>
                             </div>
                         </div>
@@ -32834,13 +32671,27 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     <td className="py-2.5 px-3">
                                                         <div className="font-bold text-white text-[12px]">{it?.productName || it?.productCode}</div>
                                                         <div className="text-[10px] font-mono text-sky-400 mt-0.5 font-semibold">{it?.productCode}</div>
-                                                        {itemSequence(it) ? (
-                                                            <div className="mt-1 px-2 py-1 rounded bg-violet-950/50 border border-violet-700/50 text-[11px] font-mono text-violet-100 break-all select-all" title="Trình tự đặt tổng hợp (bấm để chọn, sao chép)">
-                                                                🧬 {itemSequence(it)} <span className="text-violet-400">({countNucleotideBases(itemSequence(it)).count} base)</span>
-                                                            </div>
-                                                        ) : isOligoLikeItem(it) ? (
-                                                            <div className="mt-1 text-[10px] font-bold text-rose-400">🧬 Chưa có trình tự — bấm "Sửa đơn" để bổ sung</div>
-                                                        ) : null}
+                                                        {(() => {
+                                                            const resolvedSeq = resolveItemGroupSequence(viewingFactoryOrderItems.items || [], it);
+                                                            const seqLabel = String((it as any)?.oligoSeqLabel || "").trim();
+                                                            if (resolvedSeq) {
+                                                                return (
+                                                                    <div className="mt-1 px-2 py-1 rounded bg-violet-950/50 border border-violet-700/50 text-[11px] font-mono text-violet-100 break-all select-all" title="Trình tự đặt tổng hợp (bấm để chọn, sao chép)">
+                                                                        {seqLabel && <span className="mr-1.5 text-emerald-300 font-bold">[{seqLabel}]</span>}
+                                                                        🧬 {resolvedSeq} <span className="text-violet-400">({countNucleotideBases(resolvedSeq).count} base)</span>
+                                                                    </div>
+                                                                );
+                                                            }
+                                                            if (isOligoLikeItem(it)) {
+                                                                return (
+                                                                    <div className="mt-1 text-[10px] font-bold text-rose-400">
+                                                                        {seqLabel && <span className="mr-1 text-emerald-300">[{seqLabel}]</span>}
+                                                                        🧬 Chưa có trình tự — bấm "Sửa đơn" để bổ sung
+                                                                    </div>
+                                                                );
+                                                            }
+                                                            return null;
+                                                        })()}
                                                         {/* Line Item Stock Breakdown Badge */}
                                                         {(() => {
                                                             const vIsStock = checkIsPureStock(viewingFactoryOrderItems);
@@ -33812,17 +33663,26 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     <div className="text-[10px] text-cyan-300 font-mono">
                                                                         {it?.specification ? it.specification : (it?.brand ? `Hãng: ${it.brand}` : "Mua ngoài")}
                                                                     </div>
-                                                                    {(isOligoLikeItem(it) || itemSequence(it)) && (() => {
-                                                                        const seqVal = singleProcureItemSequences[lineKey] !== undefined ? singleProcureItemSequences[lineKey] : itemSequence(it);
+                                                                    {(isOligoLikeItem(it) || itemSequence(it) || (it as any)?.oligoSeqLabel) && (() => {
+                                                                        const fallbackSeq = resolveItemGroupSequence(displayItems, it);
+                                                                        const seqVal = singleProcureItemSequences[lineKey] !== undefined ? singleProcureItemSequences[lineKey] : fallbackSeq;
+                                                                        const seqLabel = String((it as any)?.oligoSeqLabel || "").trim();
                                                                         return (
-                                                                            <input
-                                                                                type="text"
-                                                                                value={seqVal}
-                                                                                onChange={(e) => setSingleProcureItemSequences(prev => ({ ...prev, [lineKey]: e.target.value }))}
-                                                                                placeholder="🧬 Nhập trình tự 5'→3' (bắt buộc để Cung ứng đặt NCC)"
-                                                                                title={seqVal || "Chưa có trình tự"}
-                                                                                className={`mt-1 w-full min-w-[220px] bg-slate-900 rounded px-2 py-1 text-[11px] font-mono text-violet-100 placeholder-rose-400/80 focus:outline-none border ${seqVal.trim() ? "border-violet-600/60 focus:border-violet-400" : "border-rose-500/70 focus:border-rose-400"}`}
-                                                                            />
+                                                                            <div className="mt-1 space-y-1">
+                                                                                {seqLabel && (
+                                                                                    <span className="inline-block px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-600/50 text-[10px] font-mono font-bold text-emerald-300">
+                                                                                        [{seqLabel}]
+                                                                                    </span>
+                                                                                )}
+                                                                                <input
+                                                                                    type="text"
+                                                                                    value={seqVal}
+                                                                                    onChange={(e) => setSingleProcureItemSequences(prev => ({ ...prev, [lineKey]: e.target.value }))}
+                                                                                    placeholder="🧬 Nhập trình tự 5'→3' (bắt buộc để Cung ứng đặt NCC)"
+                                                                                    title={seqVal || "Chưa có trình tự"}
+                                                                                    className={`w-full min-w-[220px] bg-slate-900 rounded px-2 py-1 text-[11px] font-mono text-violet-100 placeholder-rose-400/80 focus:outline-none border ${seqVal.trim() ? "border-violet-600/60 focus:border-violet-400" : "border-rose-500/70 focus:border-rose-400"}`}
+                                                                                />
+                                                                            </div>
                                                                         );
                                                                     })()}
                                                                 </td>

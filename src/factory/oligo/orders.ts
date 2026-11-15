@@ -60,9 +60,16 @@ const orderSchema = z.object({
   notes: z.string().trim().max(2000).optional().nullable(),
 });
 
-export async function createOligoOrder(tx: Tx, actor: AuthzActor, input: unknown) {
+export async function createOligoOrder(
+  tx: Tx,
+  actor: AuthzActor,
+  input: unknown,
+  options?: { trustedSystem?: boolean }
+) {
   const data = parseInput(orderSchema, input);
-  await authorize(tx, actor, "oligo.order.manage", data.org_unit_id);
+  if (!(options?.trustedSystem && actor.isSystem)) {
+    await authorize(tx, actor, "oligo.order.manage", data.org_unit_id);
+  }
   await oligoUnit(tx, data.org_unit_id);
   let due = data.due_date ?? null;
   let internalOrderId = data.internal_order_id ?? null;
@@ -286,11 +293,19 @@ export async function insertSequence(
 }
 
 /** Adds pasted sequences to an order (all or nothing); properties are computed by the analyser. */
-export async function addSequences(tx: Tx, actor: AuthzActor, orderId: string, input: unknown) {
+export async function addSequences(
+  tx: Tx,
+  actor: AuthzActor,
+  orderId: string,
+  input: unknown,
+  options?: { trustedSystem?: boolean }
+) {
   const data = parseInput(linesSchema, input);
   const order = (await tx.query("SELECT * FROM oligo.oligo_order WHERE id = $1 FOR UPDATE", [orderId])).rows[0];
   if (!order) throw notFound("đơn Oligo");
-  await authorize(tx, actor, "oligo.order.manage", order.org_unit_id);
+  if (!(options?.trustedSystem && actor.isSystem)) {
+    await authorize(tx, actor, "oligo.order.manage", order.org_unit_id);
+  }
   if (["COMPLETED", "DELIVERED", "CANCELLED"].includes(order.status)) throw invalid("Đơn đã kết thúc, không thêm trình tự.");
   const lines = await parseLines(tx, data.text, data.defaults);
   let lineNo = Number((await tx.query("SELECT coalesce(max(line_no), 0) AS n FROM oligo.oligo_sequence WHERE order_id = $1", [orderId])).rows[0].n);

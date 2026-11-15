@@ -148,4 +148,63 @@ describe("internal orders from Kinh doanh", () => {
     await handleKdEvent({ event_id: crypto.randomUUID(), event_type: "KdPoCancelled", payload: { kd_po_code: code2, reason: "Khách hủy" } });
     expect((await orderOf(code2)).status).toBe("CANCELLED");
   });
+
+  it("creates oligo order and deduplicates multi-SKU lines sharing one sequence label into one oligo_sequence", async () => {
+    const site = await makeSite();
+    await getFactoryPool().query("UPDATE core.org_unit SET module_key = NULL WHERE module_key = 'OLIGO'");
+    await getFactoryPool().query("UPDATE core.org_unit SET module_key = 'OLIGO' WHERE id = $1", [site.dept]);
+    const scaleRow = (await getFactoryPool().query("SELECT code FROM oligo.scale WHERE status = 'ACTIVE' AND code = '100NMOL' LIMIT 1")).rows[0];
+    if (!scaleRow) {
+      await getFactoryPool().query(
+        "INSERT INTO oligo.scale (code, label, synth_nmol, od_min, od_max, sort_order, status) VALUES ('100NMOL', '100 nmol', 100, 5, 10, 2, 'ACTIVE') ON CONFLICT (code) DO NOTHING"
+      );
+    }
+
+    const poCode = `PO-OLG-${crypto.randomUUID().slice(0, 6)}`;
+    await handleKdEvent({
+      event_id: crypto.randomUUID(),
+      event_type: "KdPoIssued",
+      payload: {
+        kd_po_id: 99,
+        kd_po_code: poCode,
+        factory_unit: "OLIGO",
+        ship_mode: "TO_KD",
+        lines: [
+          {
+            line_index: 0,
+            product_code: "PRI-02.100",
+            product_name: "Standard Primer 15-34 base",
+            unit: "Base",
+            quantity: 20,
+            unit_price: 11000,
+            specification: "[SARS-F1] 5'-ACGTTGCAAGTCCTGATGCA-3' | 100nmol",
+            notes: "20 base",
+          },
+          {
+            line_index: 1,
+            product_code: "PUR-02",
+            product_name: "Tinh sạch HPLC",
+            unit: "Mẫu",
+            quantity: 1,
+            unit_price: 440000,
+            specification: "[SARS-F1] 5'-ACGTTGCAAGTCCTGATGCA-3' | Tinh sạch HPLC",
+            notes: "Mã phối hợp cho trình tự [SARS-F1]",
+          },
+        ],
+      },
+    });
+
+    const io = await orderOf(poCode);
+    expect(io).toBeDefined();
+    const oligoOrd = (await getFactoryPool().query("SELECT * FROM oligo.oligo_order WHERE internal_order_id = $1", [io.id])).rows[0];
+    expect(oligoOrd).toBeDefined();
+    const seqs = (await getFactoryPool().query("SELECT * FROM oligo.oligo_sequence WHERE order_id = $1 ORDER BY line_no", [oligoOrd.id])).rows;
+    expect(seqs).toHaveLength(1);
+    expect(seqs[0]).toMatchObject({
+      name: "SARS-F1",
+      base_count: 20,
+      scale_code: "100NMOL",
+      purification: "HPLC",
+    });
+  });
 });
