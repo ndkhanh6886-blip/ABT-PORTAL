@@ -1513,8 +1513,109 @@ export function SlotsPanel({
   );
 }
 
-/** Lab instruments other than synthesizers (HPLC, spectrophotometer …) with their reagent / solvent positions. */
-export function InstrumentsView({ canManage, canOperate }: { canManage: boolean; canOperate: boolean }) {
+const ASSET_STATUS_LABELS: Record<string, string> = {
+  IN_SERVICE: "Đang dùng",
+  UNDER_MAINTENANCE: "Bảo trì",
+  OUT_OF_CALIBRATION: "Hết hiệu chuẩn",
+  RETIRED: "Ngừng",
+};
+
+function EditInstrumentPanel({ asset, onDone }: { asset: Asset; onDone: () => void }) {
+  const qc = useQueryClient();
+  const [name, setName] = useState(asset.name);
+  const [model, setModel] = useState(asset.model ?? "");
+  const [serialNo, setSerialNo] = useState(asset.serial_no ?? "");
+  const [status, setStatus] = useState(asset.status || "IN_SERVICE");
+  const [due, setDue] = useState(asset.next_calibration_due ? asset.next_calibration_due.slice(0, 10) : "");
+  const [reason, setReason] = useState("Cập nhật thông số / hạn hiệu chuẩn thiết bị");
+
+  const save = useMutation({
+    mutationFn: () =>
+      api(`/api/factory/assets/${asset.id}`, {
+        method: "PATCH",
+        json: {
+          name: name.trim(),
+          model: model.trim() || null,
+          serial_no: serialNo.trim() || null,
+          status,
+          next_calibration_due: due || null,
+          reason: reason.trim() || "Cập nhật cấu hình thiết bị",
+        },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["factory", "assets"] });
+      qc.invalidateQueries({ queryKey: ["factory", "asset-slots", asset.id] });
+      onDone();
+    },
+  });
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        save.mutate();
+      }}
+      className="p-3 mb-3 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700"
+    >
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-xs font-bold text-slate-700 dark:text-slate-200">
+          ⚙ Cài đặt thiết bị: <span className="font-mono">{asset.code}</span>
+        </div>
+        <button type="button" onClick={onDone} className="text-xs text-slate-500 hover:underline">
+          Đóng
+        </button>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+        <Field label="Tên thiết bị *">
+          <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} required />
+        </Field>
+        <Field label="Model">
+          <input className={inputClass} value={model} onChange={(e) => setModel(e.target.value)} />
+        </Field>
+        <Field label="Số Serial">
+          <input className={inputClass} value={serialNo} onChange={(e) => setSerialNo(e.target.value)} />
+        </Field>
+        <Field label="Trạng thái">
+          <select className={inputClass} value={status} onChange={(e) => setStatus(e.target.value)}>
+            {Object.entries(ASSET_STATUS_LABELS).map(([k, v]) => (
+              <option key={k} value={k}>
+                {v}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Hạn hiệu chuẩn tiếp theo">
+          <input className={inputClass} type="date" value={due} onChange={(e) => setDue(e.target.value)} />
+        </Field>
+        <Field label="Lý do chỉnh sửa">
+          <input className={inputClass} value={reason} onChange={(e) => setReason(e.target.value)} required />
+        </Field>
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <Button type="submit" disabled={save.isPending}>
+          {save.isPending ? "Đang lưu..." : "Lưu thông số"}
+        </Button>
+        <Button type="button" variant="ghost" onClick={onDone}>
+          Hủy
+        </Button>
+      </div>
+      <ErrorNote error={save.error} />
+    </form>
+  );
+}
+
+/** Lab instruments other than synthesizers (HPLC, spectrophotometer...) with their reagent / solvent positions. */
+export function InstrumentsView({
+  canManage,
+  canOperate,
+  mode = "all",
+  onNavigateToRules,
+}: {
+  canManage: boolean;
+  canOperate: boolean;
+  mode?: "assets" | "reagents" | "all";
+  onNavigateToRules?: () => void;
+}) {
   const assets = useQuery({
     queryKey: ["factory", "assets", "P-OLIGO"],
     queryFn: () => api<Asset[]>("/api/factory/assets?dept=P-OLIGO"),
@@ -1522,6 +1623,7 @@ export function InstrumentsView({ canManage, canOperate }: { canManage: boolean;
   const [open, setOpen] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
+  const [editAssetId, setEditAssetId] = useState<string | null>(null);
   const list = useMemo(() => {
     const nonSynth = (assets.data ?? []).filter(
       (a) => a.asset_type !== "SYNTHESIZER" && (!a.owner_code || a.owner_code === "P-OLIGO")
@@ -1534,7 +1636,10 @@ export function InstrumentsView({ canManage, canOperate }: { canManage: boolean;
     });
   }, [assets.data]);
 
+  const shouldAutoOpenSlots = mode !== "assets";
+
   useEffect(() => {
+    if (!shouldAutoOpenSlots) return;
     if (list.length === 0) {
       if (open !== null && !assets.isFetching) setOpen(null);
       return;
@@ -1546,7 +1651,36 @@ export function InstrumentsView({ canManage, canOperate }: { canManage: boolean;
       const hplc = list.find((a) => a.asset_type === "HPLC") ?? list[0];
       setOpen(hplc?.id ?? null);
     }
-  }, [list, open, dismissed, assets.isFetching]);
+  }, [shouldAutoOpenSlots, list, open, dismissed, assets.isFetching]);
+
+  const editAsset = editAssetId ? list.find((a) => a.id === editAssetId) ?? null : null;
+
+  if (mode === "reagents") {
+    return (
+      <div className="flex flex-col gap-3">
+        <ErrorNote error={assets.error} />
+        {open ? (
+          <SlotsPanel
+            key={open}
+            assetId={open}
+            hplcAssets={list}
+            onSelectAsset={(id) => {
+              setDismissed(false);
+              setOpen(id);
+            }}
+            canConfigure={canManage}
+            canOperate={canOperate}
+          />
+        ) : (
+          assets.data && (
+            <Card title="Quản lý Sử dụng, Định mức & Khấu hao Hóa chất HPLC">
+              <Empty>Chưa khai báo thiết bị HPLC hoặc thiết bị hậu tổng hợp. Vui lòng thêm máy ở tab Thiết bị.</Empty>
+            </Card>
+          )
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -1577,21 +1711,26 @@ export function InstrumentsView({ canManage, canOperate }: { canManage: boolean;
           ) : null
         }
       >
-        {canManage && showAdd && (
+      {canManage && showAdd && (
           <NewInstrument
             onCreated={(newId) => {
               setShowAdd(false);
-              setDismissed(false);
-              setOpen(newId);
+              if (mode === "all") {
+                setDismissed(false);
+                setOpen(newId);
+              }
             }}
           />
+        )}
+        {canManage && editAsset && (
+          <EditInstrumentPanel key={editAsset.id} asset={editAsset} onDone={() => setEditAssetId(null)} />
         )}
         <ErrorNote error={assets.error} />
         {assets.data && list.length === 0 && <Empty>Chưa khai báo thiết bị.</Empty>}
         {list.length > 0 && (
-          <Table head={["Mã thiết bị", "Tên thiết bị", "Loại", "Phòng", "Model / Serial", "Hạn hiệu chuẩn", "Quản lý Hóa chất & Khấu hao"]}>
+          <Table head={["Mã thiết bị", "Tên thiết bị", "Loại", "Trạng thái", "Phòng", "Model / Serial", "Hạn hiệu chuẩn", "Thao tác"]}>
             {list.map((a) => (
-              <tr key={a.id} className={open === a.id ? "bg-sky-50/70 dark:bg-sky-950/30" : ""}>
+              <tr key={a.id} className={open === a.id || editAssetId === a.id ? "bg-sky-50/70 dark:bg-sky-950/30" : ""}>
                 <td className="py-1.5 pr-3 font-mono font-bold text-xs">{a.code}</td>
                 <td className="py-1.5 pr-3 font-medium">{a.name}</td>
                 <td className="py-1.5 pr-3 text-xs">
@@ -1599,20 +1738,43 @@ export function InstrumentsView({ canManage, canOperate }: { canManage: boolean;
                     {TYPES[a.asset_type] ?? a.asset_type}
                   </span>
                 </td>
+                <td className="py-1.5 pr-3 text-xs">{ASSET_STATUS_LABELS[a.status] ?? a.status}</td>
                 <td className="py-1.5 pr-3 text-xs">{a.owner_name}</td>
                 <td className="py-1.5 pr-3 text-xs">{[a.model, a.serial_no].filter(Boolean).join(" / ") || "—"}</td>
                 <td className="py-1.5 pr-3 text-xs">{fmtDate(a.next_calibration_due)}</td>
                 <td className="py-1.5 pr-3 text-right">
-                  <Button
-                    type="button"
-                    variant={open === a.id ? "primary" : "ghost"}
-                    onClick={() => {
-                      setDismissed(false);
-                      setOpen(a.id);
-                    }}
-                  >
-                    🧪 {a.asset_type === "HPLC" ? "Hóa chất & Khấu hao HPLC" : "Vị trí hóa chất"}
-                  </Button>
+                  <div className="flex flex-wrap justify-end gap-1.5">
+                    {canManage && (
+                      <Button
+                        type="button"
+                        variant={editAssetId === a.id ? "primary" : "ghost"}
+                        onClick={() => setEditAssetId(editAssetId === a.id ? null : a.id)}
+                      >
+                        ⚙ Cài đặt máy
+                      </Button>
+                    )}
+                    {onNavigateToRules ? (
+                      <Button type="button" variant="ghost" onClick={onNavigateToRules}>
+                        🧪 Định mức & Chai hóa chất ↗
+                      </Button>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant={open === a.id ? "primary" : "ghost"}
+                        onClick={() => {
+                          if (open === a.id) {
+                            setDismissed(true);
+                            setOpen(null);
+                          } else {
+                            setDismissed(false);
+                            setOpen(a.id);
+                          }
+                        }}
+                      >
+                        🧪 {a.asset_type === "HPLC" ? "Hóa chất & Khấu hao HPLC" : "Vị trí hóa chất"}
+                      </Button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}

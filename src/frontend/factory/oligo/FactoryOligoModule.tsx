@@ -12,7 +12,6 @@ import { CatalogView } from "./CatalogView";
 import { EquipmentView } from "./EquipmentView";
 import { InstrumentsView } from "./InstrumentsView";
 import { AssetEventsView } from "./AssetEventsView";
-import { ColumnsView } from "./ColumnsView";
 import { PostProcessView } from "./PostProcessView";
 import { PreparationView } from "../prep/PreparationView";
 import { OligoOrdersView } from "./OligoOrdersView";
@@ -74,16 +73,14 @@ export function FactoryOligoModule() {
       {tab === "equipment" && (
         <div className="flex flex-col gap-3">
           <EquipmentView section="machines" canManageAssets={perms.has("asset.manage")} canManageRules={perms.has("oligo.reagent.manage")} canManageCatalog={perms.has("oligo.catalog.manage")} canOperate={perms.has("oligo.batch.manage")} />
-          <InstrumentsView canManage={perms.has("asset.manage")} canOperate={perms.has("asset.operate")} />
-          <ColumnsView canManage={perms.has("asset.manage")} />
+          <InstrumentsView mode="assets" onNavigateToRules={() => setTab("rules")} canManage={perms.has("asset.manage")} canOperate={perms.has("asset.operate")} />
           <AssetEventsView canPlan={perms.has("asset.operate") || perms.has("asset.manage")} />
         </div>
       )}
       {tab === "rules" && (
         <div className="flex flex-col gap-3">
           <EquipmentView section="rules" canManageAssets={perms.has("asset.manage")} canManageRules={perms.has("oligo.reagent.manage")} canManageCatalog={perms.has("oligo.catalog.manage")} canOperate={perms.has("oligo.batch.manage")} />
-          <InstrumentsView canManage={perms.has("asset.manage")} canOperate={perms.has("asset.operate")} />
-          <ColumnsView canManage={perms.has("asset.manage")} />
+          <InstrumentsView mode="reagents" canManage={perms.has("asset.manage")} canOperate={perms.has("asset.operate")} />
         </div>
       )}
       {tab === "prep" && <PreparationView canManage={perms.has("prep.formula.manage")} canExecute={perms.has("prep.execute")} />}

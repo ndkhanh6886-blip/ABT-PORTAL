@@ -2,30 +2,133 @@
 
 import React, { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import * as XLSX from "xlsx";
 import { api } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, Table } from "../ui";
+import { openExcelImportTemplate } from "../import/FactoryExcelImportModule";
 import { ItemPicker } from "./EquipmentView";
 import { PURIFICATION } from "./shared";
 
-export interface StepField { key: string; label: string; type: "NUMBER" | "TEXT" | "EQUIPMENT" | "REAGENT" | "COLUMN"; unit?: string | null; required: boolean; item_id?: string | null; default_qty?: number | null; uom?: string | null }
+export interface StepField {
+  key: string;
+  label: string;
+  type: "NUMBER" | "TEXT" | "EQUIPMENT" | "REAGENT" | "COLUMN";
+  unit?: string | null;
+  required: boolean;
+  item_id?: string | null;
+  item_code?: string | null;
+  item_name?: string | null;
+  default_qty?: number | null;
+  uom?: string | null;
+}
 interface Method { id: string; category: string; name: string; kind: "STANDARD" | "QUANTIFICATION"; target_hours: number | null; fields: StepField[]; status: string; version: number }
 interface Workflow { id: string; name: string; description: string | null; purifications: string[]; steps: { method_id: string; name?: string | null }[]; revision: number; status: string; version: number }
 
 export const FIELD_TYPE: Record<StepField["type"], string> = { NUMBER: "Số", TEXT: "Chữ", EQUIPMENT: "Thiết bị", REAGENT: "Hóa chất (trừ kho)", COLUMN: "Cột sắc ký (khấu hao)" };
 const blankField = (): StepField => ({ key: "", label: "", type: "NUMBER", unit: "", required: true });
-const slug = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/gi, "d").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/^(\d)/, "f_$1").slice(0, 40);
+const slug = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/gi, "d").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/^(\d)/, "f_$1").slice(0, 34);
 
-function MethodEditor({ base, onClose }: { base?: Method; onClose: () => void }) {
+function buildUniqueMethodFields(fields: StepField[]) {
+  const used = new Set<string>();
+  return fields.map((f, idx) => {
+    let baseKey = (f.key || slug(f.label) || `field_${idx + 1}`).replace(/[^a-z0-9_]/g, "_");
+    if (!/^[a-z]/.test(baseKey)) baseKey = `f_${baseKey}`;
+    baseKey = baseKey.slice(0, 34);
+    let key = baseKey;
+    let seq = 2;
+    while (used.has(key)) {
+      const suffix = `_${seq++}`;
+      key = `${baseKey.slice(0, 40 - suffix.length)}${suffix}`;
+    }
+    used.add(key);
+    return {
+      key,
+      label: f.label,
+      type: f.type,
+      unit: f.unit || null,
+      required: f.required,
+      item_id: f.type === "REAGENT" ? f.item_id || null : null,
+      default_qty: f.type === "REAGENT" ? f.default_qty ?? null : null,
+      uom: f.type === "REAGENT" ? f.uom || null : null,
+    };
+  });
+}
+
+function downloadSheet(rows: unknown[][], sheetName: string, fileName: string) {
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  XLSX.writeFile(wb, fileName);
+}
+
+function exportMethodsExcel(methods: Method[]) {
+  const headers = ["Nhóm bước *", "Tên phương pháp *", "Loại bước", "Định mức giờ", "Tên thông số / Hóa chất", "Loại thông số", "Mã hóa chất", "Định mức / mẫu", "Đơn vị", "Bắt buộc", "Trạng thái"];
+  const keys = ["category", "method_name", "kind", "target_hours", "field_label", "field_type", "item_code", "default_qty", "uom", "required", "status"];
+  const body: unknown[][] = [headers, keys];
+  for (const m of methods) {
+    if (m.fields.length === 0) {
+      body.push([m.category, m.name, m.kind, m.target_hours ?? "", "", "", "", "", "", "", m.status]);
+    } else {
+      for (const f of m.fields) {
+        body.push([
+          m.category,
+          m.name,
+          m.kind,
+          m.target_hours ?? "",
+          f.label,
+          f.type,
+          f.item_code ?? "",
+          f.default_qty ?? "",
+          f.uom ?? f.unit ?? "",
+          f.required ? "TRUE" : "FALSE",
+          m.status,
+        ]);
+      }
+    }
+  }
+  downloadSheet(body, "PhuongPhapSOP", "oligo_sop_methods.xlsx");
+}
+
+function exportWorkflowsExcel(workflows: Workflow[], methods: Method[]) {
+  const headers = ["Tên quy trình SOP *", "Áp dụng tinh sạch", "Mô tả", "Thứ tự bước *", "Nhóm bước", "Tên phương pháp *", "Tên bước hiển thị", "Trạng thái"];
+  const keys = ["workflow_name", "purifications", "description", "step_order", "method_category", "method_name", "step_name", "status"];
+  const body: unknown[][] = [headers, keys];
+  for (const w of workflows) {
+    w.steps.forEach((s, idx) => {
+      const m = methods.find((x) => x.id === s.method_id);
+      body.push([
+        w.name,
+        idx === 0 ? w.purifications.join(", ") : "",
+        idx === 0 ? (w.description ?? "") : "",
+        idx + 1,
+        m?.category ?? "",
+        m?.name ?? "",
+        s.name ?? "",
+        w.status,
+      ]);
+    });
+  }
+  downloadSheet(body, "QuyTrinhSOP", "oligo_sop_workflows.xlsx");
+}
+
+function MethodEditor({ base, isClone, onClose }: { base?: Method; isClone?: boolean; onClose: () => void }) {
   const qc = useQueryClient();
-  const [m, setM] = useState({ category: base?.category ?? "", name: base?.name ?? "", kind: base?.kind ?? "STANDARD", target_hours: base?.target_hours != null ? String(base.target_hours) : "", status: base?.status ?? "ACTIVE" });
+  const isEdit = Boolean(base && !isClone);
+  const [m, setM] = useState({
+    category: base?.category ?? "",
+    name: isClone && base ? `${base.name} (Bản sao)` : (base?.name ?? ""),
+    kind: base?.kind ?? "STANDARD",
+    target_hours: base?.target_hours != null ? String(base.target_hours) : "",
+    status: base?.status ?? "ACTIVE",
+  });
   const [fields, setFields] = useState<StepField[]>(base?.fields ?? []);
   const save = useMutation({
     mutationFn: () => {
-      const body = { ...m, target_hours: m.target_hours ? Number(m.target_hours) : null, fields: fields.map((f) => ({ ...f, key: f.key || slug(f.label), default_qty: f.default_qty ?? null })) };
-      if (!base) return api("/api/factory/oligo/sop/methods", { method: "POST", idempotent: true, json: body });
+      const body = { ...m, target_hours: m.target_hours ? Number(m.target_hours) : null, fields: buildUniqueMethodFields(fields) };
+      if (!isEdit) return api("/api/factory/oligo/sop/methods", { method: "POST", idempotent: true, json: body });
       const reason = window.prompt("Lý do sửa phương pháp:");
       if (!reason) throw new Error("Cần lý do sửa.");
-      return api(`/api/factory/oligo/sop/methods/${base.id}`, { method: "PUT", json: { ...body, version: base.version, reason } });
+      return api(`/api/factory/oligo/sop/methods/${base!.id}`, { method: "PUT", json: { ...body, version: base!.version, reason } });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["factory", "oligo-sop"] });
@@ -36,7 +139,20 @@ function MethodEditor({ base, onClose }: { base?: Method; onClose: () => void })
   return (
     <form className="flex flex-col gap-3 p-3 rounded-xl border border-sky-200 dark:border-sky-900 bg-sky-50/60 dark:bg-sky-950/30" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
       <div className="grid gap-3 sm:grid-cols-5 items-end">
-        <Field label="Nhóm bước *"><input className={inputClass} list="sop-categories" value={m.category} onChange={(e) => setM({ ...m, category: e.target.value })} required /></Field>
+        <Field label="Nhóm bước *">
+          <input
+            className={inputClass}
+            list="sop-categories"
+            value={m.category}
+            onChange={(e) => {
+              const category = e.target.value;
+              const norm = category.trim().toLowerCase();
+              const autoQuant = (norm === "đo od" || norm === "do od") && m.kind === "STANDARD";
+              setM({ ...m, category, ...(autoQuant ? { kind: "QUANTIFICATION" as const } : {}) });
+            }}
+            required
+          />
+        </Field>
         <Field label="Tên phương pháp *"><input className={inputClass} value={m.name} onChange={(e) => setM({ ...m, name: e.target.value })} required /></Field>
         <Field label="Loại" hint="Định lượng: bước đo OD (QC lấy OD/nmol từ đây)">
           <select className={inputClass} value={m.kind} onChange={(e) => setM({ ...m, kind: e.target.value as Method["kind"] })}>
@@ -52,7 +168,7 @@ function MethodEditor({ base, onClose }: { base?: Method; onClose: () => void })
           </select>
         </Field>
       </div>
-      <datalist id="sop-categories">{["Cắt & khử bảo vệ", "Tinh sạch", "Khử muối", "Đo OD", "Làm khô / đông khô", "Click chemistry", "Hoàn nguyên & chia ống"].map((c) => <option key={c} value={c} />)}</datalist>
+      <datalist id="sop-categories">{["Cắt & khử bảo vệ", "Làm khô", "Tinh sạch", "Khử muối", "Đo OD", "QC", "Làm khô / đông khô", "Click chemistry", "Hoàn nguyên & chia ống"].map((c) => <option key={c} value={c} />)}</datalist>
       <div className="text-xs font-bold">Thông số ghi ở bước này</div>
       {fields.map((f, i) => (
         <div key={i} className="flex flex-wrap gap-2 items-center text-xs">
@@ -63,7 +179,11 @@ function MethodEditor({ base, onClose }: { base?: Method; onClose: () => void })
           {f.type === "NUMBER" && <input className={`${inputClass} w-20`} placeholder="Đơn vị" value={f.unit ?? ""} onChange={(e) => setF(i, { unit: e.target.value })} />}
           {f.type === "REAGENT" && (
             <>
-              <ItemPicker value={f.item_id ?? ""} onChange={(id) => setF(i, { item_id: id || null })} />
+              <ItemPicker
+                value={f.item_id ?? ""}
+                current={f.item_code ? `${f.item_code} · ${f.item_name ?? ""}` : undefined}
+                onChange={(id) => setF(i, { item_id: id || null })}
+              />
               <input className={`${inputClass} w-24`} type="number" step="any" min="0" placeholder="Lượng mặc định" value={f.default_qty ?? ""} onChange={(e) => setF(i, { default_qty: e.target.value === "" ? null : Number(e.target.value) })} />
               <input className={`${inputClass} w-16`} placeholder="ĐV" value={f.uom ?? ""} onChange={(e) => setF(i, { uom: e.target.value })} required />
             </>
@@ -82,17 +202,23 @@ function MethodEditor({ base, onClose }: { base?: Method; onClose: () => void })
   );
 }
 
-function WorkflowEditor({ base, methods, onClose }: { base?: Workflow; methods: Method[]; onClose: () => void }) {
+function WorkflowEditor({ base, isClone, methods, onClose }: { base?: Workflow; isClone?: boolean; methods: Method[]; onClose: () => void }) {
   const qc = useQueryClient();
-  const [w, setW] = useState({ name: base?.name ?? "", description: base?.description ?? "", purifications: base?.purifications ?? [], status: base?.status ?? "ACTIVE" });
+  const isEdit = Boolean(base && !isClone);
+  const [w, setW] = useState({
+    name: isClone && base ? `${base.name} (Bản sao)` : (base?.name ?? ""),
+    description: base?.description ?? "",
+    purifications: isClone ? [] : (base?.purifications ?? []),
+    status: base?.status ?? "ACTIVE",
+  });
   const [steps, setSteps] = useState<{ method_id: string; name: string }[]>(base?.steps.map((s) => ({ method_id: s.method_id, name: s.name ?? "" })) ?? []);
   const save = useMutation({
     mutationFn: () => {
       const body = { ...w, steps: steps.map((s) => ({ method_id: s.method_id, name: s.name || null })) };
-      if (!base) return api("/api/factory/oligo/sop/workflows", { method: "POST", idempotent: true, json: body });
+      if (!isEdit) return api("/api/factory/oligo/sop/workflows", { method: "POST", idempotent: true, json: body });
       const reason = window.prompt("Lý do sửa quy trình (các hồ sơ đang làm giữ bản cũ):");
       if (!reason) throw new Error("Cần lý do sửa.");
-      return api(`/api/factory/oligo/sop/workflows/${base.id}`, { method: "PUT", json: { ...body, version: base.version, reason } });
+      return api(`/api/factory/oligo/sop/workflows/${base!.id}`, { method: "PUT", json: { ...body, version: base!.version, reason } });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["factory", "oligo-sop"] });
@@ -154,23 +280,60 @@ function WorkflowEditor({ base, methods, onClose }: { base?: Workflow; methods: 
 /** "Quy trình SOP" (as OligoFlow's SOP configuration): 1. library of step methods, 2. workflows built from them. */
 export function SopConfigView({ canManage }: { canManage: boolean }) {
   const sop = useQuery({ queryKey: ["factory", "oligo-sop"], queryFn: () => api<{ methods: Method[]; workflows: Workflow[] }>("/api/factory/oligo/sop") });
-  const [method, setMethod] = useState<Method | "new" | null>(null);
-  const [workflow, setWorkflow] = useState<Workflow | "new" | null>(null);
+  const [methodState, setMethodState] = useState<{ item?: Method; isClone?: boolean } | null>(null);
+  const [workflowState, setWorkflowState] = useState<{ item?: Workflow; isClone?: boolean } | null>(null);
   const methods = sop.data?.methods ?? [];
+  const workflows = sop.data?.workflows ?? [];
   const nameOf = (id: string) => methods.find((m) => m.id === id)?.name ?? "?";
   return (
     <div className="flex flex-col gap-3">
       <ErrorNote error={sop.error} />
       <Card
         title="1. Thư viện phương pháp cho từng bước (Cắt & khử bảo vệ, Tinh sạch, Đo OD, Đông khô…)"
-        actions={canManage && !method && <Button onClick={() => setMethod("new")}>+ Tạo phương pháp bước mới</Button>}
+        actions={
+          <div className="flex flex-wrap gap-1.5">
+            {methods.length > 0 && (
+              <Button type="button" variant="ghost" onClick={() => exportMethodsExcel(methods)}>
+                📤 Xuất Excel (.xlsx)
+              </Button>
+            )}
+            {canManage && (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() =>
+                  openExcelImportTemplate({
+                    templateKey: "OLIGO_POST_METHOD",
+                    deptFilter: "P-OLIGO",
+                    targetDeptCode: "P-OLIGO",
+                    targetWarehouseCode: "KHO-OLIGO",
+                  })
+                }
+              >
+                📥 Nhập Excel Phương pháp ↗
+              </Button>
+            )}
+            {canManage && !methodState && (
+              <Button type="button" onClick={() => setMethodState({})}>
+                + Tạo phương pháp bước mới
+              </Button>
+            )}
+          </div>
+        }
       >
-        {method && <MethodEditor key={method === "new" ? "new" : method.id} base={method === "new" ? undefined : method} onClose={() => setMethod(null)} />}
-        {sop.data && methods.length === 0 && !method && (
+        {methodState && (
+          <MethodEditor
+            key={`${methodState.item?.id ?? "new"}-${methodState.isClone ? "clone" : "edit"}`}
+            base={methodState.item}
+            isClone={methodState.isClone}
+            onClose={() => setMethodState(null)}
+          />
+        )}
+        {sop.data && methods.length === 0 && !methodState && (
           <Empty>
             <div className="flex flex-col items-center gap-2">
               <span>Chưa có phương pháp. Thêm các bước như cắt &amp; khử bảo vệ, tinh sạch HPLC/PAGE/OPC, đo OD.</span>
-              {canManage && <Button onClick={() => setMethod("new")}>+ Tạo phương pháp bước đầu tiên</Button>}
+              {canManage && <Button type="button" onClick={() => setMethodState({})}>+ Tạo phương pháp bước đầu tiên</Button>}
             </div>
           </Empty>
         )}
@@ -181,9 +344,24 @@ export function SopConfigView({ canManage }: { canManage: boolean }) {
                 <td className="py-1.5 pr-3 text-xs">{m.category}</td>
                 <td className="py-1.5 pr-3">{m.name}{m.kind === "QUANTIFICATION" && <span className="text-sky-700 dark:text-sky-400 text-xs"> · đo OD</span>}</td>
                 <td className="py-1.5 pr-3 text-xs">{m.target_hours ? `${m.target_hours} giờ` : "—"}</td>
-                <td className="py-1.5 pr-3 text-xs">{m.fields.map((f) => `${f.label} (${FIELD_TYPE[f.type]}${f.type === "REAGENT" && f.default_qty != null ? ` ${f.default_qty} ${f.uom}` : ""})`).join(" · ") || "—"}</td>
+                <td className="py-1.5 pr-3 text-xs">
+                  {m.fields
+                    .map((f) =>
+                      f.type === "REAGENT"
+                        ? `${f.label} (${f.item_code || FIELD_TYPE[f.type]}${f.default_qty != null ? `: ${f.default_qty} ${f.uom ?? ""}` : ""})`
+                        : `${f.label} (${FIELD_TYPE[f.type]}${f.unit ? ` ${f.unit}` : ""})`
+                    )
+                    .join(" · ") || "—"}
+                </td>
                 <td className="py-1.5 pr-3 text-xs">{m.status === "ACTIVE" ? "Đang dùng" : "Ngừng"}</td>
-                <td className="py-1.5 pr-3 text-right">{canManage && <Button variant="ghost" onClick={() => setMethod(m)}>Sửa</Button>}</td>
+                <td className="py-1.5 pr-3 text-right whitespace-nowrap">
+                  {canManage && (
+                    <>
+                      <Button type="button" variant="ghost" onClick={() => setMethodState({ item: m })}>Sửa</Button>
+                      <Button type="button" variant="ghost" onClick={() => setMethodState({ item: m, isClone: true })}>Nhân bản</Button>
+                    </>
+                  )}
+                </td>
               </tr>
             ))}
           </Table>
@@ -191,27 +369,71 @@ export function SopConfigView({ canManage }: { canManage: boolean }) {
       </Card>
       <Card
         title="2. Quy trình SOP sau tổng hợp (ghép các phương pháp theo thứ tự)"
-        actions={canManage && !workflow && <Button onClick={() => setWorkflow("new")}>+ Tạo quy trình SOP mới</Button>}
+        actions={
+          <div className="flex flex-wrap gap-1.5">
+            {workflows.length > 0 && (
+              <Button type="button" variant="ghost" onClick={() => exportWorkflowsExcel(workflows, methods)}>
+                📤 Xuất Excel (.xlsx)
+              </Button>
+            )}
+            {canManage && (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() =>
+                  openExcelImportTemplate({
+                    templateKey: "OLIGO_POST_WORKFLOW",
+                    deptFilter: "P-OLIGO",
+                    targetDeptCode: "P-OLIGO",
+                    targetWarehouseCode: "KHO-OLIGO",
+                  })
+                }
+              >
+                📥 Nhập Excel Quy trình ↗
+              </Button>
+            )}
+            {canManage && !workflowState && (
+              <Button type="button" onClick={() => setWorkflowState({})}>
+                + Tạo quy trình SOP mới
+              </Button>
+            )}
+          </div>
+        }
       >
-        {workflow && <WorkflowEditor key={workflow === "new" ? "new" : workflow.id} base={workflow === "new" ? undefined : workflow} methods={methods} onClose={() => setWorkflow(null)} />}
-        {sop.data && sop.data.workflows.length === 0 && !workflow && (
+        {workflowState && (
+          <WorkflowEditor
+            key={`${workflowState.item?.id ?? "new"}-${workflowState.isClone ? "clone" : "edit"}`}
+            base={workflowState.item}
+            isClone={workflowState.isClone}
+            methods={methods}
+            onClose={() => setWorkflowState(null)}
+          />
+        )}
+        {sop.data && workflows.length === 0 && !workflowState && (
           <Empty>
             <div className="flex flex-col items-center gap-2">
               <span>Chưa có quy trình SOP hậu tổng hợp.</span>
-              {canManage && <Button onClick={() => setWorkflow("new")}>+ Tạo quy trình SOP đầu tiên</Button>}
+              {canManage && <Button type="button" onClick={() => setWorkflowState({})}>+ Tạo quy trình SOP đầu tiên</Button>}
             </div>
           </Empty>
         )}
-        {sop.data && sop.data.workflows.length > 0 && (
+        {workflows.length > 0 && (
           <Table head={["Quy trình", "Mặc định cho", "Các bước", "Phiên bản", "Trạng thái", ""]}>
-            {sop.data.workflows.map((w) => (
+            {workflows.map((w) => (
               <tr key={w.id} className={w.status === "ACTIVE" ? "" : "opacity-50"}>
                 <td className="py-1.5 pr-3">{w.name}{w.description && <div className="text-[11px] text-slate-500">{w.description}</div>}</td>
                 <td className="py-1.5 pr-3 text-xs">{w.purifications.map((p) => PURIFICATION[p as keyof typeof PURIFICATION]).join(", ") || "—"}</td>
                 <td className="py-1.5 pr-3 text-xs">{w.steps.map((s, i) => `${i + 1}. ${s.name || nameOf(s.method_id)}`).join(" → ")}</td>
                 <td className="py-1.5 pr-3 text-xs">rev {w.revision}</td>
                 <td className="py-1.5 pr-3 text-xs">{w.status === "ACTIVE" ? "Đang dùng" : "Ngừng"}</td>
-                <td className="py-1.5 pr-3 text-right">{canManage && <Button variant="ghost" onClick={() => setWorkflow(w)}>Sửa</Button>}</td>
+                <td className="py-1.5 pr-3 text-right whitespace-nowrap">
+                  {canManage && (
+                    <>
+                      <Button type="button" variant="ghost" onClick={() => setWorkflowState({ item: w })}>Sửa</Button>
+                      <Button type="button" variant="ghost" onClick={() => setWorkflowState({ item: w, isClone: true })}>Nhân bản</Button>
+                    </>
+                  )}
+                </td>
               </tr>
             ))}
           </Table>

@@ -2,8 +2,10 @@
 
 import React, { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import * as XLSX from "xlsx";
 import { api, fmtDate, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
+import { openExcelImportTemplate } from "../import/FactoryExcelImportModule";
 import { ItemPicker } from "../oligo/EquipmentView";
 import { printPreparation } from "./printPrep";
 
@@ -25,21 +27,94 @@ interface WhOpt { id: string; code: string; name: string; locations: { id: strin
 
 const LOT_STATUS: Record<string, string> = { QUARANTINE: "Biệt trữ — chờ QC", PENDING_QC: "Chờ QC", RELEASED: "Đạt", ON_HOLD: "Tạm giữ", REJECTED: "Không đạt", EXPIRED: "Hết hạn" };
 
-function FormulaEditor({ base, onClose }: { base?: Formula; onClose: () => void }) {
+function exportFormulasExcel(formulas: Formula[]) {
+  const headers = [
+    "Mã công thức *",
+    "Tên công thức pha chế *",
+    "Nhóm pha chế",
+    "Mã hóa chất đích",
+    "Tên hóa chất đích",
+    "Mẻ chuẩn",
+    "Đơn vị mẻ",
+    "Hạn dùng (ngày)",
+    "Yêu cầu QC",
+    "Ủ (ngày)",
+    "Mã nguyên liệu *",
+    "Tên nguyên liệu",
+    "Lượng dùng *",
+    "Đơn vị NL",
+    "Hướng dẫn pha chế SOP",
+  ];
+  const keys = [
+    "formula_code",
+    "formula_name",
+    "category",
+    "output_item_code",
+    "output_item_name",
+    "basis_qty",
+    "basis_uom",
+    "shelf_life_days",
+    "requires_qc",
+    "incubation_days",
+    "ingredient_code",
+    "ingredient_name",
+    "ingredient_qty",
+    "ingredient_uom",
+    "instructions",
+  ];
+  const body: unknown[][] = [headers, keys];
+  for (const f of formulas) {
+    const lines = f.lines.length > 0 ? f.lines : [{ item_code: "", item_name: "", qty: 0, uom: f.basis_uom, item_id: "" }];
+    for (const l of lines) {
+      body.push([
+        f.code,
+        f.name,
+        f.category ?? "",
+        f.output_code,
+        f.output_name,
+        f.basis_qty,
+        f.basis_uom,
+        f.shelf_life_days ?? "",
+        f.requires_qc ? "TRUE" : "FALSE",
+        f.incubation_days ?? 0,
+        l.item_code ?? "",
+        l.item_name ?? "",
+        l.qty,
+        l.uom,
+        f.instructions ?? "",
+      ]);
+    }
+  }
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(body);
+  XLSX.utils.book_append_sheet(wb, ws, "CongThucPhaChe");
+  XLSX.writeFile(wb, "oligo_prep_formulas.xlsx");
+}
+
+function FormulaEditor({ base, isClone, onClose }: { base?: Formula; isClone?: boolean; onClose: () => void }) {
   const qc = useQueryClient();
+  const isEdit = Boolean(base && !isClone);
   const [f, setF] = useState({
-    code: base?.code ?? "", name: base?.name ?? "", category: base?.category ?? "", output_item_id: base?.output_item_id ?? "", basis_qty: String(base?.basis_qty ?? ""),
-    basis_uom: base?.basis_uom ?? "mL", shelf_life_days: base?.shelf_life_days ? String(base.shelf_life_days) : "", requires_qc: base?.requires_qc ?? false, incubation_days: String(base?.incubation_days ?? 0),
-    instructions: base?.instructions ?? "", status: base?.status ?? "ACTIVE",
+    code: isClone && base ? `${base.code}-COPY` : (base?.code ?? ""),
+    name: isClone && base ? `${base.name} (Bản sao)` : (base?.name ?? ""),
+    category: base?.category ?? "",
+    output_item_id: base?.output_item_id ?? "",
+    basis_qty: String(base?.basis_qty ?? ""),
+    basis_uom: base?.basis_uom ?? "mL",
+    shelf_life_days: base?.shelf_life_days ? String(base.shelf_life_days) : "",
+    requires_qc: base?.requires_qc ?? false,
+    incubation_days: String(base?.incubation_days ?? 0),
+    instructions: base?.instructions ?? "",
+    status: base?.status ?? "ACTIVE",
   });
   const [lines, setLines] = useState<(Line & { label?: string })[]>(base?.lines.map((l) => ({ ...l, label: `${l.item_code} · ${l.item_name}` })) ?? [{ item_id: "", qty: 0, uom: "mL" }]);
   const save = useMutation({
     mutationFn: () => {
       const body = { ...f, basis_qty: Number(f.basis_qty), shelf_life_days: f.shelf_life_days ? Number(f.shelf_life_days) : null, incubation_days: Number(f.incubation_days || 0), lines: lines.map((l) => ({ item_id: l.item_id, qty: Number(l.qty), uom: l.uom })) };
-      if (!base) return api("/api/factory/prep/formulas", { method: "POST", idempotent: true, json: body });
+      if (!isEdit) return api("/api/factory/prep/formulas", { method: "POST", idempotent: true, json: body });
       const reason = window.prompt("Lý do sửa công thức:");
       if (!reason) throw new Error("Cần lý do sửa.");
-      return api(`/api/factory/prep/formulas/${base.id}`, { method: "PUT", json: { ...body, version: base.version, reason } });
+      return api(`/api/factory/prep/formulas/${base!.id}`, { method: "PUT", json: { ...body, version: base!.version, reason } });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["factory", "prep-formulas"] });
@@ -49,7 +124,7 @@ function FormulaEditor({ base, onClose }: { base?: Formula; onClose: () => void 
   return (
     <form className="flex flex-col gap-3 p-3 rounded-xl border border-sky-200 dark:border-sky-900 bg-sky-50/60 dark:bg-sky-950/30" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
       <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6 items-end">
-        <Field label="Mã *"><input className={inputClass} value={f.code} disabled={!!base} onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })} required /></Field>
+        <Field label="Mã *"><input className={inputClass} value={f.code} disabled={isEdit} onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })} required /></Field>
         <Field label="Tên *"><input className={inputClass} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required /></Field>
         <Field label="Nhóm"><input className={inputClass} list="prep-categories" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} /></Field>
         <Field label="Mẻ chuẩn *" hint="Lượng thành phẩm mà các nguyên liệu dưới tạo ra">
@@ -170,7 +245,7 @@ export function PreparationView({ canManage, canExecute }: { canManage: boolean;
   const qc = useQueryClient();
   const formulas = useQuery({ queryKey: ["factory", "prep-formulas"], queryFn: () => api<Formula[]>("/api/factory/prep/formulas") });
   const preps = useQuery({ queryKey: ["factory", "prep-log"], queryFn: () => api<Prep[]>("/api/factory/prep/preparations") });
-  const [editing, setEditing] = useState<Formula | "new" | null>(null);
+  const [editing, setEditing] = useState<{ item?: Formula; isClone?: boolean } | null>(null);
   const [preparing, setPreparing] = useState<Formula | null>(null);
   const refresh = () => ["prep-log", "prep-orders"].forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k] }));
   const cancel = useMutation({
@@ -191,8 +266,47 @@ export function PreparationView({ canManage, canExecute }: { canManage: boolean;
   const today = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
   return (
     <div className="flex flex-col gap-3">
-      <Card title="Công thức pha chế" actions={canManage && !editing && <Button onClick={() => setEditing("new")}>+ Công thức</Button>}>
-        {editing && <FormulaEditor key={editing === "new" ? "new" : editing.id} base={editing === "new" ? undefined : editing} onClose={() => setEditing(null)} />}
+      <Card
+        title="Công thức pha chế"
+        actions={
+          <div className="flex flex-wrap gap-1.5">
+            {formulas.data && formulas.data.length > 0 && (
+              <Button type="button" variant="ghost" onClick={() => exportFormulasExcel(formulas.data!)}>
+                📤 Xuất Excel (.xlsx)
+              </Button>
+            )}
+            {canManage && (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() =>
+                  openExcelImportTemplate({
+                    templateKey: "PREP_OLIGO_FORMULA",
+                    deptFilter: "P-OLIGO",
+                    targetDeptCode: "P-OLIGO",
+                    targetWarehouseCode: "KHO-OLIGO",
+                  })
+                }
+              >
+                📥 Nhập Excel Công thức ↗
+              </Button>
+            )}
+            {canManage && !editing && (
+              <Button type="button" onClick={() => setEditing({})}>
+                + Công thức
+              </Button>
+            )}
+          </div>
+        }
+      >
+        {editing && (
+          <FormulaEditor
+            key={`${editing.item?.id ?? "new"}-${editing.isClone ? "clone" : "edit"}`}
+            base={editing.item}
+            isClone={editing.isClone}
+            onClose={() => setEditing(null)}
+          />
+        )}
         {preparing && <PrepareForm key={preparing.id} formula={preparing} onDone={refresh} />}
         <ErrorNote error={formulas.error} />
         {formulas.data?.length === 0 && !editing && <Empty>Chưa có công thức (ví dụ: Deblock 3% TCA/DCM, Cap A/B, Oxidizer, pha loãng amidite 0.1 M, đệm HPLC).</Empty>}
@@ -207,8 +321,13 @@ export function PreparationView({ canManage, canExecute }: { canManage: boolean;
                 <td className="py-1.5 pr-3 text-xs">{f.lines.map((l) => `${l.item_code} ${fmtQty(l.qty)} ${l.uom}`).join(" · ")}</td>
                 <td className="py-1.5 pr-3 text-xs">{f.shelf_life_days ? `${f.shelf_life_days} ngày` : "—"}{f.requires_qc && " · cần QC"}{f.incubation_days > 0 && ` · ủ ${f.incubation_days} ngày`}</td>
                 <td className="py-1.5 pr-3 text-right whitespace-nowrap">
-                  {canExecute && f.status === "ACTIVE" && <Button variant="ghost" onClick={() => setPreparing(preparing?.id === f.id ? null : f)}>Pha</Button>}
-                  {canManage && <Button variant="ghost" onClick={() => setEditing(f)}>Sửa</Button>}
+                  {canExecute && f.status === "ACTIVE" && <Button type="button" variant="ghost" onClick={() => setPreparing(preparing?.id === f.id ? null : f)}>Pha</Button>}
+                  {canManage && (
+                    <>
+                      <Button type="button" variant="ghost" onClick={() => setEditing({ item: f })}>Sửa</Button>
+                      <Button type="button" variant="ghost" onClick={() => setEditing({ item: f, isClone: true })}>Nhân bản</Button>
+                    </>
+                  )}
                 </td>
               </tr>
             ))}

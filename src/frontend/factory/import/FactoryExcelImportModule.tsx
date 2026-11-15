@@ -9,6 +9,7 @@ import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table }
 export interface TemplateFieldSpec {
   key: string;
   label: string;
+  aliases?: string[];
   required?: boolean;
   example: string;
   description: string;
@@ -36,18 +37,18 @@ export const EXCEL_TEMPLATES: ExcelTemplateDef[] = [
     defaultDept: "P-KIT",
     defaultWarehouse: "KHO-KIT",
     fields: [
-      { key: "item_code", label: "Mã vật tư", required: true, example: "ENZ-TAQ-5U", description: "Mã định danh duy nhất của vật tư / hóa chất / bán thành phẩm" },
-      { key: "item_name", label: "Tên vật tư", required: true, example: "HotStart Taq DNA Polymerase (5 U/µL)", description: "Tên đầy đủ của hóa chất, vật tư tiêu hao hoặc linh kiện" },
-      { key: "item_type", label: "Phân loại", required: true, example: "REAGENT", description: "RAW_MATERIAL | REAGENT | CONSUMABLE | COMPONENT | SEMI_FINISHED | FINISHED_KIT | DEVICE" },
-      { key: "base_uom", label: "Đơn vị", required: true, example: "mL", description: "Đơn vị tính gốc (mL, uL, g, kg, pcs, box, kit, set)" },
+      { key: "item_code", label: "Mã vật tư", aliases: ["material_code", "Mã NVL", "Mã vật tư (SKU)"], required: true, example: "ENZ-TAQ-5U", description: "Mã định danh duy nhất của vật tư / hóa chất / bán thành phẩm" },
+      { key: "item_name", label: "Tên vật tư", aliases: ["material_name", "Tên NVL", "Tên vật tư / Sản phẩm"], required: true, example: "HotStart Taq DNA Polymerase (5 U/µL)", description: "Tên đầy đủ của hóa chất, vật tư tiêu hao hoặc linh kiện" },
+      { key: "item_type", label: "Phân loại", aliases: ["category", "Loại hàng", "Nhóm vật tư", "Nhóm"], required: true, example: "REAGENT", description: "RAW_MATERIAL | REAGENT | CONSUMABLE | COMPONENT | SEMI_FINISHED | FINISHED_KIT | DEVICE" },
+      { key: "base_uom", label: "Đơn vị", aliases: ["unit", "Đơn vị tính"], required: true, example: "mL", description: "Đơn vị tính gốc (mL, uL, g, kg, pcs, box, kit, set)" },
       { key: "storage_condition", label: "Bảo quản", example: "-20", description: "Điều kiện nhiệt độ bảo quản: RT | 2-8 | -20 | -80" },
       { key: "warehouse_code", label: "Mã kho", example: "KHO-KIT", description: "Mã kho nhập tồn (KHO-TONG, KHO-RD, KHO-KIT, KHO-OLIGO, KHO-QA...)" },
-      { key: "lot_code", label: "Số lô", example: "LOT-TAQ-2611A", description: "Mã lô nội bộ hoặc số lô kiểm soát FEFO" },
-      { key: "mfr_lot_no", label: "Lô NSX", example: "MFR-99281", description: "Số lô gốc của nhà sản xuất trên nhãn COA" },
-      { key: "qty_on_hand", label: "Số lượng tồn", example: "250", description: "Số lượng nhập tồn thực tế theo đơn vị gốc" },
-      { key: "mfg_date", label: "Ngày SX", example: "2026-06-01", description: "Ngày sản xuất định dạng YYYY-MM-DD hoặc DD/MM/YYYY" },
-      { key: "expiry_date", label: "Hạn dùng", example: "2027-12-31", description: "Hạn sử dụng định dạng YYYY-MM-DD hoặc DD/MM/YYYY" },
-      { key: "min_stock", label: "Tồn tối thiểu", example: "50", description: "Mức tồn kho tối thiểu cảnh báo đặt hàng (ROP)" },
+      { key: "lot_code", label: "Số lô", aliases: ["lot_number", "Số Lô", "Mã lô"], example: "LOT-TAQ-2611A", description: "Mã lô nội bộ hoặc số lô kiểm soát FEFO" },
+      { key: "mfr_lot_no", label: "Lô NSX", aliases: ["manufacturer_lot", "Số lô NSX (Mfg Lot)", "Lô nhà sản xuất"], example: "MFR-99281", description: "Số lô gốc của nhà sản xuất trên nhãn COA" },
+      { key: "qty_on_hand", label: "Số lượng tồn", aliases: ["qty", "total_qty", "Số lượng tồn kho"], example: "250", description: "Số lượng nhập tồn thực tế theo đơn vị gốc (hoặc dùng quantity + bottles_count của phần mềm cũ)" },
+      { key: "mfg_date", label: "Ngày SX", aliases: ["Ngày sản xuất"], example: "2026-06-01", description: "Ngày sản xuất định dạng YYYY-MM-DD hoặc DD/MM/YYYY" },
+      { key: "expiry_date", label: "Hạn dùng", aliases: ["expire_date", "Hạn sử dụng", "HSD"], example: "2027-12-31", description: "Hạn sử dụng định dạng YYYY-MM-DD hoặc DD/MM/YYYY" },
+      { key: "min_stock", label: "Tồn tối thiểu", aliases: ["Định mức (Min)"], example: "50", description: "Mức tồn kho tối thiểu cảnh báo đặt hàng (ROP)" },
       { key: "notes", label: "Ghi chú", example: "Hóa chất chuẩn IVD nhập khẩu", description: "Ghi chú nhà cung cấp, vị trí kệ/tủ đông" },
     ],
     sampleRows: [
@@ -266,19 +267,21 @@ export const EXCEL_TEMPLATES: ExcelTemplateDef[] = [
     depts: ["ALL", "P-OLIGO", "P-KIT", "P-RD"],
     defaultDept: "P-OLIGO",
     fields: [
-      { key: "formula_code", label: "Mã công thức", required: true, example: "PREP-TEAA-01M", description: "Mã công thức pha chế (Các dòng cùng mã sẽ gộp thành 1 công thức)" },
-      { key: "formula_name", label: "Tên công thức pha chế", required: true, example: "Pha đệm chạy sắc ký HPLC 0.1M TEAA pH 7.0 (Mẻ 10 Lít)", description: "Tên đầy đủ của công thức pha chế" },
-      { key: "category", label: "Nhóm pha chế", example: "Pha động HPLC Oligo", description: "Phân nhóm công thức (Pha động HPLC, Hoạt hóa Amidite, Đệm tách chiết...)" },
-      { key: "output_item_code", label: "Mã hóa chất đích", required: true, example: "SOL-TEAA-01M", description: "Mã bán thành phẩm / dung dịch thu được sau pha chế" },
-      { key: "output_item_name", label: "Tên hóa chất đích", required: true, example: "Dung dịch đệm 0.1M TEAA pH 7.0 (Pha động A HPLC)", description: "Tên hóa chất thành phẩm thu được" },
-      { key: "basis_qty", label: "Mẻ chuẩn", required: true, example: "10000", description: "Quy mô mẻ pha chế chuẩn (VD: 1000 mL, 10000 mL)" },
-      { key: "basis_uom", label: "Đơn vị mẻ", required: true, example: "mL", description: "Đơn vị của mẻ chuẩn (mL, L, g)" },
+      { key: "formula_code", label: "Mã công thức", aliases: ["code"], required: true, example: "PREP-TEAA-01M", description: "Mã công thức pha chế (Các dòng cùng mã sẽ gộp thành 1 công thức)" },
+      { key: "formula_name", label: "Tên công thức pha chế", aliases: ["name", "Tên công thức"], required: true, example: "Pha đệm chạy sắc ký HPLC 0.1M TEAA pH 7.0 (Mẻ 10 Lít)", description: "Tên đầy đủ của công thức pha chế" },
+      { key: "category", label: "Nhóm pha chế", aliases: ["Nhóm"], example: "Pha động HPLC Oligo", description: "Phân nhóm công thức (Pha động HPLC, Hoạt hóa Amidite, Đệm tách chiết...)" },
+      { key: "output_item_code", label: "Mã hóa chất đích", example: "SOL-TEAA-01M", description: "Mã bán thành phẩm / dung dịch thu được sau pha chế (tự sinh nếu bỏ trống)" },
+      { key: "output_item_name", label: "Tên hóa chất đích", example: "Dung dịch đệm 0.1M TEAA pH 7.0 (Pha động A HPLC)", description: "Tên hóa chất thành phẩm thu được" },
+      { key: "basis_qty", label: "Mẻ chuẩn", example: "10000", description: "Quy mô mẻ pha chế chuẩn (VD: 1000 mL, 10000 mL)" },
+      { key: "basis_uom", label: "Đơn vị mẻ", example: "mL", description: "Đơn vị của mẻ chuẩn (mL, L, g)" },
       { key: "shelf_life_days", label: "Hạn dùng (ngày)", example: "90", description: "Hạn sử dụng của dung dịch sau khi pha (ngày)" },
-      { key: "ingredient_code", label: "Mã nguyên liệu", required: true, example: "CHEM-TEA-PURE", description: "Mã hóa chất nguyên liệu đầu vào" },
-      { key: "ingredient_name", label: "Tên nguyên liệu", required: true, example: "Triethylamine (TEA) tinh khiết sắc ký ≥ 99.5%", description: "Tên hóa chất nguyên liệu" },
-      { key: "ingredient_qty", label: "Lượng dùng", required: true, example: "139.5", description: "Lượng nguyên liệu cần lấy cho 1 mẻ chuẩn" },
-      { key: "ingredient_uom", label: "Đơn vị NL", required: true, example: "mL", description: "Đơn vị tính của nguyên liệu" },
-      { key: "instructions", label: "Hướng dẫn pha chế SOP", example: "Hòa TEA vào 8L nước siêu sạch, chỉnh pH = 7.0 bằng Acid Acetic băng, lọc màng 0.22 µm.", description: "Quy trình các bước pha chế & kiểm tra pH/độ dẫn" },
+      { key: "requires_qc", label: "Yêu cầu QC", aliases: ["QC"], example: "FALSE", description: "TRUE (Cần QC trước khi dùng) | FALSE" },
+      { key: "incubation_days", label: "Ủ (ngày)", example: "0", description: "Số ngày ủ / ổn định trước sử dụng (nếu có)" },
+      { key: "ingredient_code", label: "Mã nguyên liệu", aliases: ["material_code"], required: true, example: "CHEM-TEA-PURE", description: "Mã hóa chất nguyên liệu đầu vào" },
+      { key: "ingredient_name", label: "Tên nguyên liệu", aliases: ["material_name"], example: "Triethylamine (TEA) tinh khiết sắc ký ≥ 99.5%", description: "Tên hóa chất nguyên liệu" },
+      { key: "ingredient_qty", label: "Lượng dùng", aliases: ["ratio", "qty", "Tỷ lệ"], required: true, example: "139.5", description: "Lượng nguyên liệu cần lấy cho 1 mẻ chuẩn" },
+      { key: "ingredient_uom", label: "Đơn vị NL", aliases: ["unit"], example: "mL", description: "Đơn vị tính của nguyên liệu" },
+      { key: "instructions", label: "Hướng dẫn pha chế SOP", aliases: ["description", "Mô tả"], example: "Hòa TEA vào 8L nước siêu sạch, chỉnh pH = 7.0 bằng Acid Acetic băng, lọc màng 0.22 µm.", description: "Quy trình các bước pha chế & kiểm tra pH/độ dẫn" },
     ],
     sampleRows: [
       {
@@ -523,6 +526,143 @@ export const EXCEL_TEMPLATES: ExcelTemplateDef[] = [
       },
     ],
   },
+  {
+    key: "OLIGO_POST_METHOD",
+    badge: "Phương pháp SOP Oligo",
+    title: "9. Nhập Thư viện Phương pháp Sau tổng hợp Oligo",
+    subtitle: "Nhập hàng loạt phương pháp chuẩn (Cắt & Giải bảo vệ, Làm khô, Tinh sạch Cartridge/HPLC/PAGE, Đo OD, QC) kèm hóa chất và thông số đo",
+    depts: ["ALL", "P-OLIGO"],
+    defaultDept: "P-OLIGO",
+    defaultWarehouse: "KHO-OLIGO",
+    fields: [
+      { key: "category", label: "Nhóm bước", aliases: ["Phân loại", "Nhóm"], required: true, example: "Tinh sạch", description: "Cắt & Giải bảo vệ | Làm khô | Tinh sạch | Đo OD | Khử muối | QC" },
+      { key: "method_name", label: "Tên phương pháp", aliases: ["name"], required: true, example: "Tinh sạch Cartridge", description: "Tên phương pháp chuẩn (các dòng thông số liền sau cùng tên sẽ gộp vào 1 phương pháp)" },
+      { key: "kind", label: "Loại bước", aliases: ["Vai trò"], example: "STANDARD", description: "STANDARD (Thao tác chuẩn) | QUANTIFICATION (Đo OD định lượng)" },
+      { key: "target_hours", label: "Định mức giờ", aliases: ["Thời gian chuẩn (giờ)"], example: "1.0", description: "Thời gian chuẩn dự kiến (giờ)" },
+      { key: "field_label", label: "Tên thông số / Hóa chất", aliases: ["Thông số", "Hóa chất / Thông số", "Tên thông số"], example: "Dung dịch Acetonitrile", description: "Tên thông số cần thu thập hoặc tên hóa chất tiêu hao" },
+      { key: "field_type", label: "Loại thông số", aliases: ["Kiểu"], example: "REAGENT", description: "REAGENT (Hóa chất kho) | EQUIPMENT (Thiết bị) | NUMBER (Số) | TEXT (Chữ) | COLUMN (Cột HPLC)" },
+      { key: "item_code", label: "Mã hóa chất", aliases: ["reagent_code", "Mã vật tư"], example: "LC9", description: "Bắt buộc nếu Loại thông số = REAGENT; khớp với Mã vật tư trong Kho" },
+      { key: "default_qty", label: "Định mức / mẫu", aliases: ["Định mức"], example: "0.5", description: "Định mức tiêu hao gợi ý cho mỗi mẫu (nếu là Hóa chất)" },
+      { key: "uom", label: "Đơn vị", aliases: ["unit", "Đơn vị tính"], example: "mL", description: "Đơn vị đo hoặc đơn vị trừ kho (mL, uL, g, °C, phút, OD)" },
+      { key: "required", label: "Bắt buộc", example: "TRUE", description: "TRUE (Bắt buộc nhập khi thao tác) | FALSE (Tùy chọn)" },
+      { key: "status", label: "Trạng thái", example: "ACTIVE", description: "ACTIVE | INACTIVE" },
+    ],
+    sampleRows: [
+      {
+        category: "Tinh sạch",
+        method_name: "Tinh sạch Cartridge",
+        kind: "STANDARD",
+        target_hours: 1.0,
+        field_label: "Dung dịch Acetonitrile",
+        field_type: "REAGENT",
+        item_code: "LC9",
+        default_qty: 0.5,
+        uom: "mL",
+        required: "TRUE",
+        status: "ACTIVE",
+      },
+      {
+        category: "Tinh sạch",
+        method_name: "Tinh sạch Cartridge",
+        kind: "STANDARD",
+        target_hours: 1.0,
+        field_label: "Dung dịch Triethylamine Acetate 2.0M pH 7.0",
+        field_type: "REAGENT",
+        item_code: "ST0024",
+        default_qty: 2.0,
+        uom: "mL",
+        required: "TRUE",
+        status: "ACTIVE",
+      },
+      {
+        category: "Tinh sạch",
+        method_name: "Tinh sạch Cartridge",
+        kind: "STANDARD",
+        target_hours: 1.0,
+        field_label: "Dung dịch rửa muối",
+        field_type: "REAGENT",
+        item_code: "ST0026",
+        default_qty: 2.0,
+        uom: "mL",
+        required: "TRUE",
+        status: "ACTIVE",
+      },
+      {
+        category: "Tinh sạch",
+        method_name: "Tinh sạch Cartridge",
+        kind: "STANDARD",
+        target_hours: 1.0,
+        field_label: "Dung dịch TFA 2%",
+        field_type: "REAGENT",
+        item_code: "ST0027",
+        default_qty: 0,
+        uom: "mL",
+        required: "TRUE",
+        status: "ACTIVE",
+      },
+    ],
+  },
+  {
+    key: "OLIGO_POST_WORKFLOW",
+    badge: "Quy trình SOP Oligo",
+    title: "10. Nhập Quy trình SOP Sau tổng hợp Oligo",
+    subtitle: "Khai báo chuỗi các bước phương pháp nối tiếp nhau cho từng hình thức tinh sạch (Desalt, OPC, HPLC, PAGE); phải có đúng 1 bước Đo OD",
+    depts: ["ALL", "P-OLIGO"],
+    defaultDept: "P-OLIGO",
+    defaultWarehouse: "KHO-OLIGO",
+    fields: [
+      { key: "workflow_name", label: "Tên quy trình SOP", aliases: ["name", "Tên quy trình"], required: true, example: "Quy trình Cartridge chuẩn", description: "Tên quy trình SOP tổng hợp (các dòng bước liền sau cùng tên sẽ gộp vào 1 quy trình)" },
+      { key: "purifications", label: "Áp dụng tinh sạch", aliases: ["Hình thức tinh sạch"], example: "OPC", description: "DESALT, OPC, HPLC, PAGE (cách nhau dấu phẩy, hoặc để trống nếu là quy trình phụ)" },
+      { key: "description", label: "Mô tả", aliases: ["Mô tả quy trình"], example: "Quy trình giải bảo vệ AMA -> Làm khô -> Tinh sạch Cartridge -> Đo OD -> QC", description: "Mô tả ngắn mục đích quy trình" },
+      { key: "step_order", label: "Thứ tự bước", aliases: ["Bước số"], required: true, example: "1", description: "Số thứ tự bước thực hiện (1, 2, 3...)" },
+      { key: "method_category", label: "Nhóm bước", aliases: ["Phân loại"], example: "Tinh sạch", description: "Nhóm của phương pháp (tùy chọn, dùng phân biệt nếu trùng tên phương pháp)" },
+      { key: "method_name", label: "Tên phương pháp", aliases: ["Phương pháp"], required: true, example: "Tinh sạch Cartridge", description: "Phải khớp với Tên phương pháp đã có trong Thư viện Phương pháp SOP" },
+      { key: "step_name", label: "Tên bước hiển thị", aliases: ["Ghi chú bước"], example: "Bước 3: Tinh sạch Cartridge điều chế 5-10% ACN", description: "Tên hiển thị tùy chỉnh cho công đoạn này (nếu khác tên phương pháp gốc)" },
+      { key: "status", label: "Trạng thái", example: "ACTIVE", description: "ACTIVE | INACTIVE" },
+    ],
+    sampleRows: [
+      {
+        workflow_name: "Quy trình Cartridge chuẩn (Mẫu)",
+        purifications: "",
+        description: "Chuỗi 6 bước: Cắt giải bảo vệ -> Làm khô -> Cartridge -> Làm khô -> Đo OD -> QC",
+        step_order: 1,
+        method_category: "Cắt & Giải bảo vệ",
+        method_name: "AMA (65°C, 10 phút)",
+        step_name: "Cắt & giải bảo vệ AMA",
+        status: "ACTIVE",
+      },
+      {
+        workflow_name: "Quy trình Cartridge chuẩn (Mẫu)",
+        purifications: "",
+        description: "",
+        step_order: 2,
+        method_category: "Làm khô",
+        method_name: "Đông khô SpeedVac",
+        step_name: "Làm khô dung dịch AMA 0.5 ml",
+        status: "ACTIVE",
+      },
+      {
+        workflow_name: "Quy trình Cartridge chuẩn (Mẫu)",
+        purifications: "",
+        description: "",
+        step_order: 3,
+        method_category: "Tinh sạch",
+        method_name: "Tinh sạch Cartridge",
+        step_name: "Điều chế primer 5-10% ACN",
+        status: "ACTIVE",
+      },
+      {
+        workflow_name: "Quy trình Cartridge chuẩn (Mẫu)",
+        purifications: "",
+        description: "",
+        step_order: 4,
+        method_category: "Đo OD",
+        method_name: "Nanodrop A260",
+        step_name: "Đo OD primer / probe",
+        status: "ACTIVE",
+      },
+    ],
+  },
 ];
 
 const DEPT_FILTER_TABS = [
@@ -534,6 +674,19 @@ const DEPT_FILTER_TABS = [
   { code: "P-QA", label: "🛡️ Đảm bảo & Kiểm soát Chất lượng (QA/QC)" },
   { code: "KHO", label: "🏭 Kho Nhà Máy & Cung ứng NVL" },
 ];
+
+/** Navigates to the Excel Import Center and pre-selects a template & target department/warehouse. */
+export function openExcelImportTemplate(cfg: {
+  templateKey: string;
+  deptFilter?: string;
+  targetDeptCode?: string;
+  targetWarehouseCode?: string;
+}) {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.setItem("abt_import_preselect", JSON.stringify(cfg));
+  window.dispatchEvent(new CustomEvent("tbr-navigate", { detail: { tab: "factory-import" } }));
+  window.dispatchEvent(new CustomEvent("abt-import-preselect"));
+}
 
 export default function FactoryExcelImportModule() {
   const qc = useQueryClient();
@@ -548,6 +701,7 @@ export default function FactoryExcelImportModule() {
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [previewRows, setPreviewRows] = useState<Record<string, any>[]>([]);
   const [previewPage, setPreviewPage] = useState(1);
+  const [isAuditedOpeningBalance, setIsAuditedOpeningBalance] = useState(false);
   const [importProgress, setImportProgress] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<{
     total_rows: number;
@@ -584,12 +738,50 @@ export default function FactoryExcelImportModule() {
     setPreviewRows(tpl.sampleRows.map((r) => ({ ...r })));
   };
 
-  // Initialize sample rows on first load if empty
+  // Initialize sample rows or honor cross-screen preselection on first load / navigation event
   React.useEffect(() => {
-    if (previewRows.length === 0 && !uploadedFileName) {
+    const applyPreselect = () => {
+      try {
+        const raw = window.sessionStorage.getItem("abt_import_preselect");
+        if (!raw) return false;
+        window.sessionStorage.removeItem("abt_import_preselect");
+        const cfg = JSON.parse(raw) as {
+          templateKey?: string;
+          deptFilter?: string;
+          targetDeptCode?: string;
+          targetWarehouseCode?: string;
+        };
+        if (cfg.deptFilter) setDeptFilter(cfg.deptFilter);
+        const matched = cfg.templateKey ? EXCEL_TEMPLATES.find((t) => t.key === cfg.templateKey) : undefined;
+        if (matched) {
+          setSelectedTemplateKey(matched.key);
+          setTargetDeptCode(cfg.targetDeptCode || matched.defaultDept);
+          if (cfg.targetWarehouseCode || matched.defaultWarehouse) {
+            setTargetWarehouseCode(cfg.targetWarehouseCode || matched.defaultWarehouse || "KHO-KIT");
+          }
+          setImportResult(null);
+          setParseError(null);
+          setPreviewPage(1);
+          setUploadedFileName(`${matched.key}_Mau_Demo.xlsx`);
+          setPreviewRows(matched.sampleRows.map((r) => ({ ...r })));
+          return true;
+        }
+      } catch {
+        // ignore invalid storage payload
+      }
+      return false;
+    };
+
+    if (!applyPreselect() && previewRows.length === 0 && !uploadedFileName) {
       setPreviewRows(activeTemplate.sampleRows.map((r) => ({ ...r })));
       setUploadedFileName(`${activeTemplate.key}_Du_Lieu_Mau.xlsx`);
     }
+
+    const onPreselect = () => {
+      applyPreselect();
+    };
+    window.addEventListener("abt-import-preselect", onPreselect);
+    return () => window.removeEventListener("abt-import-preselect", onPreselect);
   }, []);
 
   /** Generates and downloads a real multi-sheet .xlsx file with Vietnamese headers, sample rows, and column guide */
@@ -660,16 +852,25 @@ export default function FactoryExcelImportModule() {
       const headerRow = row1MatchesKeys ? row1 : row0;
       const startRowIdx = row1MatchesKeys ? 2 : 1;
 
-      // Map each column index to a template field key
+      // Map each column index to a template field key (supports key, label, and legacy aliases)
       const colToFieldKey: (string | null)[] = headerRow.map((hdr) => {
         const clean = hdr.replace(/\s*\*\s*$/, "").trim().toLowerCase();
         const found = activeTemplate.fields.find(
-          (f) => f.key.toLowerCase() === clean || f.label.toLowerCase() === clean
+          (f) =>
+            f.key.toLowerCase() === clean ||
+            f.label.toLowerCase() === clean ||
+            (f.aliases ?? []).some((a) => a.toLowerCase() === clean)
         );
         return found ? found.key : hdr || null;
       });
 
       const parsedRows: Record<string, any>[] = [];
+      let carryFCode = "";
+      let carryFName = "";
+      let carryCat = "";
+      let carryMName = "";
+      let carryWfName = "";
+
       for (let rIdx = startRowIdx; rIdx < rawMatrix.length; rIdx++) {
         const arr = rawMatrix[rIdx];
         if (!Array.isArray(arr)) continue;
@@ -682,6 +883,40 @@ export default function FactoryExcelImportModule() {
             obj[fk] = arr[cIdx] ?? "";
           }
         }
+
+        // Legacy OligoFlow compatibility helpers on preview
+        if (activeTemplate.key === "INVENTORY_STOCK") {
+          const hasDirectQty = String(obj.qty_on_hand ?? "").trim() !== "";
+          const rawUnitQty = String(obj.quantity ?? "").trim();
+          if (!hasDirectQty && rawUnitQty !== "") {
+            const unitQ = Number(String(rawUnitQty).replace(/,/g, "")) || 0;
+            const bottles = Math.max(1, Number(String(obj.bottles_count ?? "1").replace(/,/g, "")) || 1);
+            obj.qty_on_hand = Math.round(unitQ * bottles * 1e6) / 1e6;
+          }
+        } else if (activeTemplate.key === "PREP_OLIGO_FORMULA") {
+          const code = String(obj.formula_code ?? "").trim();
+          const name = String(obj.formula_name ?? "").trim();
+          if (code) carryFCode = code;
+          if (name) carryFName = name;
+          if (!code && !name && carryFCode) obj.formula_code = carryFCode;
+          if (!code && name && !carryFCode) {
+            obj.formula_code = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/gi, "d").replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").toUpperCase().slice(0, 40);
+            carryFCode = obj.formula_code;
+          }
+          if (!name && carryFName) obj.formula_name = carryFName;
+        } else if (activeTemplate.key === "OLIGO_POST_METHOD") {
+          const cat = String(obj.category ?? "").trim();
+          const name = String(obj.method_name ?? "").trim();
+          if (cat) carryCat = cat;
+          else if (carryCat) obj.category = carryCat;
+          if (name) carryMName = name;
+          else if (carryMName) obj.method_name = carryMName;
+        } else if (activeTemplate.key === "OLIGO_POST_WORKFLOW") {
+          const wf = String(obj.workflow_name ?? "").trim();
+          if (wf) carryWfName = wf;
+          else if (carryWfName) obj.workflow_name = carryWfName;
+        }
+
         parsedRows.push(obj);
       }
 
@@ -708,9 +943,7 @@ export default function FactoryExcelImportModule() {
         errors: { row_no: number; code?: string; message: string }[];
       };
 
-      const canChunkByRow = ["INVENTORY_STOCK", "LAB_EQUIPMENT", "QC_METHOD_SPEC", "RD_PROJECT_WBS"].includes(
-        activeTemplate.key
-      );
+      const canChunkByRow = ["LAB_EQUIPMENT", "QC_METHOD_SPEC", "RD_PROJECT_WBS"].includes(activeTemplate.key);
       const CHUNK_SIZE = 400;
 
       if (!canChunkByRow || previewRows.length <= CHUNK_SIZE) {
@@ -722,6 +955,7 @@ export default function FactoryExcelImportModule() {
             template_name: activeTemplate.title,
             target_dept_code: targetDeptCode,
             target_warehouse_code: targetWarehouseCode,
+            is_audited_opening_balance: activeTemplate.key === "INVENTORY_STOCK" ? isAuditedOpeningBalance : false,
             file_name: uploadedFileName || `${activeTemplate.key}.xlsx`,
             rows: previewRows,
           },
@@ -745,6 +979,7 @@ export default function FactoryExcelImportModule() {
             template_name: activeTemplate.title,
             target_dept_code: targetDeptCode,
             target_warehouse_code: targetWarehouseCode,
+            is_audited_opening_balance: activeTemplate.key === "INVENTORY_STOCK" ? isAuditedOpeningBalance : false,
             file_name: uploadedFileName || `${activeTemplate.key}.xlsx`,
             rows: chunk,
           },
@@ -778,17 +1013,32 @@ export default function FactoryExcelImportModule() {
     },
   });
 
-  const validateRow = (row: Record<string, any>): string[] => {
+  const CARRY_DOWN_KEYS: Record<string, string[]> = {
+    PREP_OLIGO_FORMULA: ["formula_code", "formula_name"],
+    OLIGO_POST_METHOD: ["category", "method_name"],
+    OLIGO_POST_WORKFLOW: ["workflow_name"],
+  };
+
+  const validateRow = (row: Record<string, any>, rowIdx = 0): string[] => {
     const missing: string[] = [];
+    const carryKeys = CARRY_DOWN_KEYS[activeTemplate.key] ?? [];
     for (const f of activeTemplate.fields) {
-      if (f.required && String(row[f.key] ?? "").trim() === "") {
-        missing.push(f.label);
+      if (!f.required) continue;
+      const val = String(row[f.key] ?? "").trim();
+      if (val !== "") continue;
+      if (
+        rowIdx > 0 &&
+        carryKeys.includes(f.key) &&
+        previewRows.slice(0, rowIdx).some((prev) => String(prev[f.key] ?? "").trim() !== "")
+      ) {
+        continue;
       }
+      missing.push(f.label);
     }
     return missing;
   };
 
-  const validRowCount = previewRows.filter((r) => validateRow(r).length === 0).length;
+  const validRowCount = previewRows.filter((r, idx) => validateRow(r, idx).length === 0).length;
   const invalidRowCount = previewRows.length - validRowCount;
   const PAGE_SIZE = 100;
   const totalPreviewPages = Math.max(1, Math.ceil(previewRows.length / PAGE_SIZE));
@@ -828,9 +1078,9 @@ export default function FactoryExcelImportModule() {
             <div className="text-[10px] text-slate-400">Kèm cây mBOM</div>
           </div>
           <div className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-            <div className="text-[10px] text-slate-500">Quy trình Routing</div>
-            <div className="text-sm font-extrabold text-amber-700 dark:text-amber-400">{stats.routings_count} SOP</div>
-            <div className="text-[10px] text-slate-400">Công đoạn chuẩn</div>
+            <div className="text-[10px] text-slate-500">Quy trình Routing &amp; SOP</div>
+            <div className="text-sm font-extrabold text-amber-700 dark:text-amber-400">{stats.routings_count} RT · {stats.oligo_workflows_count ?? 0} SOP</div>
+            <div className="text-[10px] text-slate-400">{stats.oligo_methods_count ?? 0} PP sau TH Oligo</div>
           </div>
           <div className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
             <div className="text-[10px] text-slate-500">Phương pháp QA/QC</div>
@@ -838,7 +1088,7 @@ export default function FactoryExcelImportModule() {
             <div className="text-[10px] text-slate-400">{stats.qc_specs_count} bộ Spec</div>
           </div>
           <div className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-            <div className="text-[10px] text-slate-500">Dự án & WBS R&D</div>
+            <div className="text-[10px] text-slate-500">Dự án &amp; WBS R&amp;D</div>
             <div className="text-sm font-extrabold text-cyan-700 dark:text-cyan-400">{stats.rd_projects_count} dự án</div>
             <div className="text-[10px] text-slate-400">{stats.rd_tasks_count} việc WBS</div>
           </div>
@@ -847,7 +1097,7 @@ export default function FactoryExcelImportModule() {
 
       {/* Step 1: Filter by Technical Department & Choose Standard Excel Template */}
       <Card
-        title="Trung Tâm Nhập Dữ Liệu Excel Kéo-Thả & Thư Viện Biểu Mẫu Chuẩn Khối Kỹ Thuật (8 Biểu mẫu Toàn Nhà máy)"
+        title="Trung Tâm Nhập Dữ Liệu Excel Kéo-Thả & Thư Viện Biểu Mẫu Chuẩn Khối Kỹ Thuật (10 Biểu mẫu Toàn Nhà máy)"
         actions={
           <Button onClick={() => downloadExcelTemplate(activeTemplate)}>
             📥 Tải Biểu Mẫu Excel (.xlsx) Đang Chọn
@@ -1034,6 +1284,19 @@ export default function FactoryExcelImportModule() {
                     )}
                   </select>
                 </Field>
+                {activeTemplate.key === "INVENTORY_STOCK" && (
+                  <label className="flex items-start gap-2 pt-1 text-[11px] text-slate-700 dark:text-slate-200 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={isAuditedOpeningBalance}
+                      onChange={(e) => setIsAuditedOpeningBalance(e.target.checked)}
+                      className="mt-0.5 rounded border-slate-300"
+                    />
+                    <span>
+                      <b>Chốt số dư kiểm kê ban đầu (Mở khóa RELEASED ngay)</b> — lô nhập từ tồn đang sử dụng sẽ được mở khóa dùng ngay (yêu cầu quyền <code className="font-mono">inv.lot.release</code>; nếu không tick, lô vào Kiểm nghiệm/Cách ly).
+                    </span>
+                  </label>
+                )}
               </div>
               <div className="p-2 rounded-xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-900 text-[11px] text-slate-600 dark:text-slate-300">
                 💡 <b>Mẹo:</b> Hệ thống hỗ trợ cơ chế <b>Upsert thông minh</b> — nếu mã vật tư, thiết bị, công thức BOM hoặc quy trình đã tồn tại thì sẽ cập nhật phiên bản mới nhất, nếu chưa có sẽ tự động khởi tạo.
@@ -1207,7 +1470,7 @@ export default function FactoryExcelImportModule() {
             >
               {visiblePreviewRows.map((row, localIdx) => {
                 const rIdx = pageStartIdx + localIdx;
-                const missingCols = validateRow(row);
+                const missingCols = validateRow(row, rIdx);
                 return (
                   <tr key={rIdx} className="align-top">
                     <td className="py-1.5 pr-2 font-mono text-slate-400">{rIdx + 1}</td>

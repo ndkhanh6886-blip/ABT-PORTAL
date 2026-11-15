@@ -1,10 +1,11 @@
 import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
-import { authorize, hasFactoryPermission, registerPermissions, type AuthzActor } from "../core/authz";
+import { authorize, authorizeAnywhere, hasFactoryPermission, registerPermissions, type AuthzActor } from "../core/authz";
 import { nextNumber } from "../core/numbering";
 import { runTransition } from "../core/stateMachine";
 import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import { isPlaceholderUom, normalizeUomAlias } from "../master/service";
+import { saveMethod, saveWorkflow, type StepField } from "../oligo/postSop";
 import { ensureKitBomRoutingAndIfuSchema } from "../kit/bomRouting";
 import { ensureQaOpsSchema } from "../qms/qaOps";
 import { ensureRdProjectOpsSchema } from "../rd/projectOps";
@@ -114,8 +115,61 @@ function mapStorageCondition(raw: string): "RT" | "2-8" | "-20" | "-80" {
   return "RT";
 }
 
+function stripViAccents(raw: string): string {
+  return raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D");
+}
+
+function parseBoolFlag(val: unknown, fallback = false): boolean {
+  if (typeof val === "boolean") return val;
+  if (typeof val === "number") return val !== 0;
+  const s = stripViAccents(normStr(val)).toLowerCase();
+  if (!s) return fallback;
+  if (["1", "true", "yes", "y", "co", "x", "bat buoc"].includes(s)) return true;
+  if (["0", "false", "no", "n", "khong", "tuy chon", "optional"].includes(s)) return false;
+  return fallback;
+}
+
+function extractStockQty(r: Record<string, unknown>): number {
+  const directRaw = r.qty_on_hand ?? r.qty ?? r.total_qty ?? r["Số lượng tồn"] ?? r["Số lượng tồn kho"];
+  if (directRaw !== undefined && directRaw !== null && String(directRaw).trim() !== "") {
+    return Math.max(0, normNum(directRaw, 0));
+  }
+  const unitQtyRaw = r.quantity ?? r["Lượng / chai"] ?? r["Dung tích chai"];
+  const bottlesRaw = r.bottles_count ?? r["Số chai"] ?? r["Số chai / lọ"] ?? r["Số lượng chai"];
+  if (unitQtyRaw !== undefined && unitQtyRaw !== null && String(unitQtyRaw).trim() !== "") {
+    const unitQty = Math.max(0, normNum(unitQtyRaw, 0));
+    const bottles =
+      bottlesRaw !== undefined && bottlesRaw !== null && String(bottlesRaw).trim() !== ""
+        ? Math.max(1, normNum(bottlesRaw, 1))
+        : 1;
+    return Math.round(unitQty * bottles * 1e6) / 1e6;
+  }
+  return 0;
+}
+
+function toMethodFieldKey(raw: string, fallbackIndex: number, usedKeys: Set<string>): string {
+  const clean = stripViAccents(raw)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  let base = /^[a-z]/.test(clean) ? clean : clean ? `f_${clean}` : `field_${fallbackIndex + 1}`;
+  base = base.slice(0, 34);
+  let candidate = base;
+  let seq = 2;
+  while (usedKeys.has(candidate)) {
+    const suffix = `_${seq++}`;
+    candidate = `${base.slice(0, 40 - suffix.length)}${suffix}`;
+  }
+  usedKeys.add(candidate);
+  return candidate;
+}
+
 function mapItemType(raw: string): string {
-  const s = raw.toUpperCase().trim();
+  const s = stripViAccents(raw).toUpperCase().trim();
   const valid = [
     "RAW_MATERIAL",
     "REAGENT",
@@ -130,11 +184,64 @@ function mapItemType(raw: string): string {
   if (valid.includes(s)) return s;
   if (s.includes("KIT") || s.includes("THANH PHAM")) return "FINISHED_KIT";
   if (s.includes("BAN THANH PHAM") || s.includes("BTP") || s.includes("SEMI")) return "SEMI_FINISHED";
-  if (s.includes("HOA CHAT") || s.includes("REAGENT") || s.includes("ENZYME")) return "REAGENT";
-  if (s.includes("TIEU HAO") || s.includes("ONG") || s.includes("HOP") || s.includes("BAO BI") || s.includes("PACKAGING")) return "CONSUMABLE";
+  if (
+    s.includes("HOA CHAT") ||
+    s.includes("REAGENT") ||
+    s.includes("ENZYME") ||
+    s.includes("AMIDITE") ||
+    s.includes("SOLVENT") ||
+    s.includes("DUNG MOI") ||
+    s.includes("CPG")
+  ) {
+    return "REAGENT";
+  }
+  if (
+    s.includes("TIEU HAO") ||
+    s.includes("ONG") ||
+    s.includes("HOP") ||
+    s.includes("BAO BI") ||
+    s.includes("PACKAGING") ||
+    s.includes("COT") ||
+    s.includes("CARTRIDGE")
+  ) {
+    return "CONSUMABLE";
+  }
   if (s.includes("LINH KIEN") || s.includes("COMPONENT")) return "COMPONENT";
   if (s.includes("THIET BI") || s.includes("MAY")) return "DEVICE";
   return "RAW_MATERIAL";
+}
+
+function mapMethodFieldType(rawType: string, hasReagentCode: boolean): StepField["type"] {
+  const t = stripViAccents(rawType).toUpperCase().trim();
+  if (!t && hasReagentCode) return "REAGENT";
+  if (["NUMBER", "SO", "NUMERIC", "FLOAT", "INT"].includes(t)) return "NUMBER";
+  if (["TEXT", "CHU", "STRING", "NOTE", "GHI CHU"].includes(t)) return "TEXT";
+  if (["EQUIPMENT", "THIET BI", "MAY", "ASSET"].includes(t)) return "EQUIPMENT";
+  if (["REAGENT", "HOA CHAT", "CHEMICAL", "DUNG DICH", "DUNG MOI"].includes(t)) return "REAGENT";
+  if (["COLUMN", "COT", "HPLC COLUMN", "COT HPLC"].includes(t)) return "COLUMN";
+  return hasReagentCode ? "REAGENT" : "NUMBER";
+}
+
+function resolveMethodStepKind(rawKind: string, category: string): "STANDARD" | "QUANTIFICATION" {
+  const k = stripViAccents(rawKind).toUpperCase().trim();
+  const c = stripViAccents(category).toUpperCase().trim();
+  if (k === "QUANTIFICATION" || k.includes("DINH LUONG") || k.includes("DO OD")) return "QUANTIFICATION";
+  if (!k && (c === "DO OD" || c.includes("QUANTIFICATION"))) return "QUANTIFICATION";
+  return "STANDARD";
+}
+
+function parsePurificationList(raw: unknown): ("DESALT" | "OPC" | "HPLC" | "PAGE")[] {
+  const s = stripViAccents(normStr(raw)).toUpperCase();
+  if (!s) return [];
+  const tokens = s.split(/[,;|/\s]+/).filter(Boolean);
+  const out = new Set<"DESALT" | "OPC" | "HPLC" | "PAGE">();
+  for (const tok of tokens) {
+    if (tok === "DESALT" || tok === "DESALTED") out.add("DESALT");
+    else if (tok === "OPC" || tok === "CARTRIDGE") out.add("OPC");
+    else if (tok === "HPLC" || tok === "RP-HPLC") out.add("HPLC");
+    else if (tok === "PAGE") out.add("PAGE");
+  }
+  return [...out];
 }
 
 async function ensureItemByCode(
@@ -340,7 +447,9 @@ export async function getExcelImportOverview(tx: Tx, _actor: AuthzActor) {
         (SELECT count(*)::int FROM qms.qc_spec) AS qc_specs_count,
         (SELECT count(*)::int FROM qms.qc_method) AS qc_methods_count,
         (SELECT count(*)::int FROM rd.project) AS rd_projects_count,
-        (SELECT count(*)::int FROM rd.project_task) AS rd_tasks_count
+        (SELECT count(*)::int FROM rd.project_task) AS rd_tasks_count,
+        (SELECT count(*)::int FROM oligo.ps_method) AS oligo_methods_count,
+        (SELECT count(*)::int FROM oligo.ps_workflow) AS oligo_workflows_count
     `)
   ).rows[0];
 
@@ -387,7 +496,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
 
   if (templateKey === "INVENTORY_STOCK") {
     await authorize(tx, actor, "master.item.manage");
-    const hasStockRows = rawRows.some((r) => normNum(r.qty_on_hand ?? r.qty ?? r["Số lượng tồn"], 0) > 0);
+    const hasStockRows = rawRows.some((r) => extractStockQty(r) > 0);
     if (hasStockRows) {
       await authorize(tx, actor, "inv.receipt.manage").catch(async (err) => {
         if (err?.code === "FORBIDDEN") {
@@ -398,15 +507,37 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       });
     }
     const canReleaseOpeningLot =
-      Boolean(input.is_audited_opening_balance) && (await hasFactoryPermission(tx, actor, "inv.lot.release"));
+      Boolean(input.is_audited_opening_balance) &&
+      ((await hasFactoryPermission(tx, actor, "inv.lot.release")) ||
+        (await authorizeAnywhere(tx, actor, "inv.lot.release")
+          .then(() => true)
+          .catch(() => false)));
+
+    const pendingStockTargets = new Map<
+      string,
+      {
+        rowNo: number;
+        itemCode: string;
+        itemId: string;
+        baseUom: string;
+        lotId: string;
+        warehouseId: string;
+        locationId: string;
+        targetQty: number;
+      }
+    >();
 
     for (let i = 0; i < rawRows.length; i++) {
       const r = rawRows[i];
       const sp = `sp_inv_${i}`;
       await tx.query(`SAVEPOINT ${sp}`);
       try {
-        const itemCode = normCode(r.item_code || r["Mã vật tư"] || r["Mã vật tư (SKU)"]);
-        const itemName = normStr(r.item_name || r["Tên vật tư"] || r["Tên vật tư / Sản phẩm"]);
+        const itemCode = normCode(
+          r.item_code || r.material_code || r["Mã vật tư"] || r["Mã vật tư (SKU)"] || r["Mã NVL"]
+        );
+        const itemName = normStr(
+          r.item_name || r.material_name || r["Tên vật tư"] || r["Tên vật tư / Sản phẩm"] || r["Tên NVL"]
+        );
         if (!itemCode || !itemName) {
           throw new Error("Thiếu Mã vật tư (item_code) hoặc Tên vật tư (item_name)");
         }
@@ -416,8 +547,11 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
           {
             code: itemCode,
             name: itemName,
-            item_type: normStr(r.item_type || r["Phân loại"] || r["Loại hàng"], "RAW_MATERIAL"),
-            base_uom: normStr(r.base_uom || r["Đơn vị"]),
+            item_type: normStr(
+              r.item_type || r.category || r["Phân loại"] || r["Loại hàng"] || r["Nhóm vật tư"],
+              "RAW_MATERIAL"
+            ),
+            base_uom: normStr(r.base_uom || r.unit || r["Đơn vị"] || r["Đơn vị tính"]),
             storage_condition: normStr(r.storage_condition || r["Bảo quản"], "RT"),
             shelf_life_days: normNum(r.shelf_life_days || r["Hạn dùng (ngày)"], 365),
             min_stock: normNum(r.min_stock || r["Tồn tối thiểu"] || r["Định mức (Min)"], 0),
@@ -428,18 +562,21 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
         if (itemRes.created) createdCount++;
         else updatedCount++;
 
-        const qty = Math.max(0, normNum(r.qty_on_hand ?? r.qty ?? r["Số lượng tồn"] ?? r["Số lượng tồn kho"], 0));
-        const rawLotCode = normStr(r.lot_code || r["Số lô"] || r["Số Lô"]);
+        const qty = extractStockQty(r);
+        const rawLotCode = normStr(r.lot_code || r.lot_number || r["Số lô"] || r["Số Lô"] || r["Mã lô"]);
         const hasExplicitLot = Boolean(rawLotCode && rawLotCode !== "-");
-        let lotCode = normCode(hasExplicitLot ? rawLotCode : `${itemCode}-L01`, `${itemCode}-L01`);
+        const lotCode = normCode(hasExplicitLot ? rawLotCode : `${itemCode}-L01`, `${itemCode}-L01`);
         if ((qty > 0 || hasExplicitLot) && itemRes.tracking !== "NONE") {
           const lotStatus = canReleaseOpeningLot ? "RELEASED" : "QUARANTINE";
-          let mfgDate = normDate(r.mfg_date || r["Ngày SX"] || r["Ngày sản xuất"]);
-          let expiryDate = normDate(r.expiry_date || r["Hạn dùng"] || r["Hạn sử dụng"]) || "2027-12-31";
+          const mfgDate = normDate(r.mfg_date || r["Ngày SX"] || r["Ngày sản xuất"]);
+          let expiryDate =
+            normDate(r.expiry_date || r.expire_date || r["Hạn dùng"] || r["Hạn sử dụng"] || r["HSD"]) || "2027-12-31";
           if (mfgDate && expiryDate && expiryDate < mfgDate) {
             expiryDate = mfgDate;
           }
-          const rawMfrLot = normStr(r.mfr_lot_no || r["Lô NSX"] || r["Số lô NSX (Mfg Lot)"]);
+          const rawMfrLot = normStr(
+            r.mfr_lot_no || r.manufacturer_lot || r["Lô NSX"] || r["Số lô NSX (Mfg Lot)"] || r["Lô nhà sản xuất"]
+          );
           const mfrLot = rawMfrLot && rawMfrLot !== "-" ? rawMfrLot : lotCode;
 
           let lot = (
@@ -461,6 +598,13 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
                 [lotCode, itemRes.id, mfrLot, mfgDate, expiryDate, lotStatus, actor.userId]
               )
             ).rows[0];
+          } else if (lot.status === "QUARANTINE" && canReleaseOpeningLot) {
+            lot = (
+              await tx.query("UPDATE inv.lot SET status = 'RELEASED', updated_by = $2 WHERE id = $1 RETURNING id, status", [
+                lot.id,
+                actor.userId,
+              ])
+            ).rows[0];
           }
 
           const whLoc = await resolveWarehouseAndLocation(
@@ -474,55 +618,88 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
           );
 
           if (qty > 0) {
-            const prevBalRow = (
-              await tx.query(
-                `SELECT id, qty_on_hand::float AS qty_on_hand
-                   FROM inv.stock_balance
-                  WHERE item_id = $1 AND lot_id = $2 AND container_id IS NULL AND location_id = $3
-                  LIMIT 1`,
-                [itemRes.id, lot.id, whLoc.location_id]
-              )
-            ).rows[0];
-            const prevQty = Number(prevBalRow?.qty_on_hand ?? 0);
-            const deltaQty = Math.round((qty - prevQty) * 1e6) / 1e6;
-
-            if (Math.abs(deltaQty) > 1e-9) {
-              const doc = await createStockDocument(
-                tx,
-                actor,
-                {
-                  doc_type: deltaQty > 0 ? "RECEIPT" : "ADJUSTMENT",
-                  reason_code: "INITIAL_BALANCE",
-                  warehouse_id: whLoc.warehouse_id,
-                  notes: `Nhập tồn kho đầu kỳ từ file Excel (${fileName})`,
-                  lines: [
-                    {
-                      item_id: itemRes.id,
-                      lot_id: lot.id,
-                      ...(deltaQty > 0
-                        ? { to_location_id: whLoc.location_id }
-                        : { from_location_id: whLoc.location_id }),
-                      qty: Math.abs(deltaQty),
-                      uom: itemRes.base_uom,
-                    },
-                  ],
-                },
-                { trusted: true }
-              );
-              await runTransition(
-                tx,
-                stockDocumentMachine,
-                actor,
-                { id: doc.id, action: "post", expectedVersion: doc.version },
-                { trusted: true }
-              );
+            const batchKey = `${itemRes.id}:${lot.id}:${whLoc.location_id}`;
+            const cur = pendingStockTargets.get(batchKey);
+            if (cur) {
+              cur.targetQty = Math.round((cur.targetQty + qty) * 1e6) / 1e6;
+            } else {
+              pendingStockTargets.set(batchKey, {
+                rowNo: i + 1,
+                itemCode,
+                itemId: itemRes.id,
+                baseUom: itemRes.base_uom,
+                lotId: lot.id,
+                warehouseId: whLoc.warehouse_id,
+                locationId: whLoc.location_id,
+                targetQty: qty,
+              });
             }
           }
         }
         await tx.query(`RELEASE SAVEPOINT ${sp}`);
       } catch (e: any) {
         await tx.query(`ROLLBACK TO SAVEPOINT ${sp}`);
-        errors.push({ row_no: i + 1, code: normStr(r.item_code), message: e?.message || String(e) });
+        errors.push({
+          row_no: i + 1,
+          code: normStr(r.item_code || r.material_code || r["Mã vật tư"]),
+          message: e?.message || String(e),
+        });
+      }
+    }
+
+    let balIdx = 0;
+    for (const target of pendingStockTargets.values()) {
+      balIdx++;
+      const sp = `sp_inv_bal_${balIdx}`;
+      await tx.query(`SAVEPOINT ${sp}`);
+      try {
+        const prevBalRow = (
+          await tx.query(
+            `SELECT id, qty_on_hand::float AS qty_on_hand
+               FROM inv.stock_balance
+              WHERE item_id = $1 AND lot_id = $2 AND container_id IS NULL AND location_id = $3
+              LIMIT 1`,
+            [target.itemId, target.lotId, target.locationId]
+          )
+        ).rows[0];
+        const prevQty = Number(prevBalRow?.qty_on_hand ?? 0);
+        const deltaQty = Math.round((target.targetQty - prevQty) * 1e6) / 1e6;
+
+        if (Math.abs(deltaQty) > 1e-9) {
+          const doc = await createStockDocument(
+            tx,
+            actor,
+            {
+              doc_type: deltaQty > 0 ? "RECEIPT" : "ADJUSTMENT",
+              reason_code: "INITIAL_BALANCE",
+              warehouse_id: target.warehouseId,
+              notes: `Nhập tồn kho đầu kỳ từ file Excel (${fileName})`,
+              lines: [
+                {
+                  item_id: target.itemId,
+                  lot_id: target.lotId,
+                  ...(deltaQty > 0
+                    ? { to_location_id: target.locationId }
+                    : { from_location_id: target.locationId }),
+                  qty: Math.abs(deltaQty),
+                  uom: target.baseUom,
+                },
+              ],
+            },
+            { trusted: true }
+          );
+          await runTransition(
+            tx,
+            stockDocumentMachine,
+            actor,
+            { id: doc.id, action: "post", expectedVersion: doc.version },
+            { trusted: true }
+          );
+        }
+        await tx.query(`RELEASE SAVEPOINT ${sp}`);
+      } catch (e: any) {
+        await tx.query(`ROLLBACK TO SAVEPOINT ${sp}`);
+        errors.push({ row_no: target.rowNo, code: target.itemCode, message: e?.message || String(e) });
       }
     }
   } else if (templateKey === "LAB_EQUIPMENT") {
@@ -1030,12 +1207,35 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
     }
   } else if (templateKey === "PREP_OLIGO_FORMULA") {
     await authorize(tx, actor, "prep.formula.manage");
+    let lastFCode = "";
+    let lastFName = "";
+    let lastCategory = "";
     const grouped = new Map<string, Record<string, unknown>[]>();
     for (const r of rawRows) {
-      const fCode = normCode(r.formula_code || r["Mã công thức"]);
+      const explicitCode = normCode(r.formula_code || r.code || r["Mã công thức"]);
+      const rowName = normStr(r.formula_name || r.name || r["Tên công thức pha chế"] || r["Tên công thức"]);
+      const rowCat = normStr(r.category || r["Nhóm pha chế"] || r["Nhóm"]);
+      const hasIngredient = Boolean(normCode(r.ingredient_code || r.material_code || r["Mã nguyên liệu"]));
+      let fCode = explicitCode;
+      if (fCode) {
+        lastFCode = fCode;
+        if (rowName) lastFName = rowName;
+        if (rowCat) lastCategory = rowCat;
+      } else if (rowName) {
+        fCode = normCode(rowName);
+        lastFCode = fCode;
+        lastFName = rowName;
+        if (rowCat) lastCategory = rowCat;
+      } else if (hasIngredient && lastFCode) {
+        fCode = lastFCode;
+      }
       if (!fCode) continue;
+      const hydrated =
+        !explicitCode && !rowName && lastFName
+          ? { ...r, formula_name: lastFName, ...(lastCategory && !rowCat ? { category: lastCategory } : {}) }
+          : r;
       const arr = grouped.get(fCode) ?? [];
-      arr.push(r);
+      arr.push(hydrated);
       grouped.set(fCode, arr);
     }
     let groupIdx = 0;
@@ -1045,14 +1245,27 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       await tx.query(`SAVEPOINT ${sp}`);
       try {
         const first = lines[0];
-        const formulaName = normStr(first.formula_name || first["Tên công thức pha chế"], `Công thức ${formulaCode}`);
-        const category = normStr(first.category || first["Nhóm pha chế"], "Đệm & Hóa chất Tổng hợp");
-        const outputCode = normCode(first.output_item_code || first["Mã hóa chất đích"], `${formulaCode}-OUT`);
+        const formulaName = normStr(
+          first.formula_name || first.name || first["Tên công thức pha chế"] || first["Tên công thức"],
+          `Công thức ${formulaCode}`
+        );
+        const category = normStr(first.category || first["Nhóm pha chế"] || first["Nhóm"], "Đệm & Hóa chất Tổng hợp");
+        const ingCodes = new Set(
+          lines
+            .map((l) => normCode(l.ingredient_code || l.material_code || l["Mã nguyên liệu"]).toUpperCase())
+            .filter(Boolean)
+        );
+        let outputCode = normCode(first.output_item_code || first["Mã hóa chất đích"], `${formulaCode}-OUT`);
+        if (ingCodes.has(outputCode.toUpperCase())) {
+          outputCode = normCode(`PREP-${formulaCode}-OUT`, `${formulaCode}-TP`);
+        }
         const outputName = normStr(first.output_item_name || first["Tên hóa chất đích"], formulaName);
-        const basisQty = Math.max(0.001, normNum(first.basis_qty || first["Mẻ chuẩn"], 1000));
-        const basisUom = normStr(first.basis_uom || first["Đơn vị mẻ"], "mL");
-        const shelfLifeDays = Math.max(1, Math.round(normNum(first.shelf_life_days || first["Hạn dùng (ngày)"], 180)));
-        const instructions = normStr(first.instructions || first["Hướng dẫn pha chế SOP"]) || null;
+        const basisQty = Math.max(0.001, normNum(first.basis_qty ?? first["Mẻ chuẩn"], 1000));
+        const basisUom = normStr(first.basis_uom || first["Đơn vị mẻ"] || first.unit, "mL");
+        const shelfLifeDays = Math.max(1, Math.round(normNum(first.shelf_life_days ?? first["Hạn dùng (ngày)"], 180)));
+        const instructions = normStr(first.instructions || first.description || first["Hướng dẫn pha chế SOP"] || first["Mô tả"]) || null;
+        const requiresQc = parseBoolFlag(first.requires_qc ?? first["Yêu cầu QC"] ?? first["QC"], false);
+        const incubationDays = Math.max(0, Math.round(normNum(first.incubation_days ?? first["Ủ (ngày)"], 0)));
 
         const outItem = await ensureItemByCode(
           tx,
@@ -1075,9 +1288,22 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
             `UPDATE prep.formula
                 SET name = $2, category = $3, output_item_id = $4, basis_qty = $5,
                     basis_uom = $6, shelf_life_days = $7, instructions = $8,
-                    status = 'ACTIVE', updated_at = now(), updated_by = $9
+                    requires_qc = $9, incubation_days = $10,
+                    status = 'ACTIVE', updated_at = now(), updated_by = $11
               WHERE id = $1`,
-            [formula.id, formulaName, category, outItem.id, basisQty, outItem.base_uom, shelfLifeDays, instructions, actor.userId]
+            [
+              formula.id,
+              formulaName,
+              category,
+              outItem.id,
+              basisQty,
+              outItem.base_uom,
+              shelfLifeDays,
+              instructions,
+              requiresQc,
+              incubationDays,
+              actor.userId,
+            ]
           );
           await tx.query("DELETE FROM prep.formula_line WHERE formula_id = $1", [formula.id]);
           updatedCount++;
@@ -1087,20 +1313,33 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
               `INSERT INTO prep.formula (
                  code, name, category, output_item_id, basis_qty, basis_uom,
                  shelf_life_days, requires_qc, instructions, status, created_by, updated_by, incubation_days
-               ) VALUES ($1, $2, $3, $4, $5, $6, $7, false, $8, 'ACTIVE', $9, $9, 0)
+               ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'ACTIVE', $10, $10, $11)
                RETURNING id`,
-              [formulaCode, formulaName, category, outItem.id, basisQty, outItem.base_uom, shelfLifeDays, instructions, actor.userId]
+              [
+                formulaCode,
+                formulaName,
+                category,
+                outItem.id,
+                basisQty,
+                outItem.base_uom,
+                shelfLifeDays,
+                requiresQc,
+                instructions,
+                actor.userId,
+                incubationDays,
+              ]
             )
           ).rows[0];
           createdCount++;
         }
 
-        for (let idx = 0; idx < lines.length; idx++) {
-          const l = lines[idx];
-          const ingCode = normCode(l.ingredient_code || l["Mã nguyên liệu"]);
-          const ingName = normStr(l.ingredient_name || l["Tên nguyên liệu"], ingCode);
+        let lineNo = 0;
+        for (const l of lines) {
+          const ingCode = normCode(l.ingredient_code || l.material_code || l["Mã nguyên liệu"]);
           if (!ingCode) continue;
-          const ingUom = normStr(l.ingredient_uom || l["Đơn vị NL"], "mL");
+          lineNo++;
+          const ingName = normStr(l.ingredient_name || l.material_name || l["Tên nguyên liệu"], ingCode);
+          const ingUom = normStr(l.ingredient_uom || l.unit || l["Đơn vị NL"], "mL");
           const ingItem = await ensureItemByCode(
             tx,
             actor,
@@ -1112,11 +1351,14 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
             },
             uomCache
           );
-          const ingQty = Math.max(0.0001, normNum(l.ingredient_qty || l["Lượng dùng"], 1));
+          if (ingItem.id === outItem.id) {
+            throw new Error(`Mã hóa chất đích (${outputCode}) không được trùng với nguyên liệu đầu vào (${ingCode})`);
+          }
+          const ingQty = Math.max(0.0001, normNum(l.ingredient_qty ?? l.ratio ?? l.qty ?? l["Lượng dùng"] ?? l["Tỷ lệ"], 1));
           await tx.query(
             `INSERT INTO prep.formula_line (formula_id, line_no, item_id, qty, uom)
              VALUES ($1, $2, $3, $4, $5)`,
-            [formula.id, idx + 1, ingItem.id, ingQty, ingItem.base_uom]
+            [formula.id, lineNo, ingItem.id, ingQty, ingItem.base_uom]
           );
         }
         await tx.query(`RELEASE SAVEPOINT ${sp}`);
@@ -1519,6 +1761,233 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       } catch (e: any) {
         await tx.query(`ROLLBACK TO SAVEPOINT ${sp}`);
         errors.push({ row_no: i + 1, code: normStr(r.task_code || r.project_code), message: e?.message || String(e) });
+      }
+    }
+  } else if (templateKey === "OLIGO_POST_METHOD") {
+    await authorize(tx, actor, "oligo.sop.manage");
+    let lastCategory = "";
+    let lastMethodName = "";
+    const grouped = new Map<string, Record<string, unknown>[]>();
+    for (const r of rawRows) {
+      const cat = normStr(r.category || r["Nhóm bước"] || r["Phân loại"] || r["Nhóm"]);
+      const name = normStr(r.method_name || r.name || r["Tên phương pháp"]);
+      const hasFieldData = Boolean(
+        normStr(
+          r.field_label ||
+            r["Tên thông số"] ||
+            r["Thông số"] ||
+            r["Hóa chất / Thông số"] ||
+            r.field_key ||
+            r["Mã trường"] ||
+            r.item_code ||
+            r.reagent_code ||
+            r["Mã hóa chất"]
+        )
+      );
+      if (!name && !hasFieldData) continue;
+      const effectiveCat = (cat || lastCategory || "Tinh sạch").slice(0, 60);
+      const effectiveName = (name || lastMethodName).slice(0, 100);
+      if (cat) lastCategory = effectiveCat;
+      if (name) lastMethodName = effectiveName;
+      if (!effectiveName) continue;
+      const gKey = `${effectiveCat.toLowerCase()}::${effectiveName.toLowerCase()}`;
+      const arr = grouped.get(gKey) ?? [];
+      arr.push({ ...r, __category: effectiveCat, __method_name: effectiveName });
+      grouped.set(gKey, arr);
+    }
+
+    let groupIdx = 0;
+    for (const rows of grouped.values()) {
+      groupIdx++;
+      const first = rows[0];
+      const category = String(first.__category);
+      const methodName = String(first.__method_name);
+      const sp = `sp_om_${groupIdx}`;
+      await tx.query(`SAVEPOINT ${sp}`);
+      try {
+        const kind = resolveMethodStepKind(normStr(first.kind || first["Loại bước"] || first["Vai trò"]), category);
+        const thRaw = normNum(first.target_hours ?? first["Định mức giờ"] ?? first["Thời gian chuẩn (giờ)"], 0);
+        const target_hours = thRaw > 0 ? Math.min(1000, thRaw) : null;
+        const statusStr = stripViAccents(normStr(first.status || first["Trạng thái"], "ACTIVE")).toUpperCase();
+        const status = statusStr === "INACTIVE" || statusStr.includes("NGUNG") ? "INACTIVE" : "ACTIVE";
+
+        const usedKeys = new Set<string>();
+        const fields: StepField[] = [];
+        for (let idx = 0; idx < rows.length; idx++) {
+          const row = rows[idx];
+          const rawItemCode = normCode(row.item_code || row.reagent_code || row["Mã hóa chất"] || row["Mã vật tư"]);
+          const rawLabel = normStr(row.field_label || row["Tên thông số"] || row["Thông số"] || row["Hóa chất / Thông số"]);
+          const rawKey = normStr(row.field_key || row["Mã trường"]);
+          if (!rawLabel && !rawItemCode && !rawKey) continue;
+
+          const fType = mapMethodFieldType(
+            normStr(row.field_type || row["Loại thông số"] || row["Kiểu"]),
+            Boolean(rawItemCode)
+          );
+          const label = (rawLabel || rawItemCode || rawKey).slice(0, 100);
+          const key = toMethodFieldKey(rawKey || label, idx, usedKeys);
+          const required = parseBoolFlag(row.required ?? row["Bắt buộc"], true);
+
+          if (fType === "REAGENT") {
+            if (!rawItemCode) {
+              throw new Error(`Thông số hóa chất "${label}" thiếu Mã hóa chất (item_code)`);
+            }
+            const rawUom = normStr(row.uom || row.unit || row["Đơn vị"] || row["Đơn vị tính"], "mL");
+            const itemRes = await ensureItemByCode(
+              tx,
+              actor,
+              {
+                code: rawItemCode,
+                name: label || rawItemCode,
+                item_type: "REAGENT",
+                base_uom: rawUom,
+              },
+              uomCache
+            );
+            const defQtyRaw = row.default_qty ?? row["Định mức / mẫu"] ?? row["Định mức"];
+            const default_qty =
+              defQtyRaw !== undefined && defQtyRaw !== null && String(defQtyRaw).trim() !== ""
+                ? Math.max(0, normNum(defQtyRaw, 0))
+                : null;
+            fields.push({
+              key,
+              label,
+              type: "REAGENT",
+              unit: itemRes.base_uom.slice(0, 20),
+              required,
+              item_id: itemRes.id,
+              default_qty,
+              uom: itemRes.base_uom.slice(0, 20),
+            });
+          } else {
+            const unit = normStr(row.unit || row.uom || row["Đơn vị"]) || null;
+            fields.push({
+              key,
+              label,
+              type: fType,
+              unit: unit ? unit.slice(0, 20) : null,
+              required,
+            });
+          }
+        }
+
+        const existing = (
+          await tx.query(
+            "SELECT id, version FROM oligo.ps_method WHERE lower(trim(category)) = lower(trim($1)) AND lower(trim(name)) = lower(trim($2)) LIMIT 1",
+            [category, methodName]
+          )
+        ).rows[0];
+        await saveMethod(tx, actor, existing?.id ?? null, {
+          category,
+          name: methodName,
+          kind,
+          target_hours,
+          fields,
+          status,
+          ...(existing ? { version: existing.version, reason: `Nhập Excel (${fileName})` } : {}),
+        });
+        if (existing) updatedCount++;
+        else createdCount++;
+        await tx.query(`RELEASE SAVEPOINT ${sp}`);
+      } catch (e: any) {
+        await tx.query(`ROLLBACK TO SAVEPOINT ${sp}`);
+        errors.push({ row_no: groupIdx, code: methodName, message: e?.message || String(e) });
+      }
+    }
+  } else if (templateKey === "OLIGO_POST_WORKFLOW") {
+    await authorize(tx, actor, "oligo.sop.manage");
+    let lastWfName = "";
+    const grouped = new Map<string, Record<string, unknown>[]>();
+    for (const r of rawRows) {
+      const wfName = normStr(r.workflow_name || r.name || r["Tên quy trình"] || r["Tên quy trình SOP"]);
+      const mName = normStr(r.method_name || r["Phương pháp"] || r["Tên phương pháp"]);
+      if (!wfName && !mName) continue;
+      const effectiveWfName = (wfName || lastWfName).slice(0, 100);
+      if (wfName) lastWfName = effectiveWfName;
+      if (!effectiveWfName) continue;
+      const arr = grouped.get(effectiveWfName) ?? [];
+      arr.push(r);
+      grouped.set(effectiveWfName, arr);
+    }
+
+    const allMethods = (
+      await tx.query("SELECT id, category, name, kind, status FROM oligo.ps_method ORDER BY category, name")
+    ).rows as { id: string; category: string; name: string; kind: string; status: string }[];
+
+    let groupIdx = 0;
+    for (const [wfName, rawSteps] of grouped.entries()) {
+      groupIdx++;
+      const sp = `sp_ow_${groupIdx}`;
+      await tx.query(`SAVEPOINT ${sp}`);
+      try {
+        const sortedSteps = rawSteps
+          .map((r, idx) => ({
+            r,
+            idx,
+            order: normNum(r.step_order ?? r["Thứ tự bước"] ?? r["Bước số"], idx + 1),
+          }))
+          .sort((a, b) => a.order - b.order || a.idx - b.idx);
+
+        const first = rawSteps[0];
+        const description = normStr(first.description || first["Mô tả"]) || null;
+        const purifications = parsePurificationList(
+          first.purifications || first["Áp dụng tinh sạch"] || first["Hình thức tinh sạch"]
+        );
+        const statusStr = stripViAccents(normStr(first.status || first["Trạng thái"], "ACTIVE")).toUpperCase();
+        const status = statusStr === "INACTIVE" || statusStr.includes("NGUNG") ? "INACTIVE" : "ACTIVE";
+
+        const steps: { method_id: string; name?: string | null }[] = [];
+        for (const item of sortedSteps) {
+          const mName = normStr(item.r.method_name || item.r["Phương pháp"] || item.r["Tên phương pháp"]);
+          if (!mName) continue;
+          const mCat = normStr(item.r.method_category || item.r["Nhóm bước"] || item.r["Phân loại"]);
+          const mNameLower = mName.toLowerCase();
+          const mCatLower = mCat.toLowerCase();
+          const mNameStripped = stripViAccents(mName).toLowerCase();
+
+          let found = mCat
+            ? allMethods.find(
+                (m) => m.category.trim().toLowerCase() === mCatLower && m.name.trim().toLowerCase() === mNameLower
+              )
+            : undefined;
+          if (!found) {
+            found = allMethods.find((m) => m.name.trim().toLowerCase() === mNameLower);
+          }
+          if (!found) {
+            found = allMethods.find((m) => stripViAccents(m.name.trim()).toLowerCase() === mNameStripped);
+          }
+          if (!found) {
+            throw new Error(
+              `Không tìm thấy phương pháp "${mName}" trong Thư viện SOP (hãy nhập Biểu mẫu Phương pháp SOP trước)`
+            );
+          }
+          const stepDisplayName = normStr(item.r.step_name || item.r["Tên bước hiển thị"] || item.r["Ghi chú bước"]) || null;
+          steps.push({ method_id: found.id, name: stepDisplayName });
+        }
+
+        if (steps.length === 0) {
+          throw new Error(`Quy trình "${wfName}" chưa có bước phương pháp hợp lệ`);
+        }
+
+        const existing = (
+          await tx.query("SELECT id, version FROM oligo.ps_workflow WHERE lower(trim(name)) = lower(trim($1)) LIMIT 1", [
+            wfName,
+          ])
+        ).rows[0];
+        await saveWorkflow(tx, actor, existing?.id ?? null, {
+          name: wfName,
+          description,
+          purifications,
+          steps,
+          status,
+          ...(existing ? { version: existing.version, reason: `Nhập Excel (${fileName})` } : {}),
+        });
+        if (existing) updatedCount++;
+        else createdCount++;
+        await tx.query(`RELEASE SAVEPOINT ${sp}`);
+      } catch (e: any) {
+        await tx.query(`ROLLBACK TO SAVEPOINT ${sp}`);
+        errors.push({ row_no: groupIdx, code: wfName, message: e?.message || String(e) });
       }
     }
   } else {

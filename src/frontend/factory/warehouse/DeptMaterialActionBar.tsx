@@ -5,6 +5,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, Boxes, PackagePlus, ShoppingCart } from "lucide-react";
 import { api, fmtDate, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
+import { openExcelImportTemplate } from "../import/FactoryExcelImportModule";
+
+const MODULE_IMPORT_TARGET: Record<"RD" | "KIT" | "OLIGO" | "DEVICE" | "QMS", { deptCode: string; warehouseCode: string }> = {
+  OLIGO: { deptCode: "P-OLIGO", warehouseCode: "KHO-OLIGO" },
+  KIT: { deptCode: "P-KIT", warehouseCode: "KHO-KIT" },
+  RD: { deptCode: "P-RD", warehouseCode: "KHO-RD" },
+  DEVICE: { deptCode: "P-DEVICE", warehouseCode: "KHO-TONG" },
+  QMS: { deptCode: "P-QA", warehouseCode: "KHO-QA" },
+};
 
 interface WarehouseItem {
   id: string;
@@ -412,7 +421,15 @@ export function DeptMaterialActionBar({
 
           <button
             type="button"
-            onClick={() => navigateToHub("factory-import")}
+            onClick={() => {
+              const t = MODULE_IMPORT_TARGET[moduleKey];
+              openExcelImportTemplate({
+                templateKey: "INVENTORY_STOCK",
+                deptFilter: t.deptCode,
+                targetDeptCode: t.deptCode,
+                targetWarehouseCode: t.warehouseCode,
+              });
+            }}
             className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 cursor-pointer"
             title="Mở Trung tâm Nhập liệu Excel kéo-thả & Tải biểu mẫu chuẩn cho phòng ban"
           >

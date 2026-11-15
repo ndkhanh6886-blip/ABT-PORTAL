@@ -38,7 +38,10 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
     plasmids: 0,
   };
 
-  if (legacyOligoDataEnsured && !force) return counts;
+  if (legacyOligoDataEnsured && !force) {
+    const hasFormulas = (await tx.query("SELECT 1 FROM prep.formula LIMIT 1")).rowCount ?? 0;
+    if (hasFormulas > 0) return counts;
+  }
 
   await ensureOligoPricingSchema(tx);
 
@@ -585,7 +588,7 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
       },
     ];
 
-    for (const fm of allowDemoSeed ? legacyFormulas : []) {
+    for (const fm of legacyFormulas) {
       const outId = itemByCode.get(fm.output_code);
       if (!outId) continue;
       const ex = (await tx.query("SELECT id FROM prep.formula WHERE upper(code) = upper($1) LIMIT 1", [fm.code])).rows[0];

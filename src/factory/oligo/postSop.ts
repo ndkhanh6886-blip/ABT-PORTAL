@@ -140,6 +140,33 @@ export async function listSop(tx: Tx, actor: AuthzActor) {
   await ensureLegacyOligoDataSeeded(tx);
   await authorize(tx, actor, "oligo.view");
   const methods = (await tx.query("SELECT *, target_hours::float AS target_hours FROM oligo.ps_method ORDER BY category, name")).rows;
+  const itemIds = Array.from(
+    new Set(
+      methods.flatMap((m: any) =>
+        Array.isArray(m.fields)
+          ? m.fields
+              .filter((f: any) => f?.type === "REAGENT" && typeof f?.item_id === "string" && f.item_id)
+              .map((f: any) => String(f.item_id))
+          : []
+      )
+    )
+  );
+  if (itemIds.length > 0) {
+    const items = (await tx.query("SELECT id, code, name FROM master.item WHERE id = ANY($1::uuid[])", [itemIds])).rows;
+    const byId = new Map<string, { code: string; name: string }>(
+      items.map((it: any) => [String(it.id), { code: String(it.code), name: String(it.name) }])
+    );
+    for (const m of methods as any[]) {
+      if (!Array.isArray(m.fields)) continue;
+      m.fields = m.fields.map((f: any) => {
+        if (f?.type === "REAGENT" && f?.item_id) {
+          const it = byId.get(String(f.item_id));
+          if (it) return { ...f, item_code: it.code, item_name: it.name };
+        }
+        return f;
+      });
+    }
+  }
   const workflows = (await tx.query("SELECT * FROM oligo.ps_workflow ORDER BY status, name")).rows;
   return { methods, workflows };
 }
