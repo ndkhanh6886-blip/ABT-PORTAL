@@ -290,7 +290,7 @@ export async function listItems(tx: Tx, actor: AuthzActor, query: unknown) {
   }
   if (q.q) {
     params.push(`%${q.q}%`);
-    where.push(`(i.code ILIKE $${params.length} OR i.name ILIKE $${params.length})`);
+    where.push(`(i.code ILIKE $${params.length} OR i.name ILIKE $${params.length} OR coalesce(i.kd_item_code, '') ILIKE $${params.length})`);
   }
   if (q.missing_uom === "1" || q.missing_uom === "true") {
     where.push(`(trim(i.base_uom) ~ '^[-\u2013\u2014]+$' OR upper(trim(i.base_uom)) IN ('N/A', 'NA', 'NONE', 'NULL', '?'))`);
@@ -306,6 +306,12 @@ export async function listItems(tx: Tx, actor: AuthzActor, query: unknown) {
       )
     ).rows[0]?.cnt ?? 0
   );
+  let orderBySql = "ORDER BY i.code";
+  if (q.q) {
+    params.push(q.q);
+    const rawIdx = params.length;
+    orderBySql = `ORDER BY CASE WHEN lower(i.code) = lower($${rawIdx}) THEN 0 WHEN lower(i.code) LIKE lower($${rawIdx}) || '%' THEN 1 ELSE 2 END, i.code`;
+  }
   params.push(q.page_size, (q.page - 1) * q.page_size);
   const rows = (
     await tx.query(
@@ -313,7 +319,7 @@ export async function listItems(tx: Tx, actor: AuthzActor, query: unknown) {
               EXISTS (SELECT 1 FROM inv.stock_ledger sl WHERE sl.item_id = i.id) AS has_stock
          FROM master.item i
          LEFT JOIN master.item_category c ON c.id = i.category_id
-        ${whereSql} ORDER BY i.code LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        ${whereSql} ${orderBySql} LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     )
   ).rows;

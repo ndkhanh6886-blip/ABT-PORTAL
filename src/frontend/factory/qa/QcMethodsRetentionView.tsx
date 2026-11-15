@@ -52,7 +52,7 @@ export function QcMethodsRetentionView() {
   });
   const itemsQuery = useQuery({
     queryKey: ["factory", "qa", "master-items"],
-    queryFn: () => api<{ rows: { id: string; code: string; name: string; base_uom: string; item_type: string }[] }>("/api/factory/master/items?page_size=200"),
+    queryFn: () => api<{ rows: { id: string; code: string; name: string; base_uom: string; item_type: string }[] }>("/api/factory/master/items?page_size=2000"),
   });
 
   const saveMethodMut = useMutation({

@@ -57,4 +57,18 @@ describe("master data", () => {
     expect(page.rows.length).toBeLessThanOrEqual(2);
     expect(page.total).toBeGreaterThan(0);
   });
+
+  it("supports page_size up to 2000 and ranks exact/prefix code searches first", async () => {
+    const site = await makeSite();
+    const tag = `LF${Math.floor(1000 + Math.random() * 8999)}`;
+    await makeItem(site, { code: `AAA-${tag}`, name: `Đệm phụ ${tag}` });
+    await makeItem(site, { code: `${tag}-ALT`, name: "Dung dịch thay thế" });
+    await makeItem(site, { code: tag, name: "Hyper Ladder Test" });
+
+    const largePage = await withTransaction((tx) => listItems(tx, site.admin, { page_size: 500 }));
+    expect(largePage.page_size).toBe(500);
+
+    const searchRes = await withTransaction((tx) => listItems(tx, site.admin, { q: tag, page_size: 50 }));
+    expect(searchRes.rows.map((r: { code: string }) => r.code)).toEqual([tag, `${tag}-ALT`, `AAA-${tag}`]);
+  });
 });

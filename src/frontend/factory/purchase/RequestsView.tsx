@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActionBar, type AllowedAction } from "../actions";
 import { api, fmtDate, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
+import { CatalogItemCombobox, type CatalogMasterItemOption } from "../warehouse/CatalogItemCombobox";
 
 export const PR_STATUS: Record<string, [string, string]> = {
   DRAFT: ["PENDING_QC", "Nháp"],
@@ -44,12 +45,7 @@ interface Option {
   reasons?: PrReasonOption[];
 }
 
-interface CatalogMasterItem {
-  id: string;
-  code: string;
-  name: string;
-  base_uom: string;
-}
+type CatalogMasterItem = CatalogMasterItemOption;
 
 interface Line {
   mode: "CATALOG" | "NEW";
@@ -85,7 +81,7 @@ function NewRequestForm({ onDone }: { onDone: () => void }) {
   const uoms = useQuery({ queryKey: ["factory", "uoms"], queryFn: () => api<{ code: string }[]>("/api/factory/master/uoms") });
   const catalogItems = useQuery({
     queryKey: ["factory", "items", "pr-catalog-all"],
-    queryFn: () => api<{ rows: CatalogMasterItem[] }>("/api/factory/master/items?page_size=200&status=ACTIVE"),
+    queryFn: () => api<{ rows: CatalogMasterItem[]; total: number }>("/api/factory/master/items?page_size=2000&status=ACTIVE"),
   });
   const [head, setHead] = useState({
     org_unit_id: "",
@@ -97,8 +93,6 @@ function NewRequestForm({ onDone }: { onDone: () => void }) {
     purpose_entity_id: null as string | null,
   });
   const [lines, setLines] = useState<Line[]>(() => [emptyLine("CATALOG")]);
-  const [quickItemId, setQuickItemId] = useState("");
-  const [searchQ, setSearchQ] = useState("");
   const unit = options.data?.find((o) => o.id === head.org_unit_id);
 
   React.useEffect(() => {
@@ -115,12 +109,6 @@ function NewRequestForm({ onDone }: { onDone: () => void }) {
       purpose_entity_id: firstReason?.entity_id ?? null,
     });
   }, [options.data, head.org_unit_id]);
-
-  const searchItems = useQuery({
-    queryKey: ["factory", "items", "picker", searchQ],
-    queryFn: () => api<{ rows: CatalogMasterItem[] }>(`/api/factory/master/items?page_size=30&q=${encodeURIComponent(searchQ)}`),
-    enabled: searchQ.trim().length >= 1,
-  });
 
   const groupedReasons = React.useMemo(() => {
     const groups = new Map<string, PrReasonOption[]>();
@@ -170,25 +158,6 @@ function NewRequestForm({ onDone }: { onDone: () => void }) {
     },
   });
   const setL = (i: number, p: Partial<Line>) => setLines((prev) => prev.map((l, j) => (j === i ? { ...l, ...p } : l)));
-
-  const addPickedItem = (it: CatalogMasterItem) => {
-    setLines((prev) => {
-      const emptyIdx = prev.findIndex((l) => l.mode === "CATALOG" && !l.item_id && !l.new_item_name.trim());
-      const next: Line = {
-        mode: "CATALOG",
-        item_id: it.id,
-        label: `${it.code} — ${it.name}`,
-        new_item_code: "",
-        new_item_name: "",
-        item_type: "RAW_MATERIAL",
-        qty: "1",
-        uom: it.base_uom || "Hộp",
-        est_price: "",
-        notes: "",
-      };
-      return emptyIdx !== -1 ? prev.map((item, j) => (j === emptyIdx ? next : item)) : [...prev, next];
-    });
-  };
 
   if (options.data && options.data.length === 0) {
     return <Card title="Đề nghị mua mới"><Empty>Bạn chưa được cấp quyền lập đề nghị mua cho phòng nào.</Empty><Button variant="ghost" onClick={onDone}>Đóng</Button></Card>;
@@ -265,50 +234,15 @@ function NewRequestForm({ onDone }: { onDone: () => void }) {
         <Field label="Chi tiết Lý do / Mã Lệnh SX / Dự án *">
           <input className={inputClass} value={head.reason} onChange={(e) => setHead({ ...head, reason: e.target.value })} placeholder="Chọn từ danh mục phía trên hoặc nhập nội dung lý do cụ thể..." required />
         </Field>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="grid gap-2 sm:grid-cols-2 flex-1">
-            <select
-              className={inputClass}
-              value={quickItemId}
-              onChange={(e) => {
-                const id = e.target.value;
-                setQuickItemId("");
-                const found = (catalogItems.data?.rows ?? []).find((x) => x.id === id);
-                if (found) addPickedItem(found);
-              }}
-            >
-              <option value="">📚 Chọn nhanh vật tư từ danh sách có sẵn ({catalogItems.data?.rows.length ?? 0} mã)...</option>
-              {(catalogItems.data?.rows ?? []).map((it) => (
-                <option key={it.id} value={it.id}>{it.code} — {it.name} ({it.base_uom})</option>
-              ))}
-            </select>
-            <div className="relative">
-              <input className={inputClass} placeholder="🔍 Tìm vật tư hoặc gõ tên nguyên liệu mới..." value={searchQ} onChange={(e) => setSearchQ(e.target.value)} />
-              {searchQ.trim().length >= 1 && (
-                <ul className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg text-xs">
-                  {(searchItems.data?.rows ?? []).map((i) => (
-                    <li key={i.id}>
-                      <button type="button" className="w-full text-left px-3 py-2 hover:bg-sky-50 dark:hover:bg-sky-950/40 cursor-pointer" onClick={() => { addPickedItem(i); setSearchQ(""); }}>
-                        <span className="font-mono font-semibold">{i.code}</span> — {i.name} ({i.base_uom})
-                      </button>
-                    </li>
-                  ))}
-                  <li>
-                    <button
-                      type="button"
-                      className="w-full text-left px-3 py-2 bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 font-bold cursor-pointer"
-                      onClick={() => {
-                        setLines((prev) => [...prev, { ...emptyLine("NEW"), new_item_name: searchQ.trim() }]);
-                        setSearchQ("");
-                      }}
-                    >
-                      ✨ + Thêm nguyên liệu mới: &ldquo;{searchQ.trim()}&rdquo;
-                    </button>
-                  </li>
-                </ul>
-              )}
-            </div>
-          </div>
+        <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-2xl border border-amber-200 dark:border-amber-800/70 bg-amber-50/50 dark:bg-amber-950/20">
+          <span className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+            🧪 Danh sách Nguyên vật liệu / Hóa chất đề nghị mua ({lines.length} dòng)
+            {catalogItems.data?.total ? (
+              <span className="font-normal text-[11px] text-slate-500 dark:text-slate-400">
+                · {catalogItems.data.total.toLocaleString("vi-VN")} mã trong danh mục
+              </span>
+            ) : null}
+          </span>
           <div className="flex items-center gap-2">
             <Button type="button" variant="secondary" onClick={() => setLines((prev) => [...prev, emptyLine("CATALOG")])}>+ Thêm từ DS có sẵn</Button>
             <Button type="button" variant="secondary" onClick={() => setLines((prev) => [...prev, emptyLine("NEW")])}>✨ + Gõ mã/tên mới</Button>
@@ -324,27 +258,32 @@ function NewRequestForm({ onDone }: { onDone: () => void }) {
                     <option value="NEW">✨ Mã/tên mới</option>
                   </select>
                 </td>
-                <td className="py-2 pr-2">
+                <td className="py-2 pr-2 min-w-[280px]">
                   {l.mode === "CATALOG" ? (
-                    <select
-                      className={inputClass}
+                    <CatalogItemCombobox
                       value={l.item_id}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val === "__NEW__") {
-                          setL(i, { mode: "NEW", item_id: "" });
-                          return;
-                        }
-                        const found = (catalogItems.data?.rows ?? []).find((x) => x.id === val);
-                        setL(i, { item_id: val, label: found ? `${found.code} — ${found.name}` : "", uom: found?.base_uom || l.uom });
+                      selectedLabel={l.label}
+                      items={catalogItems.data?.rows ?? []}
+                      totalCatalogCount={catalogItems.data?.total}
+                      onSelect={(it) => {
+                        setL(i, {
+                          item_id: it.id,
+                          label: `${it.code} — ${it.name}`,
+                          uom: it.base_uom && !/^[-–—]+$/.test(it.base_uom.trim()) ? it.base_uom : l.uom || "Hộp",
+                        });
                       }}
-                    >
-                      <option value="">-- Chọn nguyên vật liệu từ danh sách --</option>
-                      {(catalogItems.data?.rows ?? []).map((it) => (
-                        <option key={it.id} value={it.id}>{it.code} — {it.name} ({it.base_uom})</option>
-                      ))}
-                      <option value="__NEW__">✨ Không có trong DS → Chuyển sang Gõ mã/tên mới...</option>
-                    </select>
+                      onClear={() => setL(i, { item_id: "", label: "" })}
+                      onSwitchToNew={(typed) => {
+                        const isCodeLike = /^[A-Za-z0-9._-]{2,30}$/.test(typed) && /[0-9._-]/.test(typed);
+                        setL(i, {
+                          mode: "NEW",
+                          item_id: "",
+                          label: "",
+                          new_item_code: isCodeLike ? typed.toUpperCase() : "",
+                          new_item_name: isCodeLike ? "" : typed,
+                        });
+                      }}
+                    />
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-12 gap-1.5">
                       <div className="sm:col-span-4">

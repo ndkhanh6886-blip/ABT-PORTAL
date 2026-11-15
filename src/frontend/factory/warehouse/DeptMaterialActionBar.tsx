@@ -6,6 +6,7 @@ import { ArrowUpRight, Boxes, PackagePlus, ShoppingCart } from "lucide-react";
 import { api, fmtDate, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { openExcelImportTemplate } from "../import/FactoryExcelImportModule";
+import { CatalogItemCombobox, type CatalogMasterItemOption } from "./CatalogItemCombobox";
 
 const MODULE_IMPORT_TARGET: Record<"RD" | "KIT" | "OLIGO" | "DEVICE" | "QMS", { deptCode: string; warehouseCode: string }> = {
   OLIGO: { deptCode: "P-OLIGO", warehouseCode: "KHO-OLIGO" },
@@ -43,14 +44,7 @@ interface PrOption {
   reasons?: PrReasonOption[];
 }
 
-interface CatalogMasterItem {
-  id: string;
-  code: string;
-  name: string;
-  item_type?: string;
-  base_uom: string;
-  category_name?: string | null;
-}
+type CatalogMasterItem = CatalogMasterItemOption;
 
 interface PrDraftLine {
   mode: "CATALOG" | "NEW";
@@ -203,7 +197,7 @@ export function DeptMaterialActionBar({
   const allCatalogItems = useQuery({
     queryKey: ["factory", "items", "pr-catalog-all"],
     queryFn: () =>
-      api<{ rows: CatalogMasterItem[] }>("/api/factory/master/items?page_size=200&status=ACTIVE"),
+      api<{ rows: CatalogMasterItem[]; total: number }>("/api/factory/master/items?page_size=2000&status=ACTIVE"),
     enabled: panel === "pr",
   });
   const [prOrgUnitId, setPrOrgUnitId] = useState("");
@@ -213,8 +207,6 @@ export function DeptMaterialActionBar({
   const [prReason, setPrReason] = useState("");
   const [prPurposeEntityType, setPrPurposeEntityType] = useState<string | null>(null);
   const [prPurposeEntityId, setPrPurposeEntityId] = useState<string | null>(null);
-  const [prItemQ, setPrItemQ] = useState("");
-  const [prQuickSelectItemId, setPrQuickSelectItemId] = useState("");
   const [prLines, setPrLines] = useState<PrDraftLine[]>(() => [createEmptyPrLine("CATALOG")]);
 
   React.useEffect(() => {
@@ -240,15 +232,6 @@ export function DeptMaterialActionBar({
     }
   }, [prOptions.data, prOrgUnitId, moduleKey, prReason]);
 
-  const prItemsSearch = useQuery({
-    queryKey: ["factory", "items", "quick-pr-picker", prItemQ],
-    queryFn: () =>
-      api<{ rows: CatalogMasterItem[] }>(
-        `/api/factory/master/items?page_size=30&q=${encodeURIComponent(prItemQ)}`
-      ),
-    enabled: panel === "pr" && prItemQ.trim().length >= 1,
-  });
-
   const mergedUomOptions = React.useMemo(() => {
     const fromDb = (uoms.data ?? []).map((u) => u.code);
     return Array.from(new Set([...fromDb, ...DEFAULT_UOM_SUGGESTIONS]));
@@ -256,30 +239,6 @@ export function DeptMaterialActionBar({
 
   const updatePrLine = (idx: number, patch: Partial<PrDraftLine>) => {
     setPrLines((prev) => prev.map((item, j) => (j === idx ? { ...item, ...patch } : item)));
-  };
-
-  const addCatalogItemToPrLines = (it: CatalogMasterItem) => {
-    setPrLines((prev) => {
-      const emptyIdx = prev.findIndex(
-        (l) => l.mode === "CATALOG" && !l.item_id && !l.new_item_name.trim()
-      );
-      const nextLine: PrDraftLine = {
-        mode: "CATALOG",
-        item_id: it.id,
-        label: `${it.code} — ${it.name}`,
-        new_item_code: "",
-        new_item_name: "",
-        item_type: "RAW_MATERIAL",
-        qty: "1",
-        uom: it.base_uom || "Hộp",
-        est_price: "",
-        notes: "",
-      };
-      if (emptyIdx !== -1) {
-        return prev.map((item, j) => (j === emptyIdx ? nextLine : item));
-      }
-      return [...prev, nextLine];
-    });
   };
 
   const validPrLines = prLines.filter((l) => {
@@ -704,11 +663,16 @@ export function DeptMaterialActionBar({
               </Field>
             </div>
 
-            {/* Thanh công cụ thêm nguyên vật liệu: Chọn từ danh sách có sẵn HOẶC Gõ mã mới, tên mới */}
-            <div className="p-3 rounded-2xl border border-amber-200 dark:border-amber-800/70 bg-amber-50/50 dark:bg-amber-950/20 space-y-2.5">
+            {/* Thanh tiêu đề & nút thêm dòng đề nghị mua */}
+            <div className="p-3 rounded-2xl border border-amber-200 dark:border-amber-800/70 bg-amber-50/50 dark:bg-amber-950/20">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
                   🧪 Danh sách Nguyên vật liệu / Hóa chất đề nghị mua ({prLines.length} dòng)
+                  {allCatalogItems.data?.total ? (
+                    <span className="font-normal text-[11px] text-slate-500 dark:text-slate-400">
+                      · {allCatalogItems.data.total.toLocaleString("vi-VN")} mã trong danh mục
+                    </span>
+                  ) : null}
                 </span>
                 <div className="flex flex-wrap items-center gap-2">
                   <button
@@ -725,90 +689,6 @@ export function DeptMaterialActionBar({
                   >
                     ✨ + Gõ mã mới / Tên nguyên liệu mới
                   </button>
-                </div>
-              </div>
-
-              <div className="grid gap-2 sm:grid-cols-2">
-                <div>
-                  <select
-                    className={inputClass}
-                    value={prQuickSelectItemId}
-                    onChange={(e) => {
-                      const id = e.target.value;
-                      setPrQuickSelectItemId("");
-                      if (!id) return;
-                      const found = (allCatalogItems.data?.rows ?? []).find((x) => x.id === id);
-                      if (found) addCatalogItemToPrLines(found);
-                    }}
-                  >
-                    <option value="">
-                      📚 Chọn nhanh nguyên vật liệu từ danh mục có sẵn ({allCatalogItems.data?.rows.length ?? 0} mã)...
-                    </option>
-                    {(allCatalogItems.data?.rows ?? []).map((it) => (
-                      <option key={it.id} value={it.id}>
-                        {it.code} — {it.name} ({it.base_uom})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="relative">
-                  <input
-                    className={inputClass}
-                    placeholder="🔍 Hoặc gõ tìm nhanh theo mã / tên vật tư (hoặc gõ tên mới để thêm ngay)..."
-                    value={prItemQ}
-                    onChange={(e) => setPrItemQ(e.target.value)}
-                  />
-                  {prItemQ.trim().length >= 1 && (
-                    <ul className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl text-xs divide-y divide-slate-100 dark:divide-slate-800">
-                      {(prItemsSearch.data?.rows ?? []).map((it) => (
-                        <li key={it.id}>
-                          <button
-                            type="button"
-                            className="w-full text-left px-3 py-2 hover:bg-amber-50 dark:hover:bg-amber-950/40 cursor-pointer flex items-center justify-between gap-2"
-                            onClick={() => {
-                              addCatalogItemToPrLines(it);
-                              setPrItemQ("");
-                            }}
-                          >
-                            <span>
-                              <span className="font-mono font-bold text-sky-700 dark:text-sky-400">{it.code}</span> — {it.name}
-                            </span>
-                            <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-mono text-[11px] shrink-0">
-                              {it.base_uom}
-                            </span>
-                          </button>
-                        </li>
-                      ))}
-                      <li>
-                        <button
-                          type="button"
-                          className="w-full text-left px-3 py-2 bg-amber-50/80 dark:bg-amber-950/50 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-amber-800 dark:text-amber-300 font-bold cursor-pointer"
-                          onClick={() => {
-                            const typed = prItemQ.trim();
-                            setPrLines((prev) => [
-                              ...prev,
-                              {
-                                mode: "NEW",
-                                item_id: "",
-                                label: "",
-                                new_item_code: "",
-                                new_item_name: typed,
-                                item_type: "RAW_MATERIAL",
-                                qty: "1",
-                                uom: "Hộp",
-                                est_price: "",
-                                notes: "",
-                              },
-                            ]);
-                            setPrItemQ("");
-                          }}
-                        >
-                          ✨ + Thêm mới nguyên vật liệu: &ldquo;{prItemQ.trim()}&rdquo; (Tự gõ mã mới &amp; tên mới)
-                        </button>
-                      </li>
-                    </ul>
-                  )}
                 </div>
               </div>
             </div>
@@ -847,31 +727,34 @@ export function DeptMaterialActionBar({
                         </td>
                         <td className="py-2 px-2.5">
                           {l.mode === "CATALOG" ? (
-                            <select
-                              className={inputClass}
+                            <CatalogItemCombobox
                               value={l.item_id}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                if (val === "__SWITCH_NEW__") {
-                                  updatePrLine(idx, { mode: "NEW", item_id: "", label: "" });
-                                  return;
-                                }
-                                const found = (allCatalogItems.data?.rows ?? []).find((x) => x.id === val);
+                              selectedLabel={l.label}
+                              items={allCatalogItems.data?.rows ?? []}
+                              totalCatalogCount={allCatalogItems.data?.total}
+                              onSelect={(it) => {
                                 updatePrLine(idx, {
-                                  item_id: val,
-                                  label: found ? `${found.code} — ${found.name}` : "",
-                                  uom: found?.base_uom || l.uom || "Hộp",
+                                  item_id: it.id,
+                                  label: `${it.code} — ${it.name}`,
+                                  uom:
+                                    it.base_uom && !/^[-–—]+$/.test(it.base_uom.trim())
+                                      ? it.base_uom
+                                      : l.uom || "Hộp",
                                 });
                               }}
-                            >
-                              <option value="">-- Chọn nguyên vật liệu từ danh sách có sẵn --</option>
-                              {(allCatalogItems.data?.rows ?? []).map((it) => (
-                                <option key={it.id} value={it.id}>
-                                  {it.code} — {it.name} ({it.base_uom})
-                                </option>
-                              ))}
-                              <option value="__SWITCH_NEW__">✨ Không có trong DS → Chuyển sang Gõ mã mới / Tên mới...</option>
-                            </select>
+                              onClear={() => updatePrLine(idx, { item_id: "", label: "" })}
+                              onSwitchToNew={(typed) => {
+                                const isCodeLike =
+                                  /^[A-Za-z0-9._-]{2,30}$/.test(typed) && /[0-9._-]/.test(typed);
+                                updatePrLine(idx, {
+                                  mode: "NEW",
+                                  item_id: "",
+                                  label: "",
+                                  new_item_code: isCodeLike ? typed.toUpperCase() : "",
+                                  new_item_name: isCodeLike ? "" : typed,
+                                });
+                              }}
+                            />
                           ) : (
                             <div className="grid grid-cols-1 sm:grid-cols-12 gap-1.5">
                               <div className="sm:col-span-4">

@@ -299,7 +299,7 @@ export function EquipmentView({
   const modItems = useQuery({
     queryKey: ["factory", "items-by-id", mods.data?.map((m) => m.amidite_item_id).filter(Boolean).join(",")],
     enabled: !!mods.data,
-    queryFn: () => api<{ rows: ItemOpt[] }>("/api/factory/master/items?page_size=200"),
+    queryFn: () => api<{ rows: ItemOpt[] }>("/api/factory/master/items?page_size=2000"),
   });
   const itemLabel = (id: string | null) => {
     const i = id ? modItems.data?.rows.find((x) => x.id === id) : undefined;

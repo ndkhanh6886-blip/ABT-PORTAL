@@ -29,7 +29,7 @@ export const GET = factoryRoute(async (tx, { actor }) => {
   ).rows;
   const items = (
     await tx.query(
-      "SELECT id, code, name, item_type, base_uom, tracking, shelf_life_days FROM master.item WHERE status = 'ACTIVE' ORDER BY code LIMIT 500"
+      "SELECT id, code, name, item_type, base_uom, tracking, shelf_life_days FROM master.item WHERE status = 'ACTIVE' ORDER BY code LIMIT 2000"
     )
   ).rows;
   const assets = (
