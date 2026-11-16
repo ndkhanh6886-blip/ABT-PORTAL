@@ -1,6 +1,7 @@
 import fs from "fs";
 import { syncLegacySalesData } from "./legacySalesSync";
 import { hashPassword, generateTemporaryPassword } from "@/backend/services/passwords";
+import { employeeCodeVariants, normalizePersonText, personNameKey } from "@/backend/services/utils";
 import path from "path";
 import { Pool, PoolClient, types } from "pg";
 
@@ -1026,6 +1027,238 @@ async function runIntegrityMigrations() {
          WHERE LOWER(TRIM(COALESCE(category, ''))) = 'oligo'
            AND COALESCE(min_stock_level, 0) <> 0
       `);
+    });
+
+    // Chuẩn hóa NFC / khoảng trắng và gộp bản ghi nhân sự-tài khoản trùng lặp (kể cả bản ghi sót sau khi Admin xóa 1 bản ghi)
+    await step("normalize_and_dedupe_personnel_v1", async () => {
+      if (await flagDone("migration_normalize_dedupe_personnel_v1")) return;
+
+      const hasZaloTable = Boolean(
+        (await client.query("SELECT to_regclass('public.zalo_user_bindings') AS tbl")).rows[0]?.tbl
+      );
+
+      // 1. Chuẩn hóa NFC & khoảng trắng trên personnel và users
+      const rawPersonnel = (
+        await client.query(
+          "SELECT id, employee_code, full_name, department, position, email, phone, status, created_at FROM personnel ORDER BY id ASC"
+        )
+      ).rows;
+      for (const r of rawPersonnel) {
+        const nextCode = normalizePersonText(r.employee_code);
+        const nextName = normalizePersonText(r.full_name);
+        const nextDept = normalizePersonText(r.department);
+        const nextPos = normalizePersonText(r.position);
+        const nextEmail = normalizePersonText(r.email).toLowerCase();
+        const codeChanged = Boolean(nextCode) && nextCode !== (r.employee_code ?? "");
+        const otherChanged =
+          nextName !== (r.full_name ?? "") ||
+          nextDept !== (r.department ?? "") ||
+          nextPos !== (r.position ?? "") ||
+          nextEmail !== (r.email ?? "");
+        if (codeChanged || otherChanged) {
+          await client.query("SAVEPOINT sp_norm_pers");
+          try {
+            await client.query(
+              `UPDATE personnel
+                  SET employee_code = COALESCE(NULLIF($2, ''), employee_code),
+                      full_name = $3,
+                      department = $4,
+                      position = $5,
+                      email = $6
+                WHERE id = $1`,
+              [r.id, nextCode, nextName || r.full_name, nextDept, nextPos, nextEmail]
+            );
+            await client.query("RELEASE SAVEPOINT sp_norm_pers");
+          } catch {
+            await client.query("ROLLBACK TO SAVEPOINT sp_norm_pers");
+            await client.query("RELEASE SAVEPOINT sp_norm_pers");
+            if (otherChanged) {
+              await client.query(
+                `UPDATE personnel SET full_name = $2, department = $3, position = $4, email = $5 WHERE id = $1`,
+                [r.id, nextName || r.full_name, nextDept, nextPos, nextEmail]
+              ).catch(() => {});
+            }
+          }
+        }
+      }
+
+      const rawUsers = (
+        await client.query("SELECT id, username, full_name, department, email, role FROM users ORDER BY id ASC")
+      ).rows;
+      for (const u of rawUsers) {
+        const nextName = normalizePersonText(u.full_name);
+        const nextDept = normalizePersonText(u.department);
+        const nextEmail = normalizePersonText(u.email).toLowerCase();
+        if (
+          nextName !== (u.full_name ?? "") ||
+          nextDept !== (u.department ?? "") ||
+          nextEmail !== (u.email ?? "")
+        ) {
+          await client.query(
+            `UPDATE users SET full_name = $2, department = $3, email = $4 WHERE id = $1`,
+            [u.id, nextName || u.full_name, nextDept, nextEmail]
+          ).catch(() => {});
+        }
+      }
+
+      // 2. Xử lý trường hợp Admin đã từng bấm Xóa nhân sự nhưng các bản ghi trùng (hoặc mã khác) vẫn còn sót lại
+      const delLogs = (
+        await client.query(
+          `SELECT id, details, created_at FROM audit_logs
+            WHERE module = 'PERSONNEL' AND action = 'DELETE'
+            ORDER BY id DESC`
+        )
+      ).rows;
+      const latestDeletedAtByName = new Map<string, number>();
+      for (const lg of delLogs) {
+        const m = String(lg.details || "").match(/^Xóa hồ sơ nhân sự(?:,\s*tài khoản\s*&\s*liên kết Zalo)?\s+(.+?)\s*\([^)]*\)\s*$/i);
+        if (!m) continue;
+        const nameKey = personNameKey(m[1]);
+        if (!nameKey || nameKey === "admin" || nameKey === "quản trị viên hệ thống" || /^\d+$/.test(nameKey)) continue;
+        const ts = lg.created_at ? new Date(lg.created_at).getTime() : 0;
+        if (ts > 0 && !latestDeletedAtByName.has(nameKey)) {
+          latestDeletedAtByName.set(nameKey, ts);
+        }
+      }
+
+      if (latestDeletedAtByName.size > 0) {
+        const curPersonnel = (
+          await client.query("SELECT id, employee_code, full_name, created_at FROM personnel ORDER BY id ASC")
+        ).rows;
+        const ghostIds: number[] = [];
+        const ghostCodes = new Set<string>();
+        const ghostNames = new Set<string>();
+
+        const byKey = new Map<string, any[]>();
+        for (const p of curPersonnel) {
+          const nk = personNameKey(p.full_name);
+          if (!nk) continue;
+          byKey.set(nk, [...(byKey.get(nk) || []), p]);
+        }
+
+        for (const [nk, delTs] of latestDeletedAtByName.entries()) {
+          const rows = byKey.get(nk) || [];
+          const hasNewerCreate = rows.some((r) => r.created_at && new Date(r.created_at).getTime() > delTs);
+          if (hasNewerCreate) continue;
+          for (const r of rows) {
+            ghostIds.push(Number(r.id));
+            for (const v of employeeCodeVariants(r.employee_code)) ghostCodes.add(v);
+            ghostNames.add(nk);
+          }
+        }
+
+        if (ghostIds.length > 0) {
+          await client.query("DELETE FROM personnel WHERE id = ANY($1::int[])", [ghostIds]);
+          const allU = (
+            await client.query("SELECT id, username, full_name, role FROM users WHERE id <> 1 AND LOWER(username) <> 'admin' AND role <> 'admin'")
+          ).rows;
+          const delUserIds = allU
+            .filter((u) => {
+              const nk = personNameKey(u.full_name);
+              const uk = normalizePersonText(u.username).toLowerCase();
+              return ghostNames.has(nk) || ghostCodes.has(uk);
+            })
+            .map((u) => Number(u.id));
+          if (delUserIds.length > 0) {
+            await client.query("DELETE FROM users WHERE id = ANY($1::int[])", [delUserIds]).catch(() => {});
+          }
+          if (hasZaloTable && ghostCodes.size > 0) {
+            await client.query(
+              "DELETE FROM zalo_user_bindings WHERE LOWER(employee_id) = ANY($1::text[])",
+              [Array.from(ghostCodes)]
+            ).catch(() => {});
+          }
+        }
+      }
+
+      // 3. Gộp các bản ghi personnel & users còn trùng lặp theo (họ tên chuẩn hóa + phòng ban chuẩn hóa)
+      const remainingPersonnel = (
+        await client.query(
+          "SELECT id, employee_code, full_name, department, position, email, phone, status FROM personnel ORDER BY id ASC"
+        )
+      ).rows;
+      const groups = new Map<string, any[]>();
+      for (const p of remainingPersonnel) {
+        const nk = personNameKey(p.full_name);
+        if (!nk) continue;
+        const dk = normalizePersonText(p.department).toLowerCase();
+        const gk = `${nk}::${dk}`;
+        groups.set(gk, [...(groups.get(gk) || []), p]);
+      }
+
+      const codeRank = (code: string): number => {
+        const c = normalizePersonText(code).toUpperCase();
+        if (/^NV-ABT-[0-9]{1,5}$/.test(c)) return 0;
+        if (/^NV-(TBR|TBRS|VIA)-[0-9]{1,5}$/.test(c)) return 1;
+        if (/^[A-Z]+[0-9]{1,5}$/.test(c)) return 2;
+        return 3; // NV-ABT-<stamp>-...
+      };
+
+      const redundantPersonnelIds: number[] = [];
+      const redundantCodes = new Set<string>();
+      for (const list of groups.values()) {
+        if (list.length < 2) continue;
+        list.sort((a, b) => {
+          const aInactive = a.status === "INACTIVE" ? 1 : 0;
+          const bInactive = b.status === "INACTIVE" ? 1 : 0;
+          if (aInactive !== bInactive) return aInactive - bInactive;
+          const ra = codeRank(a.employee_code);
+          const rb = codeRank(b.employee_code);
+          if (ra !== rb) return ra - rb;
+          const ca = (a.email ? 1 : 0) + (a.phone ? 1 : 0);
+          const cb = (b.email ? 1 : 0) + (b.phone ? 1 : 0);
+          if (ca !== cb) return cb - ca;
+          return Number(a.id) - Number(b.id);
+        });
+
+        const keep = list[0];
+        const dups = list.slice(1);
+        const mergedEmail = keep.email || dups.find((d) => d.email)?.email || "";
+        const mergedPhone = keep.phone || dups.find((d) => d.phone)?.phone || "";
+        const mergedPos = keep.position || dups.find((d) => d.position)?.position || "";
+        if (mergedEmail !== keep.email || mergedPhone !== keep.phone || mergedPos !== keep.position) {
+          await client.query(
+            "UPDATE personnel SET email = $2, phone = $3, position = $4 WHERE id = $1",
+            [keep.id, mergedEmail, mergedPhone, mergedPos]
+          ).catch(() => {});
+        }
+        const keepCodes = new Set(employeeCodeVariants(keep.employee_code));
+        for (const d of dups) {
+          redundantPersonnelIds.push(Number(d.id));
+          for (const v of employeeCodeVariants(d.employee_code)) {
+            if (!keepCodes.has(v)) redundantCodes.add(v);
+          }
+        }
+      }
+
+      if (redundantPersonnelIds.length > 0) {
+        await client.query("DELETE FROM personnel WHERE id = ANY($1::int[])", [redundantPersonnelIds]);
+        if (hasZaloTable && redundantCodes.size > 0) {
+          await client.query(
+            "DELETE FROM zalo_user_bindings WHERE LOWER(employee_id) = ANY($1::text[])",
+            [Array.from(redundantCodes)]
+          ).catch(() => {});
+        }
+        if (redundantCodes.size > 0) {
+          const allU = (
+            await client.query("SELECT id, username, full_name, role FROM users WHERE id <> 1 AND LOWER(username) <> 'admin' AND role <> 'admin'")
+          ).rows;
+          const dupUserIds = allU
+            .filter((u) => {
+              const uk = normalizePersonText(u.username).toLowerCase();
+              if (!redundantCodes.has(uk)) return false;
+              const nk = personNameKey(u.full_name);
+              // Chỉ xóa tài khoản phụ nếu chính nhân sự đó còn ít nhất 1 tài khoản khác giữ lại
+              return allU.some((other) => other.id !== u.id && personNameKey(other.full_name) === nk && !redundantCodes.has(normalizePersonText(other.username).toLowerCase()));
+            })
+            .map((u) => Number(u.id));
+          if (dupUserIds.length > 0) {
+            await client.query("DELETE FROM users WHERE id = ANY($1::int[])", [dupUserIds]).catch(() => {});
+          }
+        }
+      }
+
+      await setFlag("migration_normalize_dedupe_personnel_v1");
     });
   } finally {
     if (locked) {

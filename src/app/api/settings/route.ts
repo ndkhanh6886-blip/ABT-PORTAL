@@ -3,8 +3,9 @@ import { query, logAudit, ensurePersonnelTable, withTransaction } from "@/backen
 import { syncPersonnelToZaloBindings } from "@/backend/db/zaloDb";
 import { hashPassword, verifyPassword, generateTemporaryPassword } from "@/backend/services/passwords";
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse, setAuditActor } from "@/backend/services/authz";
-import { inferSystemRoleFromPosition } from "@/backend/services/permissions";
+import { canonicalDepartment, inferSystemRoleFromPosition } from "@/backend/services/permissions";
 import { setImportedLoginName } from "@/backend/services/accountImport";
+import { employeeCodeVariants, normalizePersonText, personNameKey } from "@/backend/services/utils";
 import { ensureFactoryRolesAndSyncAllUsers, syncSinglePortalUserToFactory } from "@/factory/orgSync";
 import { invalidateHrPersonnelCache } from "@/factory/core/hrDirectory";
 import { getFactoryPool } from "@/factory/core/db";
@@ -26,6 +27,99 @@ async function assignTemporaryPassword(username: string, fullName: string): Prom
 /** Hash of a random secret nobody knows: placeholder until assignTemporaryPassword runs. */
 function unusablePasswordHash(): string {
   return hashPassword(generateTemporaryPassword(32));
+}
+
+/** Checks whether two department labels belong to the same canonical department (fallback: normalized text). */
+function isSameDepartment(a?: string | null, b?: string | null): boolean {
+  const ca = canonicalDepartment(a);
+  const cb = canonicalDepartment(b);
+  if (ca && cb) return ca === cb;
+  const na = normalizePersonText(a).toLowerCase();
+  const nb = normalizePersonText(b).toLowerCase();
+  return Boolean(na && nb && na === nb);
+}
+
+/** Removes deleted employee/account references across Zalo bindings, org assignments, permission backups, and Factory RBAC. */
+async function cleanupDeletedStaffArtifacts(opts: {
+  personnelIds?: number[];
+  userIds?: number[];
+  codes?: string[];
+  names?: string[];
+}): Promise<void> {
+  const pIds = (opts.personnelIds ?? []).map(Number).filter((n) => Number.isFinite(n) && n > 0);
+  const uIds = (opts.userIds ?? []).map(Number).filter((n) => Number.isFinite(n) && n > 0 && n !== 1);
+  const codeSet = new Set<string>();
+  for (const c of opts.codes ?? []) {
+    for (const v of employeeCodeVariants(c)) codeSet.add(v);
+  }
+  const nameKeySet = new Set<string>(
+    (opts.names ?? []).map((n) => personNameKey(n)).filter(Boolean)
+  );
+  const pIdStrSet = new Set<string>(pIds.map(String));
+
+  if (pIds.length > 0) {
+    await query("DELETE FROM zalo_user_bindings WHERE personnel_id = ANY($1::int[])", [pIds]).catch(() => {});
+  }
+  if (codeSet.size > 0) {
+    await query("DELETE FROM zalo_user_bindings WHERE LOWER(employee_id) = ANY($1::text[])", [Array.from(codeSet)]).catch(() => {});
+    const permKeys = Array.from(codeSet)
+      .map((c) => `user_permissions_${c.replace(/[^a-z0-9]/g, "")}`)
+      .filter((k) => k.length > "user_permissions_".length);
+    if (permKeys.length > 0) {
+      await query("DELETE FROM app_storage WHERE key = ANY($1::text[])", [permKeys]).catch(() => {});
+    }
+  }
+  if (nameKeySet.size > 0) {
+    const zbRows = (await query("SELECT id, display_name FROM zalo_user_bindings").catch(() => ({ rows: [] as any[] }))).rows;
+    const matchZbIds = zbRows.filter((r) => nameKeySet.has(personNameKey(r.display_name))).map((r) => Number(r.id));
+    if (matchZbIds.length > 0) {
+      await query("DELETE FROM zalo_user_bindings WHERE id = ANY($1::int[])", [matchZbIds]).catch(() => {});
+    }
+  }
+
+  // Strip removed employee codes / names / IDs from org_position_assignments
+  try {
+    const assignRow = (await query("SELECT data FROM app_storage WHERE key = 'org_position_assignments' LIMIT 1")).rows[0];
+    if (assignRow?.data && typeof assignRow.data === "object") {
+      let changed = false;
+      const next: Record<string, Record<string, string[]>> = {};
+      for (const [deptKey, posMap] of Object.entries(assignRow.data as Record<string, any>)) {
+        if (!posMap || typeof posMap !== "object") continue;
+        const nextPosMap: Record<string, string[]> = {};
+        for (const [posTitle, holders] of Object.entries(posMap)) {
+          if (!Array.isArray(holders)) continue;
+          const filtered = holders.filter((h) => {
+            const raw = String(h || "").trim();
+            const low = raw.toLowerCase();
+            const remove =
+              pIdStrSet.has(raw) ||
+              codeSet.has(low) ||
+              nameKeySet.has(personNameKey(raw));
+            if (remove) changed = true;
+            return !remove;
+          });
+          nextPosMap[posTitle] = filtered;
+        }
+        next[deptKey] = nextPosMap;
+      }
+      if (changed) {
+        await query(
+          "UPDATE app_storage SET data = $1::jsonb, version = COALESCE(version, 1) + 1, updated_at = NOW() WHERE key = 'org_position_assignments'",
+          [JSON.stringify(next)]
+        );
+      }
+    }
+  } catch {}
+
+  if (uIds.length > 0) {
+    try {
+      const fPool = getFactoryPool();
+      await fPool.query("DELETE FROM core.user_role WHERE user_id = ANY($1::int[])", [uIds]);
+      await fPool.query("DELETE FROM core.user_profile WHERE user_id = ANY($1::int[])", [uIds]);
+    } catch {}
+  }
+
+  invalidateHrPersonnelCache();
 }
 
 /** Mã nhân viên tự sinh không trùng (thay cho Date.now() dễ trùng và ghi đè hồ sơ của người khác). */
@@ -215,43 +309,65 @@ export async function POST(req: NextRequest) {
 
     if (action === "personnel") {
       const { id, employee_code, full_name, department, position, email, phone, status } = body;
-      const cleanEmail = email ? String(email).trim().toLowerCase() : "";
-      const cleanName = full_name ? String(full_name).trim() : "";
-      const role = inferSystemRoleFromPosition(department, position);
+      const cleanEmail = normalizePersonText(email).toLowerCase();
+      const cleanName = normalizePersonText(full_name);
+      const cleanDept = normalizePersonText(department);
+      const cleanPos = normalizePersonText(position);
+      const cleanPhone = normalizePersonText(phone);
+      const requestedCode = normalizePersonText(employee_code);
+      const role = inferSystemRoleFromPosition(cleanDept, cleanPos);
+
+      if (!cleanName) {
+        return NextResponse.json({ error: "Vui lòng nhập họ và tên nhân sự." }, { status: 400 });
+      }
 
       if (id) {
         await query(
           `UPDATE personnel SET full_name=$1, department=$2, position=$3, email=$4, phone=$5, status=$6 WHERE id=$7`,
-          [cleanName, department, position, cleanEmail, phone, status || "ACTIVE", id]
+          [cleanName, cleanDept, cleanPos, cleanEmail, cleanPhone, status || "ACTIVE", id]
         );
         // Automatically sync to users table (chat account)
-        await query(
-          `UPDATE users SET 
-             full_name = $1, 
-             department = $2, 
-             email = $3,
-             role = CASE WHEN role = 'admin' THEN 'admin' ELSE $4 END,
-             is_active = $5
-           WHERE $6 <> '' AND (username = $6
-              OR username = REPLACE(REPLACE($6, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA'))`,
-          [cleanName, department, cleanEmail, role, (status !== "INACTIVE"), employee_code || ""]
-        );
-        await syncSinglePortalUserToFactory({ username: employee_code || "", department, position, role }).catch(() => {});
+        const variants = employeeCodeVariants(requestedCode);
+        if (variants.length > 0) {
+          await query(
+            `UPDATE users SET 
+               full_name = $1, 
+               department = $2, 
+               email = $3,
+               role = CASE WHEN role = 'admin' THEN 'admin' ELSE $4 END,
+               is_active = $5
+             WHERE LOWER(username) = ANY($6::text[])`,
+            [cleanName, cleanDept, cleanEmail, role, (status !== "INACTIVE"), variants]
+          );
+        }
+        await syncSinglePortalUserToFactory({ username: requestedCode, department: cleanDept, position: cleanPos, role }).catch(() => {});
         invalidateHrPersonnelCache();
-        await logAudit("UPDATE", "PERSONNEL", `Cập nhật nhân sự & tài khoản chat ${cleanName} (${employee_code})`);
+        await logAudit("UPDATE", "PERSONNEL", `Cập nhật nhân sự & tài khoản chat ${cleanName} (${requestedCode})`);
       } else {
-        const requestedCode = String(employee_code || "").trim();
         if (requestedCode) {
-          const dup = await query("SELECT full_name FROM personnel WHERE employee_code = $1", [requestedCode]);
+          const dup = await query("SELECT full_name FROM personnel WHERE LOWER(employee_code) = LOWER($1)", [requestedCode]);
           if (dup.rows.length > 0) {
             return NextResponse.json({ error: `Mã nhân viên ${requestedCode} đã thuộc về "${dup.rows[0].full_name}". Vui lòng dùng mã khác hoặc sửa hồ sơ hiện có.` }, { status: 409 });
           }
+        }
+        const existingAll = (await query("SELECT id, employee_code, full_name, department FROM personnel")).rows;
+        const nameKey = personNameKey(cleanName);
+        const dupPerson = existingAll.find(
+          (p) => personNameKey(p.full_name) === nameKey && isSameDepartment(p.department, cleanDept)
+        );
+        if (dupPerson) {
+          return NextResponse.json(
+            {
+              error: `Nhân sự "${cleanName}" đã tồn tại trong phòng ${dupPerson.department} (Mã NV: ${dupPerson.employee_code}). Vui lòng chỉnh sửa hồ sơ hiện có thay vì tạo trùng.`,
+            },
+            { status: 409 }
+          );
         }
         const code = requestedCode || await nextEmployeeCode();
         await query(
           `INSERT INTO personnel (employee_code, full_name, department, position, email, phone, status)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [code, cleanName, department, position, cleanEmail, phone, status || "ACTIVE"]
+          [code, cleanName, cleanDept, cleanPos, cleanEmail, cleanPhone, status || "ACTIVE"]
         );
         // Tạo tài khoản đăng nhập tương ứng; không ghi đè tài khoản đã tồn tại
         const ins = await query(
@@ -259,10 +375,10 @@ export async function POST(req: NextRequest) {
            VALUES ($1, $2, $3, $4, $5, $6, true, true)
            ON CONFLICT (username) DO NOTHING
            RETURNING username`,
-          [code, unusablePasswordHash(), cleanName, role, department, cleanEmail]
+          [code, unusablePasswordHash(), cleanName, role, cleanDept, cleanEmail]
         );
         const credential = ins.rows.length > 0 ? await assignTemporaryPassword(code, cleanName) : null;
-        await syncSinglePortalUserToFactory({ username: code, department, position, role }).catch(() => {});
+        await syncSinglePortalUserToFactory({ username: code, department: cleanDept, position: cleanPos, role }).catch(() => {});
         invalidateHrPersonnelCache();
         await logAudit("CREATE", "PERSONNEL", `Thêm mới nhân sự & tài khoản chat ${cleanName} (${code})`);
         return NextResponse.json({ success: true, initial_credentials: credential ? [credential] : [] });
@@ -322,11 +438,14 @@ export async function POST(req: NextRequest) {
       // Mã dự phòng cho dòng thiếu mã: duy nhất trong lô (Date.now() trùng nhau giữa các dòng cùng mili-giây)
       const importBatchStamp = Date.now().toString(36).toUpperCase();
       let importAutoSeq = 0;
+      const existingPersonnelRows = (
+        await query("SELECT id, employee_code, full_name, department, email FROM personnel ORDER BY id ASC")
+      ).rows;
       for (const r of rows) {
         const getVal = (candidates: string[]): string => {
           for (const c of candidates) {
             if (r[c] !== undefined && r[c] !== null && String(r[c]).trim() !== "") {
-              return String(r[c]).trim();
+              return normalizePersonText(String(r[c]));
             }
           }
           const rowKeys = Object.keys(r);
@@ -335,19 +454,29 @@ export async function POST(req: NextRequest) {
             for (const rk of rowKeys) {
               const cleanRk = rk.toLowerCase().replace(/[\s\(\)\*\_]/g, "");
               if (cleanRk === cleanCand && r[rk] !== undefined && r[rk] !== null && String(r[rk]).trim() !== "") {
-                return String(r[rk]).trim();
+                return normalizePersonText(String(r[rk]));
               }
             }
           }
           return "";
         };
 
-        const empCode = getVal(["Mã nhân viên (*)", "Mã nhân viên", "employee_code", "MaNV", "Mã NV", "Mã"]) || `NV-ABT-${importBatchStamp}-${++importAutoSeq}`;
+        const rawEmpCode = getVal(["Mã nhân viên (*)", "Mã nhân viên", "employee_code", "MaNV", "Mã NV", "Mã"]);
         const fullName = getVal(["Họ và tên (*)", "Họ và tên", "full_name", "name", "Họ tên"]) || "Nhân viên ABT";
-        const email = getVal(["Email (*)", "Email", "email"]) || "";
+        const email = getVal(["Email (*)", "Email", "email"]).toLowerCase();
         const phone = getVal(["Số điện thoại", "phone", "SĐT", "Điện thoại"]);
         const dept = getVal(["Phòng ban (*)", "Phòng ban", "department"]) || "Kinh Doanh";
         const position = getVal(["Chức vụ / Vị trí (*)", "Chức vụ / Vị trí", "Chức vụ", "Vị trí", "position"]) || "Chuyên viên";
+        const nameKey = personNameKey(fullName);
+        const matchedExisting =
+          !rawEmpCode && nameKey
+            ? existingPersonnelRows.find(
+                (p) =>
+                  personNameKey(p.full_name) === nameKey &&
+                  (isSameDepartment(p.department, dept) || (email && String(p.email || "").trim().toLowerCase() === email))
+              ) || existingPersonnelRows.find((p) => personNameKey(p.full_name) === nameKey)
+            : undefined;
+        const empCode = rawEmpCode || matchedExisting?.employee_code || `NV-ABT-${importBatchStamp}-${++importAutoSeq}`;
         const rawRole = getVal(["Vai trò hệ thống (*)", "Vai trò hệ thống", "Vai Trò Hệ Thống", "Vai trò", "role", "Role"]);
         const statusRaw = (getVal(["Trạng thái", "status"]) || "ACTIVE").toUpperCase();
         const status = statusRaw.includes("NGHỈ") || statusRaw.includes("INACTIVE") ? "INACTIVE" : "ACTIVE";
@@ -357,7 +486,7 @@ export async function POST(req: NextRequest) {
         const providedLoginName = getVal(["Tên đăng nhập (*)", "Tên đăng nhập", "username", "TenDangNhap"]);
 
         // 1. Upsert into personnel (Single Source of Truth)
-        await query(
+        const pUpsert = await query(
           `INSERT INTO personnel (employee_code, full_name, department, position, email, phone, status)
            VALUES ($1, $2, $3, $4, $5, $6, $7)
            ON CONFLICT (employee_code) DO UPDATE 
@@ -366,9 +495,13 @@ export async function POST(req: NextRequest) {
                position = EXCLUDED.position,
                email = EXCLUDED.email,
                phone = EXCLUDED.phone,
-               status = EXCLUDED.status`,
+               status = EXCLUDED.status
+           RETURNING id, employee_code, full_name, department, email`,
           [empCode, fullName, dept, position, email, phone, status]
         );
+        if (pUpsert.rows[0] && !existingPersonnelRows.some((p) => p.employee_code === empCode)) {
+          existingPersonnelRows.push(pUpsert.rows[0]);
+        }
 
         // Tài khoản đã có chỉ nhận mật khẩu trong file khi người dùng chưa từng đổi mật khẩu
         const userRes = await query(
@@ -411,28 +544,71 @@ export async function POST(req: NextRequest) {
 
     if (action === "delete_personnel") {
       const { id, full_name, employee_code } = body;
-      await query(`DELETE FROM personnel WHERE id=$1`, [id]);
-      invalidateHrPersonnelCache();
-      if (employee_code && employee_code !== "admin") {
-        await query(`
-          DELETE FROM users 
-          WHERE username = $1 
-             OR username = REPLACE(REPLACE($1, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA')
-             OR username = REPLACE(REPLACE($1, 'ABT', 'NV-ABT-'), 'VIA', 'NV-VIA-')
-        `, [employee_code]);
-        await query(`
-          DELETE FROM zalo_user_bindings 
-          WHERE employee_id = $1 
-             OR employee_id = REPLACE(REPLACE($1, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA')
-             OR employee_id = REPLACE(REPLACE($1, 'ABT', 'NV-ABT-'), 'VIA', 'NV-VIA-')
-        `, [employee_code]).catch(() => {});
+      const numId = id != null && !isNaN(Number(id)) ? Number(id) : null;
+      const targetRow = numId
+        ? (await query("SELECT id, employee_code, full_name FROM personnel WHERE id = $1", [numId])).rows[0]
+        : null;
+      const targetName = normalizePersonText(targetRow?.full_name || full_name);
+      const targetCode = normalizePersonText(targetRow?.employee_code || employee_code);
+      const targetNameKey = personNameKey(targetName);
+      const codeSet = new Set<string>(employeeCodeVariants(targetCode));
+
+      const allPersonnel = (await query("SELECT id, employee_code, full_name FROM personnel")).rows;
+      const matchedPersonnel = allPersonnel.filter((p) => {
+        if (numId !== null && Number(p.id) === numId) return true;
+        const pk = normalizePersonText(p.employee_code).toLowerCase();
+        if (pk && codeSet.has(pk)) return true;
+        if (targetNameKey && targetNameKey !== "admin" && personNameKey(p.full_name) === targetNameKey) return true;
+        return false;
+      });
+      for (const mp of matchedPersonnel) {
+        for (const v of employeeCodeVariants(mp.employee_code)) codeSet.add(v);
       }
-      await logAudit("DELETE", "PERSONNEL", `Xóa hồ sơ nhân sự, tài khoản & liên kết Zalo ${full_name || id} (${employee_code || ""})`);
-      return NextResponse.json({ success: true });
+
+      const deletedPersonnelIds = matchedPersonnel.map((p) => Number(p.id)).filter((n) => Number.isFinite(n));
+      if (deletedPersonnelIds.length > 0) {
+        await query("DELETE FROM personnel WHERE id = ANY($1::int[])", [deletedPersonnelIds]);
+      } else if (numId !== null) {
+        await query("DELETE FROM personnel WHERE id = $1", [numId]);
+      }
+
+      const allUsers = (
+        await query("SELECT id, username, login_name, full_name, role FROM users WHERE id <> 1 AND LOWER(username) <> 'admin'")
+      ).rows;
+      const matchedUserIds = allUsers
+        .filter((u) => {
+          if (Number(u.id) === Number(me.id) || String(u.role || "").toLowerCase() === "admin") return false;
+          const uk = normalizePersonText(u.username).toLowerCase();
+          const lk = normalizePersonText(u.login_name).toLowerCase();
+          if (uk && codeSet.has(uk)) return true;
+          if (lk && codeSet.has(lk)) return true;
+          if (targetNameKey && targetNameKey !== "admin" && personNameKey(u.full_name) === targetNameKey) return true;
+          return false;
+        })
+        .map((u) => Number(u.id));
+
+      if (matchedUserIds.length > 0) {
+        await query("DELETE FROM users WHERE id = ANY($1::int[])", [matchedUserIds]);
+      }
+
+      await cleanupDeletedStaffArtifacts({
+        personnelIds: deletedPersonnelIds.length > 0 ? deletedPersonnelIds : numId ? [numId] : [],
+        userIds: matchedUserIds,
+        codes: Array.from(codeSet),
+        names: [targetName, ...matchedPersonnel.map((p) => p.full_name)].filter(Boolean),
+      });
+
+      await logAudit("DELETE", "PERSONNEL", `Xóa hồ sơ nhân sự, tài khoản & liên kết Zalo ${targetName || id} (${targetCode || ""})`);
+      return NextResponse.json({ success: true, deleted_personnel: deletedPersonnelIds.length, deleted_users: matchedUserIds.length });
     }
 
     if (action === "user") {
-      const { id, username, password, full_name, role, department, email, is_active } = body;
+      const { id, password, is_active } = body;
+      const username = normalizePersonText(body.username);
+      const full_name = normalizePersonText(body.full_name);
+      const role = normalizePersonText(body.role);
+      const department = normalizePersonText(body.department);
+      const email = normalizePersonText(body.email).toLowerCase();
       if (id) {
         if (password) {
           await query(
@@ -449,12 +625,10 @@ export async function POST(req: NextRequest) {
         }
         // Đồng bộ email sang hồ sơ nhân sự theo mã nhân viên (không theo họ tên để tránh ghi nhầm người trùng tên)
         if (email && username) {
-          const cleanEmail = String(email).trim().toLowerCase();
+          const variants = employeeCodeVariants(username);
           await query(
-            `UPDATE personnel SET email = $1
-             WHERE employee_code = REPLACE(REPLACE($2, 'ABT', 'NV-ABT-'), 'VIA', 'NV-VIA-')
-                OR employee_code = $2`,
-            [cleanEmail, username]
+            `UPDATE personnel SET email = $1 WHERE LOWER(employee_code) = ANY($2::text[])`,
+            [email, variants]
           );
         }
         await syncSinglePortalUserToFactory({ userId: Number(id), username, department, role }).catch(() => {});
@@ -501,12 +675,70 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "delete_user") {
-      const { id, username } = body;
-      if (Number(id) === 1 || Number(id) === Number(me.id)) {
+      const { id, username, also_delete_personnel } = body;
+      const numId = Number(id);
+      const targetUser = (await query("SELECT id, username, login_name, full_name, role FROM users WHERE id = $1", [numId])).rows[0];
+      if (numId === 1 || numId === Number(me.id) || String(targetUser?.username || username || "").toLowerCase() === "admin") {
         return NextResponse.json({ error: "Không thể xóa tài khoản Quản trị viên tối cao (Super Admin)" }, { status: 400 });
       }
-      await query(`DELETE FROM users WHERE id=$1`, [id]);
-      await logAudit("DELETE", "USER", `Xóa tài khoản ${username || id}`);
+      const targetName = normalizePersonText(targetUser?.full_name || "");
+      const targetNameKey = personNameKey(targetName);
+      const codeSet = new Set<string>([
+        ...employeeCodeVariants(targetUser?.username || username),
+        ...employeeCodeVariants(targetUser?.login_name),
+      ]);
+
+      const allUsers = (
+        await query("SELECT id, username, login_name, full_name, role FROM users WHERE id <> 1 AND LOWER(username) <> 'admin'")
+      ).rows;
+      const delUserIds = allUsers
+        .filter((u) => {
+          if (Number(u.id) === Number(me.id) || String(u.role || "").toLowerCase() === "admin") return false;
+          if (Number(u.id) === numId) return true;
+          const uk = normalizePersonText(u.username).toLowerCase();
+          if (uk && codeSet.has(uk)) return true;
+          if (also_delete_personnel && targetNameKey && targetNameKey !== "admin" && personNameKey(u.full_name) === targetNameKey) return true;
+          return false;
+        })
+        .map((u) => Number(u.id));
+
+      if (delUserIds.length > 0) {
+        await query("DELETE FROM users WHERE id = ANY($1::int[])", [delUserIds]);
+      } else if (Number.isFinite(numId)) {
+        await query("DELETE FROM users WHERE id = $1", [numId]);
+      }
+
+      let deletedPersonnelIds: number[] = [];
+      let deletedNames: string[] = targetName ? [targetName] : [];
+      if (also_delete_personnel) {
+        const allPersonnel = (await query("SELECT id, employee_code, full_name FROM personnel")).rows;
+        const matchedPersonnel = allPersonnel.filter((p) => {
+          const pk = normalizePersonText(p.employee_code).toLowerCase();
+          if (pk && codeSet.has(pk)) return true;
+          if (targetNameKey && targetNameKey !== "admin" && personNameKey(p.full_name) === targetNameKey) return true;
+          return false;
+        });
+        for (const mp of matchedPersonnel) {
+          for (const v of employeeCodeVariants(mp.employee_code)) codeSet.add(v);
+        }
+        deletedPersonnelIds = matchedPersonnel.map((p) => Number(p.id)).filter((n) => Number.isFinite(n));
+        if (deletedPersonnelIds.length > 0) {
+          await query("DELETE FROM personnel WHERE id = ANY($1::int[])", [deletedPersonnelIds]);
+        }
+        deletedNames = [...deletedNames, ...matchedPersonnel.map((p) => p.full_name)].filter(Boolean);
+      }
+
+      await cleanupDeletedStaffArtifacts({
+        personnelIds: deletedPersonnelIds,
+        userIds: delUserIds.length > 0 ? delUserIds : [numId],
+        codes: Array.from(codeSet),
+        names: deletedNames,
+      });
+
+      await logAudit("DELETE", "USER", `Xóa tài khoản ${targetUser?.username || username || id}`);
+      if (also_delete_personnel) {
+        await logAudit("DELETE", "PERSONNEL", `Xóa hồ sơ nhân sự, tài khoản & liên kết Zalo ${targetName || username || id} (${targetUser?.username || ""})`);
+      }
       return NextResponse.json({ success: true });
     }
 

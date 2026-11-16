@@ -61,7 +61,7 @@ import {
   Smartphone,
   Factory
 } from "lucide-react";
-import { formatDate } from "@/backend/services/utils";
+import { employeeCodeVariants, formatDate, normalizePersonText, personNameKey } from "@/backend/services/utils";
 import { FactoryAccessSection, FactoryFeatureGroups } from "@/frontend/factory/settings/FactoryAccessSection";
 import { FactorySettingsModule } from "@/frontend/factory/settings/FactorySettingsModule";
 import { PERMISSION_GROUPS, ROLE_PRESETS, DEPARTMENT_MODULES, DepartmentModule, resolveRolePreset, getDefaultDepartmentPermissions, getEffectivePermissions, hasPermission, inferSystemRoleFromPosition, COMPANY_DEPARTMENTS } from "@/backend/services/permissions";
@@ -1190,7 +1190,16 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
 
   // Delete User
   const handleDeleteUser = async (userItem: any) => {
-    if (!window.confirm(`Bạn có chắc chắn muốn xóa tài khoản "${userItem.username}" (${userItem.full_name})?`)) return;
+    const nameKey = personNameKey(userItem.full_name);
+    const codeSet = new Set(employeeCodeVariants(userItem.username));
+    const hasLinkedPersonnel = personnel.some((p) => {
+      const pk = normalizePersonText(p.employee_code).toLowerCase();
+      return (pk && codeSet.has(pk)) || (nameKey && personNameKey(p.full_name) === nameKey);
+    });
+    const confirmMsg = hasLinkedPersonnel
+      ? `Bạn có chắc chắn muốn xóa tài khoản "${userItem.username}" (${userItem.full_name})?\n(Lưu ý: Nếu muốn xóa hẳn nhân sự khỏi Danh bạ & Chat Nội Bộ, hãy dùng nút Xóa ở Danh Bạ Nhân Sự hoặc Vị Trí & Chức Danh.)`
+      : `Bạn có chắc chắn muốn xóa tài khoản "${userItem.username}" (${userItem.full_name})?`;
+    if (!window.confirm(confirmMsg)) return;
     try {
       const res = await fetch("/api/settings?action=delete_user", {
         method: "POST",
@@ -1199,6 +1208,10 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        if (typeof window !== "undefined") {
+          try { localStorage.removeItem("lab_members"); } catch {}
+          window.dispatchEvent(new CustomEvent("tbr_personnel_updated"));
+        }
         showToast("success", `Đã xóa tài khoản ${userItem.username}`);
         fetchData();
       } else {
@@ -1270,7 +1283,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
 
   // Delete Personnel
   const handleDeletePersonnel = async (p: any) => {
-    if (!window.confirm(`Bạn có chắc chắn muốn xóa nhân sự "${p.full_name}" (${p.employee_code})?`)) return;
+    if (!window.confirm(`Bạn có chắc chắn muốn xóa nhân sự "${p.full_name}" (${p.employee_code}) và mọi tài khoản / dữ liệu liên kết?`)) return;
     try {
       const res = await fetch("/api/settings?action=delete_personnel", {
         method: "POST",
@@ -1279,9 +1292,12 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        showToast("success", `Đã xóa nhân sự ${p.full_name}`);
+        if (typeof window !== "undefined") {
+          try { localStorage.removeItem("lab_members"); } catch {}
+          window.dispatchEvent(new CustomEvent("tbr_personnel_updated"));
+        }
+        showToast("success", `Đã xóa hoàn toàn nhân sự ${p.full_name}`);
         fetchData();
-        if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("tbr_personnel_updated"));
       } else {
         showToast("error", data.error || "Không thể xóa nhân sự");
       }
@@ -2473,6 +2489,13 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                                           title="Chỉnh sửa nhân sự"
                                         >
                                           <Edit3 className="w-3.5 h-3.5" />
+                                        </button>
+                                        <button
+                                          onClick={() => handleDeletePersonnel(p)}
+                                          className="p-1.5 hover:bg-rose-50 dark:hover:bg-rose-950/50 text-slate-400 hover:text-rose-600 rounded-lg transition-colors cursor-pointer"
+                                          title="Xóa nhân sự khỏi danh bạ & tài khoản liên kết"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
                                         </button>
                                       </div>
                                     </div>

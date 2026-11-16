@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query, logAudit, withTransaction, HttpError, httpErrorStatus } from "@/backend/db/db";
 import { getAuthorizedUser, unauthorizedResponse, setAuditActor } from "@/backend/services/authz";
+import { normalizePersonText, personNameKey } from "@/backend/services/utils";
 import { getFactoryPool } from "@/factory/core/db";
 
 /**
@@ -345,7 +346,18 @@ export async function GET(req: NextRequest) {
               ELSE 'offline'
             END as presence_status
           FROM personnel p
-          LEFT JOIN users u ON (u.username = p.employee_code OR TRIM(LOWER(u.full_name)) = TRIM(LOWER(p.full_name)))
+          LEFT JOIN LATERAL (
+            SELECT u2.id, u2.last_seen_at
+              FROM users u2
+             WHERE u2.is_active IS NOT FALSE
+               AND (
+                 LOWER(u2.username) = LOWER(p.employee_code)
+                 OR LOWER(u2.username) = LOWER(REGEXP_REPLACE(p.employee_code, '^NV-(ABT|TBRS|TBR|VIA)-?', '\\1', 'i'))
+                 OR LOWER(REGEXP_REPLACE(TRIM(u2.full_name), '\\s+', ' ', 'g')) = LOWER(REGEXP_REPLACE(TRIM(p.full_name), '\\s+', ' ', 'g'))
+               )
+             ORDER BY u2.last_seen_at DESC NULLS LAST, u2.id ASC
+             LIMIT 1
+          ) u ON true
           WHERE p.employee_code IS NOT NULL AND p.employee_code != '' AND (p.status IS NULL OR p.status != 'INACTIVE')
 
           UNION ALL
@@ -420,9 +432,22 @@ export async function GET(req: NextRequest) {
         // Bỏ qua nếu bảng nhà máy chưa sẵn sàng
       }
 
+      const presenceRank = (s?: string) => (s === "online" ? 2 : s === "away" ? 1 : 0);
+      const dedupedPersonnelMap = new Map<string, any>();
+      for (const row of personnelRes.rows || []) {
+        const cleanName = normalizePersonText(row.full_name);
+        const key = personNameKey(cleanName) || String(row.username || row.id || "").toLowerCase();
+        if (!key) continue;
+        const normalizedRow = { ...row, full_name: cleanName || row.username };
+        const existing = dedupedPersonnelMap.get(key);
+        if (!existing || presenceRank(normalizedRow.presence_status) > presenceRank(existing.presence_status)) {
+          dedupedPersonnelMap.set(key, normalizedRow);
+        }
+      }
+
       return NextResponse.json({
         channels: formattedChannels,
-        personnel: personnelRes.rows || [],
+        personnel: Array.from(dedupedPersonnelMap.values()),
         tasks: tasksRes.rows || [],
         workflows: workflowsRes.rows || [],
         factoryWorkItems,

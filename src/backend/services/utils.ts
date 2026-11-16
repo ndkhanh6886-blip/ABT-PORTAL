@@ -205,3 +205,41 @@ export function hasPermission(role: string | undefined, action: 'view' | 'edit' 
   if (heads.some(r => normRole.includes(r))) return true;
   return action === "view" || action === "edit";
 }
+
+/** Normalizes person/org strings to Unicode NFC, strips zero-width chars, and collapses whitespace/NBSP. */
+export function normalizePersonText(input?: string | null): string {
+  if (!input) return "";
+  return String(input)
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .normalize("NFC")
+    .replace(/[\s\u00A0]+/g, " ")
+    .trim();
+}
+
+/** Canonical lowercase comparison key for Vietnamese person names (NFC + unified tone placement). */
+export function personNameKey(input?: string | null): string {
+  const s = normalizePersonText(input).toLowerCase();
+  if (!s) return "";
+  return s
+    .normalize("NFD")
+    .replace(/([ou])([\u0300\u0301\u0303\u0309\u0323])([aey])/g, "$1$3$2")
+    .normalize("NFC");
+}
+
+/** All lowercase employee_code / username alias forms (NV-ABT-016 <-> ABT016, NV-TBR-016 <-> TBR016, NV-VIA-016 <-> VIA016, NV-TBRS-016 <-> TBRS016). */
+export function employeeCodeVariants(code?: string | null): string[] {
+  const clean = normalizePersonText(code).toLowerCase();
+  if (!clean) return [];
+  const out = new Set<string>([clean]);
+  const m = clean.match(/^(?:nv-?)?(abt|tbrs|tbr|via)-?([0-9a-z-]+)$/i);
+  if (m) {
+    const [, prefix, rest] = m;
+    const p = prefix.toLowerCase();
+    const r = rest.replace(/^-+/, "").toLowerCase();
+    out.add(`${p}${r}`);
+    out.add(`${p}-${r}`);
+    out.add(`nv-${p}-${r}`);
+    out.add(`nv-${p}${r}`);
+  }
+  return Array.from(out);
+}

@@ -55,14 +55,16 @@ import {
   formatVietnamTime,
   formatVietnamDate,
   formatVietnamDateTime,
-  getVietnamDateLabel
+  getVietnamDateLabel,
+  normalizePersonText,
+  personNameKey
 } from "@/backend/services/utils";
 import { nowVNDateTime } from "@/backend/services/dates";
 
 export const normalizeUserName = (name?: string): string => {
-  if (!name) return "Nhân viên ABT";
-  const trimmed = name.trim();
-  const lower = trimmed.toLowerCase();
+  const trimmed = normalizePersonText(name);
+  if (!trimmed) return "Nhân viên ABT";
+  const lower = personNameKey(trimmed);
   if (
     lower === "admin" || 
     lower === "quan tri vien" || 
@@ -123,18 +125,19 @@ const COMMON_EMOJIS = ["👍", "❤️", "🚀", "👀", "✅", "🎉", "🔥", 
 
 export const dedupePersonnel = (list: any[]): any[] => {
   if (!Array.isArray(list)) return [];
+  const presenceRank = (s?: string) => (s === "online" ? 2 : s === "away" ? 1 : 0);
   const map = new Map<string, any>();
   for (const p of list) {
-    const rawName = p.full_name || p.name || "";
-    const norm = normalizeUserName(rawName);
-    if (!norm) continue;
-    if (!map.has(norm)) {
-      map.set(norm, { ...p, full_name: rawName });
-    } else {
-      const existing = map.get(norm);
-      if (p.presence_status === "online" && existing.presence_status !== "online") {
-        map.set(norm, { ...existing, ...p, full_name: rawName });
-      }
+    const rawName = normalizePersonText(p?.full_name || p?.name || "");
+    const displayName = normalizeUserName(rawName);
+    const key = personNameKey(displayName);
+    if (!key) continue;
+    const item = { ...p, full_name: displayName };
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, item);
+    } else if (presenceRank(item.presence_status) > presenceRank(existing.presence_status)) {
+      map.set(key, { ...existing, ...item });
     }
   }
   return Array.from(map.values());
@@ -582,7 +585,7 @@ export const EnterpriseChatModule: React.FC = () => {
       const data = await res.json();
       if (data.channels && Array.isArray(data.channels) && data.channels.length > 0) {
         setChannels(data.channels);
-        if (data.personnel && Array.isArray(data.personnel) && data.personnel.length > 0) {
+        if (Array.isArray(data.personnel)) {
           const deduped = dedupePersonnel(data.personnel);
           setPersonnelList(deduped);
           if (typeof window !== "undefined") {
@@ -653,6 +656,14 @@ export const EnterpriseChatModule: React.FC = () => {
   useEffect(() => {
     setLoading(true);
     fetchChannels();
+  }, [currentUserName]);
+
+  useEffect(() => {
+    const onPersonnelUpdated = () => {
+      fetchChannels();
+    };
+    window.addEventListener("tbr_personnel_updated", onPersonnelUpdated);
+    return () => window.removeEventListener("tbr_personnel_updated", onPersonnelUpdated);
   }, [currentUserName]);
 
   // 2. Fetch Messages for Active Channel (Primary)
@@ -817,8 +828,14 @@ export const EnterpriseChatModule: React.FC = () => {
             });
 
             setChannels(chData.channels);
-            if (chData.personnel && Array.isArray(chData.personnel)) {
-              setPersonnelList(dedupePersonnel(chData.personnel));
+            if (Array.isArray(chData.personnel)) {
+              const deduped = dedupePersonnel(chData.personnel);
+              setPersonnelList(deduped);
+              if (typeof window !== "undefined") {
+                try {
+                  localStorage.setItem("lab_members", JSON.stringify(deduped));
+                } catch (e) {}
+              }
             }
           }
         }
@@ -1919,7 +1936,7 @@ export const EnterpriseChatModule: React.FC = () => {
                 const unreadCount = item.unreadCount;
 
                 return (
-                  <div key={item.colleague.id || item.colleague.employee_code || colleagueName} className="group/dm flex items-center gap-1">
+                  <div key={personNameKey(colleagueName) || item.colleague.employee_code || item.colleague.id} className="group/dm flex items-center gap-1">
                     <button
                       onClick={() => {
                         if (item.channel) {

@@ -5,6 +5,7 @@ import { getAuthorizedUser, isAdminUser, isAccountantUser, unauthorizedResponse,
 import { hasPermission, inferSystemRoleFromPosition } from "@/backend/services/permissions";
 import { stripCostFields } from "@/backend/services/costVisibility";
 import { todayVN, toVNDateString, normalizeExcelDateToISO, formatVNDate } from "@/backend/services/dates";
+import { normalizePersonText, personNameKey } from "@/backend/services/utils";
 
 /** Stock-changing actions and the permissions allowed to run them. */
 const WRITE_PERMISSIONS: Record<string, string[]> = {
@@ -2377,12 +2378,15 @@ export async function POST(req: NextRequest) {
           console.warn("Could not drop users_email_key:", e?.message);
         }
 
+        const existingPersRows = (
+          await query("SELECT employee_code, full_name, department, email FROM personnel ORDER BY id ASC")
+        ).rows;
         for (const r of rows) {
           // Helper to get value matching keys flexibly
           const getVal = (candidates: string[]): string => {
             for (const c of candidates) {
               if (r[c] !== undefined && r[c] !== null && String(r[c]).trim() !== "") {
-                return String(r[c]).replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+                return normalizePersonText(String(r[c]));
               }
             }
             // Case/accent/symbol insensitive lookup
@@ -2392,17 +2396,25 @@ export async function POST(req: NextRequest) {
               for (const rk of rowKeys) {
                 const cleanRk = rk.toLowerCase().replace(/[\s\(\)\*\_]/g, "");
                 if (cleanRk === cleanCand && r[rk] !== undefined && r[rk] !== null && String(r[rk]).trim() !== "") {
-                  return String(r[rk]).replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+                  return normalizePersonText(String(r[rk]));
                 }
               }
             }
             return "";
           };
 
-          const empCode = getVal(["Mã nhân viên (*)", "Mã nhân viên", "employee_code", "MaNV", "Mã NV"]) || autoCode("NV-TBR");
+          const rawEmpCode = getVal(["Mã nhân viên (*)", "Mã nhân viên", "employee_code", "MaNV", "Mã NV"]);
           const fullName = getVal(["Họ và tên (*)", "Họ và tên", "full_name", "name", "Họ tên"]) || "Nhân viên TBR";
           let username = getVal(["Tên đăng nhập (*)", "Tên đăng nhập", "username", "TenDangNhap"]);
-          const email = getVal(["Email (*)", "Email", "email"]) || (username ? `${username}@tbr.vn` : "");
+          const email = (getVal(["Email (*)", "Email", "email"]) || (username ? `${username}@tbr.vn` : "")).toLowerCase();
+          const nameKey = personNameKey(fullName);
+          const matchedPers =
+            !rawEmpCode && nameKey
+              ? existingPersRows.find(
+                  (p) => personNameKey(p.full_name) === nameKey && email && String(p.email || "").trim().toLowerCase() === email
+                ) || existingPersRows.find((p) => personNameKey(p.full_name) === nameKey)
+              : undefined;
+          const empCode = rawEmpCode || matchedPers?.employee_code || autoCode("NV-TBR");
           if (!username) {
             const emailPart = email.split("@")[0];
             username = emailPart || empCode.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -2459,6 +2471,9 @@ export async function POST(req: NextRequest) {
                    status = EXCLUDED.status`,
               [empCode, fullName, dept, position, email, phone, status]
             );
+            if (!existingPersRows.some((p) => p.employee_code === empCode)) {
+              existingPersRows.push({ employee_code: empCode, full_name: fullName, department: dept, email });
+            }
           } catch (persErr: any) {
             console.error("Warning: personnel upsert failed, continuing:", persErr.message);
           }

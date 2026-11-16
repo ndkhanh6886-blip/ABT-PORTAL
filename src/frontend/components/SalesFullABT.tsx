@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
-import { isServiceProduct } from "@/backend/services/catalogStore";
+import { isServiceProduct } from "@/backend/services/catalogRules";
 import { packagingFormOfLot, normalizePackagingForm, normalizeIcForm, normalizeTubeType, withPackagingNote, isPcrKitProduct, PACKAGING_LABEL, IC_LABEL, PCR_TUBE_CODES, kitSpecOf, kitSpecLabel, lotKitSpec, lotMatchesKitSpec, kitSpecMismatches, missingKitSpec, hasKitSpec, type KitSpec } from "@/frontend/utils/packagingForm";
 import {
     Wallet,

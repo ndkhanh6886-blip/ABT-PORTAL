@@ -22,6 +22,7 @@ import {
 import { useAuth } from "@/frontend/contexts/AuthContext";
 import { MainTab } from "@/frontend/components/Navbar";
 import { uploadSingleFileSmart } from "@/frontend/components/AttachmentPicker";
+import { dedupePersonnel } from "@/frontend/components/EnterpriseChatModule";
 import {
   formatVietnamTime,
   formatVietnamDate,
@@ -110,7 +111,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
         .then(data => {
           if (data.channels && data.channels.length > 0) {
             setChannels(data.channels);
-            setPersonnel(data.personnel || []);
+            setPersonnel(dedupePersonnel(data.personnel || []));
             setActiveChannelId(prev => {
               if (prev) return prev;
               const defaultCh =
