@@ -11,7 +11,7 @@ import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import { lotMachine } from "../inv/lots";
 import { releaseDemandReservations, reserve } from "../inv/reservations";
 import { getItem, toBaseQty } from "../master/service";
-import { getFormula, prepare } from "./service";
+import { getFormula, normalizePrepDeptScope, prepare } from "./service";
 
 const DEMAND = "PREPARATION" as const;
 const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
@@ -32,11 +32,27 @@ const orderSchema = z.object({
  */
 export async function createPrepOrder(tx: Tx, actor: AuthzActor, input: unknown) {
   const d = parseInput(orderSchema, input);
-  const wh = (await tx.query("SELECT id, owner_org_unit_id FROM master.warehouse WHERE id = $1 AND status = 'ACTIVE'", [d.warehouse_id])).rows[0];
+  const wh = (
+    await tx.query(
+      `SELECT w.id, w.owner_org_unit_id, w.purpose, ou.module_key AS org_module_key
+         FROM master.warehouse w
+         LEFT JOIN core.org_unit ou ON ou.id = w.owner_org_unit_id
+        WHERE w.id = $1 AND w.status = 'ACTIVE'`,
+      [d.warehouse_id]
+    )
+  ).rows[0];
   if (!wh) throw notFound("kho");
   await authorize(tx, actor, "prep.execute", wh.owner_org_unit_id);
   const f = await getFormula(tx, d.formula_id);
   if (f.status !== "ACTIVE") throw invalid(`Công thức ${f.code} đang ngừng dùng.`);
+  const whDept = ["OLIGO", "RD", "KIT"].includes(wh.org_module_key)
+    ? wh.org_module_key
+    : ["OLIGO", "RD"].includes(wh.purpose)
+      ? wh.purpose
+      : null;
+  if (whDept && f.dept_scope && whDept !== f.dept_scope) {
+    throw invalid(`Công thức pha chế bộ phận ${f.dept_scope} (${f.code}) không được lập lệnh pha trên kho của bộ phận ${whDept}.`);
+  }
   const out = await getItem(tx, f.output_item_id);
   const factor = (await toBaseQty(tx, out, d.qty, d.uom)) / (await toBaseQty(tx, out, Number(f.basis_qty), f.basis_uom));
   const code = await nextNumber(tx, "PREP_ORDER");
@@ -85,17 +101,20 @@ export async function cancelPrepOrder(tx: Tx, actor: AuthzActor, id: string, rea
   await writeAudit(tx, actor, { entityType: "prep_order", entityId: o.id, action: "cancel", changes: { status: ["PLANNED", "CANCELLED"] }, reason });
 }
 
-export async function listPrepOrders(tx: Tx, actor: AuthzActor) {
+export async function listPrepOrders(tx: Tx, actor: AuthzActor, deptScopeRaw?: string | null) {
+  const scope = normalizePrepDeptScope(deptScopeRaw);
   const rows = (
     await tx.query(
       `SELECT o.id, o.code, o.status, o.qty::float AS qty, o.uom, o.planned_date, o.notes, o.cancel_reason, o.created_at, w.owner_org_unit_id, w.code AS warehouse_code,
-              f.code AS formula_code, f.name AS formula_name, u.display_name AS created_by_name, p.code AS preparation_code,
+              f.code AS formula_code, f.name AS formula_name, f.dept_scope, u.display_name AS created_by_name, p.code AS preparation_code,
               (SELECT json_agg(json_build_object('item_code', i.code, 'lot_code', l.code, 'qty', (r.qty_base - r.qty_consumed)::float, 'uom', i.base_uom) ORDER BY i.code)
                  FROM inv.reservation r JOIN master.item i ON i.id = r.item_id LEFT JOIN inv.lot l ON l.id = r.lot_id
                 WHERE r.demand_entity_type = 'PREPARATION' AND r.demand_entity_id = o.id AND r.status = 'ACTIVE') AS reserved
          FROM prep.prep_order o JOIN prep.formula f ON f.id = o.formula_id JOIN master.warehouse w ON w.id = o.warehouse_id
          LEFT JOIN core.user_profile u ON u.user_id = o.created_by LEFT JOIN prep.preparation p ON p.id = o.preparation_id
-        ORDER BY CASE o.status WHEN 'PLANNED' THEN 0 ELSE 1 END, o.planned_date, o.code LIMIT 300`
+        WHERE ($1::text IS NULL OR f.dept_scope = $1)
+        ORDER BY CASE o.status WHEN 'PLANNED' THEN 0 ELSE 1 END, o.planned_date, o.code LIMIT 300`,
+      [scope]
     )
   ).rows;
   const out = [];

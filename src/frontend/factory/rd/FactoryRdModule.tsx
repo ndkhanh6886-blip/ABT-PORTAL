@@ -107,6 +107,7 @@ export function FactoryRdModule() {
       )}
       {tab === "prep" && (
         <PreparationView
+          deptScope="RD"
           canManage={perms.has("prep.formula.manage")}
           canExecute={perms.has("prep.execute")}
           canDelete={Boolean(me.data?.is_root || perms.has("prep.formula.delete"))}

@@ -2,8 +2,9 @@ import { afterAll, describe, expect, it } from "vitest";
 import { createUser, grant } from "../../__tests__/helpers";
 import { closeFactoryPool, getFactoryPool, withTransaction } from "../../core/db";
 import { makeItem, makeSite, stockedLot } from "../../inv/__tests__/fixtures";
-import { cancelPrepOrder, createPrepOrder } from "../orders";
-import { cancelPreparation, deleteFormula, listFormulas, prepare, saveFormula } from "../service";
+import { executeExcelBatchImport } from "../../import/excelImport";
+import { cancelPrepOrder, createPrepOrder, listPrepOrders } from "../orders";
+import { cancelPreparation, deleteFormula, listFormulas, listPreparations, prepOptions, prepare, saveFormula } from "../service";
 import { ensureLegacyOligoDataSeeded } from "../../oligo/legacySync";
 import "../../modules";
 
@@ -158,5 +159,153 @@ describe("reagent preparation", () => {
       expect(formulasAfter.some((x: { code: string }) => x.code === "AMA")).toBe(false);
       await tx.query("ROLLBACK TO SAVEPOINT sp_legacy_delete_test");
     });
+  });
+
+  it("isolates R&D and Oligo preparation formulas, orders, logs, warehouses, and Excel imports independently", async () => {
+    const suffix = rnd();
+    const oligoSite = await makeSite();
+    const rdSite = await makeSite();
+    await db().query("UPDATE core.org_unit SET module_key = 'OLIGO' WHERE id = $1", [oligoSite.dept]);
+    await db().query("UPDATE core.org_unit SET module_key = 'RD' WHERE id = $1", [rdSite.dept]);
+    await db().query("UPDATE master.warehouse SET purpose = 'OLIGO' WHERE id = $1", [oligoSite.warehouse]);
+    await db().query("UPDATE master.warehouse SET purpose = 'RD' WHERE id = $1", [rdSite.warehouse]);
+
+    const rootAdmin = { ...(await createUser("Root Admin")), isRootAdmin: true };
+    const ingOligo = await makeItem(oligoSite, { name: `Oligo Sol ${suffix}`, base_uom: "mL" });
+    const outOligo = await makeItem(oligoSite, { name: `Oligo Buffer ${suffix}`, base_uom: "mL" });
+    await stockedLot(oligoSite, ingOligo.id, 1000, "2030-01-01", { uom: "mL" });
+
+    const ingRd = await makeItem(rdSite, { name: `RD Reagent ${suffix}`, base_uom: "mL" });
+    const outRd = await makeItem(rdSite, { name: `RD Lysis ${suffix}`, base_uom: "mL" });
+    await stockedLot(rdSite, ingRd.id, 1000, "2030-01-01", { uom: "mL" });
+
+    // 1. Both departments can reuse the exact same formula code independently without collision
+    const sharedCode = `TE1X-${suffix}`;
+    const fOligo = await withTransaction((tx) =>
+      saveFormula(tx, rootAdmin, null, {
+        code: sharedCode,
+        name: "Đệm TE Oligo",
+        dept_scope: "OLIGO",
+        output_item_id: outOligo.id,
+        basis_qty: 100,
+        basis_uom: "mL",
+        lines: [{ item_id: ingOligo.id, qty: 100, uom: "mL" }],
+      })
+    );
+    const fRd = await withTransaction((tx) =>
+      saveFormula(tx, rootAdmin, null, {
+        code: sharedCode,
+        name: "Đệm ly giải R&D",
+        dept_scope: "RD",
+        output_item_id: outRd.id,
+        basis_qty: 100,
+        basis_uom: "mL",
+        lines: [{ item_id: ingRd.id, qty: 100, uom: "mL" }],
+      })
+    );
+    expect(fOligo.dept_scope).toBe("OLIGO");
+    expect(fRd.dept_scope).toBe("RD");
+
+    // 2. Listing formulas by dept=RD never leaks OLIGO formulas and does not trigger legacy Oligo formula seeding
+    const rdFormulas = await withTransaction((tx) => listFormulas(tx, rootAdmin, "RD"));
+    expect(rdFormulas.every((f: any) => f.dept_scope === "RD")).toBe(true);
+    expect(rdFormulas.some((f: any) => f.id === fRd.id)).toBe(true);
+    expect(rdFormulas.some((f: any) => f.id === fOligo.id)).toBe(false);
+
+    const oligoFormulas = await withTransaction((tx) => listFormulas(tx, rootAdmin, "OLIGO"));
+    expect(oligoFormulas.every((f: any) => f.dept_scope === "OLIGO")).toBe(true);
+    expect(oligoFormulas.some((f: any) => f.id === fOligo.id)).toBe(true);
+    expect(oligoFormulas.some((f: any) => f.id === fRd.id)).toBe(false);
+
+    // 3. Warehouse options are filtered cleanly per department
+    const rdOpts = await withTransaction((tx) => prepOptions(tx, rootAdmin, "RD"));
+    expect(rdOpts.some((w: any) => w.id === rdSite.warehouse)).toBe(true);
+    expect(rdOpts.some((w: any) => w.id === oligoSite.warehouse)).toBe(false);
+
+    const oligoOpts = await withTransaction((tx) => prepOptions(tx, rootAdmin, "OLIGO"));
+    expect(oligoOpts.some((w: any) => w.id === oligoSite.warehouse)).toBe(true);
+    expect(oligoOpts.some((w: any) => w.id === rdSite.warehouse)).toBe(false);
+
+    // 4. Cross-department execution and planned order creation are blocked
+    await expect(
+      withTransaction((tx) =>
+        prepare(tx, rootAdmin, {
+          formula_id: fOligo.id,
+          qty: 50,
+          uom: "mL",
+          warehouse_id: rdSite.warehouse,
+          to_location_id: rdSite.shelf,
+        })
+      )
+    ).rejects.toThrow(/bộ phận OLIGO/);
+    await expect(
+      withTransaction((tx) =>
+        createPrepOrder(tx, rootAdmin, {
+          formula_id: fRd.id,
+          qty: 50,
+          uom: "mL",
+          warehouse_id: oligoSite.warehouse,
+          planned_date: "2026-12-01",
+        })
+      )
+    ).rejects.toThrow(/bộ phận RD/);
+
+    // 5. Orders & preparation logs remain isolated by deptScope
+    const ordRd = await withTransaction((tx) =>
+      createPrepOrder(tx, rootAdmin, {
+        formula_id: fRd.id,
+        qty: 50,
+        uom: "mL",
+        warehouse_id: rdSite.warehouse,
+        planned_date: "2026-12-01",
+      })
+    );
+    const prepOligo = await withTransaction((tx) =>
+      prepare(tx, rootAdmin, {
+        formula_id: fOligo.id,
+        qty: 50,
+        uom: "mL",
+        warehouse_id: oligoSite.warehouse,
+        to_location_id: oligoSite.shelf,
+      })
+    );
+
+    const rdOrders = await withTransaction((tx) => listPrepOrders(tx, rootAdmin, "RD"));
+    const oligoOrders = await withTransaction((tx) => listPrepOrders(tx, rootAdmin, "OLIGO"));
+    expect(rdOrders.some((o: any) => o.id === ordRd.id)).toBe(true);
+    expect(oligoOrders.some((o: any) => o.id === ordRd.id)).toBe(false);
+
+    const rdPreps = await withTransaction((tx) => listPreparations(tx, rootAdmin, "RD"));
+    const oligoPreps = await withTransaction((tx) => listPreparations(tx, rootAdmin, "OLIGO"));
+    expect(oligoPreps.some((p: any) => p.id === prepOligo.id)).toBe(true);
+    expect(rdPreps.some((p: any) => p.id === prepOligo.id)).toBe(false);
+
+    // 6. Excel formula import with target_dept_code = 'P-RD' writes dept_scope = 'RD'
+    const xlCode = `XLRD-${suffix}`;
+    const xlRes = await withTransaction((tx) =>
+      executeExcelBatchImport(tx, rootAdmin, {
+        template_key: "PREP_OLIGO_FORMULA",
+        target_dept_code: "P-RD",
+        file_name: `rd_prep_${suffix}.xlsx`,
+        rows: [
+          {
+            formula_code: xlCode,
+            formula_name: `Công thức RD Excel ${suffix}`,
+            category: "Đệm ly giải & Tách chiết",
+            basis_qty: 500,
+            basis_uom: "mL",
+            ingredient_code: ingRd.code,
+            ingredient_name: ingRd.name,
+            ingredient_qty: 100,
+            ingredient_uom: "mL",
+          },
+        ],
+      })
+    );
+    expect(xlRes.error_count).toBe(0);
+    const rdAfterExcel = await withTransaction((tx) => listFormulas(tx, rootAdmin, "RD"));
+    expect(rdAfterExcel.some((f: any) => f.code === xlCode && f.dept_scope === "RD")).toBe(true);
+    const oligoAfterExcel = await withTransaction((tx) => listFormulas(tx, rootAdmin, "OLIGO"));
+    expect(oligoAfterExcel.some((f: any) => f.code === xlCode)).toBe(false);
   });
 });

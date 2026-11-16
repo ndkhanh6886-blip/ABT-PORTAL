@@ -85,6 +85,7 @@ export function FactoryOligoModule() {
       )}
       {tab === "prep" && (
         <PreparationView
+          deptScope="OLIGO"
           canManage={perms.has("prep.formula.manage")}
           canExecute={perms.has("prep.execute")}
           canDelete={Boolean(me.data?.is_root || perms.has("prep.formula.delete"))}

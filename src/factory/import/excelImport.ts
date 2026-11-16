@@ -7,6 +7,7 @@ import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import { isPlaceholderUom, normalizeUomAlias } from "../master/service";
 import { saveMethod, saveWorkflow, type StepField } from "../oligo/postSop";
 import { ensureKitBomRoutingAndIfuSchema } from "../kit/bomRouting";
+import { normalizePrepDeptScope } from "../prep/service";
 import { ensureQaOpsSchema } from "../qms/qaOps";
 import { ensureRdProjectOpsSchema } from "../rd/projectOps";
 import "../master/permissions";
@@ -1251,6 +1252,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
     }
   } else if (templateKey === "PREP_OLIGO_FORMULA") {
     await authorize(tx, actor, "prep.formula.manage");
+    const formulaDeptScope = normalizePrepDeptScope(targetDeptCode) ?? "OLIGO";
     let lastFCode = "";
     let lastFName = "";
     let lastCategory = "";
@@ -1325,7 +1327,10 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
         );
 
         let formula = (
-          await tx.query("SELECT id FROM prep.formula WHERE upper(code) = upper($1) LIMIT 1", [formulaCode])
+          await tx.query(
+            "SELECT id FROM prep.formula WHERE dept_scope = $1 AND upper(code) = upper($2) LIMIT 1",
+            [formulaDeptScope, formulaCode]
+          )
         ).rows[0];
         if (formula) {
           await tx.query(
@@ -1355,14 +1360,15 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
           formula = (
             await tx.query(
               `INSERT INTO prep.formula (
-                 code, name, category, output_item_id, basis_qty, basis_uom,
+                 code, name, category, dept_scope, output_item_id, basis_qty, basis_uom,
                  shelf_life_days, requires_qc, instructions, status, created_by, updated_by, incubation_days
-               ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'ACTIVE', $10, $10, $11)
+               ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'ACTIVE', $11, $11, $12)
                RETURNING id`,
               [
                 formulaCode,
                 formulaName,
                 category,
+                formulaDeptScope,
                 outItem.id,
                 basisQty,
                 outItem.base_uom,

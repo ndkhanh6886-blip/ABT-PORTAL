@@ -19,11 +19,62 @@ registerPermissions([
   { code: "prep.execute", description: "Thực hiện pha chế: trừ nguyên liệu, tạo lô hóa chất pha (trong kho của phòng)" },
 ]);
 
+export type PrepDeptScope = "OLIGO" | "RD" | "KIT";
+
+export function normalizePrepDeptScope(raw?: unknown): PrepDeptScope | null {
+  const s = String(raw ?? "").trim().toUpperCase();
+  if (!s) return null;
+  if (s === "RD" || s === "P-RD" || s === "R&D") return "RD";
+  if (s === "KIT" || s === "P-KIT") return "KIT";
+  if (s === "OLIGO" || s === "P-OLIGO") return "OLIGO";
+  return null;
+}
+
+async function resolveDefaultFormulaScope(tx: Tx, actor: AuthzActor): Promise<PrepDeptScope> {
+  const row = (
+    await tx.query(
+      `SELECT coalesce(u.module_key, ur_ou.module_key) AS module_key
+         FROM core.user_profile up
+         LEFT JOIN core.org_unit u ON u.id = up.org_unit_id AND u.status = 'ACTIVE'
+         LEFT JOIN core.user_role ur ON ur.user_id = up.user_id AND ur.revoked_at IS NULL
+         LEFT JOIN core.org_unit ur_ou ON ur_ou.id = ur.scope_org_unit_id AND ur_ou.status = 'ACTIVE'
+        WHERE up.user_id = $1
+        ORDER BY (u.module_key IN ('RD', 'OLIGO', 'KIT')) DESC NULLS LAST,
+                 (ur_ou.module_key IN ('RD', 'OLIGO', 'KIT')) DESC NULLS LAST
+        LIMIT 1`,
+      [actor.userId]
+    )
+  ).rows[0] as { module_key?: string | null } | undefined;
+  return normalizePrepDeptScope(row?.module_key) ?? "OLIGO";
+}
+
+async function authorizeFormulaScope(tx: Tx, actor: AuthzActor, targetScope: PrepDeptScope, isExplicitScope: boolean): Promise<void> {
+  await authorizeAnywhere(tx, actor, "prep.formula.manage");
+  if (!isExplicitScope || actor.isRootAdmin || actor.isSystem) return;
+  const scopedRows = (
+    await tx.query(
+      `SELECT ur.scope_org_unit_id, ou.module_key
+         FROM core.user_role ur
+         JOIN core.role_permission rp ON rp.role_id = ur.role_id AND rp.permission_code = 'prep.formula.manage'
+         LEFT JOIN core.org_unit ou ON ou.id = ur.scope_org_unit_id
+        WHERE ur.user_id = $1 AND ur.revoked_at IS NULL
+          AND ur.valid_from <= now() AND (ur.valid_to IS NULL OR ur.valid_to > now())`,
+      [actor.userId]
+    )
+  ).rows as { scope_org_unit_id: string | null; module_key: string | null }[];
+  const hasCompanyWideOrGeneric = scopedRows.some((r) => r.scope_org_unit_id === null || r.module_key === null);
+  const hasMatchingScope = scopedRows.some((r) => r.module_key === targetScope);
+  if (!hasCompanyWideOrGeneric && scopedRows.length > 0 && !hasMatchingScope) {
+    throw invalid(`Bạn không có quyền quản lý công thức pha chế thuộc bộ phận ${targetScope}.`);
+  }
+}
+
 const lineSchema = z.object({ item_id: z.string().uuid("chọn nguyên liệu"), qty: z.coerce.number().positive("lượng phải lớn hơn 0"), uom: z.string().min(1) });
 const formulaSchema = z.object({
   code: z.string().trim().regex(/^[A-Z0-9_-]{2,30}$/, "mã công thức: chữ hoa, số, _ -"),
   name: z.string().trim().min(1).max(200),
   category: z.string().trim().max(60).optional().nullable(),
+  dept_scope: z.enum(["OLIGO", "RD", "KIT"]).optional(),
   output_item_id: z.string().uuid("chọn mã hàng thành phẩm pha"),
   basis_qty: z.coerce.number().positive(),
   basis_uom: z.string().min(1),
@@ -37,9 +88,12 @@ const formulaSchema = z.object({
 
 /** A formula: ingredients per `basis_qty` of the prepared item. Edits are audited old → new; preparations keep what they used. */
 export async function saveFormula(tx: Tx, actor: AuthzActor, id: string | null, input: unknown) {
-  await authorizeAnywhere(tx, actor, "prep.formula.manage");
   const raw = (input ?? {}) as Record<string, unknown>;
-  const d = parseInput(formulaSchema, input);
+  const normalizedInput =
+    raw.dept_scope !== undefined && raw.dept_scope !== null && raw.dept_scope !== ""
+      ? { ...raw, dept_scope: normalizePrepDeptScope(raw.dept_scope) ?? raw.dept_scope }
+      : raw;
+  const d = parseInput(formulaSchema, normalizedInput);
   const out = await getItem(tx, d.output_item_id);
   await toBaseQty(tx, out, d.basis_qty, d.basis_uom); // the unit must convert to the item's base unit
   for (const l of d.lines) {
@@ -48,18 +102,23 @@ export async function saveFormula(tx: Tx, actor: AuthzActor, id: string | null, 
   }
   let formulaId = id;
   if (!id) {
-    if ((await tx.query("SELECT 1 FROM prep.formula WHERE code = $1", [d.code])).rowCount) throw conflict(`Đã có công thức ${d.code}.`, "DUPLICATE");
+    const targetScope = d.dept_scope ?? (await resolveDefaultFormulaScope(tx, actor));
+    await authorizeFormulaScope(tx, actor, targetScope, Boolean(d.dept_scope));
+    if ((await tx.query("SELECT 1 FROM prep.formula WHERE dept_scope = $1 AND upper(code) = upper($2)", [targetScope, d.code])).rowCount) {
+      throw conflict(`Đã có công thức ${d.code} trong bộ phận ${targetScope}.`, "DUPLICATE");
+    }
     formulaId = (
       await tx.query(
-        `INSERT INTO prep.formula (code, name, category, output_item_id, basis_qty, basis_uom, shelf_life_days, requires_qc, instructions, status, created_by, updated_by, incubation_days)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, $12) RETURNING id`,
-        [d.code, d.name, d.category ?? null, d.output_item_id, d.basis_qty, d.basis_uom, d.shelf_life_days ?? null, d.requires_qc, d.instructions ?? null, d.status, actor.userId, d.incubation_days]
+        `INSERT INTO prep.formula (code, name, category, dept_scope, output_item_id, basis_qty, basis_uom, shelf_life_days, requires_qc, instructions, status, created_by, updated_by, incubation_days)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13) RETURNING id`,
+        [d.code, d.name, d.category ?? null, targetScope, d.output_item_id, d.basis_qty, d.basis_uom, d.shelf_life_days ?? null, d.requires_qc, d.instructions ?? null, d.status, actor.userId, d.incubation_days]
       )
     ).rows[0].id;
-    await writeAudit(tx, actor, { entityType: "prep_formula", entityId: formulaId!, action: "create", changes: { code: [null, d.code], lines: [null, d.lines.length] } });
+    await writeAudit(tx, actor, { entityType: "prep_formula", entityId: formulaId!, action: "create", changes: { code: [null, d.code], dept_scope: [null, targetScope], lines: [null, d.lines.length] } });
   } else {
     const cur = (await tx.query("SELECT * FROM prep.formula WHERE id = $1 FOR UPDATE", [id])).rows[0];
     if (!cur) throw notFound("công thức");
+    await authorizeFormulaScope(tx, actor, (cur.dept_scope as PrepDeptScope) ?? "OLIGO", true);
     if (cur.version !== Number(raw.version)) throw conflict("Công thức vừa được người khác sửa. Tải lại.", "STALE_VERSION");
     if (typeof raw.reason !== "string" || raw.reason.trim().length < 3) throw invalid("Nhập lý do sửa công thức.");
     const before = (await tx.query("SELECT item_id, qty::float AS qty, uom FROM prep.formula_line WHERE formula_id = $1 ORDER BY line_no", [id])).rows;
@@ -101,14 +160,22 @@ export async function getFormula(tx: Tx, id: string) {
   return f;
 }
 
-export async function listFormulas(tx: Tx, actor: AuthzActor) {
-  await ensureLegacyOligoDataSeeded(tx);
+export async function listFormulas(tx: Tx, actor: AuthzActor, deptScopeRaw?: string | null) {
+  const scope = normalizePrepDeptScope(deptScopeRaw);
+  if (!scope || scope === "OLIGO") {
+    await ensureLegacyOligoDataSeeded(tx);
+  }
   // anyone who prepares or writes formulas, in any department
   await authorizeAnywhere(tx, actor, "prep.execute").catch((err) => {
     if (err?.code === "FORBIDDEN") return authorizeAnywhere(tx, actor, "prep.formula.manage");
     throw err;
   });
-  const ids = (await tx.query("SELECT id FROM prep.formula ORDER BY status, code")).rows;
+  const ids = (
+    await tx.query(
+      "SELECT id FROM prep.formula WHERE ($1::text IS NULL OR dept_scope = $1) ORDER BY status, code",
+      [scope]
+    )
+  ).rows;
   return Promise.all(ids.map((r) => getFormula(tx, r.id)));
 }
 
@@ -161,7 +228,7 @@ export async function deleteFormula(tx: Tx, actor: AuthzActor, id: string, input
     entityType: "prep_formula",
     entityId: formulaId,
     action: "delete",
-    changes: { code: [cur.code, null], name: [cur.name, null], lines: [JSON.stringify(before), null] },
+    changes: { code: [cur.code, null], name: [cur.name, null], dept_scope: [cur.dept_scope ?? "OLIGO", null], lines: [JSON.stringify(before), null] },
     reason,
   });
 
@@ -188,11 +255,27 @@ const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
  */
 export async function prepare(tx: Tx, actor: AuthzActor, input: unknown) {
   const d = parseInput(prepareSchema, input);
-  const wh = (await tx.query("SELECT id, owner_org_unit_id FROM master.warehouse WHERE id = $1 AND status = 'ACTIVE'", [d.warehouse_id])).rows[0];
+  const wh = (
+    await tx.query(
+      `SELECT w.id, w.owner_org_unit_id, w.purpose, ou.module_key AS org_module_key
+         FROM master.warehouse w
+         LEFT JOIN core.org_unit ou ON ou.id = w.owner_org_unit_id
+        WHERE w.id = $1 AND w.status = 'ACTIVE'`,
+      [d.warehouse_id]
+    )
+  ).rows[0];
   if (!wh) throw notFound("kho");
   await authorize(tx, actor, "prep.execute", wh.owner_org_unit_id);
   const f = await getFormula(tx, d.formula_id);
   if (f.status !== "ACTIVE") throw invalid(`Công thức ${f.code} đang ngừng dùng.`);
+  const whDept = ["OLIGO", "RD", "KIT"].includes(wh.org_module_key)
+    ? wh.org_module_key
+    : ["OLIGO", "RD"].includes(wh.purpose)
+      ? wh.purpose
+      : null;
+  if (whDept && f.dept_scope && whDept !== f.dept_scope) {
+    throw invalid(`Công thức pha chế bộ phận ${f.dept_scope} (${f.code}) không được pha trên kho của bộ phận ${whDept}.`);
+  }
   const outItem = await getItem(tx, f.output_item_id);
   const outBase = await toBaseQty(tx, outItem, d.qty, d.uom);
   const basisBase = await toBaseQty(tx, outItem, Number(f.basis_qty), f.basis_uom);
@@ -289,14 +372,17 @@ export async function cancelPreparation(tx: Tx, actor: AuthzActor, id: string, r
   await writeAudit(tx, actor, { entityType: "preparation", entityId: id, action: "cancel", changes: { status: ["DONE", "CANCELLED"] }, reason });
 }
 
-export async function listPreparations(tx: Tx, actor: AuthzActor) {
+export async function listPreparations(tx: Tx, actor: AuthzActor, deptScopeRaw?: string | null) {
+  const scope = normalizePrepDeptScope(deptScopeRaw);
   const rows = (
     await tx.query(
       `SELECT p.id, p.code, p.status, p.qty_out::float AS qty_out, p.uom_out, p.prepared_at, p.lines, p.notes, p.cancel_reason, p.warehouse_id, p.incubation_until, p.incubated_at, p.to_location_id,
-              f.code AS formula_code, f.name AS formula_name, l.code AS lot_code, l.status AS lot_status, l.expiry_date, u.display_name AS prepared_by_name, w.owner_org_unit_id
+              f.code AS formula_code, f.name AS formula_name, f.dept_scope, l.code AS lot_code, l.status AS lot_status, l.expiry_date, u.display_name AS prepared_by_name, w.owner_org_unit_id
          FROM prep.preparation p JOIN prep.formula f ON f.id = p.formula_id JOIN inv.lot l ON l.id = p.lot_id JOIN master.warehouse w ON w.id = p.warehouse_id
          LEFT JOIN core.user_profile u ON u.user_id = p.prepared_by
-        ORDER BY p.prepared_at DESC LIMIT 200`
+        WHERE ($1::text IS NULL OR f.dept_scope = $1)
+        ORDER BY p.prepared_at DESC LIMIT 200`,
+      [scope]
     )
   ).rows;
   const out = [];
@@ -305,13 +391,37 @@ export async function listPreparations(tx: Tx, actor: AuthzActor) {
 }
 
 /** Warehouses where the user may prepare, with their normal (non-quarantine) locations. */
-export async function prepOptions(tx: Tx, actor: AuthzActor) {
-  const whs = (await tx.query("SELECT w.id, w.code, w.name, w.owner_org_unit_id FROM master.warehouse w WHERE w.status = 'ACTIVE' ORDER BY w.code")).rows;
-  const out = [];
+export async function prepOptions(tx: Tx, actor: AuthzActor, deptScopeRaw?: string | null) {
+  const scope = normalizePrepDeptScope(deptScopeRaw);
+  const whs = (
+    await tx.query(
+      `SELECT w.id, w.code, w.name, w.owner_org_unit_id, w.purpose, ou.module_key AS org_module_key
+         FROM master.warehouse w
+         LEFT JOIN core.org_unit ou ON ou.id = w.owner_org_unit_id
+        WHERE w.status = 'ACTIVE'
+        ORDER BY w.code`
+    )
+  ).rows;
+  const permitted = [];
   for (const w of whs) {
     if (!(await hasFactoryPermission(tx, actor, "prep.execute", w.owner_org_unit_id))) continue;
     const locations = (await tx.query("SELECT id, code, name FROM master.location WHERE warehouse_id = $1 AND status = 'ACTIVE' AND NOT is_quarantine ORDER BY code", [w.id])).rows;
-    out.push({ ...w, locations });
+    permitted.push({ ...w, locations });
   }
-  return out;
+  if (!scope) return permitted;
+
+  const matching = permitted.filter((w) => {
+    const whDept = ["OLIGO", "RD", "KIT", "DEVICE"].includes(w.org_module_key)
+      ? w.org_module_key
+      : ["OLIGO", "RD"].includes(w.purpose)
+        ? w.purpose
+        : null;
+    return !whDept || whDept === scope;
+  });
+  const list = matching.length > 0 ? matching : permitted;
+  return list.sort((a, b) => {
+    const aOwn = a.org_module_key === scope || a.purpose === scope ? 0 : 1;
+    const bOwn = b.org_module_key === scope || b.purpose === scope ? 0 : 1;
+    return aOwn - bOwn || String(a.code).localeCompare(String(b.code));
+  });
 }

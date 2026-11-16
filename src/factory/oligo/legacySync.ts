@@ -603,7 +603,8 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
                  FROM core.audit_log
                 WHERE entity_type = 'prep_formula'
                   AND action = 'delete'
-                  AND changes->'code'->>0 IS NOT NULL`
+                  AND changes->'code'->>0 IS NOT NULL
+                  AND (changes->'dept_scope'->>0 IS NULL OR changes->'dept_scope'->>0 = 'OLIGO')`
             )
           ).rows.map((r) => String(r.code))
         );
@@ -612,13 +613,13 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
       if (deletedFormulaCodes.has(fm.code.toUpperCase())) continue;
       const outId = itemByCode.get(fm.output_code);
       if (!outId) continue;
-      const ex = (await tx.query("SELECT id FROM prep.formula WHERE upper(code) = upper($1) LIMIT 1", [fm.code])).rows[0];
+      const ex = (await tx.query("SELECT id FROM prep.formula WHERE dept_scope = 'OLIGO' AND upper(code) = upper($1) LIMIT 1", [fm.code])).rows[0];
       if (!ex) {
         const fRow = (
           await tx.query(
             `INSERT INTO prep.formula
-               (code, name, category, output_item_id, basis_qty, basis_uom, shelf_life_days, requires_qc, incubation_days, instructions, status)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, false, 0, $8, 'ACTIVE')
+               (code, name, category, dept_scope, output_item_id, basis_qty, basis_uom, shelf_life_days, requires_qc, incubation_days, instructions, status)
+             VALUES ($1, $2, $3, 'OLIGO', $4, $5, $6, $7, false, 0, $8, 'ACTIVE')
              RETURNING id`,
             [fm.code, fm.name, fm.category, outId, fm.basis_qty, fm.basis_uom, fm.shelf_life_days, fm.instructions]
           )

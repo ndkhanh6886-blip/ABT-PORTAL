@@ -27,7 +27,46 @@ interface WhOpt { id: string; code: string; name: string; locations: { id: strin
 
 const LOT_STATUS: Record<string, string> = { QUARANTINE: "Biệt trữ — chờ QC", PENDING_QC: "Chờ QC", RELEASED: "Đạt", ON_HOLD: "Tạm giữ", REJECTED: "Không đạt", EXPIRED: "Hết hạn" };
 
-function exportFormulasExcel(formulas: Formula[]) {
+export type PrepDeptScope = "OLIGO" | "RD" | "KIT";
+
+const PREP_SCOPE_META: Record<
+  PrepDeptScope,
+  {
+    cardTitle: string;
+    emptyText: string;
+    categories: string[];
+    exportFileName: string;
+    importDeptCode: string;
+    importWarehouseCode: string;
+  }
+> = {
+  OLIGO: {
+    cardTitle: "Công thức pha chế Oligo (Hóa chất tổng hợp & Sắc ký)",
+    emptyText: "Chưa có công thức pha chế Oligo (ví dụ: Deblock 3% TCA/DCM, Cap A/B, Oxidizer, pha loãng amidite 0.1 M, đệm HPLC).",
+    categories: ["Tổng hợp", "Pha loãng amidite", "Khử bảo vệ", "Tinh sạch", "Đệm HPLC", "Khác"],
+    exportFileName: "oligo_prep_formulas.xlsx",
+    importDeptCode: "P-OLIGO",
+    importWarehouseCode: "KHO-OLIGO",
+  },
+  RD: {
+    cardTitle: "Công thức pha chế R&D (Đệm nghiên cứu, MasterMix thử nghiệm & Dung dịch chuẩn)",
+    emptyText: "Chưa có công thức pha chế R&D (ví dụ: Đệm ly giải thử nghiệm, MasterMix 2X khảo sát, Đệm TE 1X, Dung dịch pha loãng mẫu chuẩn).",
+    categories: ["MasterMix thử nghiệm", "Đệm ly giải & Tách chiết", "Đệm phản ứng PCR/qPCR", "Dung dịch chuẩn / Chứng dương", "Pha loãng Primer/Probe R&D", "Khác"],
+    exportFileName: "rd_prep_formulas.xlsx",
+    importDeptCode: "P-RD",
+    importWarehouseCode: "KHO-RD",
+  },
+  KIT: {
+    cardTitle: "Công thức pha chế Kit IVD",
+    emptyText: "Chưa có công thức pha chế Kit.",
+    categories: ["MasterMix Kit", "Đệm tách chiết", "Chứng dương / Chứng nội", "Khác"],
+    exportFileName: "kit_prep_formulas.xlsx",
+    importDeptCode: "P-KIT",
+    importWarehouseCode: "KHO-KIT",
+  },
+};
+
+function exportFormulasExcel(formulas: Formula[], fileName: string) {
   const headers = [
     "Mã công thức *",
     "Tên công thức pha chế *",
@@ -88,12 +127,14 @@ function exportFormulasExcel(formulas: Formula[]) {
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet(body);
   XLSX.utils.book_append_sheet(wb, ws, "CongThucPhaChe");
-  XLSX.writeFile(wb, "oligo_prep_formulas.xlsx");
+  XLSX.writeFile(wb, fileName);
 }
 
-function FormulaEditor({ base, isClone, onClose }: { base?: Formula; isClone?: boolean; onClose: () => void }) {
+function FormulaEditor({ base, isClone, deptScope, onClose }: { base?: Formula; isClone?: boolean; deptScope: PrepDeptScope; onClose: () => void }) {
   const qc = useQueryClient();
   const isEdit = Boolean(base && !isClone);
+  const meta = PREP_SCOPE_META[deptScope];
+  const datalistId = `prep-categories-${deptScope}`;
   const [f, setF] = useState({
     code: isClone && base ? `${base.code}-COPY` : (base?.code ?? ""),
     name: isClone && base ? `${base.name} (Bản sao)` : (base?.name ?? ""),
@@ -110,14 +151,14 @@ function FormulaEditor({ base, isClone, onClose }: { base?: Formula; isClone?: b
   const [lines, setLines] = useState<(Line & { label?: string })[]>(base?.lines.map((l) => ({ ...l, label: `${l.item_code} · ${l.item_name}` })) ?? [{ item_id: "", qty: 0, uom: "mL" }]);
   const save = useMutation({
     mutationFn: () => {
-      const body = { ...f, basis_qty: Number(f.basis_qty), shelf_life_days: f.shelf_life_days ? Number(f.shelf_life_days) : null, incubation_days: Number(f.incubation_days || 0), lines: lines.map((l) => ({ item_id: l.item_id, qty: Number(l.qty), uom: l.uom })) };
+      const body = { ...f, dept_scope: deptScope, basis_qty: Number(f.basis_qty), shelf_life_days: f.shelf_life_days ? Number(f.shelf_life_days) : null, incubation_days: Number(f.incubation_days || 0), lines: lines.map((l) => ({ item_id: l.item_id, qty: Number(l.qty), uom: l.uom })) };
       if (!isEdit) return api("/api/factory/prep/formulas", { method: "POST", idempotent: true, json: body });
       const reason = window.prompt("Lý do sửa công thức:");
       if (!reason) throw new Error("Cần lý do sửa.");
       return api(`/api/factory/prep/formulas/${base!.id}`, { method: "PUT", json: { ...body, version: base!.version, reason } });
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["factory", "prep-formulas"] });
+      qc.invalidateQueries({ queryKey: ["factory", "prep-formulas", deptScope] });
       onClose();
     },
   });
@@ -126,7 +167,7 @@ function FormulaEditor({ base, isClone, onClose }: { base?: Formula; isClone?: b
       <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6 items-end">
         <Field label="Mã *"><input className={inputClass} value={f.code} disabled={isEdit} onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })} required /></Field>
         <Field label="Tên *"><input className={inputClass} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required /></Field>
-        <Field label="Nhóm"><input className={inputClass} list="prep-categories" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} /></Field>
+        <Field label="Nhóm"><input className={inputClass} list={datalistId} value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} /></Field>
         <Field label="Mẻ chuẩn *" hint="Lượng thành phẩm mà các nguyên liệu dưới tạo ra">
           <div className="flex gap-1">
             <input className={inputClass} type="number" step="any" min="0" value={f.basis_qty} onChange={(e) => setF({ ...f, basis_qty: e.target.value })} required />
@@ -141,7 +182,7 @@ function FormulaEditor({ base, isClone, onClose }: { base?: Formula; isClone?: b
           </select>
         </Field>
       </div>
-      <datalist id="prep-categories">{["Tổng hợp", "Pha loãng amidite", "Khử bảo vệ", "Tinh sạch", "Đệm HPLC", "Khác"].map((c) => <option key={c} value={c} />)}</datalist>
+      <datalist id={datalistId}>{meta.categories.map((c) => <option key={c} value={c} />)}</datalist>
       <div className="flex flex-wrap gap-3 items-center text-xs">
         <span>Thành phẩm pha:</span>
         <ItemPicker value={f.output_item_id} current={base ? `${base.output_code} · ${base.output_name}` : undefined} onChange={(id) => setF({ ...f, output_item_id: id })} />
@@ -168,8 +209,11 @@ function FormulaEditor({ base, isClone, onClose }: { base?: Formula; isClone?: b
   );
 }
 
-function PrepareForm({ formula, onDone }: { formula: Formula; onDone: () => void }) {
-  const opts = useQuery({ queryKey: ["factory", "prep-options"], queryFn: () => api<WhOpt[]>("/api/factory/prep/options") });
+function PrepareForm({ formula, deptScope, onDone }: { formula: Formula; deptScope: PrepDeptScope; onDone: () => void }) {
+  const opts = useQuery({
+    queryKey: ["factory", "prep-options", deptScope],
+    queryFn: () => api<WhOpt[]>(`/api/factory/prep/options?dept=${deptScope}`),
+  });
   const [f, setF] = useState({ qty: String(formula.basis_qty), uom: formula.basis_uom, warehouse_id: "", to_location_id: "", notes: "", mode: "now", planned_date: new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10) });
   const wh = opts.data?.find((w) => w.id === f.warehouse_id) ?? (opts.data?.length === 1 ? opts.data[0] : undefined);
   const factor = Number(f.qty) / formula.basis_qty;
@@ -241,12 +285,29 @@ function PrepareForm({ formula, onDone }: { formula: Formula; onDone: () => void
 }
 
 /** "Pha chế hóa chất" (as OligoFlow): formulas, the preparation order and the preparation log. */
-export function PreparationView({ canManage, canExecute, canDelete }: { canManage: boolean; canExecute: boolean; canDelete?: boolean }) {
+export function PreparationView({
+  canManage,
+  canExecute,
+  canDelete,
+  deptScope = "OLIGO",
+}: {
+  canManage: boolean;
+  canExecute: boolean;
+  canDelete?: boolean;
+  deptScope?: PrepDeptScope;
+}) {
   const qc = useQueryClient();
   const me = useFactoryMe();
+  const meta = PREP_SCOPE_META[deptScope];
   const allowDelete = canDelete ?? Boolean(me.data?.is_root || me.data?.permissions?.includes("prep.formula.delete"));
-  const formulas = useQuery({ queryKey: ["factory", "prep-formulas"], queryFn: () => api<Formula[]>("/api/factory/prep/formulas") });
-  const preps = useQuery({ queryKey: ["factory", "prep-log"], queryFn: () => api<Prep[]>("/api/factory/prep/preparations") });
+  const formulas = useQuery({
+    queryKey: ["factory", "prep-formulas", deptScope],
+    queryFn: () => api<Formula[]>(`/api/factory/prep/formulas?dept=${deptScope}`),
+  });
+  const preps = useQuery({
+    queryKey: ["factory", "prep-log", deptScope],
+    queryFn: () => api<Prep[]>(`/api/factory/prep/preparations?dept=${deptScope}`),
+  });
   const [editing, setEditing] = useState<{ item?: Formula; isClone?: boolean } | null>(null);
   const [preparing, setPreparing] = useState<Formula | null>(null);
   const removeFormula = useMutation({
@@ -255,16 +316,19 @@ export function PreparationView({ canManage, canExecute, canDelete }: { canManag
     onSuccess: (_res, vars) => {
       if (editing?.item?.id === vars.id) setEditing(null);
       if (preparing?.id === vars.id) setPreparing(null);
-      qc.invalidateQueries({ queryKey: ["factory", "prep-formulas"] });
+      qc.invalidateQueries({ queryKey: ["factory", "prep-formulas", deptScope] });
     },
   });
-  const refresh = () => ["prep-log", "prep-orders"].forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k] }));
+  const refresh = () => ["prep-log", "prep-orders"].forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k, deptScope] }));
   const cancel = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) => api(`/api/factory/prep/preparations/${id}/cancel`, { method: "POST", json: { reason } }),
     onSuccess: refresh,
   });
   const incubated = useMutation({ mutationFn: (id: string) => api(`/api/factory/prep/preparations/${id}/incubated`, { method: "POST", json: {} }), onSuccess: refresh });
-  const orders = useQuery({ queryKey: ["factory", "prep-orders"], queryFn: () => api<PrepOrder[]>("/api/factory/prep/orders") });
+  const orders = useQuery({
+    queryKey: ["factory", "prep-orders", deptScope],
+    queryFn: () => api<PrepOrder[]>(`/api/factory/prep/orders?dept=${deptScope}`),
+  });
   const orderAct = useMutation({
     mutationFn: ({ id, act }: { id: string; act: "execute" | "cancel" }) => {
       if (act === "execute") return api(`/api/factory/prep/orders/${id}/execute`, { method: "POST", idempotent: true, json: {} });
@@ -278,11 +342,11 @@ export function PreparationView({ canManage, canExecute, canDelete }: { canManag
   return (
     <div className="flex flex-col gap-3">
       <Card
-        title="Công thức pha chế"
+        title={meta.cardTitle}
         actions={
           <div className="flex flex-wrap gap-1.5">
             {formulas.data && formulas.data.length > 0 && (
-              <Button type="button" variant="ghost" onClick={() => exportFormulasExcel(formulas.data!)}>
+              <Button type="button" variant="ghost" onClick={() => exportFormulasExcel(formulas.data!, meta.exportFileName)}>
                 📤 Xuất Excel (.xlsx)
               </Button>
             )}
@@ -293,9 +357,9 @@ export function PreparationView({ canManage, canExecute, canDelete }: { canManag
                 onClick={() =>
                   openExcelImportTemplate({
                     templateKey: "PREP_OLIGO_FORMULA",
-                    deptFilter: "P-OLIGO",
-                    targetDeptCode: "P-OLIGO",
-                    targetWarehouseCode: "KHO-OLIGO",
+                    deptFilter: meta.importDeptCode,
+                    targetDeptCode: meta.importDeptCode,
+                    targetWarehouseCode: meta.importWarehouseCode,
                   })
                 }
               >
@@ -312,15 +376,16 @@ export function PreparationView({ canManage, canExecute, canDelete }: { canManag
       >
         {editing && (
           <FormulaEditor
-            key={`${editing.item?.id ?? "new"}-${editing.isClone ? "clone" : "edit"}`}
+            key={`${deptScope}-${editing.item?.id ?? "new"}-${editing.isClone ? "clone" : "edit"}`}
             base={editing.item}
             isClone={editing.isClone}
+            deptScope={deptScope}
             onClose={() => setEditing(null)}
           />
         )}
-        {preparing && <PrepareForm key={preparing.id} formula={preparing} onDone={refresh} />}
+        {preparing && <PrepareForm key={preparing.id} formula={preparing} deptScope={deptScope} onDone={refresh} />}
         <ErrorNote error={formulas.error ?? removeFormula.error} />
-        {formulas.data?.length === 0 && !editing && <Empty>Chưa có công thức (ví dụ: Deblock 3% TCA/DCM, Cap A/B, Oxidizer, pha loãng amidite 0.1 M, đệm HPLC).</Empty>}
+        {formulas.data?.length === 0 && !editing && <Empty>{meta.emptyText}</Empty>}
         {formulas.data && formulas.data.length > 0 && (
           <Table head={["Mã", "Tên / nhóm", "Thành phẩm", "Mẻ chuẩn", "Nguyên liệu", "Hạn / QC", ""]}>
             {formulas.data.map((f) => (
