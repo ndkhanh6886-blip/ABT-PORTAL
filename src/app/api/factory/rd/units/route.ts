@@ -2,7 +2,7 @@ import { factoryRoute, idempotent } from "@/factory/http";
 import { hasFactoryPermission } from "@/factory/core/authz";
 import { invalid } from "@/factory/core/errors";
 import { createStrategicGoal, listEvaluationCriteria, listStrategicGoals, saveEvaluationCriterion } from "@/factory/rd/ideas";
-import { listGateTemplates } from "@/factory/rd/projects";
+import { deleteGateTemplate, listGateTemplates, saveGateTemplate } from "@/factory/rd/projects";
 import { listRdStaffRoster } from "@/factory/rd/projectOps";
 
 export const GET = factoryRoute(async (tx, { actor, url }) => {
@@ -47,6 +47,12 @@ export const POST = factoryRoute(async (tx, ctx) => {
   }
   if (kind === "criterion") {
     return saveEvaluationCriterion(tx, ctx.actor, ctx.body.id ?? null, ctx.body);
+  }
+  if (kind === "gate_template") {
+    return saveGateTemplate(tx, ctx.actor, ctx.body.id ?? null, ctx.body);
+  }
+  if (kind === "delete_gate_template") {
+    return deleteGateTemplate(tx, ctx.actor, String(ctx.body.id || ""));
   }
   throw invalid("Loại cấu hình R&D không hợp lệ.");
 });

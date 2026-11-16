@@ -38,10 +38,33 @@ const PROJ_ACTIONS = {
 };
 
 const GATE_ACTIONS = {
+  unlock: "🔓 Mở khóa cổng sớm",
   submit: "Gửi duyệt cổng Stage-Gate",
   decide_go: "Quyết định GO (Qua cổng)",
   decide_recycle: "Yêu cầu sửa (RECYCLE)",
 };
+
+const DOC_TYPE_SUGGESTIONS = [
+  "TPP",
+  "RISK_ISO14971",
+  "FORMULATION",
+  "BOM_DRAFT",
+  "ANALYTICAL_VAL",
+  "STABILITY_ISO23640",
+  "CLINICAL_EVAL",
+  "IFU_SPEC",
+  "DHF_DMR",
+  "PRD_FTO",
+  "CAD_DFMEA",
+  "DVP_IEC61010",
+  "DMR",
+  "SRS_RISK",
+  "SDS",
+  "VERIFICATION_REPORT",
+  "RELEASE_VAL",
+  "SOP",
+  "DHF_DOC",
+];
 
 const ENTRY_TYPE_BADGE: Record<string, { status: string; label: string }> = {
   ELN_EXPERIMENT: { status: "PENDING_QC", label: "Xuất từ bài ELN" },
@@ -105,6 +128,7 @@ interface ProjectDetail {
   leader_name: string;
   leader_name_override?: string | null;
   budget_amount?: string | number | null;
+  gate_template_id?: string;
   template_name: string;
   idea_code: string | null;
   current_stage: string;
@@ -251,19 +275,29 @@ interface ProjectOpsData {
 
 function DeliverableRow({
   d,
+  projectId,
+  gateId,
   gateStatus,
   canManage,
   canReview,
+  canCustomize = false,
   onDone,
 }: {
   d: Deliverable;
+  projectId: string;
+  gateId: string;
   gateStatus: string;
   canManage: boolean;
   canReview: boolean;
+  canCustomize?: boolean;
   onDone: () => void;
 }) {
   const [notes, setNotes] = useState(d.notes ?? "");
   const [comment, setComment] = useState(d.reviewer_comment ?? "");
+  const [editingCrit, setEditingCrit] = useState(false);
+  const [critName, setCritName] = useState(d.item_name || d.title || "");
+  const [critDocType, setCritDocType] = useState(d.doc_type || "DHF_DOC");
+  const [critRequired, setCritRequired] = useState(Boolean(d.is_required));
   const editable = gateStatus === "OPEN" || gateStatus === "NEEDS_REVISION" || gateStatus === "PENDING_REVIEW";
 
   const updateMut = useMutation({
@@ -271,6 +305,37 @@ function DeliverableRow({
       api(`/api/factory/rd/deliverables/${d.id}`, {
         method: "PUT",
         json: { status, notes: notes || null, reviewer_comment: comment || null },
+      }),
+    onSuccess: onDone,
+  });
+
+  const saveCritMut = useMutation({
+    mutationFn: () =>
+      api(`/api/factory/rd/projects/${projectId}`, {
+        method: "POST",
+        json: {
+          kind: "gate_deliverable",
+          deliverable_id: d.id,
+          project_gate_id: gateId,
+          item_name: critName,
+          doc_type: critDocType || "DHF_DOC",
+          is_required: critRequired,
+        },
+      }),
+    onSuccess: () => {
+      setEditingCrit(false);
+      onDone();
+    },
+  });
+
+  const delCritMut = useMutation({
+    mutationFn: () =>
+      api(`/api/factory/rd/projects/${projectId}`, {
+        method: "POST",
+        json: {
+          kind: "delete_gate_deliverable",
+          deliverable_id: d.id,
+        },
       }),
     onSuccess: onDone,
   });
@@ -290,11 +355,94 @@ function DeliverableRow({
     <tr className="border-t border-slate-100 dark:border-slate-800/60 align-top">
       <td className="py-2 pr-2 font-mono">{d.seq}</td>
       <td className="py-2 pr-3">
-        <div className="font-semibold">{d.item_name || d.title}</div>
-        <div className="text-[11px] text-slate-500 font-mono">
-          {d.doc_type ? `Mã hồ sơ: ${d.doc_type} · ` : ""}
-          {d.is_required ? "Bắt buộc" : "Tùy chọn"}
-        </div>
+        {editingCrit && canCustomize ? (
+          <div className="space-y-1.5 p-2 rounded-lg border border-sky-200 dark:border-sky-800 bg-sky-50/40 dark:bg-sky-950/20">
+            <input
+              className={`${inputClass} text-xs`}
+              value={critName}
+              onChange={(e) => setCritName(e.target.value)}
+              placeholder="Tên tiêu chí / hạng mục hồ sơ *"
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                list="rd-doc-type-datalist"
+                className={`${inputClass} w-44 font-mono text-xs`}
+                value={critDocType}
+                onChange={(e) => setCritDocType(e.target.value)}
+                placeholder="Mã hồ sơ (VD: TPP)"
+              />
+              <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={critRequired}
+                  onChange={(e) => setCritRequired(e.target.checked)}
+                />
+                <span>Bắt buộc</span>
+              </label>
+              <Button
+                type="button"
+                className="!px-2.5 !py-1 !text-[11px]"
+                disabled={saveCritMut.isPending || critName.trim().length < 2}
+                onClick={() => saveCritMut.mutate()}
+              >
+                {saveCritMut.isPending ? "Đang lưu..." : "Lưu"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="!px-2 !py-1 !text-[11px]"
+                onClick={() => setEditingCrit(false)}
+              >
+                Hủy
+              </Button>
+            </div>
+            <ErrorNote error={saveCritMut.error} />
+          </div>
+        ) : (
+          <>
+            <div className="font-semibold">{d.item_name || d.title}</div>
+            <div className="text-[11px] text-slate-500 font-mono flex flex-wrap items-center gap-1.5">
+              <span>
+                {d.doc_type ? `Mã hồ sơ: ${d.doc_type} · ` : ""}
+                {d.is_required ? "Bắt buộc" : "Tùy chọn"}
+              </span>
+              {canCustomize && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      saveCritMut.reset();
+                      setCritName(d.item_name || d.title || "");
+                      setCritDocType(d.doc_type || "DHF_DOC");
+                      setCritRequired(Boolean(d.is_required));
+                      setEditingCrit(true);
+                    }}
+                    className="text-sky-700 dark:text-sky-400 hover:underline font-sans font-semibold cursor-pointer"
+                  >
+                    ✏️ Sửa
+                  </button>
+                  <button
+                    type="button"
+                    disabled={delCritMut.isPending}
+                    onClick={() => {
+                      if (
+                        (d.status !== "MISSING" || d.attachment_id) &&
+                        !window.confirm(`Xóa hạng mục "${d.item_name || d.title}" khỏi cổng này?`)
+                      ) {
+                        return;
+                      }
+                      delCritMut.mutate();
+                    }}
+                    className="text-rose-600 dark:text-rose-400 hover:underline font-sans font-semibold cursor-pointer"
+                  >
+                    🗑️ Xóa
+                  </button>
+                </>
+              )}
+            </div>
+            <ErrorNote error={delCritMut.error} />
+          </>
+        )}
         {d.attachment_id && (
           <a
             href={`/api/factory/rd/deliverables/${d.id}`}
@@ -424,6 +572,25 @@ function ProjectPanel({
   const [resAttachName, setResAttachName] = useState("");
   const [resAttachUrl, setResAttachUrl] = useState("");
 
+  // Per-project Stage-Gate & Checklist customization state
+  const [addingCritGateId, setAddingCritGateId] = useState<string | null>(null);
+  const [newCritName, setNewCritName] = useState("");
+  const [newCritDocType, setNewCritDocType] = useState("DHF_DOC");
+  const [newCritRequired, setNewCritRequired] = useState(true);
+
+  const [editingGateId, setEditingGateId] = useState<string | null>(null);
+  const [editGateName, setEditGateName] = useState("");
+  const [editGateStageAfter, setEditGateStageAfter] = useState("");
+
+  const [showAddGateForm, setShowAddGateForm] = useState(false);
+  const [newGateNo, setNewGateNo] = useState("");
+  const [newGateName, setNewGateName] = useState("");
+  const [newGateStageAfter, setNewGateStageAfter] = useState("");
+
+  const [showReapplyTemplate, setShowReapplyTemplate] = useState(false);
+  const [reapplyTemplateId, setReapplyTemplateId] = useState("");
+  const [gateCustomizeNotice, setGateCustomizeNotice] = useState<string | null>(null);
+
   const openResultDrawer = (t: ProjectOpsData["tasks"][number]) => {
     setEditingResultTask(t);
     setResAssignee(t.assignee_name || detail.data?.leader_name || "");
@@ -533,6 +700,71 @@ function ProjectPanel({
     qc.invalidateQueries({ queryKey: ["factory", "rd", "project-ops", id] });
     qc.invalidateQueries({ queryKey: ["factory", "rd", "projects"] });
   };
+
+  const addGateCritMut = useMutation({
+    mutationFn: (gateId: string) =>
+      api(`/api/factory/rd/projects/${id}`, {
+        method: "POST",
+        json: {
+          kind: "gate_deliverable",
+          project_gate_id: gateId,
+          item_name: newCritName,
+          doc_type: newCritDocType || "DHF_DOC",
+          is_required: newCritRequired,
+        },
+      }),
+    onSuccess: () => {
+      setAddingCritGateId(null);
+      setNewCritName("");
+      setNewCritDocType("DHF_DOC");
+      setNewCritRequired(true);
+      setGateCustomizeNotice("✅ Đã thêm tiêu chí / hạng mục hồ sơ vào cổng Stage-Gate.");
+      refresh();
+    },
+  });
+
+  const saveGateMetaMut = useMutation({
+    mutationFn: (payload: { gate_id?: string | null; gate_no?: number; gate_name: string; stage_after: string }) =>
+      api(`/api/factory/rd/projects/${id}`, {
+        method: "POST",
+        json: { kind: "gate_meta", ...payload },
+      }),
+    onSuccess: () => {
+      setEditingGateId(null);
+      setShowAddGateForm(false);
+      setNewGateNo("");
+      setNewGateName("");
+      setNewGateStageAfter("");
+      setGateCustomizeNotice("✅ Đã cập nhật thông tin cổng Stage-Gate của dự án.");
+      refresh();
+    },
+  });
+
+  const deleteGateMut = useMutation({
+    mutationFn: (gateId: string) =>
+      api(`/api/factory/rd/projects/${id}`, {
+        method: "POST",
+        json: { kind: "delete_gate", gate_id: gateId },
+      }),
+    onSuccess: () => {
+      setEditingGateId(null);
+      setGateCustomizeNotice("✅ Đã xóa cổng Stage-Gate khỏi dự án.");
+      refresh();
+    },
+  });
+
+  const reapplyTemplateMut = useMutation({
+    mutationFn: (templateId: string) =>
+      api(`/api/factory/rd/projects/${id}`, {
+        method: "POST",
+        json: { kind: "apply_gate_template", template_id: templateId },
+      }),
+    onSuccess: () => {
+      setShowReapplyTemplate(false);
+      setGateCustomizeNotice("✅ Đã áp dụng bộ mẫu Stage-Gate mới cho dự án.");
+      refresh();
+    },
+  });
 
   const saveTaskMut = useMutation({
     mutationFn: (payload: Record<string, unknown>) =>
@@ -885,39 +1117,371 @@ function ProjectPanel({
             </Button>
           </div>
 
-          {subTab === "gates" && (
-            <div className="flex flex-col gap-3">
-              {p.gates.map((g) => (
-                <div key={g.id} className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 flex flex-col gap-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
+          {subTab === "gates" && (() => {
+            const canCustomizeGates =
+              (canManage || canEdit || canReviewGate) &&
+              p.status !== "TRANSFERRED" &&
+              p.status !== "KILLED" &&
+              !p.has_immutable_handoff;
+            const canReapplyTemplate =
+              canCustomizeGates &&
+              !p.gates.some(
+                (gt) =>
+                  gt.status === "PASSED" ||
+                  gt.deliverables.some((d) => d.status === "SUBMITTED" || d.status === "ACCEPTED" || Boolean(d.attachment_id))
+              );
+            const gateMutationErr =
+              addGateCritMut.error ?? saveGateMetaMut.error ?? deleteGateMut.error ?? reapplyTemplateMut.error;
+
+            return (
+              <div className="flex flex-col gap-3">
+                <datalist id="rd-doc-type-datalist">
+                  {DOC_TYPE_SUGGESTIONS.map((dt) => (
+                    <option key={dt} value={dt} />
+                  ))}
+                </datalist>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/40 text-xs">
+                  <div className="space-y-0.5">
                     <div>
-                      <b className="text-sm">{g.gate_name}</b>
-                      <span className="ml-2 text-slate-500">→ Mở sang giai đoạn: <code className="font-mono">{g.stage_after}</code></span>
+                      <b>Bộ mẫu gốc:</b>{" "}
+                      <span className="font-semibold text-sky-700 dark:text-sky-400">
+                        {p.template_name || "Tùy chỉnh theo dự án"}
+                      </span>
                     </div>
-                    <StatusBadge status={GATE_STATUS[g.status]?.[0] ?? "QUARANTINE"} label={GATE_STATUS[g.status]?.[1] ?? g.status} />
+                    {canCustomizeGates && (
+                      <div className="text-[11px] text-slate-500">
+                        Có thể thêm, sửa hoặc bỏ bớt tiêu chí Checklist DHF trực tiếp trên mọi cổng chưa duyệt qua cổng (PASSED).
+                      </div>
+                    )}
                   </div>
-                  {g.decided_by_name && (
-                    <div className="text-[11px] text-slate-500">
-                      Quyết định gần nhất: <b>{g.decision}</b> bởi {g.decided_by_name} ({fmtDate(g.decided_at)}) {g.decision_note && `— "${g.decision_note}"`}
+                  {canCustomizeGates && (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="!px-2.5 !py-1 !text-[11px]"
+                        onClick={() => {
+                          saveGateMetaMut.reset();
+                          const nextNo = p.gates.length
+                            ? Math.min(10, Math.max(...p.gates.map((x) => Number(x.gate_no))) + 1)
+                            : 0;
+                          setNewGateNo(String(nextNo));
+                          setNewGateName(`Gate ${nextNo}: Cổng bổ sung`);
+                          setNewGateStageAfter(`G${Math.min(10, nextNo + 1)}_STAGE`);
+                          setShowAddGateForm((v) => !v);
+                        }}
+                      >
+                        {showAddGateForm ? "Đóng form thêm cổng" : "➕ Thêm Cổng Gate"}
+                      </Button>
+                      {canReapplyTemplate && (ctx.data?.templates?.length ?? 0) > 0 && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="!px-2.5 !py-1 !text-[11px]"
+                          onClick={() => {
+                            reapplyTemplateMut.reset();
+                            setReapplyTemplateId(p.gate_template_id || ctx.data?.templates?.[0]?.id || "");
+                            setShowReapplyTemplate((v) => !v);
+                          }}
+                        >
+                          🔄 Áp dụng lại từ Mẫu Gate
+                        </Button>
+                      )}
                     </div>
                   )}
-                  <Table head={["#", "Hạng mục hồ sơ bắt buộc (Checklist DHF)", "Minh chứng / File đính kèm", "Trạng thái", "Thẩm định cổng"]}>
-                    {g.deliverables.map((d) => (
-                      <DeliverableRow
-                        key={d.id}
-                        d={d}
-                        gateStatus={g.status}
-                        canManage={canManage}
-                        canReview={canReviewGate}
-                        onDone={refresh}
-                      />
-                    ))}
-                  </Table>
-                  <ActionBar endpoint={`/api/factory/rd/gates/${g.id}/actions`} version={g.version} actions={g.actions} labels={GATE_ACTIONS} onDone={refresh} />
                 </div>
-              ))}
-            </div>
-          )}
+
+                {gateCustomizeNotice && (
+                  <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 text-xs font-semibold flex items-center justify-between">
+                    <span>{gateCustomizeNotice}</span>
+                    <button type="button" className="underline ml-2" onClick={() => setGateCustomizeNotice(null)}>
+                      Đóng
+                    </button>
+                  </div>
+                )}
+
+                <ErrorNote error={gateMutationErr} />
+
+                {canCustomizeGates && showAddGateForm && (
+                  <form
+                    className="grid gap-2 sm:grid-cols-6 items-end p-3 rounded-xl border border-sky-300 dark:border-sky-800 bg-sky-50/40 dark:bg-sky-950/20"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      saveGateMetaMut.mutate({
+                        gate_no: Number(newGateNo),
+                        gate_name: newGateName,
+                        stage_after: newGateStageAfter,
+                      });
+                    }}
+                  >
+                    <Field label="Số Gate (0–10) *">
+                      <input
+                        type="number"
+                        min={0}
+                        max={10}
+                        className={inputClass}
+                        value={newGateNo}
+                        onChange={(e) => setNewGateNo(e.target.value)}
+                        required
+                      />
+                    </Field>
+                    <div className="sm:col-span-3">
+                      <Field label="Tên Cổng Stage-Gate *">
+                        <input
+                          className={inputClass}
+                          value={newGateName}
+                          onChange={(e) => setNewGateName(e.target.value)}
+                          placeholder="VD: Gate 5: Theo dõi hậu mại & Nâng cấp v2"
+                          required
+                        />
+                      </Field>
+                    </div>
+                    <Field label="Mở sang Giai đoạn *">
+                      <input
+                        className={`${inputClass} font-mono`}
+                        value={newGateStageAfter}
+                        onChange={(e) => setNewGateStageAfter(e.target.value)}
+                        placeholder="VD: G5_POSTMARKET"
+                        required
+                      />
+                    </Field>
+                    <div className="flex gap-1.5">
+                      <Button type="submit" disabled={saveGateMetaMut.isPending}>
+                        {saveGateMetaMut.isPending ? "Đang tạo..." : "Tạo cổng"}
+                      </Button>
+                    </div>
+                  </form>
+                )}
+
+                {canReapplyTemplate && showReapplyTemplate && (
+                  <form
+                    className="flex flex-wrap items-end gap-2 p-3 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/40 dark:bg-amber-950/20"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (reapplyTemplateId) reapplyTemplateMut.mutate(reapplyTemplateId);
+                    }}
+                  >
+                    <div className="min-w-72 flex-1">
+                      <Field label="Chọn Bộ mẫu Stage-Gate áp dụng cho dự án (thay thế checklist trắng hiện tại)">
+                        <select
+                          className={inputClass}
+                          value={reapplyTemplateId}
+                          onChange={(e) => setReapplyTemplateId(e.target.value)}
+                          required
+                        >
+                          <option value="">-- Chọn bộ mẫu Stage-Gate --</option>
+                          {(ctx.data?.templates ?? []).map((t) => {
+                            const gateCount = new Set(t.items.map((x) => x.gate_no)).size;
+                            return (
+                              <option key={t.id} value={t.id}>
+                                {t.name} ({t.code} · {gateCount} cổng · {t.items.length} tiêu chí)
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </Field>
+                    </div>
+                    <Button type="submit" disabled={reapplyTemplateMut.isPending || !reapplyTemplateId}>
+                      {reapplyTemplateMut.isPending ? "Đang áp dụng..." : "Áp dụng mẫu này"}
+                    </Button>
+                    <Button type="button" variant="ghost" onClick={() => setShowReapplyTemplate(false)}>
+                      Hủy
+                    </Button>
+                  </form>
+                )}
+
+                {p.gates.map((g) => {
+                  const gateEditable = canCustomizeGates && g.status !== "PASSED";
+                  const isEditingThisGate = editingGateId === g.id;
+                  const isAddingCritToGate = addingCritGateId === g.id;
+                  return (
+                    <div key={g.id} className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 flex flex-col gap-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <b className="text-sm">{g.gate_name}</b>
+                          <span className="ml-2 text-slate-500">
+                            → Mở sang giai đoạn: <code className="font-mono">{g.stage_after}</code>
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {gateEditable && (
+                            <>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                className="!px-2 !py-0.5 !text-[11px]"
+                                onClick={() => {
+                                  addGateCritMut.reset();
+                                  setNewCritName("");
+                                  setNewCritDocType("DHF_DOC");
+                                  setNewCritRequired(true);
+                                  setAddingCritGateId(isAddingCritToGate ? null : g.id);
+                                }}
+                              >
+                                {isAddingCritToGate ? "Đóng" : "+ Thêm tiêu chí"}
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                className="!px-2 !py-0.5 !text-[11px]"
+                                onClick={() => {
+                                  saveGateMetaMut.reset();
+                                  setEditGateName(g.gate_name);
+                                  setEditGateStageAfter(g.stage_after);
+                                  setEditingGateId(isEditingThisGate ? null : g.id);
+                                }}
+                              >
+                                ✏️ Sửa cổng
+                              </Button>
+                            </>
+                          )}
+                          <StatusBadge status={GATE_STATUS[g.status]?.[0] ?? "QUARANTINE"} label={GATE_STATUS[g.status]?.[1] ?? g.status} />
+                        </div>
+                      </div>
+
+                      {gateEditable && isEditingThisGate && (
+                        <form
+                          className="grid gap-2 sm:grid-cols-6 items-end p-2.5 rounded-lg border border-sky-200 dark:border-sky-800 bg-sky-50/40 dark:bg-sky-950/20"
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            saveGateMetaMut.mutate({
+                              gate_id: g.id,
+                              gate_name: editGateName,
+                              stage_after: editGateStageAfter,
+                            });
+                          }}
+                        >
+                          <div className="sm:col-span-3">
+                            <Field label="Tên Cổng Stage-Gate *">
+                              <input
+                                className={inputClass}
+                                value={editGateName}
+                                onChange={(e) => setEditGateName(e.target.value)}
+                                required
+                              />
+                            </Field>
+                          </div>
+                          <div className="sm:col-span-2">
+                            <Field label="Giai đoạn sau cổng *">
+                              <input
+                                className={`${inputClass} font-mono`}
+                                value={editGateStageAfter}
+                                onChange={(e) => setEditGateStageAfter(e.target.value)}
+                                required
+                              />
+                            </Field>
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                            <Button type="submit" className="!px-2.5 !py-1 !text-[11px]" disabled={saveGateMetaMut.isPending}>
+                              Lưu cổng
+                            </Button>
+                            {p.gates.length > 1 && (
+                              <Button
+                                type="button"
+                                variant="danger"
+                                className="!px-2.5 !py-1 !text-[11px]"
+                                disabled={deleteGateMut.isPending}
+                                onClick={() => {
+                                  if (!window.confirm(`Xóa "${g.gate_name}" và toàn bộ tiêu chí chưa nộp của cổng này?`)) return;
+                                  deleteGateMut.mutate(g.id);
+                                }}
+                              >
+                                🗑️ Xóa cổng
+                              </Button>
+                            )}
+                          </div>
+                        </form>
+                      )}
+
+                      {gateEditable && isAddingCritToGate && (
+                        <form
+                          className="grid gap-2 sm:grid-cols-6 items-end p-2.5 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50/30 dark:bg-emerald-950/20"
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            addGateCritMut.mutate(g.id);
+                          }}
+                        >
+                          <div className="sm:col-span-3">
+                            <Field label="Tên tiêu chí / Hạng mục hồ sơ mới *">
+                              <input
+                                className={inputClass}
+                                value={newCritName}
+                                onChange={(e) => setNewCritName(e.target.value)}
+                                placeholder="VD: Báo cáo so sánh độ tương đồng mẫu lâm sàng với Kit tham chiếu"
+                                required
+                                autoFocus
+                              />
+                            </Field>
+                          </div>
+                          <Field label="Mã hồ sơ">
+                            <input
+                              list="rd-doc-type-datalist"
+                              className={`${inputClass} font-mono`}
+                              value={newCritDocType}
+                              onChange={(e) => setNewCritDocType(e.target.value)}
+                              placeholder="DHF_DOC"
+                            />
+                          </Field>
+                          <div className="pb-1.5">
+                            <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={newCritRequired}
+                                onChange={(e) => setNewCritRequired(e.target.checked)}
+                              />
+                              <span>Bắt buộc</span>
+                            </label>
+                          </div>
+                          <div className="flex gap-1">
+                            <Button type="submit" className="!px-2.5 !py-1 !text-[11px]" disabled={addGateCritMut.isPending}>
+                              Lưu tiêu chí
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              className="!px-2 !py-1 !text-[11px]"
+                              onClick={() => setAddingCritGateId(null)}
+                            >
+                              Hủy
+                            </Button>
+                          </div>
+                        </form>
+                      )}
+
+                      {g.decided_by_name && (
+                        <div className="text-[11px] text-slate-500">
+                          Quyết định gần nhất: <b>{g.decision}</b> bởi {g.decided_by_name} ({fmtDate(g.decided_at)}) {g.decision_note && `— "${g.decision_note}"`}
+                        </div>
+                      )}
+                      {g.deliverables.length === 0 ? (
+                        <div className="text-xs text-slate-500 py-2">
+                          Cổng này chưa có tiêu chí/hồ sơ nào. Hãy bấm <b>+ Thêm tiêu chí</b> để bổ sung yêu cầu cần nộp cho cổng.
+                        </div>
+                      ) : (
+                        <Table head={["#", "Tiêu chí / Hạng mục hồ sơ (Checklist DHF)", "Minh chứng / File đính kèm", "Trạng thái", "Thẩm định cổng"]}>
+                          {g.deliverables.map((d) => (
+                            <DeliverableRow
+                              key={d.id}
+                              d={d}
+                              projectId={p.id}
+                              gateId={g.id}
+                              gateStatus={g.status}
+                              canManage={canManage}
+                              canReview={canReviewGate}
+                              canCustomize={gateEditable}
+                              onDone={refresh}
+                            />
+                          ))}
+                        </Table>
+                      )}
+                      <ActionBar endpoint={`/api/factory/rd/gates/${g.id}/actions`} version={g.version} actions={g.actions} labels={GATE_ACTIONS} onDone={refresh} />
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
 
           {subTab === "wbs" && (
             <div className="flex flex-col gap-3">
@@ -2169,6 +2733,479 @@ function ProjectPanel({
   );
 }
 
+const BUILTIN_TEMPLATE_CODES = new Set(["SG_IVD_KIT", "SG_SOFTWARE", "SG_DEVICE_DHF"]);
+
+type GateDraft = {
+  gate_no: number;
+  gate_name: string;
+  stage_after: string;
+  items: { item_name: string; doc_type: string; is_required: boolean }[];
+};
+
+function groupTemplateToGates(tpl?: { items?: { gate_no: number; gate_name: string; stage_after: string; item_name: string; doc_type: string; is_required: boolean }[] } | null): GateDraft[] {
+  const byGate = new Map<number, GateDraft>();
+  for (const it of tpl?.items ?? []) {
+    const no = Number(it.gate_no);
+    if (!byGate.has(no)) {
+      byGate.set(no, {
+        gate_no: no,
+        gate_name: it.gate_name,
+        stage_after: it.stage_after,
+        items: [],
+      });
+    }
+    byGate.get(no)!.items.push({
+      item_name: it.item_name,
+      doc_type: it.doc_type || "DHF_DOC",
+      is_required: Boolean(it.is_required),
+    });
+  }
+  const sorted = [...byGate.values()].sort((a, b) => a.gate_no - b.gate_no);
+  if (sorted.length > 0) return sorted;
+  return [
+    {
+      gate_no: 0,
+      gate_name: "Gate 0: Khởi tạo & Định hướng",
+      stage_after: "G1_FEASIBILITY",
+      items: [{ item_name: "Hồ sơ yêu cầu & mục tiêu nghiên cứu", doc_type: "TPP", is_required: true }],
+    },
+  ];
+}
+
+function GateTemplateManagerModal({
+  templates,
+  onSaved,
+  onClose,
+}: {
+  templates: {
+    id: string;
+    code: string;
+    name: string;
+    domain: string;
+    description?: string | null;
+    project_count?: number;
+    items: { id: string; gate_no: number; gate_name: string; stage_after: string; seq: number; item_name: string; doc_type: string; is_required: boolean }[];
+  }[];
+  onSaved: () => void;
+  onClose: () => void;
+}) {
+  const [selectedId, setSelectedId] = useState<string>(templates[0]?.id ?? "__NEW__");
+  const [tplCode, setTplCode] = useState<string>(templates[0]?.code ?? "");
+  const [tplName, setTplName] = useState<string>(templates[0]?.name ?? "");
+  const [tplDomain, setTplDomain] = useState<string>(templates[0]?.domain ?? "KIT");
+  const [tplDesc, setTplDesc] = useState<string>(templates[0]?.description ?? "");
+  const [gates, setGates] = useState<GateDraft[]>(() => groupTemplateToGates(templates[0]));
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const loadIntoDraft = (idOrNew: string) => {
+    setNotice(null);
+    saveMut.reset();
+    delMut.reset();
+    setSelectedId(idOrNew);
+    if (idOrNew === "__NEW__") {
+      setTplCode("");
+      setTplName("Mẫu Stage-Gate Tùy chỉnh");
+      setTplDomain("KIT");
+      setTplDesc("");
+      setGates(groupTemplateToGates(null));
+      return;
+    }
+    const found = templates.find((t) => t.id === idOrNew);
+    if (found) {
+      setTplCode(found.code || "");
+      setTplName(found.name || "");
+      setTplDomain(found.domain || "KIT");
+      setTplDesc(found.description || "");
+      setGates(groupTemplateToGates(found));
+    }
+  };
+
+  const handleCloneCurrent = () => {
+    setNotice(null);
+    saveMut.reset();
+    delMut.reset();
+    setSelectedId("__NEW__");
+    setTplCode("");
+    setTplName(`${tplName || "Mẫu Stage-Gate"} (Bản sao)`);
+  };
+
+  const saveMut = useMutation({
+    mutationFn: () =>
+      api<{ id: string; code: string; name: string }>("/api/factory/rd/units", {
+        method: "POST",
+        json: {
+          kind: "gate_template",
+          id: selectedId === "__NEW__" ? null : selectedId,
+          code: tplCode.trim() || null,
+          name: tplName,
+          domain: tplDomain,
+          description: tplDesc.trim() || null,
+          gates,
+        },
+      }),
+    onSuccess: (saved) => {
+      setSelectedId(saved.id);
+      setTplCode(saved.code);
+      setNotice(`✅ Đã lưu bộ mẫu "${saved.name}" (${saved.code}).`);
+      onSaved();
+    },
+  });
+
+  const delMut = useMutation({
+    mutationFn: (id: string) =>
+      api("/api/factory/rd/units", {
+        method: "POST",
+        json: { kind: "delete_gate_template", id },
+      }),
+    onSuccess: () => {
+      setNotice("✅ Đã xóa / ẩn bộ mẫu Stage-Gate.");
+      setSelectedId("__NEW__");
+      onSaved();
+    },
+  });
+
+  const isBuiltinSelected = selectedId !== "__NEW__" && BUILTIN_TEMPLATE_CODES.has(tplCode);
+  const currentTpl = templates.find((t) => t.id === selectedId);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-[1px] flex items-center justify-center p-4 overflow-y-auto"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-5xl max-h-[90vh] overflow-y-auto rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 shadow-2xl space-y-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <datalist id="rd-doc-type-datalist">
+          {DOC_TYPE_SUGGESTIONS.map((dt) => (
+            <option key={dt} value={dt} />
+          ))}
+        </datalist>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
+          <div>
+            <div className="text-sm font-bold text-slate-900 dark:text-white">
+              ⚙️ Cài đặt Bộ mẫu Cổng Stage-Gate &amp; Checklist DHF (ISO 13485)
+            </div>
+            <div className="text-[11px] text-slate-500">
+              Thiết lập các bộ tiêu chí chuẩn dùng chung khi tạo dự án mới (các dự án đang chạy giữ nguyên snapshot cũ trừ khi bấm Áp dụng lại).
+            </div>
+          </div>
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Đóng
+          </Button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5 pb-2 border-b border-slate-100 dark:border-slate-800">
+          {templates.map((t) => {
+            const active = selectedId === t.id;
+            const gCnt = new Set(t.items.map((x) => x.gate_no)).size;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => loadIntoDraft(t.id)}
+                className={`px-3 py-1.5 rounded-xl border text-xs font-semibold cursor-pointer transition-all ${
+                  active
+                    ? "border-sky-600 bg-sky-600 text-white shadow-sm"
+                    : "border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:border-sky-400"
+                }`}
+              >
+                {BUILTIN_TEMPLATE_CODES.has(t.code) ? "🏛️ " : "🧩 "}
+                {t.name} ({gCnt} cổng · {t.items.length} tiêu chí)
+              </button>
+            );
+          })}
+          <Button type="button" variant="ghost" className="!px-2.5 !py-1.5 !text-xs" onClick={() => loadIntoDraft("__NEW__")}>
+            + Tạo Bộ Mẫu Mới
+          </Button>
+          {selectedId !== "__NEW__" && (
+            <Button type="button" variant="ghost" className="!px-2.5 !py-1.5 !text-xs" onClick={handleCloneCurrent}>
+              📋 Nhân bản mẫu này
+            </Button>
+          )}
+        </div>
+
+        {notice && (
+          <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 text-xs font-semibold">
+            {notice}
+          </div>
+        )}
+        <ErrorNote error={saveMut.error ?? delMut.error} />
+
+        <form
+          className="space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            saveMut.mutate();
+          }}
+        >
+          <div className="grid gap-3 sm:grid-cols-4 text-xs">
+            <div className="sm:col-span-2">
+              <Field label="Tên bộ mẫu Stage-Gate *">
+                <input
+                  className={inputClass}
+                  value={tplName}
+                  onChange={(e) => setTplName(e.target.value)}
+                  required
+                  minLength={3}
+                />
+              </Field>
+            </div>
+            <Field label={isBuiltinSelected ? "Mã mẫu (Mặc định hệ thống)" : "Mã mẫu (Để trống = tự sinh)"}>
+              <input
+                className={`${inputClass} font-mono`}
+                value={tplCode}
+                disabled={isBuiltinSelected}
+                onChange={(e) => setTplCode(e.target.value)}
+                placeholder="VD: SG_KIT_FAST"
+              />
+            </Field>
+            <Field label="Lĩnh vực mặc định *">
+              <select className={inputClass} value={tplDomain} onChange={(e) => setTplDomain(e.target.value)}>
+                {Object.entries(DOMAIN_LABEL).map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <div className="sm:col-span-4">
+              <Field label="Mô tả bộ mẫu (Tùy chọn)">
+                <input
+                  className={inputClass}
+                  value={tplDesc}
+                  onChange={(e) => setTplDesc(e.target.value)}
+                  placeholder="Áp dụng cho loại đề tài nào, lưu ý hồ sơ bắt buộc..."
+                />
+              </Field>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {gates.map((g, gIdx) => (
+              <div
+                key={`${gIdx}-${g.gate_no}`}
+                className="p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50 space-y-2.5"
+              >
+                <div className="grid gap-2 sm:grid-cols-6 items-end text-xs">
+                  <Field label="Số Gate (0–10) *">
+                    <input
+                      type="number"
+                      min={0}
+                      max={10}
+                      className={inputClass}
+                      value={g.gate_no}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        setGates((prev) => prev.map((x, i) => (i === gIdx ? { ...x, gate_no: v } : x)));
+                      }}
+                      required
+                    />
+                  </Field>
+                  <div className="sm:col-span-3">
+                    <Field label="Tên Cổng Stage-Gate *">
+                      <input
+                        className={inputClass}
+                        value={g.gate_name}
+                        onChange={(e) =>
+                          setGates((prev) => prev.map((x, i) => (i === gIdx ? { ...x, gate_name: e.target.value } : x)))
+                        }
+                        required
+                      />
+                    </Field>
+                  </div>
+                  <Field label="Giai đoạn tiếp theo *">
+                    <input
+                      className={`${inputClass} font-mono`}
+                      value={g.stage_after}
+                      onChange={(e) =>
+                        setGates((prev) => prev.map((x, i) => (i === gIdx ? { ...x, stage_after: e.target.value } : x)))
+                      }
+                      required
+                    />
+                  </Field>
+                  <div className="flex flex-wrap gap-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="!px-2 !py-1 !text-[11px]"
+                      onClick={() =>
+                        setGates((prev) =>
+                          prev.map((x, i) =>
+                            i === gIdx
+                              ? {
+                                  ...x,
+                                  items: [...x.items, { item_name: "", doc_type: "DHF_DOC", is_required: true }],
+                                }
+                              : x
+                          )
+                        )
+                      }
+                    >
+                      + Tiêu chí
+                    </Button>
+                    {gates.length > 1 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="!px-2 !py-1 !text-[11px] text-rose-600 dark:text-rose-400"
+                        onClick={() => setGates((prev) => prev.filter((_, i) => i !== gIdx))}
+                      >
+                        🗑️ Xóa cổng
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 pl-2 border-l-2 border-sky-300 dark:border-sky-800">
+                  {g.items.map((it, itIdx) => (
+                    <div key={itIdx} className="grid gap-2 sm:grid-cols-12 items-center text-xs">
+                      <div className="sm:col-span-1 font-mono text-slate-500">#{itIdx + 1}</div>
+                      <div className="sm:col-span-6">
+                        <input
+                          className={inputClass}
+                          value={it.item_name}
+                          placeholder="Tên tiêu chí / Hạng mục hồ sơ *"
+                          onChange={(e) =>
+                            setGates((prev) =>
+                              prev.map((xg, i) =>
+                                i === gIdx
+                                  ? {
+                                      ...xg,
+                                      items: xg.items.map((xi, j) =>
+                                        j === itIdx ? { ...xi, item_name: e.target.value } : xi
+                                      ),
+                                    }
+                                  : xg
+                              )
+                            )
+                          }
+                          required
+                        />
+                      </div>
+                      <div className="sm:col-span-3">
+                        <input
+                          list="rd-doc-type-datalist"
+                          className={`${inputClass} font-mono`}
+                          value={it.doc_type}
+                          placeholder="Mã hồ sơ"
+                          onChange={(e) =>
+                            setGates((prev) =>
+                              prev.map((xg, i) =>
+                                i === gIdx
+                                  ? {
+                                      ...xg,
+                                      items: xg.items.map((xi, j) =>
+                                        j === itIdx ? { ...xi, doc_type: e.target.value } : xi
+                                      ),
+                                    }
+                                  : xg
+                              )
+                            )
+                          }
+                        />
+                      </div>
+                      <div className="sm:col-span-2 flex items-center justify-between gap-2">
+                        <label className="inline-flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={it.is_required}
+                            onChange={(e) =>
+                              setGates((prev) =>
+                                prev.map((xg, i) =>
+                                  i === gIdx
+                                    ? {
+                                        ...xg,
+                                        items: xg.items.map((xi, j) =>
+                                          j === itIdx ? { ...xi, is_required: e.target.checked } : xi
+                                        ),
+                                      }
+                                    : xg
+                                )
+                              )
+                            }
+                          />
+                          <span>Bắt buộc</span>
+                        </label>
+                        {g.items.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setGates((prev) =>
+                                prev.map((xg, i) =>
+                                  i === gIdx ? { ...xg, items: xg.items.filter((_, j) => j !== itIdx) } : xg
+                                )
+                              )
+                            }
+                            className="text-rose-600 dark:text-rose-400 font-semibold cursor-pointer"
+                            title="Xóa tiêu chí này"
+                          >
+                            🗑️
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                const nextNo = gates.length ? Math.min(10, Math.max(...gates.map((x) => Number(x.gate_no))) + 1) : 0;
+                setGates((prev) => [
+                  ...prev,
+                  {
+                    gate_no: nextNo,
+                    gate_name: `Gate ${nextNo}: Cổng mới`,
+                    stage_after: nextNo >= 4 ? "TRANSFERRED" : `G${Math.min(10, nextNo + 1)}_STAGE`,
+                    items: [{ item_name: "Hồ sơ đánh giá cổng", doc_type: "DHF_DOC", is_required: true }],
+                  },
+                ]);
+              }}
+            >
+              ➕ Thêm Cổng Gate mới
+            </Button>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+            <div>
+              {selectedId !== "__NEW__" && !isBuiltinSelected && (
+                <Button
+                  type="button"
+                  variant="danger"
+                  disabled={delMut.isPending}
+                  onClick={() => {
+                    const msg =
+                      (currentTpl?.project_count ?? 0) > 0
+                        ? `Mẫu "${tplName}" đang gắn với ${currentTpl?.project_count} dự án nên sẽ được ẩn khỏi danh sách chọn mẫu mới (dự án cũ không bị ảnh hưởng). Tiếp tục?`
+                        : `Xóa vĩnh viễn bộ mẫu tùy chỉnh "${tplName}"?`;
+                    if (!window.confirm(msg)) return;
+                    delMut.mutate(selectedId);
+                  }}
+                >
+                  {delMut.isPending ? "Đang xóa..." : "🗑️ Xóa / Ẩn mẫu tùy chỉnh"}
+                </Button>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button type="button" variant="ghost" onClick={onClose}>
+                Đóng
+              </Button>
+              <Button type="submit" disabled={saveMut.isPending}>
+                {saveMut.isPending ? "Đang lưu..." : "💾 Lưu Bộ Mẫu Stage-Gate"}
+              </Button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 const PIPELINE_STAGES = [
   { key: "G0", label: "1. Khảo sát & TPP (G0)", sub: "Xác lập yêu cầu thiết kế" },
   { key: "G1", label: "2. Khả thi / Feasibility (G1)", sub: "Thử nghiệm công thức sơ bộ" },
@@ -2215,9 +3252,11 @@ export function ProjectsView({
   const [selected, setSelected] = useState<string | null>(null);
   const [addingMode, setAddingMode] = useState<"NEW_PRODUCT" | "IMPROVEMENT" | null>(null);
   const [showPermissions, setShowPermissions] = useState(false);
+  const [showGateTemplateManager, setShowGateTemplateManager] = useState(false);
 
   const [name, setName] = useState("");
   const [targetDomain, setTargetDomain] = useState("KIT");
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [ivdClass, setIvdClass] = useState("CLASS_B");
   const [leaderName, setLeaderName] = useState("");
   const [budgetAmount, setBudgetAmount] = useState("60000000");
@@ -2278,6 +3317,7 @@ export function ProjectsView({
           project_type: addingMode ?? "NEW_PRODUCT",
           target_domain: domainLock ?? targetDomain,
           ivd_class: ivdClass,
+          gate_template_id: selectedTemplateId || null,
           name,
           leader_name: leaderName || null,
           budget_amount: Number(budgetAmount || 50000000),
@@ -2418,6 +3458,14 @@ export function ProjectsView({
         />
       )}
 
+      {showGateTemplateManager && (
+        <GateTemplateManagerModal
+          templates={ctx.data?.templates ?? []}
+          onSaved={() => qc.invalidateQueries({ queryKey: ["factory", "rd", "context"] })}
+          onClose={() => setShowGateTemplateManager(false)}
+        />
+      )}
+
       {selected && (
         <ProjectPanel
           key={selected}
@@ -2459,6 +3507,11 @@ export function ProjectsView({
             <a href="/api/factory/rd/roadmap/ics" className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold">
               Xuất lịch Roadmap (.ics)
             </a>
+            {(canManage || canEdit || canReviewGate) && (
+              <Button variant="ghost" onClick={() => setShowGateTemplateManager(true)}>
+                ⚙️ Cài đặt Mẫu Gate chuẩn
+              </Button>
+            )}
             {canManagePermissions && (
               <Button
                 variant={showPermissions ? "primary" : "ghost"}
@@ -2538,11 +3591,31 @@ export function ProjectsView({
             </div>
             {!domainLock && (
               <Field label="Lĩnh vực sản phẩm đích *">
-                <select className={inputClass} value={targetDomain} onChange={(e) => setTargetDomain(e.target.value)}>
+                <select
+                  className={inputClass}
+                  value={targetDomain}
+                  onChange={(e) => {
+                    setTargetDomain(e.target.value);
+                    setSelectedTemplateId("");
+                  }}
+                >
                   {Object.entries(DOMAIN_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                 </select>
               </Field>
             )}
+            <Field label="Bộ mẫu cổng Stage-Gate & Checklist DHF">
+              <select className={inputClass} value={selectedTemplateId} onChange={(e) => setSelectedTemplateId(e.target.value)}>
+                <option value="">-- Tự động theo lĩnh vực (Khuyến nghị) --</option>
+                {(ctx.data?.templates ?? []).map((t) => {
+                  const gateCount = new Set(t.items.map((x) => x.gate_no)).size;
+                  return (
+                    <option key={t.id} value={t.id}>
+                      {t.name} ({gateCount} cổng · {t.items.length} tiêu chí)
+                    </option>
+                  );
+                })}
+              </select>
+            </Field>
             <Field label="Phân loại IVD / RUO">
               <select className={inputClass} value={ivdClass} onChange={(e) => setIvdClass(e.target.value)}>
                 {Object.entries(IVD_CLASS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}

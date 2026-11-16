@@ -1,6 +1,18 @@
 import { factoryRoute } from "@/factory/http";
 import { invalid } from "@/factory/core/errors";
-import { deleteProject, getProjectDetail, saveMilestone, saveRiskItem, saveSpecEvaluation, updateProject } from "@/factory/rd/projects";
+import {
+  applyTemplateToProjectGates,
+  deleteProject,
+  deleteProjectGate,
+  deleteProjectGateDeliverable,
+  getProjectDetail,
+  saveMilestone,
+  saveProjectGateDeliverable,
+  saveProjectGateMeta,
+  saveRiskItem,
+  saveSpecEvaluation,
+  updateProject,
+} from "@/factory/rd/projects";
 
 export const GET = factoryRoute((tx, { actor, params }) => getProjectDetail(tx, actor, params.id));
 
@@ -16,6 +28,21 @@ export const POST = factoryRoute(async (tx, { actor, params, body }) => {
   }
   if (kind === "milestone") {
     return saveMilestone(tx, actor, params.id, body.milestone_id ?? null, body);
+  }
+  if (kind === "gate_meta") {
+    return saveProjectGateMeta(tx, actor, params.id, body.gate_id ?? null, body);
+  }
+  if (kind === "delete_gate") {
+    return deleteProjectGate(tx, actor, params.id, String(body.gate_id || ""));
+  }
+  if (kind === "gate_deliverable") {
+    return saveProjectGateDeliverable(tx, actor, params.id, body.deliverable_id ?? null, body);
+  }
+  if (kind === "delete_gate_deliverable") {
+    return deleteProjectGateDeliverable(tx, actor, params.id, String(body.deliverable_id || ""));
+  }
+  if (kind === "apply_gate_template") {
+    return applyTemplateToProjectGates(tx, actor, params.id, String(body.template_id || ""));
   }
   throw invalid("Thao tác dự án không hợp lệ.");
 });

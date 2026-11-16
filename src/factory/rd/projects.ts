@@ -296,15 +296,579 @@ export const projectGateMachine = defineMachine<GateStatus, ProjectGateRow>({
   ],
 });
 
+const BUILTIN_GATE_TEMPLATE_CODES = new Set(["SG_IVD_KIT", "SG_SOFTWARE", "SG_DEVICE_DHF"]);
+
+async function authorizeGateCriteriaEdit(tx: Tx, actor: AuthzActor, ownerOrgUnitId: string): Promise<void> {
+  for (const perm of ["rd.project.manage", "rd.project.edit", "rd.gate.review"]) {
+    if (await hasFactoryPermission(tx, actor, perm, ownerOrgUnitId)) return;
+  }
+  await authorize(tx, actor, "rd.project.manage", ownerOrgUnitId);
+}
+
+async function authorizeGateTemplateManage(tx: Tx, actor: AuthzActor): Promise<void> {
+  const perms = ["rd.gate.review", "rd.project.edit", "rd.project.manage"];
+  const units = (await tx.query("SELECT id FROM core.org_unit WHERE status = 'ACTIVE'")).rows as { id: string }[];
+  for (const perm of perms) {
+    if (await hasFactoryPermission(tx, actor, perm, null)) return;
+    for (const u of units) {
+      if (await hasFactoryPermission(tx, actor, perm, u.id)) return;
+    }
+  }
+  await authorizeAnywhere(tx, actor, "rd.project.manage");
+}
+
+async function assertProjectGatesCustomizable(tx: Tx, actor: AuthzActor, projectId: string): Promise<ProjectRow> {
+  const project = (await tx.query("SELECT * FROM rd.project WHERE id = $1 FOR UPDATE", [projectId])).rows[0] as
+    | ProjectRow
+    | undefined;
+  if (!project) throw notFound("dự án R&D");
+  await authorizeGateCriteriaEdit(tx, actor, project.owner_org_unit_id);
+  if (project.status === "TRANSFERRED" || project.status === "KILLED" || (await hasImmutableProjectHandoff(tx, projectId))) {
+    throw conflict(
+      "Không thể chỉnh sửa tiêu chí Stage-Gate của dự án đã kết thúc / chuyển giao sản xuất hoặc đã có hồ sơ nghiệm thu."
+    );
+  }
+  return project;
+}
+
+async function insertProjectGatesFromTemplateItems(tx: Tx, projectId: string, tplItems: any[]): Promise<void> {
+  const gatesMap = new Map<number, { gate_name: string; stage_after: string; items: any[] }>();
+  for (const item of tplItems) {
+    if (!gatesMap.has(item.gate_no)) {
+      gatesMap.set(item.gate_no, { gate_name: item.gate_name, stage_after: item.stage_after, items: [] });
+    }
+    gatesMap.get(item.gate_no)!.items.push(item);
+  }
+  const sortedGateNos = [...gatesMap.keys()].sort((a, b) => a - b);
+  for (const [idx, gateNo] of sortedGateNos.entries()) {
+    const g = gatesMap.get(gateNo)!;
+    const gateRow = (
+      await tx.query(
+        `INSERT INTO rd.project_gate (project_id, gate_no, gate_name, stage_after, status)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+        [projectId, gateNo, g.gate_name, g.stage_after, idx === 0 ? "OPEN" : "LOCKED"]
+      )
+    ).rows[0];
+    for (const it of g.items) {
+      await tx.query(
+        `INSERT INTO rd.gate_deliverable (project_gate_id, template_item_id, seq, item_name, doc_type, is_required, status)
+         VALUES ($1, $2, $3, $4, $5, $6, 'MISSING')`,
+        [gateRow.id, it.id, it.seq, it.item_name, it.doc_type, it.is_required]
+      );
+    }
+  }
+}
+
 export async function listGateTemplates(tx: Tx, actor: AuthzActor) {
   await authorizeAnywhere(tx, actor, "rd.view");
-  const templates = (await tx.query("SELECT * FROM rd.gate_template WHERE status = 'ACTIVE' ORDER BY code")).rows;
+  const templates = (
+    await tx.query(
+      `SELECT t.*,
+              (SELECT count(*)::int FROM rd.project p WHERE p.gate_template_id = t.id) AS project_count
+         FROM rd.gate_template t
+        WHERE t.status = 'ACTIVE'
+        ORDER BY CASE WHEN t.code IN ('SG_IVD_KIT', 'SG_SOFTWARE', 'SG_DEVICE_DHF') THEN 0 ELSE 1 END, t.code`
+    )
+  ).rows;
   for (const t of templates) {
     t.items = (
-      await tx.query("SELECT * FROM rd.gate_template_item WHERE template_id = $1 ORDER BY gate_no, seq", [t.id])
+      await tx.query("SELECT * FROM rd.gate_template_item WHERE template_id = $1 ORDER BY gate_no ASC, seq ASC", [t.id])
     ).rows;
   }
   return templates;
+}
+
+const gateTemplateItemInputSchema = z.object({
+  item_name: z.string().trim().min(2, "Nhập tên tiêu chí / hạng mục hồ sơ").max(300),
+  doc_type: z.string().trim().min(1, "Nhập mã hồ sơ").max(60).default("DHF_DOC"),
+  is_required: z.boolean().default(true),
+});
+
+const gateTemplateGateInputSchema = z.object({
+  gate_no: z.coerce.number().int().min(0).max(10),
+  gate_name: z.string().trim().min(2, "Nhập tên cổng Stage-Gate").max(200),
+  stage_after: z.string().trim().min(2, "Nhập mã giai đoạn tiếp theo").max(80),
+  items: z.array(gateTemplateItemInputSchema).min(1, "Mỗi cổng cần ít nhất 1 tiêu chí/hồ sơ").max(40),
+});
+
+const saveGateTemplateSchema = z.object({
+  code: z.string().trim().max(40).optional().nullable(),
+  name: z.string().trim().min(3, "Nhập tên bộ mẫu Stage-Gate").max(200),
+  domain: z.enum(["KIT", "OLIGO", "DEVICE", "SOFTWARE", "OTHER"]).default("KIT"),
+  description: z.string().trim().max(1000).optional().nullable(),
+  gates: z.array(gateTemplateGateInputSchema).min(1, "Bộ mẫu phải có ít nhất 1 cổng Stage-Gate").max(11),
+});
+
+export async function saveGateTemplate(tx: Tx, actor: AuthzActor, templateId: string | null, input: unknown) {
+  await authorizeGateTemplateManage(tx, actor);
+  const d = parseInput(saveGateTemplateSchema, input);
+
+  const gateNos = d.gates.map((g) => g.gate_no);
+  if (new Set(gateNos).size !== gateNos.length) {
+    throw invalid("Số thứ tự cổng (gate_no) trong bộ mẫu không được trùng nhau.");
+  }
+
+  const normalizedRawCode = (d.code || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  if (d.code && d.code.trim() !== "" && normalizedRawCode.length < 2) {
+    throw invalid("Mã bộ mẫu Stage-Gate phải có ít nhất 2 ký tự chữ/số.");
+  }
+
+  let tpl: any;
+  let oldCode: string | null = null;
+  if (templateId) {
+    const existing = (await tx.query("SELECT * FROM rd.gate_template WHERE id = $1 FOR UPDATE", [templateId])).rows[0];
+    if (!existing) throw notFound("bộ mẫu Stage-Gate");
+    oldCode = existing.code;
+    const finalCode = BUILTIN_GATE_TEMPLATE_CODES.has(existing.code)
+      ? existing.code
+      : normalizedRawCode || existing.code;
+    if (finalCode !== existing.code) {
+      const dup = await tx.query("SELECT 1 FROM rd.gate_template WHERE code = $1 AND id <> $2", [finalCode, templateId]);
+      if (dup.rowCount) throw conflict("Mã bộ mẫu Stage-Gate đã tồn tại.");
+    }
+    tpl = (
+      await tx.query(
+        `UPDATE rd.gate_template
+            SET code = $2,
+                name = $3,
+                domain = $4,
+                description = $5,
+                status = 'ACTIVE',
+                version = version + 1,
+                updated_at = now(),
+                updated_by = $6
+          WHERE id = $1
+          RETURNING *`,
+        [templateId, finalCode, d.name, d.domain, d.description ?? null, actor.userId]
+      )
+    ).rows[0];
+  } else {
+    const finalCode =
+      normalizedRawCode ||
+      `SG_CUSTOM_${Date.now().toString(36).toUpperCase()}_${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const dup = await tx.query("SELECT 1 FROM rd.gate_template WHERE code = $1", [finalCode]);
+    if (dup.rowCount) throw conflict("Mã bộ mẫu Stage-Gate đã tồn tại.");
+    tpl = (
+      await tx.query(
+        `INSERT INTO rd.gate_template (code, name, domain, description, created_by, updated_by)
+         VALUES ($1, $2, $3, $4, $5, $5)
+         RETURNING *`,
+        [finalCode, d.name, d.domain, d.description ?? null, actor.userId]
+      )
+    ).rows[0];
+  }
+
+  // Delete previous template items cleanly (existing project deliverables keep their snapshots with template_item_id = NULL)
+  await tx.query("DELETE FROM rd.gate_template_item WHERE template_id = $1", [tpl.id]);
+  const sortedGates = [...d.gates].sort((a, b) => a.gate_no - b.gate_no);
+  for (const g of sortedGates) {
+    for (let idx = 0; idx < g.items.length; idx++) {
+      const it = g.items[idx];
+      await tx.query(
+        `INSERT INTO rd.gate_template_item (template_id, gate_no, gate_name, stage_after, seq, item_name, doc_type, is_required)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          tpl.id,
+          g.gate_no,
+          g.gate_name,
+          g.stage_after,
+          idx + 1,
+          it.item_name,
+          (it.doc_type || "DHF_DOC").trim().toUpperCase(),
+          it.is_required,
+        ]
+      );
+    }
+  }
+
+  const items = (
+    await tx.query("SELECT * FROM rd.gate_template_item WHERE template_id = $1 ORDER BY gate_no ASC, seq ASC", [tpl.id])
+  ).rows;
+  const projectCount = Number(
+    (await tx.query("SELECT count(*)::int AS c FROM rd.project WHERE gate_template_id = $1", [tpl.id])).rows[0]?.c ?? 0
+  );
+
+  await writeAudit(tx, actor, {
+    entityType: "rd_gate_template",
+    entityId: tpl.id,
+    action: templateId ? "update" : "create",
+    changes: {
+      code: [oldCode, tpl.code],
+      name: [null, tpl.name],
+      item_count: [null, items.length],
+    },
+  });
+
+  return { ...tpl, project_count: projectCount, items };
+}
+
+export async function deleteGateTemplate(tx: Tx, actor: AuthzActor, templateId: string) {
+  await authorizeGateTemplateManage(tx, actor);
+  if (!templateId) throw invalid("Thiếu ID bộ mẫu Stage-Gate cần xóa.");
+  const existing = (await tx.query("SELECT * FROM rd.gate_template WHERE id = $1 FOR UPDATE", [templateId])).rows[0];
+  if (!existing) throw notFound("bộ mẫu Stage-Gate");
+  if (BUILTIN_GATE_TEMPLATE_CODES.has(existing.code)) {
+    throw invalid(
+      "Không thể xóa bộ mẫu gốc mặc định của hệ thống. Bạn có thể chỉnh sửa trực tiếp tiêu chí của mẫu này hoặc nhân bản thành mẫu mới."
+    );
+  }
+
+  const used = await tx.query("SELECT 1 FROM rd.project WHERE gate_template_id = $1 LIMIT 1", [templateId]);
+  if (used.rowCount) {
+    await tx.query(
+      "UPDATE rd.gate_template SET status = 'INACTIVE', updated_at = now(), updated_by = $2 WHERE id = $1",
+      [templateId, actor.userId]
+    );
+  } else {
+    await tx.query("DELETE FROM rd.gate_template WHERE id = $1", [templateId]);
+  }
+
+  await writeAudit(tx, actor, {
+    entityType: "rd_gate_template",
+    entityId: templateId,
+    action: "delete",
+    changes: { code: [existing.code, null], name: [existing.name, null] },
+  });
+  return { deleted: true, id: templateId };
+}
+
+const projectGateMetaSchema = z.object({
+  gate_no: z.coerce.number().int().min(0).max(10).optional(),
+  gate_name: z.string().trim().min(2, "Nhập tên cổng Stage-Gate").max(200),
+  stage_after: z.string().trim().min(2, "Nhập mã giai đoạn tiếp theo").max(80),
+});
+
+export async function saveProjectGateMeta(
+  tx: Tx,
+  actor: AuthzActor,
+  projectId: string,
+  gateId: string | null,
+  input: unknown
+) {
+  await assertProjectGatesCustomizable(tx, actor, projectId);
+  const d = parseInput(projectGateMetaSchema, input);
+
+  if (gateId) {
+    const existing = (
+      await tx.query("SELECT * FROM rd.project_gate WHERE id = $1 AND project_id = $2 FOR UPDATE", [gateId, projectId])
+    ).rows[0] as ProjectGateRow | undefined;
+    if (!existing) throw notFound("cổng Stage-Gate");
+    if (existing.status === "PASSED") {
+      throw invalid("Không thể chỉnh sửa cổng đã được ký duyệt qua cổng (PASSED).");
+    }
+    const updated = (
+      await tx.query(
+        `UPDATE rd.project_gate
+            SET gate_name = $2,
+                stage_after = $3,
+                version = version + 1,
+                updated_at = now(),
+                updated_by = $4
+          WHERE id = $1
+          RETURNING *`,
+        [gateId, d.gate_name, d.stage_after, actor.userId]
+      )
+    ).rows[0];
+    await writeAudit(tx, actor, {
+      entityType: "rd_project_gate",
+      entityId: gateId,
+      action: "update_meta",
+      changes: {
+        gate_name: [existing.gate_name, updated.gate_name],
+        stage_after: [existing.stage_after, updated.stage_after],
+      },
+    });
+    return updated;
+  }
+
+  const existingGates = (
+    await tx.query("SELECT id, gate_no, status FROM rd.project_gate WHERE project_id = $1 ORDER BY gate_no ASC", [
+      projectId,
+    ])
+  ).rows as { id: string; gate_no: number; status: string }[];
+  const maxGateNo = existingGates.length ? Math.max(...existingGates.map((g) => Number(g.gate_no))) : -1;
+  const gateNo = d.gate_no ?? maxGateNo + 1;
+  if (gateNo < 0 || gateNo > 10) {
+    throw invalid("Số thứ tự cổng (gate_no) phải nằm trong khoảng 0 đến 10.");
+  }
+  if (existingGates.some((g) => Number(g.gate_no) === gateNo)) {
+    throw conflict(`Dự án đã có Gate ${gateNo}. Vui lòng chọn số thứ tự cổng khác.`);
+  }
+  const hasUnpassedPrior = existingGates.some((g) => Number(g.gate_no) < gateNo && g.status !== "PASSED");
+  const initialStatus: GateStatus = hasUnpassedPrior ? "LOCKED" : "OPEN";
+
+  const inserted = (
+    await tx.query(
+      `INSERT INTO rd.project_gate (project_id, gate_no, gate_name, stage_after, status, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [projectId, gateNo, d.gate_name, d.stage_after, initialStatus, actor.userId]
+    )
+  ).rows[0];
+
+  await writeAudit(tx, actor, {
+    entityType: "rd_project_gate",
+    entityId: inserted.id,
+    action: "create_gate",
+    changes: {
+      gate_no: [null, gateNo],
+      gate_name: [null, d.gate_name],
+      stage_after: [null, d.stage_after],
+    },
+  });
+  return inserted;
+}
+
+export async function deleteProjectGate(tx: Tx, actor: AuthzActor, projectId: string, gateId: string) {
+  await assertProjectGatesCustomizable(tx, actor, projectId);
+  const existing = (
+    await tx.query("SELECT * FROM rd.project_gate WHERE id = $1 AND project_id = $2 FOR UPDATE", [gateId, projectId])
+  ).rows[0] as ProjectGateRow | undefined;
+  if (!existing) throw notFound("cổng Stage-Gate");
+  if (existing.status === "PASSED") {
+    throw invalid("Không thể xóa cổng đã được ký duyệt qua cổng (PASSED).");
+  }
+  const totalGates = Number(
+    (await tx.query("SELECT count(*)::int AS c FROM rd.project_gate WHERE project_id = $1", [projectId])).rows[0]?.c ?? 0
+  );
+  if (totalGates <= 1) {
+    throw invalid("Dự án phải có ít nhất 1 cổng Stage-Gate.");
+  }
+  const hasEvidence = await tx.query(
+    "SELECT 1 FROM rd.gate_deliverable WHERE project_gate_id = $1 AND (status = 'ACCEPTED' OR attachment_id IS NOT NULL) LIMIT 1",
+    [gateId]
+  );
+  if (hasEvidence.rowCount) {
+    throw invalid(
+      "Không thể xóa cổng đã có hồ sơ đính kèm hoặc đã được thẩm định Đạt. Hãy xóa/gỡ từng hạng mục trước nếu cần."
+    );
+  }
+
+  await tx.query("DELETE FROM rd.gate_deliverable WHERE project_gate_id = $1", [gateId]);
+  await tx.query("DELETE FROM rd.project_gate WHERE id = $1", [gateId]);
+
+  const remaining = (
+    await tx.query("SELECT id, status FROM rd.project_gate WHERE project_id = $1 ORDER BY gate_no ASC", [projectId])
+  ).rows as { id: string; status: string }[];
+  const hasActiveGate = remaining.some((g) => ["OPEN", "PENDING_REVIEW", "NEEDS_REVISION"].includes(g.status));
+  if (!hasActiveGate) {
+    const firstLocked = remaining.find((g) => g.status === "LOCKED");
+    if (firstLocked) {
+      await tx.query("UPDATE rd.project_gate SET status = 'OPEN', updated_at = now(), updated_by = $2 WHERE id = $1", [
+        firstLocked.id,
+        actor.userId,
+      ]);
+    }
+  }
+
+  await writeAudit(tx, actor, {
+    entityType: "rd_project_gate",
+    entityId: gateId,
+    action: "delete_gate",
+    changes: { gate_no: [existing.gate_no, null], gate_name: [existing.gate_name, null] },
+  });
+  return { deleted: true, id: gateId };
+}
+
+const projectDeliverableCriterionSchema = z.object({
+  project_gate_id: z.string().uuid("Chọn cổng Stage-Gate"),
+  item_name: z.string().trim().min(2, "Nhập tên tiêu chí / hạng mục hồ sơ").max(300),
+  doc_type: z.string().trim().min(1).max(60).default("DHF_DOC"),
+  is_required: z.boolean().default(true),
+  seq: z.coerce.number().int().positive().optional(),
+});
+
+export async function saveProjectGateDeliverable(
+  tx: Tx,
+  actor: AuthzActor,
+  projectId: string,
+  deliverableId: string | null,
+  input: unknown
+) {
+  await assertProjectGatesCustomizable(tx, actor, projectId);
+  const d = parseInput(projectDeliverableCriterionSchema, input);
+
+  const gate = (
+    await tx.query("SELECT * FROM rd.project_gate WHERE id = $1 AND project_id = $2 FOR UPDATE", [
+      d.project_gate_id,
+      projectId,
+    ])
+  ).rows[0] as ProjectGateRow | undefined;
+  if (!gate) throw notFound("cổng Stage-Gate");
+  if (gate.status === "PASSED") {
+    throw invalid("Không thể chỉnh sửa tiêu chí trên cổng đã ký duyệt qua cổng (PASSED).");
+  }
+
+  const normalizedDocType = (d.doc_type || "DHF_DOC").trim().toUpperCase();
+
+  if (deliverableId) {
+    const existing = (
+      await tx.query("SELECT * FROM rd.gate_deliverable WHERE id = $1 AND project_gate_id = $2 FOR UPDATE", [
+        deliverableId,
+        d.project_gate_id,
+      ])
+    ).rows[0];
+    if (!existing) throw notFound("hạng mục hồ sơ cổng");
+    const updated = (
+      await tx.query(
+        `UPDATE rd.gate_deliverable
+            SET item_name = $2,
+                doc_type = $3,
+                is_required = $4,
+                seq = COALESCE($5, seq),
+                updated_at = now(),
+                updated_by = $6
+          WHERE id = $1
+          RETURNING *`,
+        [deliverableId, d.item_name, normalizedDocType, d.is_required, d.seq ?? null, actor.userId]
+      )
+    ).rows[0];
+    await writeAudit(tx, actor, {
+      entityType: "rd_gate_deliverable",
+      entityId: deliverableId,
+      action: "update_criterion",
+      changes: {
+        item_name: [existing.item_name, updated.item_name],
+        doc_type: [existing.doc_type, updated.doc_type],
+        is_required: [existing.is_required, updated.is_required],
+      },
+    });
+    return updated;
+  }
+
+  const nextSeq =
+    d.seq ??
+    Number(
+      (await tx.query("SELECT coalesce(max(seq), 0) + 1 AS s FROM rd.gate_deliverable WHERE project_gate_id = $1", [
+        d.project_gate_id,
+      ])).rows[0]?.s ?? 1
+    );
+
+  const inserted = (
+    await tx.query(
+      `INSERT INTO rd.gate_deliverable
+         (project_gate_id, template_item_id, seq, item_name, doc_type, is_required, status, updated_by)
+       VALUES ($1, NULL, $2, $3, $4, $5, 'MISSING', $6)
+       RETURNING *`,
+      [d.project_gate_id, nextSeq, d.item_name, normalizedDocType, d.is_required, actor.userId]
+    )
+  ).rows[0];
+
+  await writeAudit(tx, actor, {
+    entityType: "rd_gate_deliverable",
+    entityId: inserted.id,
+    action: "create_criterion",
+    changes: {
+      project_gate_id: [null, d.project_gate_id],
+      item_name: [null, d.item_name],
+      doc_type: [null, normalizedDocType],
+      is_required: [null, d.is_required],
+    },
+  });
+  return inserted;
+}
+
+export async function deleteProjectGateDeliverable(
+  tx: Tx,
+  actor: AuthzActor,
+  projectId: string,
+  deliverableId: string
+) {
+  await assertProjectGatesCustomizable(tx, actor, projectId);
+  const existing = (
+    await tx.query(
+      `SELECT gd.*, pg.project_id, pg.status AS gate_status
+         FROM rd.gate_deliverable gd
+         JOIN rd.project_gate pg ON pg.id = gd.project_gate_id
+        WHERE gd.id = $1 AND pg.project_id = $2
+        FOR UPDATE OF gd`,
+      [deliverableId, projectId]
+    )
+  ).rows[0];
+  if (!existing) throw notFound("hạng mục hồ sơ cổng");
+  if (existing.gate_status === "PASSED") {
+    throw invalid("Không thể xóa tiêu chí trên cổng đã ký duyệt qua cổng (PASSED).");
+  }
+
+  await tx.query("DELETE FROM rd.gate_deliverable WHERE id = $1", [deliverableId]);
+  await tx.query(
+    `WITH ordered AS (
+       SELECT id, row_number() OVER (ORDER BY seq ASC, id ASC) AS rn
+         FROM rd.gate_deliverable
+        WHERE project_gate_id = $1
+     )
+     UPDATE rd.gate_deliverable gd
+        SET seq = ordered.rn
+       FROM ordered
+      WHERE gd.id = ordered.id AND gd.seq <> ordered.rn`,
+    [existing.project_gate_id]
+  );
+
+  await writeAudit(tx, actor, {
+    entityType: "rd_gate_deliverable",
+    entityId: deliverableId,
+    action: "delete_criterion",
+    changes: {
+      item_name: [existing.item_name, null],
+      doc_type: [existing.doc_type, null],
+    },
+  });
+  return { deleted: true, id: deliverableId };
+}
+
+export async function applyTemplateToProjectGates(
+  tx: Tx,
+  actor: AuthzActor,
+  projectId: string,
+  templateId: string
+) {
+  const project = await assertProjectGatesCustomizable(tx, actor, projectId);
+  if (!templateId) throw invalid("Vui lòng chọn bộ mẫu Stage-Gate cần áp dụng.");
+
+  const blocked = await tx.query(
+    `SELECT 1
+       FROM rd.project_gate pg
+       LEFT JOIN rd.gate_deliverable gd ON gd.project_gate_id = pg.id
+      WHERE pg.project_id = $1
+        AND (pg.status = 'PASSED' OR gd.status IN ('SUBMITTED', 'ACCEPTED') OR gd.attachment_id IS NOT NULL)
+      LIMIT 1`,
+    [projectId]
+  );
+  if (blocked.rowCount) {
+    throw invalid("Chỉ được áp dụng lại bộ mẫu khi chưa có cổng nào qua cổng (PASSED) và chưa có minh chứng/file nào đã nộp.");
+  }
+
+  const tpl = (await tx.query("SELECT * FROM rd.gate_template WHERE id = $1", [templateId])).rows[0];
+  if (!tpl) throw notFound("bộ mẫu Stage-Gate");
+  const tplItems = (
+    await tx.query("SELECT * FROM rd.gate_template_item WHERE template_id = $1 ORDER BY gate_no ASC, seq ASC", [
+      templateId,
+    ])
+  ).rows;
+  if (!tplItems.length) throw invalid("Bộ mẫu Stage-Gate chưa có cổng / tiêu chí nào.");
+
+  await tx.query(
+    "DELETE FROM rd.gate_deliverable USING rd.project_gate pg WHERE pg.id = rd.gate_deliverable.project_gate_id AND pg.project_id = $1",
+    [projectId]
+  );
+  await tx.query("DELETE FROM rd.project_gate WHERE project_id = $1", [projectId]);
+  await insertProjectGatesFromTemplateItems(tx, projectId, tplItems);
+  await tx.query(
+    "UPDATE rd.project SET gate_template_id = $2, version = version + 1, updated_at = now(), updated_by = $3 WHERE id = $1",
+    [projectId, templateId, actor.userId]
+  );
+
+  await writeAudit(tx, actor, {
+    entityType: "rd_project",
+    entityId: projectId,
+    action: "apply_gate_template",
+    changes: { gate_template_id: [project.gate_template_id, templateId], template_code: [null, tpl.code] },
+  });
+  return getProjectDetail(tx, actor, projectId);
 }
 
 const createProjectSchema = z.object({
@@ -381,31 +945,7 @@ export async function createProject(tx: Tx, actor: AuthzActor, input: unknown) {
   );
 
   // Group template items by gate_no
-  const gatesMap = new Map<number, { gate_name: string; stage_after: string; items: typeof tplItems }>();
-  for (const item of tplItems) {
-    if (!gatesMap.has(item.gate_no)) {
-      gatesMap.set(item.gate_no, { gate_name: item.gate_name, stage_after: item.stage_after, items: [] });
-    }
-    gatesMap.get(item.gate_no)!.items.push(item);
-  }
-  const sortedGateNos = [...gatesMap.keys()].sort((a, b) => a - b);
-  for (const [idx, gateNo] of sortedGateNos.entries()) {
-    const g = gatesMap.get(gateNo)!;
-    const gateRow = (
-      await tx.query(
-        `INSERT INTO rd.project_gate (project_id, gate_no, gate_name, stage_after, status)
-         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-        [project.id, gateNo, g.gate_name, g.stage_after, idx === 0 ? "OPEN" : "LOCKED"]
-      )
-    ).rows[0];
-    for (const it of g.items) {
-      await tx.query(
-        `INSERT INTO rd.gate_deliverable (project_gate_id, template_item_id, seq, item_name, doc_type, is_required, status)
-         VALUES ($1, $2, $3, $4, $5, $6, 'MISSING')`,
-        [gateRow.id, it.id, it.seq, it.item_name, it.doc_type, it.is_required]
-      );
-    }
-  }
+  await insertProjectGatesFromTemplateItems(tx, project.id, tplItems);
 
   if (idea) {
     await runTransition(tx, ideaMachine, actor, { id: idea.id, action: "convert", expectedVersion: idea.version }, { trusted: true });

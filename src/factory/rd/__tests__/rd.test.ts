@@ -14,14 +14,22 @@ import {
   ideaMachine,
 } from "../ideas";
 import {
+  applyTemplateToProjectGates,
   createProject,
+  deleteGateTemplate,
   deleteProject,
+  deleteProjectGate,
+  deleteProjectGateDeliverable,
   exportRoadmapIcs,
   getProjectDetail,
+  listGateTemplates,
   listProjects,
   projectGateMachine,
   projectMachine,
+  saveGateTemplate,
   saveMilestone,
+  saveProjectGateDeliverable,
+  saveProjectGateMeta,
   saveSpecEvaluation,
   updateGateDeliverable,
   updateProject,
@@ -1269,5 +1277,202 @@ describe("R&D Module (Phase 4d): Idea Funnel, Stage-Gate, ELN, Biobank, Tech Tra
     await expect(
       withTransaction((tx) => deleteProject(tx, rdHead, projLocked.id, { reason: "Thử xóa dự án đã gửi chuyển giao" }))
     ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("11. Stage-Gate Templates & Per-Project Criteria: customizes templates safely and edits/deletes/adds gate deliverables without breaking existing projects", async () => {
+    const site = await makeSite();
+    const { researcher, rdHead } = await setupRdTeam(site);
+
+    const rndCode = `SG_TEST_${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+
+    // 1. Create custom template via saveGateTemplate
+    const tpl = await withTransaction((tx) =>
+      saveGateTemplate(tx, rdHead, null, {
+        code: rndCode,
+        name: "Mẫu Stage-Gate Kit Rút gọn 2 Cổng",
+        domain: "KIT",
+        description: "Bộ mẫu cho đề tài cải tiến đệm nhanh",
+        gates: [
+          {
+            gate_no: 0,
+            gate_name: "Gate 0: Khởi tạo cải tiến",
+            stage_after: "G1_VALIDATION",
+            items: [
+              { item_name: "Đề xuất thay đổi kỹ thuật (ECR)", doc_type: "ECR_SPEC", is_required: true },
+              { item_name: "Ghi chú tham khảo (tùy chọn)", doc_type: "NOTE", is_required: false },
+            ],
+          },
+          {
+            gate_no: 1,
+            gate_name: "Gate 1: Thẩm định & Chuyển giao",
+            stage_after: "TRANSFERRED",
+            items: [
+              { item_name: "Báo cáo so sánh tương đương (Bridging Study)", doc_type: "BRIDGING", is_required: true },
+            ],
+          },
+        ],
+      })
+    );
+    expect(tpl.code).toBe(rndCode);
+    expect(tpl.items).toHaveLength(3);
+
+    const fetchedTemplates = await withTransaction((tx) => listGateTemplates(tx, researcher));
+    expect(fetchedTemplates.some((t: any) => t.id === tpl.id)).toBe(true);
+
+    // 2. Create project using custom gate_template_id
+    const proj = await withTransaction((tx) =>
+      createProject(tx, researcher, {
+        name: "Cải tiến đệm bảo quản MasterMix",
+        owner_org_unit_id: site.dept,
+        target_domain: "KIT",
+        gate_template_id: tpl.id,
+        leader_id: researcher.userId,
+      })
+    );
+    expect(proj.template_code).toBe(rndCode);
+    expect(proj.gates).toHaveLength(2);
+    expect(proj.gates[0].status).toBe("OPEN");
+    expect(proj.gates[1].status).toBe("LOCKED");
+    expect(proj.gates[0].deliverables).toHaveLength(2);
+
+    // 3. Updating template items later MUST NOT break existing project's deliverables (ON DELETE SET NULL safety)
+    const updatedTpl = await withTransaction((tx) =>
+      saveGateTemplate(tx, rdHead, tpl.id, {
+        code: rndCode,
+        name: "Mẫu Stage-Gate Kit Rút gọn 2 Cổng (v2)",
+        domain: "KIT",
+        gates: [
+          {
+            gate_no: 0,
+            gate_name: "Gate 0: Khởi tạo v2",
+            stage_after: "G1_VALIDATION",
+            items: [{ item_name: "Hồ sơ ECR v2", doc_type: "ECR_V2", is_required: true }],
+          },
+        ],
+      })
+    );
+    expect(updatedTpl.items).toHaveLength(1);
+
+    const afterTplEditProj = await withTransaction((tx) => getProjectDetail(tx, researcher, proj.id));
+    expect(afterTplEditProj.gates[0].deliverables).toHaveLength(2);
+
+    // 4. Direct per-project deliverable customization on OPEN (Gate 0) and LOCKED (Gate 1) gates
+    const gate0 = afterTplEditProj.gates[0];
+    const gate1 = afterTplEditProj.gates[1];
+
+    // Add custom criterion to OPEN Gate 0
+    const addedG0 = await withTransaction((tx) =>
+      saveProjectGateDeliverable(tx, researcher, proj.id, null, {
+        project_gate_id: gate0.id,
+        item_name: "Đánh giá ổn định nhiệt 37C",
+        doc_type: "STABILITY_37C",
+        is_required: true,
+      })
+    );
+    expect(addedG0.seq).toBe(3);
+
+    // Add custom criterion to LOCKED Gate 1 upfront
+    const addedG1 = await withTransaction((tx) =>
+      saveProjectGateDeliverable(tx, researcher, proj.id, null, {
+        project_gate_id: gate1.id,
+        item_name: "Checklist đào tạo QC",
+        doc_type: "QC_TRAIN",
+        is_required: false,
+      })
+    );
+    expect(addedG1.seq).toBe(2);
+
+    // Edit existing Gate 0 deliverable: rename and mark optional (is_required = false)
+    const editedD0 = await withTransaction((tx) =>
+      saveProjectGateDeliverable(tx, researcher, proj.id, gate0.deliverables[0].id, {
+        project_gate_id: gate0.id,
+        item_name: "Đề xuất ECR (Đã tinh giản)",
+        doc_type: "ECR_SIMPLE",
+        is_required: false,
+      })
+    );
+    expect(editedD0.item_name).toBe("Đề xuất ECR (Đã tinh giản)");
+    expect(editedD0.is_required).toBe(false);
+
+    // Delete optional deliverable on Gate 0 and added deliverable on Gate 1
+    await withTransaction((tx) => deleteProjectGateDeliverable(tx, researcher, proj.id, gate0.deliverables[1].id));
+    await withTransaction((tx) => deleteProjectGateDeliverable(tx, researcher, proj.id, addedG1.id));
+
+    // Add a custom Gate 2 and verify save/delete gate meta works
+    const addedGate2 = await withTransaction((tx) =>
+      saveProjectGateMeta(tx, researcher, proj.id, null, {
+        gate_no: 2,
+        gate_name: "Gate 2: Theo dõi sau chuyển giao",
+        stage_after: "POST_TRANSFER",
+      })
+    );
+    expect(addedGate2.status).toBe("LOCKED");
+    await withTransaction((tx) =>
+      saveProjectGateMeta(tx, researcher, proj.id, addedGate2.id, {
+        gate_name: "Gate 2: Hậu mại mở rộng",
+        stage_after: "TRANSFERRED",
+      })
+    );
+    await withTransaction((tx) => deleteProjectGate(tx, researcher, proj.id, addedGate2.id));
+
+    // Re-applying template works while nothing submitted
+    const stdKitTpl = fetchedTemplates.find((t: any) => t.code === "SG_IVD_KIT");
+    expect(stdKitTpl).toBeTruthy();
+    const reappliedProj = await withTransaction((tx) =>
+      applyTemplateToProjectGates(tx, rdHead, proj.id, stdKitTpl.id)
+    );
+    expect(reappliedProj.gates.length).toBeGreaterThanOrEqual(4);
+
+    // Submit only required items on Gate 0 & approve -> Gate 0 becomes PASSED
+    const projForPass = await withTransaction((tx) => getProjectDetail(tx, researcher, proj.id));
+    const g0ToPass = projForPass.gates[0];
+    for (const deliv of g0ToPass.deliverables) {
+      await withTransaction((tx) =>
+        updateGateDeliverable(tx, researcher, deliv.id, {
+          status: "SUBMITTED",
+          notes: "Đã hoàn tất hồ sơ minh chứng",
+        })
+      );
+      await withTransaction((tx) =>
+        updateGateDeliverable(tx, rdHead, deliv.id, {
+          status: "ACCEPTED",
+          reviewer_comment: "Đạt",
+        })
+      );
+    }
+    await act(projectGateMachine, researcher, g0ToPass.id, "submit");
+    await act(projectGateMachine, rdHead, g0ToPass.id, "decide_go", signed);
+
+    // 5. Once Gate 0 is PASSED, editing/adding/deleting deliverables on Gate 0 is blocked
+    await expect(
+      withTransaction((tx) =>
+        saveProjectGateDeliverable(tx, rdHead, proj.id, null, {
+          project_gate_id: g0ToPass.id,
+          item_name: "Cố tình thêm sau khi PASSED",
+          doc_type: "LATE_DOC",
+          is_required: true,
+        })
+      )
+    ).rejects.toMatchObject({ status: 422 });
+
+    await expect(
+      withTransaction((tx) => deleteProjectGateDeliverable(tx, rdHead, proj.id, g0ToPass.deliverables[0].id))
+    ).rejects.toMatchObject({ status: 422 });
+
+    // LOCKED / OPEN Gate 1 can still be customized while Gate 0 is PASSED
+    const addedToOpenG1 = await withTransaction((tx) =>
+      saveProjectGateDeliverable(tx, researcher, proj.id, null, {
+        project_gate_id: projForPass.gates[1].id,
+        item_name: "Bổ sung tiêu chí kiểm thử thực tế cho Gate 1",
+        doc_type: "G1_EXTRA",
+        is_required: false,
+      })
+    );
+    expect(addedToOpenG1.doc_type).toBe("G1_EXTRA");
+
+    // Archiving custom template used by existing project soft-deactivates it cleanly
+    await withTransaction((tx) => deleteGateTemplate(tx, rdHead, tpl.id));
+    const afterDelTplList = await withTransaction((tx) => listGateTemplates(tx, researcher));
+    expect(afterDelTplList.some((t: any) => t.id === tpl.id)).toBe(false);
   });
 });
