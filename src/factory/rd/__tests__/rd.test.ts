@@ -1106,6 +1106,11 @@ describe("R&D Module (Phase 4d): Idea Funnel, Stage-Gate, ELN, Biobank, Tech Tra
         leader_id: resA.userId,
       })
     );
+    // Cannot mark TRANSFERRED while 0/5 gates are passed and no accepted handoff exists
+    await expect(act(projectMachine, rdHead, projTransferred.id, "mark_transferred", {})).rejects.toMatchObject({
+      code: "GUARD_FAILED",
+    });
+    await getFactoryPool().query("UPDATE rd.project_gate SET status = 'PASSED' WHERE project_id = $1", [projTransferred.id]);
     await act(projectMachine, rdHead, projTransferred.id, "mark_transferred", {});
 
     // 1. activeOnly excludes KILLED and TRANSFERRED
@@ -1166,5 +1171,103 @@ describe("R&D Module (Phase 4d): Idea Funnel, Stage-Gate, ELN, Biobank, Tech Tra
         editExperiment(tx, resA, standalone.id, { project_id: projTransferred.id, version: standalone.version })
       )
     ).rejects.toMatchObject({ status: 422, code: "INVALID" });
+  });
+
+  it("10. Premature TRANSFERRED Guard, Revert & Safe Deletion: blocks premature transition, allows deleting/reverting TRANSFERRED without downstream handoffs, and blocks when SUBMITTED transfer exists", async () => {
+    const site = await makeSite();
+    const { rdHead, kitDept } = await setupRdTeam(site);
+    await grant(rdHead, ["rd.project.edit", "rd.project.delete"], site.dept);
+
+    // 1. Legacy/erroneous TRANSFERRED project with 0/5 passed gates and no downstream handoff can be reverted to ACTIVE
+    const projRevert = await withTransaction((tx) =>
+      createProject(tx, rdHead, {
+        name: "Dự án gán nhầm TRANSFERRED cần khôi phục",
+        owner_org_unit_id: site.dept,
+        target_domain: "KIT",
+      })
+    );
+    await getFactoryPool().query(
+      "UPDATE rd.project SET status = 'TRANSFERRED', current_stage = 'TRANSFERRED', actual_transfer_date = CURRENT_DATE WHERE id = $1",
+      [projRevert.id]
+    );
+
+    const detailBefore = await withTransaction((tx) => getProjectDetail(tx, rdHead, projRevert.id));
+    expect(detailBefore.has_immutable_handoff).toBe(false);
+
+    const reverted = await withTransaction((tx) =>
+      updateProject(tx, rdHead, projRevert.id, {
+        version: detailBefore.version,
+        status: "ACTIVE",
+        reason: "Khôi phục trạng thái do đánh dấu nhầm TRANSFERRED",
+      })
+    );
+    expect(reverted.status).toBe("ACTIVE");
+    expect(reverted.current_stage).toBe("G0_CONCEPT");
+    expect(reverted.actual_transfer_date).toBeNull();
+
+    // 2. Erroneous TRANSFERRED project without downstream handoffs can be deleted directly with audit log
+    const projDirectDel = await withTransaction((tx) =>
+      createProject(tx, rdHead, {
+        name: "Dự án gán nhầm TRANSFERRED cần xóa trực tiếp",
+        owner_org_unit_id: site.dept,
+        target_domain: "OTHER",
+      })
+    );
+    await getFactoryPool().query(
+      "UPDATE rd.project SET status = 'TRANSFERRED', current_stage = 'TRANSFERRED' WHERE id = $1",
+      [projDirectDel.id]
+    );
+
+    const delRes = await withTransaction((tx) =>
+      deleteProject(tx, rdHead, projDirectDel.id, { reason: "Nhân viên tạo sai và chuyển nhầm trạng thái" })
+    );
+    expect(delRes.deleted).toBe(true);
+
+    const audit = await getFactoryPool().query(
+      "SELECT action, reason FROM core.audit_log WHERE entity_type = 'rd_project' AND entity_id = $1 AND action = 'delete'",
+      [projDirectDel.id]
+    );
+    expect(audit.rowCount).toBe(1);
+    expect(audit.rows[0].reason).toContain("Nhân viên tạo sai");
+
+    // 3. Project with non-DRAFT tech_transfer_package (SUBMITTED) exposes has_immutable_handoff=true and blocks delete/revert
+    const projLocked = await withTransaction((tx) =>
+      createProject(tx, rdHead, {
+        name: "Dự án đã gửi hồ sơ chuyển giao công nghệ",
+        owner_org_unit_id: site.dept,
+        target_domain: "KIT",
+      })
+    );
+    await withTransaction((tx) =>
+      createTechTransferPackage(tx, rdHead, {
+        project_id: projLocked.id,
+        target_domain: "KIT",
+        target_org_unit_id: kitDept,
+        title: "Hồ sơ chuyển giao đã gửi",
+        bom_specification: [{ component_code: "MM-01", component_name: "MasterMix", qty_per_kit: 100, uom: "µL" }],
+        routing_steps: [{ seq: 1, step_name: "Pha chế", params: "2-8°C" }],
+        stability_summary: "Đạt 12 tháng -20°C",
+        validation_summary: "Đạt 3 lô pilot",
+        submit_now: true,
+      })
+    );
+    await getFactoryPool().query("UPDATE rd.project SET status = 'TRANSFERRED', current_stage = 'TRANSFERRED' WHERE id = $1", [
+      projLocked.id,
+    ]);
+
+    const lockedList = await withTransaction((tx) => listProjects(tx, rdHead));
+    const lockedRow = lockedList.find((r: any) => r.id === projLocked.id);
+    expect(lockedRow?.has_immutable_handoff).toBe(true);
+
+    const lockedDetail = await withTransaction((tx) => getProjectDetail(tx, rdHead, projLocked.id));
+    expect(lockedDetail.has_immutable_handoff).toBe(true);
+
+    await expect(
+      withTransaction((tx) => updateProject(tx, rdHead, projLocked.id, { version: lockedDetail.version, status: "ACTIVE" }))
+    ).rejects.toMatchObject({ status: 409 });
+
+    await expect(
+      withTransaction((tx) => deleteProject(tx, rdHead, projLocked.id, { reason: "Thử xóa dự án đã gửi chuyển giao" }))
+    ).rejects.toMatchObject({ status: 409 });
   });
 });

@@ -56,6 +56,18 @@ async function projectOwner(tx: Tx, projectId: string): Promise<string> {
   return p.owner_org_unit_id;
 }
 
+const immutableHandoffSql = (projIdExpr: string) => `(
+  EXISTS (SELECT 1 FROM rd.tech_transfer_package ttp WHERE ttp.project_id = ${projIdExpr} AND ttp.status <> 'DRAFT')
+  OR EXISTS (SELECT 1 FROM rd.software_release sr WHERE sr.project_id = ${projIdExpr} AND sr.status <> 'DRAFT')
+  OR EXISTS (SELECT 1 FROM device.device_model dm WHERE dm.rd_project_id = ${projIdExpr} AND dm.status = 'COMMERCIAL')
+  OR EXISTS (SELECT 1 FROM rd.sw_test_run tr JOIN rd.sw_test_case tc ON tc.id = tr.test_case_id WHERE tc.project_id = ${projIdExpr})
+)`;
+
+export async function hasImmutableProjectHandoff(tx: Tx, projectId: string): Promise<boolean> {
+  const row = (await tx.query(`SELECT ${immutableHandoffSql("$1")} AS locked`, [projectId])).rows[0];
+  return Boolean(row?.locked);
+}
+
 export const projectMachine = defineMachine<ProjectStatus, ProjectRow>({
   entityType: "rd_project",
   table: "rd.project",
@@ -90,6 +102,27 @@ export const projectMachine = defineMachine<ProjectStatus, ProjectRow>({
       from: "ACTIVE",
       to: "TRANSFERRED",
       permission: "rd.gate.review",
+      guards: [
+        {
+          code: "GATES_OR_TRANSFER_NOT_READY",
+          message:
+            "Chỉ đánh dấu Đã chuyển giao SX khi dự án đã qua tất cả cổng Stage-Gate (PASSED) hoặc đã có Hồ sơ Chuyển giao Công nghệ / Phát hành Phần mềm được nghiệm thu.",
+          check: async ({ tx, row }) => {
+            const res = (
+              await tx.query(
+                `SELECT (
+                   (EXISTS (SELECT 1 FROM rd.project_gate WHERE project_id = $1)
+                    AND NOT EXISTS (SELECT 1 FROM rd.project_gate WHERE project_id = $1 AND status <> 'PASSED'))
+                   OR EXISTS (SELECT 1 FROM rd.tech_transfer_package WHERE project_id = $1 AND status IN ('ACCEPTED', 'COMPLETED'))
+                   OR EXISTS (SELECT 1 FROM rd.software_release WHERE project_id = $1 AND status = 'RELEASED')
+                 ) AS ready`,
+                [row.id]
+              )
+            ).rows[0];
+            return Boolean(res?.ready);
+          },
+        },
+      ],
       patch: () => ({ actual_transfer_date: vnToday(), current_stage: "TRANSFERRED" }),
     },
   ],
@@ -883,6 +916,7 @@ export async function listProjects(tx: Tx, actor: AuthzActor, domainOrFilter?: s
               (SELECT count(*)::int FROM rd.project_gate g WHERE g.project_id = p.id) AS total_gates,
               (SELECT count(*)::int FROM rd.project_gate g WHERE g.project_id = p.id AND g.status = 'PASSED') AS passed_gates,
               (SELECT count(*)::int FROM rd.experiment e WHERE e.project_id = p.id) AS experiment_count,
+              ${immutableHandoffSql("p.id")} AS has_immutable_handoff,
               coalesce((
                 SELECT jsonb_agg(DISTINCT nm)
                   FROM (
@@ -989,7 +1023,8 @@ export async function getProjectDetail(tx: Tx, actor: AuthzActor, id: string) {
     )
   ).rows;
   const actions = await listAllowedActions(tx, projectMachine, actor, project);
-  return { ...project, gates, specs, risks, milestones, members, actions };
+  const hasImmutableHandoff = await hasImmutableProjectHandoff(tx, id);
+  return { ...project, has_immutable_handoff: hasImmutableHandoff, gates, specs, risks, milestones, members, actions };
 }
 
 const optDate = z.preprocess(
@@ -1008,7 +1043,7 @@ const updateProjectSchema = z.object({
   planned_start: optDate,
   planned_end: optDate,
   description: z.string().trim().max(4000).nullable().optional(),
-  status: z.enum(["ACTIVE", "ON_HOLD", "KILLED"]).optional(),
+  status: z.enum(["ACTIVE", "ON_HOLD", "KILLED", "TRANSFERRED"]).optional(),
   reason: z.string().trim().max(1000).optional().nullable(),
   version: z.coerce.number().int().nonnegative().optional(),
 });
@@ -1020,7 +1055,8 @@ function fmtIsoDate(val: unknown): string | null {
 }
 
 /**
- * Edits R&D project metadata (and optionally status among ACTIVE / ON_HOLD / KILLED) under `rd.project.edit`.
+ * Edits R&D project metadata (and optionally status among ACTIVE / ON_HOLD / KILLED, or reverting an
+ * accidental TRANSFERRED when no immutable downstream handoff exists) under `rd.project.edit`.
  */
 export async function updateProject(tx: Tx, actor: AuthzActor, id: string, input: unknown) {
   const d = parseInput(updateProjectSchema, input);
@@ -1035,8 +1071,10 @@ export async function updateProject(tx: Tx, actor: AuthzActor, id: string, input
   if (d.version !== undefined && cur.version !== d.version) {
     throw conflict("Dự án vừa được người khác thay đổi. Tải lại trang rồi thử lại.", "STALE_VERSION");
   }
-  if (cur.status === "TRANSFERRED" && d.status !== undefined && d.status !== ("TRANSFERRED" as any)) {
-    throw conflict("Dự án đã chuyển giao công nghệ (TRANSFERRED) không thể hạ trạng thái.");
+  if (cur.status === "TRANSFERRED" && d.status !== undefined && d.status !== "TRANSFERRED") {
+    if (await hasImmutableProjectHandoff(tx, id)) {
+      throw conflict("Dự án đã có hồ sơ chuyển giao công nghệ / phát hành phần mềm không thể hạ trạng thái.");
+    }
   }
 
   const nextStart = d.planned_start === undefined ? fmtIsoDate(cur.planned_start) : d.planned_start;
@@ -1048,6 +1086,19 @@ export async function updateProject(tx: Tx, actor: AuthzActor, id: string, input
   if (d.leader_id !== undefined) {
     const prof = await tx.query("SELECT 1 FROM core.user_profile WHERE user_id = $1", [d.leader_id]);
     if (!prof.rowCount) throw notFound("nhân sự chủ nhiệm đề tài");
+  }
+
+  const nextStatus = d.status ?? cur.status;
+  const isRevertingTransfer = cur.status === "TRANSFERRED" && nextStatus !== "TRANSFERRED";
+  let restoredStage = cur.current_stage;
+  if (isRevertingTransfer && cur.current_stage === "TRANSFERRED") {
+    const lastPassed = (
+      await tx.query(
+        "SELECT stage_after FROM rd.project_gate WHERE project_id = $1 AND status = 'PASSED' ORDER BY gate_no DESC LIMIT 1",
+        [id]
+      )
+    ).rows[0];
+    restoredStage = lastPassed?.stage_after ?? "G0_CONCEPT";
   }
 
   const curNormalized: Record<string, unknown> = {
@@ -1062,6 +1113,12 @@ export async function updateProject(tx: Tx, actor: AuthzActor, id: string, input
     planned_end: fmtIsoDate(cur.planned_end),
     description: cur.description ?? null,
     status: cur.status,
+    ...(isRevertingTransfer
+      ? {
+          current_stage: cur.current_stage,
+          actual_transfer_date: fmtIsoDate(cur.actual_transfer_date),
+        }
+      : {}),
   };
 
   const nextNormalized: Record<string, unknown> = {
@@ -1077,7 +1134,13 @@ export async function updateProject(tx: Tx, actor: AuthzActor, id: string, input
     planned_start: nextStart,
     planned_end: nextEnd,
     description: d.description === undefined ? curNormalized.description : d.description?.trim() || null,
-    status: d.status ?? curNormalized.status,
+    status: nextStatus,
+    ...(isRevertingTransfer
+      ? {
+          current_stage: restoredStage,
+          actual_transfer_date: null,
+        }
+      : {}),
   };
 
   const fields = Object.keys(curNormalized);
@@ -1124,9 +1187,6 @@ export async function deleteProject(tx: Tx, actor: AuthzActor, id: string, input
     await authorize(tx, actor, "rd.project.delete", cur.owner_org_unit_id);
   }
 
-  if (cur.status === "TRANSFERRED") {
-    throw conflict("Không thể xóa dự án đã hoàn tất chuyển giao sản xuất (TRANSFERRED).");
-  }
   const hasNonDraftTransfer = await tx.query(
     "SELECT 1 FROM rd.tech_transfer_package WHERE project_id = $1 AND status <> 'DRAFT' LIMIT 1",
     [id]

@@ -114,6 +114,7 @@ interface ProjectDetail {
   actual_transfer_date: string | null;
   description: string | null;
   version: number;
+  has_immutable_handoff?: boolean;
   gates: Gate[];
   specs: {
     id: string;
@@ -772,8 +773,12 @@ function ProjectPanel({
             <Button
               variant="ghost"
               className="text-rose-600 dark:text-rose-400"
-              disabled={p.status === "TRANSFERRED"}
-              title={p.status === "TRANSFERRED" ? "Không thể xóa dự án đã chuyển giao SX" : "Xóa dự án R&D"}
+              disabled={Boolean(p.has_immutable_handoff)}
+              title={
+                p.has_immutable_handoff
+                  ? "Không thể xóa dự án đã có hồ sơ chuyển giao công nghệ / phát hành phần mềm / dòng máy thương mại"
+                  : "Xóa dự án R&D"
+              }
               onClick={() => onRequestDelete(p)}
             >
               🗑️ Xóa dự án
@@ -2237,6 +2242,7 @@ export function ProjectsView({
   const [deleteReason, setDeleteReason] = useState("");
 
   const openEditProj = (proj: any) => {
+    editMut.reset();
     setEditingProj(proj);
     setEditName(proj.name || "");
     setEditType(proj.project_type || "NEW_PRODUCT");
@@ -2252,6 +2258,7 @@ export function ProjectsView({
   };
 
   const openDeleteProj = (proj: any) => {
+    deleteMut.reset();
     setDeletingProj(proj);
     setDeleteReason("");
   };
@@ -2306,7 +2313,7 @@ export function ProjectsView({
           planned_start: editStart || null,
           planned_end: editEnd || null,
           description: editDesc || null,
-          ...(p.status !== "TRANSFERRED" ? { status: editStatus } : {}),
+          ...(!p.has_immutable_handoff ? { status: editStatus } : {}),
           reason: editReason.trim() || null,
         },
       });
@@ -2643,8 +2650,12 @@ export function ProjectsView({
                         {canDelete && (
                           <Button
                             variant="ghost"
-                            disabled={r.status === "TRANSFERRED"}
-                            title={r.status === "TRANSFERRED" ? "Không thể xóa dự án đã chuyển giao SX" : "Xóa dự án R&D"}
+                            disabled={Boolean(r.has_immutable_handoff)}
+                            title={
+                              r.has_immutable_handoff
+                                ? "Không thể xóa dự án đã có hồ sơ chuyển giao công nghệ / phát hành phần mềm / dòng máy thương mại"
+                                : "Xóa dự án R&D"
+                            }
                             className="!px-2 !py-1 !text-[11px] text-rose-600 dark:text-rose-400"
                             onClick={() => openDeleteProj(r)}
                           >
@@ -2729,16 +2740,19 @@ export function ProjectsView({
                 <select
                   className={inputClass}
                   value={editStatus}
-                  disabled={editingProj.status === "TRANSFERRED"}
+                  disabled={Boolean(editingProj.has_immutable_handoff)}
                   onChange={(ev) => setEditStatus(ev.target.value)}
                 >
-                  {editingProj.status === "TRANSFERRED" ? (
-                    <option value="TRANSFERRED">Đã chuyển giao SX (Khóa)</option>
+                  {editingProj.has_immutable_handoff ? (
+                    <option value={editingProj.status}>Đã chuyển giao SX (Khóa do đã có hồ sơ chuyển giao)</option>
                   ) : (
                     <>
                       <option value="ACTIVE">Đang triển khai (ACTIVE)</option>
                       <option value="ON_HOLD">Tạm dừng (ON_HOLD)</option>
                       <option value="KILLED">Đã dừng dự án (KILLED)</option>
+                      {editingProj.status === "TRANSFERRED" && (
+                        <option value="TRANSFERRED">Đã chuyển giao SX (TRANSFERRED)</option>
+                      )}
                     </>
                   )}
                 </select>
