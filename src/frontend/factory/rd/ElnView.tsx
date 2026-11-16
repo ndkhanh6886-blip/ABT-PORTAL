@@ -621,38 +621,80 @@ export function ElnView({ canWrite }: { canWrite: boolean }) {
       )}
 
       <Card
-        title="Sổ thí nghiệm điện tử (ELN — Tuân thủ ALCOA+ & 21 CFR Part 11)"
+        title={
+          <span className="inline-flex items-center gap-2">
+            <span>Sổ thí nghiệm điện tử (ELN)</span>
+            <span className="hidden xl:inline-block px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+              ALCOA+ · 21 CFR Part 11
+            </span>
+          </span>
+        }
         actions={
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             <input
-              className={`${inputClass} w-44`}
+              className={`${inputClass} sm:w-44 !min-h-8 !py-1 !px-2.5 !text-xs`}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="🔍 Tìm mã ELN, tiêu đề, WBS..."
+              placeholder="🔍 Mã ELN, tiêu đề, WBS..."
             />
-            <select className={`${inputClass} w-56`} value={staffFilter} onChange={(e) => setStaffFilter(e.target.value)}>
-              <option value="">👤 Mọi nghiên cứu viên R&D</option>
-              {staffOptions.map((st) => (
-                <option key={st} value={st}>
-                  {st}
+            <select
+              className={`${inputClass} sm:w-44 !min-h-8 !py-1 !px-2.5 !text-xs`}
+              value={staffFilter}
+              onChange={(e) => setStaffFilter(e.target.value)}
+            >
+              <option value="">👤 Tất cả NCV ({allExps.length})</option>
+              {staffOptions.map((st) => {
+                const cnt = allExps.filter((r) => (r.performer_name || r.created_by_name) === st).length;
+                return (
+                  <option key={st} value={st}>
+                    {st} ({cnt})
+                  </option>
+                );
+              })}
+            </select>
+            <select
+              className={`${inputClass} sm:w-44 !min-h-8 !py-1 !px-2.5 !text-xs`}
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+            >
+              <option value="">Tất cả dự án & Độc lập</option>
+              <option value="STANDALONE">🧪 Chỉ ELN độc lập</option>
+              {projects.data?.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.code} — {p.name}
                 </option>
               ))}
             </select>
-            <select className={`${inputClass} w-56`} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-              <option value="">Tất cả (Dự án & Độc lập)</option>
-              <option value="STANDALONE">🧪 Chỉ thử nghiệm độc lập</option>
-              {projects.data?.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
-            </select>
-            <select className={`${inputClass} w-40`} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-              <option value="">Mọi trạng thái ELN</option>
+            <select
+              className={`${inputClass} sm:w-36 !min-h-8 !py-1 !px-2.5 !text-xs`}
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              <option value="">Mọi trạng thái</option>
               {Object.entries(EXP_STATUS).map(([k, [, label]]) => (
                 <option key={k} value={k}>
                   {label}
                 </option>
               ))}
             </select>
+            {(searchQuery || staffFilter || projectId || statusFilter) && (
+              <Button
+                variant="ghost"
+                title="Xóa toàn bộ bộ lọc"
+                className="!min-h-8 !py-1 !px-2.5"
+                onClick={() => {
+                  setSearchQuery("");
+                  setStaffFilter("");
+                  setProjectId("");
+                  setStatusFilter("");
+                }}
+              >
+                ✕
+              </Button>
+            )}
             {canWrite && (
               <Button
+                className="!min-h-8 !py-1 !px-3 whitespace-nowrap"
                 onClick={() => {
                   if (!adding) {
                     setNewProjId(projectId && projectId !== "STANDALONE" ? projectId : "");
@@ -660,49 +702,13 @@ export function ElnView({ canWrite }: { canWrite: boolean }) {
                   setAdding(!adding);
                 }}
               >
-                + Lập thí nghiệm ELN mới
+                + Lập ELN mới
               </Button>
             )}
           </div>
         }
       >
         <ErrorNote error={list.error ?? createMut.error} />
-
-        {/* Quick Researcher Workload Filter Bar for ELN */}
-        {staffOptions.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 mb-3 pb-2.5 border-b border-slate-100 dark:border-slate-800 text-xs">
-            <span className="font-semibold text-slate-500 mr-1">🧪 Lọc nhanh Nhật ký ELN theo Nghiên cứu viên R&D:</span>
-            <button
-              type="button"
-              onClick={() => setStaffFilter("")}
-              className={`px-2.5 py-1 rounded-full font-semibold cursor-pointer transition-all ${
-                staffFilter === ""
-                  ? "bg-indigo-600 text-white"
-                  : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200"
-              }`}
-            >
-              Tất cả ({allExps.length})
-            </button>
-            {staffOptions.map((st) => {
-              const cnt = allExps.filter((r) => (r.performer_name || r.created_by_name) === st).length;
-              const active = staffFilter === st;
-              return (
-                <button
-                  key={st}
-                  type="button"
-                  onClick={() => setStaffFilter(active ? "" : st)}
-                  className={`px-2.5 py-1 rounded-full font-semibold cursor-pointer transition-all ${
-                    active
-                      ? "bg-indigo-600 text-white shadow-sm"
-                      : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200"
-                  }`}
-                >
-                  👤 {st} ({cnt})
-                </button>
-              );
-            })}
-          </div>
-        )}
 
         {adding && (
           <form

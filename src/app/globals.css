@@ -2357,6 +2357,10 @@ html.dark {
     min-width: 0;
     text-overflow: ellipsis;
   }
+
+  .factory-input-width {
+    width: 100%;
+  }
 }
 
 .flex > select,
