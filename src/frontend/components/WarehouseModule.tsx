@@ -63,6 +63,7 @@ import { todayVN, toVNDateString, normalizeExcelDateToISO, normalizeExcelRowDate
 import { DateInputVN, formatDayVN, toISODate } from "@/frontend/components/DateInputVN";
 import { printWarehouseSlip, exportWarehouseSlipExcel, txPartnerName } from "@/frontend/components/warehouse/warehouseSlipDocs";
 import { packagingFormOfLot, isPcrKitProduct, PACKAGING_LABEL } from "@/frontend/utils/packagingForm";
+import { isOligoMtoProduct } from "@/backend/services/catalogRules";
 
 /**
  * Hỏi lại khi có dòng hàng mà hạn dùng ≤ ngày nhập kho (thường là gõ nhầm ngày sản xuất vào ô hạn dùng).
@@ -691,6 +692,7 @@ export const WarehouseModule: React.FC = () => {
         const pCat = String(item.category || "").trim().toLowerCase();
         if (pCode === "DVSC" || pCode === "OLIGO-SVC" || pCode.startsWith("DV-") || pCode.startsWith("SVC-")) return false;
         if (pCat.includes("dịch vụ") || pName.startsWith("dịch vụ") || pName.includes("dịch vụ sửa chữa") || pName.includes("dịch vụ bảo trì") || pName.includes("dịch vụ hiệu chuẩn")) return false;
+        if (isOligoMtoProduct(item) && Number(item.stock_quantity ?? item.quantity ?? 0) <= 0) return false;
         return true;
       })
       .map((item) => {

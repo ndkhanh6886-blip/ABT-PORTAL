@@ -1,6 +1,24 @@
 import type { PoolClient } from "pg";
 import { query } from "@/backend/db/db";
 import type { StoragePatch } from "@/backend/services/storagePatch";
+import {
+  normalizeVnCategoryText,
+  isServiceProduct,
+  isOligoMtoProduct,
+  isLegacyDemoOligoCode,
+  isNonPricedPipelineStatus,
+  LEGACY_DEMO_OLIGO_CODES,
+} from "./catalogRules";
+import { isDetailedOligoSkuCode } from "@/shared/oligoCatalog";
+
+export {
+  normalizeVnCategoryText,
+  isServiceProduct,
+  isOligoMtoProduct,
+  isLegacyDemoOligoCode,
+  isNonPricedPipelineStatus,
+  LEGACY_DEMO_OLIGO_CODES,
+};
 
 /**
  * Danh mục hàng thương mại (khóa `sales_commercial_products` cũ) lưu mỗi mặt hàng một dòng trong bảng
@@ -16,64 +34,6 @@ const COST_FIELDS = ["cost_price", "costPrice", "unit_cost", "unitCost", "purcha
 
 const cleanCode = (v: any) => String(v ?? "").trim();
 
-/** Chuẩn hóa chính tả tiếng Việt cho tên phân loại (đồng nhất oá/óa, uý/úy, Kít/Kit, NFC). */
-export function normalizeVnCategoryText(raw?: string | null): string {
-  if (!raw) return "";
-  let s = String(raw).normalize("NFC").trim();
-  const repls: Array<[string, string]> = [
-    ["Hoá", "Hóa"], ["hoá", "hóa"], ["HOÁ", "HÓA"],
-    ["oá", "óa"], ["oà", "òa"], ["oả", "ỏa"], ["oã", "õa"], ["oạ", "ọa"],
-    ["OÁ", "ÓA"], ["OÀ", "ÒA"], ["OẢ", "ỎA"], ["OÃ", "ÕA"], ["OẠ", "ỌA"],
-    ["uý", "úy"], ["uỳ", "ùy"], ["uỷ", "ủy"], ["uỹ", "ũy"], ["uỵ", "ụy"],
-    ["UÝ", "ÚY"], ["UỲ", "ÙY"], ["UỶ", "ỦY"], ["UỸ", "ŨY"], ["UỴ", "ỤY"],
-    ["Kít ", "Kit "], ["kít ", "kit "],
-  ];
-  for (const [a, b] of repls) {
-    s = s.split(a).join(b);
-  }
-  return s.replace(/\s+/g, " ");
-}
-
-/**
- * Kiểm tra mặt hàng có phải là Dịch vụ (sửa chữa, bảo trì, hiệu chuẩn, lắp đặt...) hay không.
- * Mặt hàng dịch vụ chỉ phát sinh khi có dịch vụ/sửa chữa, KHÔNG có số lượng tồn kho trong kho.
- */
-export function isServiceProduct(item?: {
-  code?: string | null;
-  product_code?: string | null;
-  name?: string | null;
-  product_name?: string | null;
-  category?: string | null;
-  unit?: string | null;
-} | null): boolean {
-  if (!item) return false;
-  const cUp = String(item.code ?? item.product_code ?? "").trim().toUpperCase();
-  const nLow = normalizeVnCategoryText(item.name ?? item.product_name ?? "").toLowerCase();
-  const catLow = normalizeVnCategoryText(item.category ?? "").toLowerCase();
-  if (cUp === "DVSC" || cUp.startsWith("DV-") || cUp.startsWith("DV_") || cUp.startsWith("SVC-") || cUp === "OLIGO-SVC") {
-    return true;
-  }
-  if (catLow.includes("dịch vụ")) {
-    return true;
-  }
-  if (
-    nLow.startsWith("dịch vụ") ||
-    nLow.startsWith("sửa chữa") ||
-    nLow.startsWith("phí dịch vụ") ||
-    nLow.startsWith("phí sửa chữa") ||
-    nLow.startsWith("phí bảo trì") ||
-    nLow.startsWith("phí hiệu chuẩn") ||
-    nLow.includes("dịch vụ sửa chữa") ||
-    nLow.includes("dịch vụ bảo trì") ||
-    nLow.includes("dịch vụ bảo dưỡng") ||
-    nLow.includes("dịch vụ hiệu chuẩn") ||
-    nLow.includes("dịch vụ kiểm định")
-  ) {
-    return true;
-  }
-  return false;
-}
-
 /**
  * Tự động suy luận phân loại thực tế khi mặt hàng đang mang phân loại mặc định chung chung
  * ("Hàng Thương Mại", "Vật tư y tế", "Sinh Phẩm & Nguyên Liệu"...) hoặc bị rơi vào mặc định "Thiết bị"
@@ -87,6 +47,13 @@ export function resolveActualProductCategory(item: { code?: string; name?: strin
 
   if (isServiceProduct(item)) {
     return "Dịch vụ & Khác";
+  }
+
+  if (catLow === "oligo" || isDetailedOligoSkuCode(cUp)) {
+    return "Oligo";
+  }
+  if (catLow === "giải pháp tự pha" || /^(PIP|POP|AMP|PPP)-\d+/i.test(cUp)) {
+    return "Giải pháp tự pha";
   }
 
   const isGeneric =
@@ -162,13 +129,15 @@ export function resolveActualProductCategory(item: { code?: string; name?: strin
 export async function readCatalog(c?: Queryable): Promise<any[]> {
   const q = c ? c.query.bind(c) : query;
   const res = await q("SELECT data FROM catalog_items ORDER BY sort_order ASC, code ASC");
-  return res.rows.map((r: any) => {
-    const d = r.data || {};
-    return {
-      ...d,
-      category: resolveActualProductCategory(d),
-    };
-  });
+  return res.rows
+    .map((r: any) => {
+      const d = r.data || {};
+      return {
+        ...d,
+        category: resolveActualProductCategory(d),
+      };
+    })
+    .filter((item: any) => !isLegacyDemoOligoCode(item.code));
 }
 
 /** Số phiên bản để trình duyệt nhận biết thay đổi (đổi mỗi khi có dòng được ghi). */
@@ -279,12 +248,14 @@ export async function replaceCatalog(c: Queryable, items: any[], canDelete: bool
  */
 export async function appendCatalogEntry(c: Queryable, entry: Record<string, any>): Promise<void> {
   const code = cleanCode(entry?.code);
-  if (!code) return;
+  if (!code || isLegacyDemoOligoCode(code)) return;
   const isSvc = isServiceProduct({ ...entry, code });
-  const resolvedCategory = resolveActualProductCategory({ ...entry, code });
+  const explicitDealerPrices = Boolean(entry?.explicitDealerPrices);
+  const { explicitDealerPrices: _dropFlag, ...cleanEntry } = entry || {};
+  const resolvedCategory = resolveActualProductCategory({ ...cleanEntry, code });
   const initialPayload = isSvc
-    ? { ...entry, code, category: resolvedCategory, costPrice: 0, price: 0, priceDealer1: 0, priceDealer2: 0, leadTime: "Theo phát sinh thực tế" }
-    : { ...entry, code, category: resolvedCategory };
+    ? { ...cleanEntry, code, category: resolvedCategory, costPrice: 0, price: 0, priceDealer1: 0, priceDealer2: 0, leadTime: "Theo phát sinh thực tế" }
+    : { ...cleanEntry, code, category: resolvedCategory };
   const ins = await c.query(
     `INSERT INTO catalog_items (code, data, sort_order, updated_at) VALUES ($1, $2::jsonb, $3, now())
      ON CONFLICT (code) DO NOTHING
@@ -294,9 +265,10 @@ export async function appendCatalogEntry(c: Queryable, entry: Record<string, any
   if ((ins.rowCount || 0) > 0) return;
 
   // Dịch vụ sửa chữa mỗi lần mỗi giá theo thực tế -> không ghi đè giá của 1 lần phát sinh vào danh mục chuẩn
-  const newCost = isSvc ? 0 : (Number(entry?.costPrice ?? entry?.cost_price) || 0);
-  const newPrice = isSvc ? 0 : (Number(entry?.price ?? entry?.standard_price) || 0);
-  const newStorage = String(entry?.storageCondition ?? entry?.storage_condition ?? "").trim();
+  const newCost = isSvc ? 0 : (Number(cleanEntry?.costPrice ?? cleanEntry?.cost_price) || 0);
+  const rawPrice = cleanEntry?.price ?? cleanEntry?.standard_price;
+  const newPrice = isSvc ? 0 : (Number(rawPrice) || 0);
+  const newStorage = String(cleanEntry?.storageCondition ?? cleanEntry?.storage_condition ?? "").trim();
 
   const existingRes = await c.query("SELECT data FROM catalog_items WHERE code = $1", [code]);
   if (existingRes.rows.length === 0) return;
@@ -310,6 +282,13 @@ export async function appendCatalogEntry(c: Queryable, entry: Record<string, any
     patch.category = curCatResolved;
   }
 
+  for (const field of ["name", "specification", "unit", "subCategory", "leadTime", "supplier", "brand", "notes"] as const) {
+    const val = cleanEntry?.[field];
+    if (val !== undefined && val !== null && String(val).trim() !== "") {
+      patch[field] = String(val).trim();
+    }
+  }
+
   if (newCost > 0) {
     const oldCost = Number(curData.costPrice ?? curData.cost_price) || 0;
     if (oldCost > 0 && oldCost !== newCost) {
@@ -318,14 +297,23 @@ export async function appendCatalogEntry(c: Queryable, entry: Record<string, any
     }
     patch.costPrice = newCost;
   }
-  if (newPrice > 0) {
+  if (!isSvc && (newPrice > 0 || explicitDealerPrices)) {
     const oldPrice = Number(curData.price) || 0;
-    if (oldPrice > 0 && oldPrice !== newPrice) {
+    if (oldPrice > 0 && newPrice > 0 && oldPrice !== newPrice) {
       patch.previousPrice = oldPrice;
     }
-    patch.price = newPrice;
-    patch.priceDealer1 = Number(entry?.priceDealer1) || Math.round(newPrice * 0.85);
-    patch.priceDealer2 = Number(entry?.priceDealer2) || Math.round(newPrice * 0.8);
+    if (newPrice > 0 || rawPrice !== undefined) {
+      patch.price = newPrice;
+    }
+    const d1Raw = cleanEntry?.priceDealer1 !== undefined ? Number(cleanEntry.priceDealer1) || 0 : undefined;
+    const d2Raw = cleanEntry?.priceDealer2 !== undefined ? Number(cleanEntry.priceDealer2) || 0 : undefined;
+    if (explicitDealerPrices) {
+      if (d1Raw !== undefined) patch.priceDealer1 = d1Raw;
+      if (d2Raw !== undefined) patch.priceDealer2 = d2Raw;
+    } else if (newPrice > 0) {
+      patch.priceDealer1 = d1Raw || Math.round(newPrice * 0.85);
+      patch.priceDealer2 = d2Raw || Math.round(newPrice * 0.8);
+    }
   }
   if (newStorage && !curData.storageCondition) {
     patch.storageCondition = newStorage;
