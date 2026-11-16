@@ -257,5 +257,30 @@ describe("root administrator", () => {
       )
     ).rows.map((r) => r.action);
     expect(auditActions).toEqual(["revoke_permission", "grant_permission", "revoke_permission", "reset_overrides"]);
+
+    // 5. Locking implicit `intake.order.view` removes it from heldPermissions & blocks permission checks, until reset
+    await withTransaction(async (tx) => {
+      expect(await heldPermissions(tx, qaUser1)).toContain("intake.order.view");
+    });
+    await withTransaction((tx) =>
+      setUserCustomPermission(tx, a, directory, qaUser1.userId, {
+        permission_codes: ["intake.order.view"],
+        enabled: false,
+        reason: "Khóa tab Đơn Nội Bộ",
+      })
+    );
+    await withTransaction(async (tx) => {
+      expect(await heldPermissions(tx, qaUser1)).not.toContain("intake.order.view");
+      expect(await hasFactoryPermission(tx, qaUser1, "intake.order.view")).toBe(false);
+    });
+    await withTransaction((tx) =>
+      setUserCustomPermission(tx, a, directory, qaUser1.userId, {
+        reset_overrides: true,
+        reason: "Mở lại mặc định",
+      })
+    );
+    await withTransaction(async (tx) => {
+      expect(await heldPermissions(tx, qaUser1)).toContain("intake.order.view");
+    });
   });
 });

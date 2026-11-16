@@ -4327,7 +4327,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                 key={permissionsModalUser.id}
                 userId={Number(permissionsModalUser.id)}
                 username={permissionsModalUser.username}
-                isRootAdmin={permissionsModalUser.role === "admin" || permissionsModalUser.role === "director"}
+                isRootAdmin={String(permissionsModalUser.role || "").toLowerCase() === "admin" || String(permissionsModalUser.username || "").toLowerCase() === "admin"}
               />
 
               {/* Divider between Departments and Granular Features */}
@@ -4435,7 +4435,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                 key={`features-${permissionsModalUser.id}`}
                 userId={Number(permissionsModalUser.id)}
                 username={permissionsModalUser.username}
-                isRootAdmin={permissionsModalUser.role === "admin" || permissionsModalUser.role === "director"}
+                isRootAdmin={String(permissionsModalUser.role || "").toLowerCase() === "admin" || String(permissionsModalUser.username || "").toLowerCase() === "admin"}
                 startIndex={PERMISSION_GROUPS.length + 1}
                 onSummaryChange={setFactoryPermSummary}
               />

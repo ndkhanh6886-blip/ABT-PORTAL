@@ -317,13 +317,23 @@ export async function setUserCustomPermission(
          JOIN core.role_permission rp ON rp.role_id = r.id
          LEFT JOIN core.org_unit o ON o.id = ur.scope_org_unit_id
         WHERE ur.user_id = $1 AND ur.revoked_at IS NULL AND r.code <> $2
-          AND ur.valid_from <= now() AND (ur.valid_to IS NULL OR ur.valid_to > now())`,
+          AND ur.valid_from <= now() AND (ur.valid_to IS NULL OR ur.valid_to > now())
+       UNION ALL
+       SELECT DISTINCT rp.permission_code, ur.scope_org_unit_id, o.module_key, o.unit_type
+         FROM core.delegation d
+         JOIN core.user_role ur ON ur.user_id = d.from_user_id AND ur.role_id = d.role_id AND ur.revoked_at IS NULL
+         JOIN core.role r ON r.id = ur.role_id AND r.status = 'ACTIVE'
+         JOIN core.role_permission rp ON rp.role_id = r.id
+         LEFT JOIN core.org_unit o ON o.id = ur.scope_org_unit_id
+        WHERE d.to_user_id = $1 AND d.revoked_at IS NULL AND d.valid_from <= now() AND d.valid_to > now() AND r.code <> $2`,
       [targetUserId, roleCode]
     )
   ).rows as { permission_code: string; scope_org_unit_id: string | null; module_key: string | null; unit_type: string | null }[];
 
   const isHeldInAnyRole = (c: string) =>
-    inheritedGrants.some((g) => g.permission_code === c) || Boolean(getPermission(c)?.bootstrapAdmin);
+    c === "intake.order.view" ||
+    inheritedGrants.some((g) => g.permission_code === c) ||
+    Boolean(getPermission(c)?.bootstrapAdmin);
 
   const isEffectivelyInheritedEverywhere = (c: string) => {
     const mod = c.split(".")[0];

@@ -153,6 +153,9 @@ function useFactoryAccess(userId: number, username: string) {
           names.push(item.grant.role_name);
         }
       }
+      if (permCode === "intake.order.view" && names.length === 0) {
+        names.push("Mặc định nội bộ");
+      }
       return [...new Set(names)];
     };
     return { customPermSet: customSet, inheritedRolesFor: getInherited };
@@ -184,20 +187,34 @@ function useFactoryAccess(userId: number, username: string) {
   };
 }
 
+const DEFAULT_DEPT_ENTRY_PERMS: Record<string, string[]> = {
+  rd: ["rd.view"],
+  kit: ["kit.view"],
+  oligo: ["oligo.view"],
+  device: ["device.view"],
+  qa: ["qms.qc.view"],
+  wh: ["inv.stock.view", "master.data.view"],
+  purchase: ["purchase.pr.view", "purchase.po.view"],
+  intake: ["intake.order.view"],
+  core: ["core.audit.view"],
+};
+
 /**
- * Factory access of one portal user inside "Phân Quyền Chi Tiết Cá Nhân". Factory permissions come only from
- * roles (scoped to a department, audited, GMP / 21 CFR Part 11), so a department is opened by granting /
- * revoking a role, which takes effect at once — not with the portal "Lưu" button.
+ * Factory access of one portal user inside "Phân Quyền Chi Tiết Cá Nhân". Admins can either toggle a
+ * whole department card on/off in 1 click (per-user enable/exclusion, without stripping their primary role
+ * elsewhere) or expand a card to grant/revoke roles.
  */
 export function FactoryAccessSection({ userId, username, isRootAdmin }: { userId: number; username: string; isRootAdmin: boolean }) {
   const qc = useQueryClient();
   const me = useFactoryMe();
-  const { user, roles, roleById, allUnits, units, catalogue, isPermActiveInDept, error, ready } = useFactoryAccess(userId, username);
+  const { user, roles, roleById, allUnits, units, catalogue, excludedSet, customPermSet, inheritedRolesFor, isPermActiveInDept, error, ready } =
+    useFactoryAccess(userId, username);
   const [open, setOpen] = useState<string | null>(null);
   const [form, setForm] = useState<{ dept: string; roleId: string; scope: string }>({ dept: "", roleId: "", scope: "" });
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["factory", "users"] });
+    qc.invalidateQueries({ queryKey: ["factory", "roles"] });
     qc.invalidateQueries({ queryKey: ["factory", "me"] });
   };
   const grant = useMutation({
@@ -212,7 +229,16 @@ export function FactoryAccessSection({ userId, username, isRootAdmin }: { userId
     mutationFn: ({ id, reason }: { id: string; reason: string }) => api(`/api/factory/user-roles/${id}/revoke`, { method: "POST", json: { reason } }),
     onSuccess: refresh,
   });
+  const toggleDeptMut = useMutation({
+    mutationFn: (arg: { codes: string[]; enabled: boolean; reason: string }) =>
+      api(`/api/factory/users/${userId}/permissions`, {
+        method: "POST",
+        json: { permission_codes: arg.codes, enabled: arg.enabled, reason: arg.reason },
+      }),
+    onSuccess: refresh,
+  });
   const isSelf = me.data?.profile.user_id === userId;
+  const canToggleDept = !isRootAdmin && (!isSelf || Boolean(me.data?.is_root));
 
   return (
     <div className="bg-gradient-to-br from-teal-50/80 via-white to-slate-50 dark:from-slate-800/80 dark:via-slate-850/60 dark:to-slate-900 rounded-2xl border-2 border-teal-500/40 p-5 space-y-4 shadow-sm">
@@ -228,7 +254,7 @@ export function FactoryAccessSection({ userId, username, isRootAdmin }: { userId
             </span>
           </h4>
           <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-            Bấm vào phòng để cấp / thu hồi vai trò (có hiệu lực ngay, ghi nhật ký kiểm toán). Lưu ý: <strong>Kho Nhà máy &amp; Cung ứng Kỹ thuật (P-KHO)</strong> quản lý NVL, enzyme, bán thành phẩm, lô sản xuất &amp; cấp phát FEFO theo GMP/ISO 13485 — tách biệt hoàn toàn với <strong>Kho Kinh Doanh &amp; Cung Ứng Kinh Doanh</strong> ở trên. Tích chọn / bỏ chọn chi tiết từng quyền cho cá nhân ở phần bên dưới.
+            Gạt công tắc <strong>Bật/Tắt</strong> ở góc phải từng thẻ để mở hoặc khóa nhanh quyền vào phòng cho riêng cá nhân này (không làm mất vai trò chính ở phòng khác), hoặc bấm vào tên phòng để cấp / thu hồi vai trò. Lưu ý: <strong>Kho Nhà máy &amp; Cung ứng Kỹ thuật (P-KHO)</strong> tách biệt hoàn toàn với <strong>Kho Kinh Doanh &amp; Cung Ứng Kinh Doanh</strong> ở trên.
           </p>
         </div>
       </div>
@@ -242,6 +268,7 @@ export function FactoryAccessSection({ userId, username, isRootAdmin }: { userId
           {FACTORY_DEPTS.map((d) => {
             const perms = catalogue.filter((p) => d.modules.includes(p.module));
             const heldCount = perms.filter((p) => isPermActiveInDept(p.code, d.unit, isRootAdmin)).length;
+            const customInDeptCount = perms.filter((p) => customPermSet.has(p.code) && !excludedSet.has(p.code)).length;
             const grants = user.grants.filter(
               (g) =>
                 !g.role_code?.startsWith("USER_CUSTOM_") &&
@@ -253,6 +280,33 @@ export function FactoryAccessSection({ userId, username, isRootAdmin }: { userId
             const deptUnit = units.find((u) => u.module_key === d.unit);
             const expanded = open === d.key;
             const on = heldCount > 0;
+            const handleQuickToggle = (e: React.MouseEvent | React.KeyboardEvent) => {
+              e.stopPropagation();
+              if (!canToggleDept || toggleDeptMut.isPending || perms.length === 0) return;
+              if (on) {
+                toggleDeptMut.mutate({
+                  codes: perms.map((p) => p.code),
+                  enabled: false,
+                  reason: `Khóa quyền vào phân hệ ${d.short}`,
+                });
+              } else {
+                const excludedInherited = perms
+                  .filter((p) => excludedSet.has(p.code) && inheritedRolesFor(p.code, d.unit).length > 0)
+                  .map((p) => p.code);
+                const defaults = (DEFAULT_DEPT_ENTRY_PERMS[d.key] ?? perms.slice(0, 1).map((p) => p.code)).filter((c) =>
+                  perms.some((p) => p.code === c)
+                );
+                const codesToEnable = excludedInherited.length > 0 ? excludedInherited : defaults;
+                if (codesToEnable.length > 0) {
+                  toggleDeptMut.mutate({
+                    codes: codesToEnable,
+                    enabled: true,
+                    reason: `Mở quyền vào phân hệ ${d.short}`,
+                  });
+                }
+                setOpen(d.key);
+              }
+            };
             return (
               <div
                 key={d.key}
@@ -260,13 +314,50 @@ export function FactoryAccessSection({ userId, username, isRootAdmin }: { userId
                   on ? "bg-white dark:bg-slate-800 border-teal-500 ring-2 ring-teal-500/20" : "bg-slate-50/60 dark:bg-slate-850/40 border-slate-200 dark:border-slate-800"
                 }`}
               >
-                <button type="button" onClick={() => setOpen(expanded ? null : d.key)} className="flex items-start justify-between gap-2 text-left cursor-pointer">
-                  <div>
+                <div className="flex items-start justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setOpen(expanded ? null : d.key)}
+                    className="flex-1 text-left cursor-pointer min-w-0"
+                  >
                     <div className={`text-xs font-black ${on ? "text-slate-900 dark:text-white" : "text-slate-600 dark:text-slate-400"}`}>{d.short}</div>
                     <div className="text-[10px] text-slate-400 font-medium">{d.name}</div>
+                  </button>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {canToggleDept && perms.length > 0 && (
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={on}
+                        disabled={toggleDeptMut.isPending}
+                        onClick={handleQuickToggle}
+                        title={
+                          on
+                            ? `Bấm để khóa toàn bộ quyền vào "${d.short}" cho riêng cá nhân này`
+                            : `Bấm để mở quyền vào "${d.short}"`
+                        }
+                        aria-label={on ? `Khóa ${d.short}` : `Mở ${d.short}`}
+                        className={`w-9 h-5 rounded-full transition-colors p-0.5 shrink-0 cursor-pointer disabled:opacity-50 ${
+                          on ? "bg-teal-600 hover:bg-teal-500" : "bg-slate-300 dark:bg-slate-700 hover:bg-slate-400"
+                        }`}
+                      >
+                        <div
+                          className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                            on ? "translate-x-4 shadow-sm" : "translate-x-0"
+                          }`}
+                        />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setOpen(expanded ? null : d.key)}
+                      aria-label={expanded ? `Thu gọn ${d.short}` : `Mở rộng ${d.short}`}
+                      className="p-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-400 cursor-pointer"
+                    >
+                      {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                    </button>
                   </div>
-                  {expanded ? <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" /> : <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />}
-                </button>
+                </div>
                 <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800 text-[10px]">
                   <span className={`font-bold ${on ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400"}`}>{on ? "✓ ĐƯỢC PHÉP VÀO" : "✕ ĐANG KHÓA TAB"}</span>
                   <span className="text-slate-400 font-mono">
@@ -276,27 +367,81 @@ export function FactoryAccessSection({ userId, username, isRootAdmin }: { userId
 
                 {expanded && (
                   <div className="flex flex-col gap-3 pt-1">
-                    <div className="flex flex-wrap gap-1.5">
-                      {isRootAdmin && <span className="text-[11px] text-amber-700 dark:text-amber-300">Root admin · toàn quyền nhà máy.</span>}
-                      {!isRootAdmin && grants.length === 0 && <span className="text-[11px] text-slate-400">Chưa có vai trò nào của phòng này.</span>}
-                      {grants.map((g) => (
-                        <span key={g.id} className="flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-teal-50 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-900 text-[11px] text-teal-800 dark:text-teal-200">
-                          {g.role_name} · {g.scope_name ?? "toàn công ty"}
-                          {!isSelf && (
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap gap-1.5 items-center">
+                        {isRootAdmin && <span className="text-[11px] text-amber-700 dark:text-amber-300">Root admin · toàn quyền nhà máy.</span>}
+                        {!isRootAdmin && grants.length === 0 && customInDeptCount === 0 && (
+                          <span className="text-[11px] text-slate-400">Chưa có vai trò nào của phòng này.</span>
+                        )}
+                        {customInDeptCount > 0 && (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-[11px] text-emerald-700 dark:text-emerald-300 font-semibold">
+                            Cấp riêng cá nhân · {customInDeptCount} quyền
+                          </span>
+                        )}
+                        {grants.map((g) => (
+                          <span key={g.id} className="flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-teal-50 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-900 text-[11px] text-teal-800 dark:text-teal-200">
+                            {g.role_name} · {g.scope_name ?? "toàn công ty"}
+                            {!isSelf && (
+                              <button
+                                type="button"
+                                className="ml-1 w-5 h-5 rounded-full hover:bg-teal-200 dark:hover:bg-teal-900 cursor-pointer"
+                                title="Thu hồi vai trò"
+                                onClick={() => {
+                                  const reason = window.prompt(`Lý do thu hồi vai trò "${g.role_name}":`);
+                                  if (reason) revoke.mutate({ id: g.id, reason });
+                                }}
+                              >
+                                ×
+                              </button>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                      {canToggleDept && perms.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                          {on ? (
                             <button
                               type="button"
-                              className="ml-1 w-5 h-5 rounded-full hover:bg-teal-200 dark:hover:bg-teal-900 cursor-pointer"
-                              title="Thu hồi vai trò"
-                              onClick={() => {
-                                const reason = window.prompt(`Lý do thu hồi vai trò "${g.role_name}":`);
-                                if (reason) revoke.mutate({ id: g.id, reason });
-                              }}
+                              disabled={toggleDeptMut.isPending}
+                              onClick={() =>
+                                toggleDeptMut.mutate({
+                                  codes: perms.map((p) => p.code),
+                                  enabled: false,
+                                  reason: `Khóa tab ${d.short} (tắt toàn bộ ${perms.length} quyền của phân hệ)`,
+                                })
+                              }
+                              className="px-2.5 py-1 rounded-lg bg-rose-50 dark:bg-rose-950/50 hover:bg-rose-100 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-[11px] font-bold cursor-pointer disabled:opacity-50"
                             >
-                              ×
+                              Khóa tab phòng này (Tắt hết)
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={toggleDeptMut.isPending}
+                              onClick={handleQuickToggle}
+                              className="px-2.5 py-1 rounded-lg bg-teal-50 dark:bg-teal-950/50 hover:bg-teal-100 border border-teal-200 dark:border-teal-800 text-teal-700 dark:text-teal-300 text-[11px] font-bold cursor-pointer disabled:opacity-50"
+                            >
+                              Mở tab (Quyền xem)
                             </button>
                           )}
-                        </span>
-                      ))}
+                          {heldCount < perms.length && (
+                            <button
+                              type="button"
+                              disabled={toggleDeptMut.isPending}
+                              onClick={() =>
+                                toggleDeptMut.mutate({
+                                  codes: perms.map((p) => p.code),
+                                  enabled: true,
+                                  reason: `Bật đủ ${perms.length} tính năng trong phân hệ ${d.short}`,
+                                })
+                              }
+                              className="px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-[11px] font-bold cursor-pointer disabled:opacity-50"
+                            >
+                              Bật đủ {perms.length} tính năng
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     {isSelf ? (
@@ -352,7 +497,7 @@ export function FactoryAccessSection({ userId, username, isRootAdmin }: { userId
           })}
         </div>
       )}
-      <ErrorNote error={grant.error ?? revoke.error} />
+      <ErrorNote error={grant.error ?? revoke.error ?? toggleDeptMut.error} />
     </div>
   );
 }

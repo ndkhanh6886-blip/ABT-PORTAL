@@ -119,7 +119,7 @@ export function TechnicalTabs({ active, onChange }: { active: MainTab; onChange:
         { tab: "factory-oligo", label: "Tổng Hợp Oligo", icon: FlaskConical, show: hasAny(me.data, ["oligo"]) },
         { tab: "factory-device", label: "Kỹ Thuật – Thiết Bị", icon: Cpu, show: hasAny(me.data, ["device"]) },
         { tab: "factory-qa", label: "QA/QC", icon: ShieldCheck, show: hasAny(me.data, ["qms.qc.view"]) },
-        { tab: "factory-purchase", label: "Cung Ứng NVL", icon: PackageCheck, show: hasAny(me.data, ["purchase", "master.partner"]) },
+        { tab: "factory-purchase", label: "Cung Ứng NVL", icon: PackageCheck, show: hasAny(me.data, ["purchase"]) },
         { tab: "factory-warehouse", label: "Kho Nhà Máy", icon: Warehouse, show: hasAny(me.data, ["inv", "master"]) },
         { tab: "factory-analytics", label: "Phân Tích & Dự Báo", icon: BarChart3, show: hasAny(me.data, ["qms.qc.view"]) },
         { tab: "factory-import", label: "Nhập Liệu Excel", icon: FileSpreadsheet, show: Boolean(me.data?.permissions.length) },

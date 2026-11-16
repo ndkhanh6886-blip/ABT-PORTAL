@@ -77,7 +77,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
   const canFactoryDevice = hasAny(factoryMe.data, ["device"]);
   const canFactoryQa = hasAny(factoryMe.data, ["qms.qc.view"]);
   const canFactoryOrders = hasAny(factoryMe.data, ["intake"]);
-  const canFactoryPurchase = hasAny(factoryMe.data, ["purchase", "master.partner"]);
+  const canFactoryPurchase = hasAny(factoryMe.data, ["purchase"]);
 
   const technicalTabs = ([
     canFactoryRd ? "factory-rd" : null,
@@ -93,7 +93,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
   const canTechnical = technicalTabs.length > 0;
   const isTechnicalTab = (technicalTabs as readonly string[]).includes(activeTab);
   const firstTechnicalTab: MainTab = isTechnicalTab ? activeTab : technicalTabs[0] ?? "factory-rd";
-  const canInternalOrders = can("sales.view") || canFactoryOrders || canTechnical;
+  const canInternalOrders = can("sales.view") || canFactoryOrders;
 
   const isSettingsTab = activeTab === "settings" || activeTab === "factory-settings";
 
