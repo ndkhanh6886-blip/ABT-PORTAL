@@ -2,8 +2,36 @@
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
-import { isServiceProduct } from "@/backend/services/catalogRules";
 import { packagingFormOfLot, normalizePackagingForm, normalizeIcForm, normalizeTubeType, withPackagingNote, isPcrKitProduct, PACKAGING_LABEL, IC_LABEL, PCR_TUBE_CODES, kitSpecOf, kitSpecLabel, lotKitSpec, lotMatchesKitSpec, kitSpecMismatches, missingKitSpec, hasKitSpec, type KitSpec } from "@/frontend/utils/packagingForm";
+
+/** Kiểm tra mặt hàng có phải là Dịch vụ (sửa chữa, bảo trì, hiệu chuẩn...) — hàm thuần phía client, không import từ backend/db. */
+function isServiceProduct(item?: {
+    code?: string | null;
+    product_code?: string | null;
+    name?: string | null;
+    product_name?: string | null;
+    category?: string | null;
+} | null): boolean {
+    if (!item) return false;
+    const cUp = String(item.code ?? item.product_code ?? "").trim().toUpperCase();
+    const nLow = String(item.name ?? item.product_name ?? "").normalize("NFC").trim().toLowerCase();
+    const catLow = String(item.category ?? "").normalize("NFC").trim().toLowerCase();
+    if (cUp === "DVSC" || cUp.startsWith("DV-") || cUp.startsWith("DV_") || cUp.startsWith("SVC-") || cUp === "OLIGO-SVC") return true;
+    if (catLow.includes("dịch vụ")) return true;
+    return (
+        nLow.startsWith("dịch vụ") ||
+        nLow.startsWith("sửa chữa") ||
+        nLow.startsWith("phí dịch vụ") ||
+        nLow.startsWith("phí sửa chữa") ||
+        nLow.startsWith("phí bảo trì") ||
+        nLow.startsWith("phí hiệu chuẩn") ||
+        nLow.includes("dịch vụ sửa chữa") ||
+        nLow.includes("dịch vụ bảo trì") ||
+        nLow.includes("dịch vụ bảo dưỡng") ||
+        nLow.includes("dịch vụ hiệu chuẩn") ||
+        nLow.includes("dịch vụ kiểm định")
+    );
+}
 import {
     Wallet,
     Briefcase,
