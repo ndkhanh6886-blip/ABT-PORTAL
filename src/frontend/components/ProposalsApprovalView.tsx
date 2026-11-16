@@ -78,6 +78,9 @@ export interface ProposalStepTemplate {
   defaultApprover: string;
   slaHours: number;
   conditionMinAmount?: number; // Nếu có: chỉ kích hoạt bước này khi số tiền >= hạn mức
+  allowAttachment?: boolean;
+  requireAttachment?: boolean;
+  attachmentLabel?: string;
 }
 
 export interface ProposalTemplate {
@@ -107,6 +110,10 @@ export interface ProposalStepInstance {
   decidedAt?: string;
   decidedBy?: string;
   comment?: string;
+  allowAttachment?: boolean;
+  requireAttachment?: boolean;
+  attachmentLabel?: string;
+  attachments?: Attachment[];
 }
 
 export interface ProposalLineItem {
@@ -144,6 +151,7 @@ export interface ProposalItem {
   executorName?: string;
   executedAt?: string;
   executionNote?: string;
+  executionAttachments?: Attachment[];
   linkedRefCode?: string;
   customerName?: string;
   supplierName?: string;
@@ -156,6 +164,7 @@ export interface ProposalItem {
     text: string;
     time: string;
     actionTag?: string;
+    attachments?: Attachment[];
   }>;
   auditLogs: Array<{
     time: string;
@@ -310,7 +319,7 @@ export const DEFAULT_PROPOSAL_TEMPLATES: ProposalTemplate[] = [
     ],
     defaultSteps: [
       { stepOrder: 1, stepName: "Trưởng bộ phận xác nhận", roleType: "DEPT_HEAD", defaultDept: "Theo phòng người tạo", defaultApprover: "Trưởng bộ phận", slaHours: 4 },
-      { stepOrder: 2, stepName: "Kế toán kiểm tra & xuất hóa đơn", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Võ Thị Ngọc Giàu", slaHours: 8 }
+      { stepOrder: 2, stepName: "Kế toán kiểm tra & xuất hóa đơn", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Võ Thị Ngọc Giàu", slaHours: 8, allowAttachment: true, attachmentLabel: "File Hóa đơn VAT đã xuất (PDF / XML / Ảnh)" }
     ]
   },
 
@@ -654,8 +663,9 @@ export function isProposalWaitingForUser(
   const activeStep = (p.steps || []).find((s) => s.status === "PENDING_NOW") || p.steps?.[p.currentStepIndex];
   if (!activeStep) return false;
   if (isSamePerson(activeStep.approverName, currentStaffName)) return true;
+  if (userDept && canonName(activeStep.approverName) === canonName(userDept)) return true;
   if (isDirector && (activeStep.roleType === "DIRECTOR" || activeStep.dept === "Ban Giám Đốc")) return true;
-  if (isManager && activeStep.roleType === "DEPT_HEAD" && activeStep.dept.toLowerCase() === String(userDept || "").toLowerCase()) {
+  if (isManager && (activeStep.roleType === "DEPT_HEAD" || canonName(activeStep.approverName) === "truong bo phan") && canonName(activeStep.dept) === canonName(userDept)) {
     return true;
   }
   return false;
@@ -734,9 +744,13 @@ export function ProposalsApprovalView({
   // Chi tiết Đề xuất & Xử lý Duyệt
   const [selectedProposal, setSelectedProposal] = useState<ProposalItem | null>(null);
   const [decisionNote, setDecisionNote] = useState<string>("");
+  const [decisionAttachments, setDecisionAttachments] = useState<Attachment[]>([]);
+  const [executionNoteInput, setExecutionNoteInput] = useState<string>("");
+  const [executionAttachments, setExecutionAttachments] = useState<Attachment[]>([]);
   const [delegateToStaff, setDelegateToStaff] = useState<string>("");
   const [showDelegateBox, setShowDelegateBox] = useState<boolean>(false);
   const [commentInput, setCommentInput] = useState<string>("");
+  const [commentAttachments, setCommentAttachments] = useState<Attachment[]>([]);
 
   // Modal Cấu hình Biểu mẫu & Ma trận Phê duyệt
   const [isTemplateBuilderOpen, setIsTemplateBuilderOpen] = useState(false);
@@ -961,7 +975,10 @@ export function ProposalsApprovalView({
         dept: stepDept,
         approverName: stepApprover,
         status: idx === 0 ? "PENDING_NOW" : "WAITING",
-        slaHours: st.slaHours || 8
+        slaHours: st.slaHours || 8,
+        allowAttachment: st.allowAttachment ?? true,
+        requireAttachment: Boolean(st.requireAttachment),
+        attachmentLabel: st.attachmentLabel || ""
       };
     });
   };
@@ -1478,6 +1495,14 @@ export function ProposalsApprovalView({
         ? stepsCopy.findIndex((s) => s.status === "PENDING_NOW")
         : proposal.currentStepIndex || 0;
 
+    if (decision === "APPROVE" && stepsCopy[activeIdx]?.requireAttachment && decisionAttachments.length === 0) {
+      showToast(
+        `Bước "${stepsCopy[activeIdx]?.stepName}" yêu cầu phải tải tệp lên (${stepsCopy[activeIdx]?.attachmentLabel || "Hóa đơn / Chứng từ kết quả"}) trước khi bấm Phê duyệt!`,
+        "warning"
+      );
+      return;
+    }
+
     let nextStatus: ProposalStatus = proposal.status;
     let nextStepIdx = activeIdx;
     let auditAction = "";
@@ -1486,14 +1511,22 @@ export function ProposalsApprovalView({
     let notifyMsg = "";
     let notifyTargets: string[] = [];
 
+    const stepUploadedFiles = decision === "EXECUTE" ? executionAttachments : decisionAttachments;
+    const uploadedFilesNote =
+      stepUploadedFiles.length > 0
+        ? ` (Đính kèm ${stepUploadedFiles.length} tệp: ${stepUploadedFiles.map((f) => f.name).join(", ")})`
+        : "";
+
     if (decision === "APPROVE") {
       if (stepsCopy[activeIdx]) {
+        const prevStepAtts = Array.isArray(stepsCopy[activeIdx].attachments) ? stepsCopy[activeIdx].attachments! : [];
         stepsCopy[activeIdx] = {
           ...stepsCopy[activeIdx],
           status: "APPROVED",
           decidedAt: nowStr,
           decidedBy: currentStaffName,
-          comment: note || "Đồng ý phê duyệt"
+          comment: note || (decisionAttachments.length > 0 ? `Đã duyệt & tải lên ${decisionAttachments.length} tệp đính kèm` : "Đồng ý phê duyệt"),
+          attachments: [...prevStepAtts, ...decisionAttachments]
         };
       }
       const nextWaitingIdx = stepsCopy.findIndex((s, i) => i > activeIdx && s.status !== "APPROVED" && s.status !== "SKIPPED");
@@ -1505,14 +1538,14 @@ export function ProposalsApprovalView({
         nextStepIdx = nextWaitingIdx;
         nextStatus = "PENDING";
         auditAction = `Phê duyệt Bước ${activeIdx + 1}/${stepsCopy.length}`;
-        auditDetail = `${currentStaffName} đã duyệt "${stepsCopy[activeIdx]?.stepName}". Chuyển Bước ${nextWaitingIdx + 1}: ${stepsCopy[nextWaitingIdx].approverName}.${note ? ` Ý kiến: ${note}` : ""}`;
+        auditDetail = `${currentStaffName} đã duyệt "${stepsCopy[activeIdx]?.stepName}"${uploadedFilesNote}. Chuyển Bước ${nextWaitingIdx + 1}: ${stepsCopy[nextWaitingIdx].approverName}.${note ? ` Ý kiến: ${note}` : ""}`;
         notifyTitle = `✅ Đã duyệt Bước ${activeIdx + 1} [${proposal.proposalCode}]`;
-        notifyMsg = `${currentStaffName} đã duyệt Bước ${activeIdx + 1} đề xuất "${proposal.title}". Đề xuất đã chuyển sang Bước ${nextWaitingIdx + 1} chờ ${stepsCopy[nextWaitingIdx].approverName} phê duyệt.`;
+        notifyMsg = `${currentStaffName} đã duyệt Bước ${activeIdx + 1} đề xuất "${proposal.title}"${uploadedFilesNote}. Đề xuất đã chuyển sang Bước ${nextWaitingIdx + 1} chờ ${stepsCopy[nextWaitingIdx].approverName} phê duyệt.`;
         notifyTargets = [proposal.requesterName, stepsCopy[nextWaitingIdx].approverName, ...(proposal.followers || [])];
       } else {
         nextStatus = "APPROVED";
         auditAction = "Phê duyệt hoàn tất (Final Approved)";
-        auditDetail = `${currentStaffName} đã phê duyệt bước cuối. Đề xuất chính thức có hiệu lực thi hành.${note ? ` Chỉ đạo: ${note}` : ""}`;
+        auditDetail = `${currentStaffName} đã phê duyệt bước cuối${uploadedFilesNote}. Đề xuất chính thức có hiệu lực thi hành.${note ? ` Chỉ đạo: ${note}` : ""}`;
         const isLeaveProp =
           proposal.templateId === "tmpl_leave_request" ||
           String(proposal.proposalCode || "").toUpperCase().startsWith("DXNP") ||
@@ -1528,48 +1561,52 @@ export function ProposalsApprovalView({
           notifyTargets = [...allStaffNames];
         } else {
           notifyTitle = `🎉 ĐÃ PHÊ DUYỆT HOÀN TẤT [${proposal.proposalCode}]`;
-          notifyMsg = `Đề xuất "${proposal.title}" của ${proposal.requesterName} đã được ${currentStaffName} phê duyệt hoàn tất!${note ? ` Chỉ đạo: "${note}"` : ""}`;
+          notifyMsg = `Đề xuất "${proposal.title}" của ${proposal.requesterName} đã được ${currentStaffName} phê duyệt hoàn tất${uploadedFilesNote}!${note ? ` Chỉ đạo: "${note}"` : ""}`;
           notifyTargets = [proposal.requesterName, proposal.executorName || "", ...(proposal.followers || [])];
         }
       }
     } else if (decision === "RETURN") {
       if (stepsCopy[activeIdx]) {
+        const prevStepAtts = Array.isArray(stepsCopy[activeIdx].attachments) ? stepsCopy[activeIdx].attachments! : [];
         stepsCopy[activeIdx] = {
           ...stepsCopy[activeIdx],
           status: "RETURNED",
           decidedAt: nowStr,
           decidedBy: currentStaffName,
-          comment: note
+          comment: note,
+          attachments: [...prevStepAtts, ...decisionAttachments]
         };
       }
       nextStatus = "RETURNED";
       auditAction = `Yêu cầu bổ sung / Giải trình (Bước ${activeIdx + 1})`;
-      auditDetail = `${currentStaffName} trả lại yêu cầu bổ sung hồ sơ/giải trình: "${note}"`;
+      auditDetail = `${currentStaffName} trả lại yêu cầu bổ sung hồ sơ/giải trình: "${note}"${uploadedFilesNote}`;
       notifyTitle = `🔄 Yêu cầu bổ sung đề xuất [${proposal.proposalCode}]`;
-      notifyMsg = `${currentStaffName} yêu cầu bổ sung/giải trình cho đề xuất "${proposal.title}": "${note}". Vui lòng chỉnh sửa và gửi duyệt lại!`;
+      notifyMsg = `${currentStaffName} yêu cầu bổ sung/giải trình cho đề xuất "${proposal.title}": "${note}"${uploadedFilesNote}. Vui lòng chỉnh sửa và gửi duyệt lại!`;
       notifyTargets = [proposal.requesterName, ...(proposal.followers || [])];
     } else if (decision === "REJECT") {
       if (stepsCopy[activeIdx]) {
+        const prevStepAtts = Array.isArray(stepsCopy[activeIdx].attachments) ? stepsCopy[activeIdx].attachments! : [];
         stepsCopy[activeIdx] = {
           ...stepsCopy[activeIdx],
           status: "REJECTED",
           decidedAt: nowStr,
           decidedBy: currentStaffName,
-          comment: note
+          comment: note,
+          attachments: [...prevStepAtts, ...decisionAttachments]
         };
       }
       nextStatus = "REJECTED";
       auditAction = `Từ chối phê duyệt (Bước ${activeIdx + 1})`;
-      auditDetail = `${currentStaffName} từ chối phê duyệt. Lý do: "${note}"`;
+      auditDetail = `${currentStaffName} từ chối phê duyệt. Lý do: "${note}"${uploadedFilesNote}`;
       notifyTitle = `❌ Từ chối đề xuất [${proposal.proposalCode}]`;
       notifyMsg = `${currentStaffName} đã từ chối đề xuất "${proposal.title}". Lý do: "${note}"`;
       notifyTargets = [proposal.requesterName, ...(proposal.followers || [])];
     } else if (decision === "EXECUTE") {
       nextStatus = "EXECUTED";
-      auditAction = "Xác nhận Đã thực thi / Giải ngân / Xuất kho";
-      auditDetail = `${currentStaffName} xác nhận đã hoàn tất thực thi đề xuất.${note ? ` Ghi chú: ${note}` : ""}`;
+      auditAction = "Xác nhận Đã thực thi / Xuất hóa đơn / Giải ngân";
+      auditDetail = `${currentStaffName} xác nhận đã hoàn tất thực thi đề xuất${uploadedFilesNote}.${note ? ` Ghi chú: ${note}` : ""}`;
       notifyTitle = `🏁 Đã thực thi hoàn tất [${proposal.proposalCode}]`;
-      notifyMsg = `${currentStaffName} đã thực thi hoàn tất đề xuất "${proposal.title}" (${note || "Đã giải ngân / xuất hàng / ghi nhận công"}).`;
+      notifyMsg = `${currentStaffName} đã thực thi hoàn tất đề xuất "${proposal.title}"${uploadedFilesNote} (${note || "Đã xuất hóa đơn / giải ngân / thực thi hoàn tất"}).`;
       notifyTargets = [proposal.requesterName, ...(proposal.followers || [])];
     } else if (decision === "WITHDRAW") {
       nextStatus = "WITHDRAWN";
@@ -1577,15 +1614,16 @@ export function ProposalsApprovalView({
       auditDetail = `${currentStaffName} đã chủ động rút lại đề xuất.${note ? ` Lý do: ${note}` : ""}`;
     }
 
-    const updatedComments = note
+    const updatedComments = (note || stepUploadedFiles.length > 0)
       ? [
           ...(proposal.comments || []),
           {
             id: `cmt-${Date.now()}`,
             author: currentStaffName,
             dept: userDept,
-            text: note,
+            text: note || `Đã đính kèm ${stepUploadedFiles.length} tệp kết quả (${stepUploadedFiles.map((f) => f.name).join(", ")})`,
             time: nowStr,
+            attachments: stepUploadedFiles.length > 0 ? stepUploadedFiles : undefined,
             actionTag:
               decision === "APPROVE"
                 ? "✅ Phê duyệt"
@@ -1594,11 +1632,20 @@ export function ProposalsApprovalView({
                 : decision === "REJECT"
                 ? "❌ Từ chối"
                 : decision === "EXECUTE"
-                ? "🏁 Đã thực thi"
+                ? "🏁 Đã thực thi & Gửi chứng từ"
                 : "🚫 Đã rút"
           }
         ]
       : proposal.comments || [];
+
+    const existingAtts = Array.isArray(proposal.attachments) ? proposal.attachments : [];
+    const existingUrls = new Set(existingAtts.map((a) => a.url));
+    const mergedAttachments = [
+      ...existingAtts,
+      ...stepUploadedFiles.filter((a) => a && a.url && !existingUrls.has(a.url))
+    ];
+    const prevExecAtts = Array.isArray(proposal.executionAttachments) ? proposal.executionAttachments : [];
+    const mergedExecAtts = decision === "EXECUTE" ? [...prevExecAtts, ...executionAttachments] : prevExecAtts;
 
     const updatedProposal: ProposalItem = {
       ...proposal,
@@ -1608,6 +1655,8 @@ export function ProposalsApprovalView({
       updatedAt: nowStr,
       executedAt: decision === "EXECUTE" ? nowStr : proposal.executedAt,
       executionNote: decision === "EXECUTE" ? note || "Đã thực thi hoàn tất" : proposal.executionNote,
+      executionAttachments: mergedExecAtts,
+      attachments: mergedAttachments,
       comments: updatedComments,
       auditLogs: [
         ...(proposal.auditLogs || []),
@@ -1624,6 +1673,9 @@ export function ProposalsApprovalView({
     await onSaveProposals(nextList);
     setSelectedProposal(updatedProposal);
     setDecisionNote("");
+    setDecisionAttachments([]);
+    setExecutionNoteInput("");
+    setExecutionAttachments([]);
 
     const cleanTargets = Array.from(new Set(notifyTargets.filter((n) => n && !isSamePerson(n, currentStaffName))));
     if (notifyTitle && cleanTargets.length > 0) {
@@ -1752,24 +1804,33 @@ export function ProposalsApprovalView({
 
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedProposal || !commentInput.trim()) return;
+    if (!selectedProposal || (!commentInput.trim() && commentAttachments.length === 0)) return;
     const nowStr = nowVNDateTime();
     const newCmt = {
       id: `cmt-${Date.now()}`,
       author: currentStaffName,
       dept: userDept,
-      text: commentInput.trim(),
-      time: nowStr
+      text: commentInput.trim() || `Đã tải lên ${commentAttachments.length} tệp đính kèm`,
+      time: nowStr,
+      attachments: commentAttachments.length > 0 ? commentAttachments : undefined
     };
+    const existingAtts = Array.isArray(selectedProposal.attachments) ? selectedProposal.attachments : [];
+    const existingUrls = new Set(existingAtts.map((a) => a.url));
+    const mergedAtts = [
+      ...existingAtts,
+      ...commentAttachments.filter((a) => a && a.url && !existingUrls.has(a.url))
+    ];
     const updated: ProposalItem = {
       ...selectedProposal,
+      attachments: mergedAtts,
       comments: [...(selectedProposal.comments || []), newCmt]
     };
     const nextList = proposals.map((p) => (p.id === selectedProposal.id ? updated : p));
     await onSaveProposals(nextList);
     setSelectedProposal(updated);
     setCommentInput("");
-    showToast("Đã gửi thảo luận vào tờ trình!", "success");
+    setCommentAttachments([]);
+    showToast("Đã gửi thảo luận & tệp đính kèm vào tờ trình!", "success");
   };
 
   const handleDeleteProposal = async (p: ProposalItem) => {
@@ -4400,6 +4461,36 @@ export function ProposalsApprovalView({
                                 💬 &ldquo;{st.comment}&rdquo;
                               </div>
                             )}
+                            {Array.isArray(st.attachments) && st.attachments.length > 0 && (
+                              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                {st.attachments.map((att, aIdx) => (
+                                  <div
+                                    key={aIdx}
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-slate-800 border border-indigo-200 dark:border-slate-700 text-[11px]"
+                                  >
+                                    <Paperclip className="w-3 h-3 text-indigo-600 shrink-0" />
+                                    <span className="font-bold text-slate-800 dark:text-slate-200 truncate max-w-[180px]">{att.name}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => onPreviewAttachment(att)}
+                                      className="px-1.5 py-0.5 rounded bg-indigo-600 text-white text-[10px] font-bold hover:bg-indigo-700 cursor-pointer"
+                                    >
+                                      👁️ Xem
+                                    </button>
+                                    <a
+                                      href={att.url}
+                                      download={att.name}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="text-slate-500 hover:text-indigo-600"
+                                      title="Tải xuống"
+                                    >
+                                      <Download className="w-3 h-3" />
+                                    </a>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -4431,7 +4522,9 @@ export function ProposalsApprovalView({
               </div>
 
               {/* BẢNG ĐIỀU KHIỂN QUYẾT ĐỊNH CỦA NGƯỜI PHÊ DUYỆT */}
-              {canApproverAct && p.status === "PENDING" && (
+              {canApproverAct && p.status === "PENDING" && (() => {
+                const activeStepObj = (p.steps || []).find((s) => s.status === "PENDING_NOW") || p.steps?.[p.currentStepIndex];
+                return (
                 <div className="p-4 rounded-2xl bg-amber-50/90 dark:bg-amber-950/40 border-2 border-amber-400 dark:border-amber-700 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-black uppercase text-amber-950 dark:text-amber-200">
@@ -4474,9 +4567,18 @@ export function ProposalsApprovalView({
                     rows={2}
                     value={decisionNote}
                     onChange={(e) => setDecisionNote(e.target.value)}
-                    placeholder="Nhập ý kiến chỉ đạo, ghi chú phê duyệt, hoặc lý do yêu cầu bổ sung / từ chối..."
+                    placeholder="Nhập ý kiến chỉ đạo, ghi chú phê duyệt (VD: Đã xuất HĐ số...), hoặc lý do yêu cầu bổ sung / từ chối..."
                     className="w-full px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 border border-amber-300 dark:border-slate-700 text-slate-900 dark:text-white"
                   />
+
+                  <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-300/80 dark:border-slate-700">
+                    <AttachmentPicker
+                      files={decisionAttachments}
+                      onChange={setDecisionAttachments}
+                      label={`📎 ${activeStepObj?.attachmentLabel || "Tải lên Hóa đơn VAT / Ủy nhiệm chi / Chứng từ kết quả khi duyệt"}${activeStepObj?.requireAttachment ? " *" : ""}`}
+                      hint="Kế toán / Người phê duyệt có thể đính kèm trực tiếp file Hóa đơn (PDF/XML), UNC hoặc biên bản ngay tại đây"
+                    />
+                  </div>
 
                   <div className="flex flex-wrap items-center gap-2">
                     <button
@@ -4485,7 +4587,7 @@ export function ProposalsApprovalView({
                       className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-sm cursor-pointer"
                     >
                       <CheckCircle2 className="w-4 h-4" />
-                      <span>✅ Đồng Ý Phê Duyệt</span>
+                      <span>✅ Đồng Ý Phê Duyệt{decisionAttachments.length > 0 ? ` (& Gửi ${decisionAttachments.length} file)` : ""}</span>
                     </button>
 
                     <button
@@ -4507,37 +4609,105 @@ export function ProposalsApprovalView({
                     </button>
                   </div>
                 </div>
-              )}
+                );
+              })()}
 
-              {/* Hậu kiểm Thực thi sau khi đã được phê duyệt (Dành cho Kế toán chi tiền / Kho xuất hàng / HCNS) */}
-              {p.status === "APPROVED" && (
-                <div className="p-4 rounded-2xl bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div>
-                    <div className="text-xs font-black text-emerald-900 dark:text-emerald-200 uppercase">
-                      ✅ ĐỀ XUẤT ĐÃ ĐƯỢC PHÊ DUYỆT HOÀN TẤT — SẴN SÀNG THỰC THI
+              {/* Hậu kiểm Thực thi & Tải Hóa đơn / Chứng từ kết quả sau khi đã được phê duyệt */}
+              {(p.status === "APPROVED" || p.status === "EXECUTED") && (
+                <div className="p-4 rounded-2xl bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-800 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-black text-emerald-900 dark:text-emerald-200 uppercase">
+                        {p.status === "EXECUTED"
+                          ? "🏁 ĐỀ XUẤT ĐÃ THỰC THI HOÀN TẤT — HÓA ĐƠN & CHỨNG TỪ KẾT QUẢ"
+                          : "✅ ĐỀ XUẤT ĐÃ ĐƯỢC PHÊ DUYỆT — TẢI HÓA ĐƠN / CHỨNG TỪ & XÁC NHẬN THỰC THI"}
+                      </div>
+                      <p className="text-[11px] text-emerald-700 dark:text-emerald-300 mt-0.5">
+                        Kế toán / Bộ phận thực thi có thể tải bổ sung file Hóa đơn VAT, Ủy nhiệm chi (UNC), Biên bản bàn giao và xác nhận hoàn tất tại đây.
+                      </p>
                     </div>
-                    <p className="text-[11px] text-emerald-700 dark:text-emerald-300 mt-0.5">
-                      Bộ phận thực thi (Kế toán giải ngân / Kho xuất hàng / HCNS) có thể xác nhận hoàn tất hoặc giao việc triển khai sang Bảng Công Việc.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 shrink-0">
                     <button
                       type="button"
                       onClick={() => {
                         onCreateTaskFromProposal(p);
                         setSelectedProposal(null);
                       }}
-                      className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-300 border border-indigo-300 font-bold text-xs hover:bg-indigo-50 cursor-pointer"
+                      className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-300 border border-indigo-300 font-bold text-xs hover:bg-indigo-50 cursor-pointer shrink-0"
                     >
                       📌 Giao việc triển khai
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDecision(p, "EXECUTE", "Đã giải ngân / Xuất kho / Thực thi hoàn tất theo phê duyệt")}
-                      className="px-3.5 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-extrabold text-xs cursor-pointer"
-                    >
-                      🏁 Xác nhận Đã Thực Thi Hoàn Tất
-                    </button>
+                  </div>
+
+                  {Array.isArray(p.executionAttachments) && p.executionAttachments.length > 0 && (
+                    <div className="p-2.5 rounded-xl bg-white/90 dark:bg-slate-900 border border-emerald-200 dark:border-slate-700 space-y-1.5">
+                      <div className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 uppercase">
+                        📎 Hóa đơn / Chứng từ kết quả đã tải lên ({p.executionAttachments.length}):
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {p.executionAttachments.map((att, idx) => (
+                          <div
+                            key={idx}
+                            className="flex items-center gap-2 px-3 py-1 rounded-xl bg-emerald-50 dark:bg-slate-800 border border-emerald-200 dark:border-slate-700 text-xs"
+                          >
+                            <Paperclip className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                            <span className="font-bold text-slate-800 dark:text-slate-200 truncate max-w-[220px]">{att.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => onPreviewAttachment(att)}
+                              className="px-2 py-0.5 rounded bg-emerald-600 text-white text-[10px] font-bold hover:bg-emerald-700 cursor-pointer"
+                            >
+                              👁️ Xem trực tiếp
+                            </button>
+                            <a
+                              href={att.url}
+                              download={att.name}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-slate-500 hover:text-emerald-600"
+                              title="Tải xuống"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </a>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-slate-700 space-y-2.5">
+                    <AttachmentPicker
+                      files={executionAttachments}
+                      onChange={setExecutionAttachments}
+                      label="📎 Tải lên Hóa đơn VAT / Ủy nhiệm chi (UNC) / Chứng từ kết quả thực thi"
+                      hint="Hỗ trợ đính kèm PDF hóa đơn, XML, ảnh chụp UNC, biên bản xuất kho..."
+                    />
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                      <input
+                        type="text"
+                        value={executionNoteInput}
+                        onChange={(e) => setExecutionNoteInput(e.target.value)}
+                        placeholder="Ghi chú thực thi (VD: Đã xuất Hóa đơn số 0001234 ngày 16/11/2026)..."
+                        className="flex-1 px-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleDecision(
+                            p,
+                            "EXECUTE",
+                            executionNoteInput.trim() ||
+                              (executionAttachments.length > 0
+                                ? `Đã tải lên ${executionAttachments.length} chứng từ / hóa đơn thực thi`
+                                : "Đã giải ngân / Xuất hóa đơn / Thực thi hoàn tất theo phê duyệt")
+                          )
+                        }
+                        className="px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-extrabold text-xs cursor-pointer shrink-0"
+                      >
+                        {p.status === "EXECUTED"
+                          ? "📎 Lưu Bổ Sung Hóa Đơn / Chứng Từ"
+                          : "🏁 Lưu Hóa Đơn / Chứng Từ & Xác Nhận Hoàn Tất"}
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -4565,24 +4735,54 @@ export function ProposalsApprovalView({
                             <span className="inline-block text-[10px] font-bold text-indigo-600 mt-0.5">{c.actionTag}</span>
                           )}
                           <p className="text-slate-700 dark:text-slate-300 mt-0.5">{c.text}</p>
+                          {Array.isArray(c.attachments) && c.attachments.length > 0 && (
+                            <div className="mt-1.5 flex flex-wrap gap-1.5">
+                              {c.attachments.map((att, aIdx) => (
+                                <div
+                                  key={aIdx}
+                                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-indigo-50 dark:bg-slate-800 border border-indigo-200 dark:border-slate-700 text-[10px]"
+                                >
+                                  <Paperclip className="w-3 h-3 text-indigo-600 shrink-0" />
+                                  <span className="font-bold text-slate-800 dark:text-slate-200 truncate max-w-[160px]">{att.name}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => onPreviewAttachment(att)}
+                                    className="px-1.5 py-0.5 rounded bg-indigo-600 text-white font-bold hover:bg-indigo-700 cursor-pointer"
+                                  >
+                                    👁️ Xem
+                                  </button>
+                                  <a href={att.url} download={att.name} target="_blank" rel="noreferrer" className="text-slate-500 hover:text-indigo-600">
+                                    <Download className="w-3 h-3" />
+                                  </a>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ))
                     )}
                   </div>
-                  <form onSubmit={handleAddComment} className="flex items-center gap-2 pt-1">
-                    <input
-                      type="text"
-                      value={commentInput}
-                      onChange={(e) => setCommentInput(e.target.value)}
-                      placeholder="Nhập ý kiến trao đổi / giải trình thêm..."
-                      className="flex-1 px-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950"
+                  <form onSubmit={handleAddComment} className="space-y-2 pt-1">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={commentInput}
+                        onChange={(e) => setCommentInput(e.target.value)}
+                        placeholder="Nhập ý kiến trao đổi / giải trình hoặc đính kèm file..."
+                        className="flex-1 px-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950"
+                      />
+                      <button
+                        type="submit"
+                        className="px-3 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 cursor-pointer"
+                      >
+                        Gửi
+                      </button>
+                    </div>
+                    <AttachmentPicker
+                      files={commentAttachments}
+                      onChange={setCommentAttachments}
+                      label="Đính kèm tệp vào trao đổi (Tùy chọn)"
                     />
-                    <button
-                      type="submit"
-                      className="px-3 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 cursor-pointer"
-                    >
-                      Gửi
-                    </button>
                   </form>
                 </div>
 
@@ -5172,6 +5372,57 @@ export function ProposalsApprovalView({
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
+                      )}
+                    </div>
+
+                    {/* Cấu hình cho phép / bắt buộc người duyệt ở bước này tải file lên (VD: Kế toán tải Hóa đơn VAT / UNC) */}
+                    <div className="sm:col-span-12 pt-1.5 mt-1 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center gap-3">
+                      <label className="inline-flex items-center gap-1.5 text-[11px] font-bold text-indigo-700 dark:text-indigo-300 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={st.allowAttachment !== false}
+                          onChange={(e) => {
+                            const copy = [...editingTemplate.defaultSteps];
+                            copy[idx] = {
+                              ...copy[idx],
+                              allowAttachment: e.target.checked,
+                              requireAttachment: e.target.checked ? copy[idx].requireAttachment : false
+                            };
+                            setEditingTemplate({ ...editingTemplate, defaultSteps: copy });
+                          }}
+                          className="accent-indigo-600"
+                        />
+                        <span>📎 Cho phép người duyệt bước này tải file lên (Hóa đơn / UNC / Chứng từ kết quả)</span>
+                      </label>
+
+                      {st.allowAttachment !== false && (
+                        <>
+                          <label className="inline-flex items-center gap-1.5 text-[11px] font-bold text-rose-600 dark:text-rose-400 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(st.requireAttachment)}
+                              onChange={(e) => {
+                                const copy = [...editingTemplate.defaultSteps];
+                                copy[idx] = { ...copy[idx], requireAttachment: e.target.checked };
+                                setEditingTemplate({ ...editingTemplate, defaultSteps: copy });
+                              }}
+                              className="accent-rose-600"
+                            />
+                            <span>Bắt buộc phải đính kèm file khi bấm Duyệt</span>
+                          </label>
+
+                          <input
+                            type="text"
+                            value={st.attachmentLabel || ""}
+                            onChange={(e) => {
+                              const copy = [...editingTemplate.defaultSteps];
+                              copy[idx] = { ...copy[idx], attachmentLabel: e.target.value };
+                              setEditingTemplate({ ...editingTemplate, defaultSteps: copy });
+                            }}
+                            placeholder="Nhãn hướng dẫn tải file ở bước này (VD: Tải lên Hóa đơn VAT đã xuất PDF/XML)..."
+                            className="flex-1 min-w-[240px] px-2.5 py-1 rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50/40 dark:bg-slate-950 text-[11px]"
+                          />
+                        </>
                       )}
                     </div>
                   </div>
