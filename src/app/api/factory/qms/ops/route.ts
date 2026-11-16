@@ -11,6 +11,7 @@ import {
   receiveAndCreateQcTest,
   recordStandardUsage,
   releaseLotFromQcTest,
+  releaseOpeningLotsSkipQc,
   saveCoaTemplateConfig,
   saveQcMethod,
   saveReferenceStandard,
@@ -65,6 +66,8 @@ export const POST = factoryRoute(
         });
       case "assign_spec_item":
         return assignSpecToItem(tx, actor, body);
+      case "release_opening_lots":
+        return releaseOpeningLotsSkipQc(tx, actor, body);
       default:
         throw invalid(`Thao tác QA/QC không hợp lệ: ${String(op)}`);
     }

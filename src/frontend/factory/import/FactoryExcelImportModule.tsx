@@ -701,7 +701,7 @@ export default function FactoryExcelImportModule() {
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [previewRows, setPreviewRows] = useState<Record<string, any>[]>([]);
   const [previewPage, setPreviewPage] = useState(1);
-  const [isAuditedOpeningBalance, setIsAuditedOpeningBalance] = useState(false);
+  const [isAuditedOpeningBalance, setIsAuditedOpeningBalance] = useState(true);
   const [importProgress, setImportProgress] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<{
     total_rows: number;
@@ -1293,7 +1293,7 @@ export default function FactoryExcelImportModule() {
                       className="mt-0.5 rounded border-slate-300"
                     />
                     <span>
-                      <b>Chốt số dư kiểm kê ban đầu (Mở khóa RELEASED ngay)</b> — lô nhập từ tồn đang sử dụng sẽ được mở khóa dùng ngay (yêu cầu quyền <code className="font-mono">inv.lot.release</code>; nếu không tick, lô vào Kiểm nghiệm/Cách ly).
+                      <b>Chốt số dư kiểm kê ban đầu (Mở khóa RELEASED ngay)</b> — lô nhập từ tồn đầu kỳ đã đánh giá sẽ được mở khóa dùng ngay (mặc định bật cho tồn đầu kỳ; nếu bỏ tích, lô vào Kiểm nghiệm/Biệt trữ).
                     </span>
                   </label>
                 )}

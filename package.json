@@ -9,6 +9,7 @@
     "lint": "eslint",
     "test": "vitest run",
     "factory:migrate": "tsx scripts/factory-migrate.ts",
+    "factory:release-opening": "tsx scripts/factory-release-opening.ts",
     "factory:worker": "tsx scripts/factory-worker.ts"
   },
   "dependencies": {

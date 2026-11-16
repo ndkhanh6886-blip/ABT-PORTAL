@@ -5,7 +5,8 @@ import { writeAudit } from "../core/audit";
 import { vnToday, addDays } from "../core/dates";
 import { FactoryError, invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
-import { parseInput } from "../core/records";
+import { insertRecord, parseInput } from "../core/records";
+import { isPlaceholderUom } from "../master/service";
 import { insertSignature, recordHash, type SignatureCredential } from "../core/signature";
 import { listPortalActivePersonnel } from "../core/hrDirectory";
 import { raiseDeviation } from "./incidents";
@@ -2038,4 +2039,241 @@ export async function assignSpecToItem(tx: Tx, actor: AuthzActor, input: unknown
   });
 
   return { spec: cloned, mode: "CLONE", count: itemRows.length };
+}
+
+const DEFAULT_OPENING_RELEASE_REASON =
+  "Nguyên liệu tồn đầu kỳ nhập lần đầu lên hệ thống đã được đánh giá chất lượng trước đó (bỏ qua IQC)";
+
+const releaseOpeningLotsSchema = z
+  .object({
+    reason: z.string().trim().max(500).optional().nullable(),
+  })
+  .optional();
+
+/**
+ * Releases all initial opening-balance lots (`origin = 'OPENING'`) that are awaiting QC (`QUARANTINE` / `PENDING_QC`)
+ * without open NCRs or LOT deviations, cancels unreviewed LOT QC tests attached to them, and transfers any
+ * quarantine stock balances (`is_quarantine = true`) of released OPENING lots onto each warehouse's active shelf.
+ */
+export async function releaseOpeningLotsSkipQc(tx: Tx, actor: AuthzActor, input?: unknown) {
+  if (!actor.isRootAdmin && !actor.isSystem) {
+    await authorize(tx, actor, "inv.lot.release");
+  }
+  const parsed = parseInput(releaseOpeningLotsSchema, input);
+  const reason = parsed?.reason?.trim() || DEFAULT_OPENING_RELEASE_REASON;
+
+  // 1. Lock all OPENING lots currently waiting in QUARANTINE / PENDING_QC (skip any with open NCR or LOT Deviation)
+  const lots = (
+    await tx.query(
+      `SELECT l.id, l.code, l.status, l.item_id
+         FROM inv.lot l
+        WHERE l.origin = 'OPENING'
+          AND l.status IN ('QUARANTINE', 'PENDING_QC')
+          AND NOT EXISTS (
+            SELECT 1 FROM qms.ncr n
+             WHERE n.lot_id = l.id AND n.status <> 'CLOSED'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM qms.deviation d
+             WHERE d.entity_type = 'LOT' AND d.entity_id = l.id AND d.status <> 'CLOSED'
+          )
+        ORDER BY l.id
+        FOR UPDATE`
+    )
+  ).rows as { id: string; code: string; status: string; item_id: string }[];
+
+  const lotIds = lots.map((l) => l.id);
+  let cancelledTestsCount = 0;
+
+  if (lotIds.length > 0) {
+    // 2. Cancel any unreviewed LOT QC tests on those OPENING lots
+    const openTests = (
+      await tx.query(
+        `SELECT id, code, status
+           FROM qms.qc_test
+          WHERE entity_type = 'LOT'
+            AND entity_id = ANY($1::uuid[])
+            AND status IN ('PLANNED', 'IN_PROGRESS', 'RESULTS_ENTERED')
+          ORDER BY id
+          FOR UPDATE`,
+        [lotIds]
+      )
+    ).rows as { id: string; code: string; status: string }[];
+
+    if (openTests.length > 0) {
+      const testIds = openTests.map((t) => t.id);
+      await tx.query(
+        `UPDATE qms.qc_test
+            SET status = 'CANCELLED',
+                version = version + 1,
+                updated_at = now(),
+                updated_by = $2
+          WHERE id = ANY($1::uuid[])`,
+        [testIds, actor.userId]
+      );
+      for (const t of openTests) {
+        await writeAudit(tx, actor, {
+          entityType: "qc_test",
+          entityId: t.id,
+          action: "cancel_opening_skip_qc",
+          changes: { status: [t.status, "CANCELLED"] },
+          reason,
+        });
+      }
+      cancelledTestsCount = openTests.length;
+    }
+
+    // 3. Transition all matched OPENING lots -> RELEASED
+    await tx.query(
+      `UPDATE inv.lot
+          SET status = 'RELEASED',
+              version = version + 1,
+              updated_at = now(),
+              updated_by = $2
+        WHERE id = ANY($1::uuid[])`,
+      [lotIds, actor.userId]
+    );
+
+    await writeAudit(tx, actor, {
+      entityType: "lot_opening_batch",
+      entityId: "OPENING",
+      action: "release_opening_skip_qc",
+      changes: {
+        released_lots: [0, lotIds.length],
+        cancelled_tests: [0, cancelledTestsCount],
+      },
+      reason,
+    });
+  }
+
+  // 4. Move all positive quarantine balances of OPENING + RELEASED lots onto each warehouse's active normal shelf
+  const qBalances = (
+    await tx.query(
+      `SELECT loc.warehouse_id,
+              sb.item_id,
+              sb.lot_id,
+              sb.container_id,
+              sb.location_id AS from_loc_id,
+              (sb.qty_on_hand - sb.qty_reserved)::float AS avail_qty,
+              i.base_uom,
+              i.code AS item_code
+         FROM inv.stock_balance sb
+         JOIN inv.lot l ON l.id = sb.lot_id
+         JOIN master.item i ON i.id = sb.item_id
+         JOIN master.location loc ON loc.id = sb.location_id
+        WHERE l.origin = 'OPENING'
+          AND l.status = 'RELEASED'
+          AND loc.is_quarantine = true
+          AND (sb.qty_on_hand - sb.qty_reserved) > 0
+        ORDER BY loc.warehouse_id, i.code, sb.lot_id, sb.location_id`
+    )
+  ).rows as {
+    warehouse_id: string;
+    item_id: string;
+    lot_id: string;
+    container_id: string | null;
+    from_loc_id: string;
+    avail_qty: number;
+    base_uom: string;
+    item_code: string;
+  }[];
+
+  const effectiveUoms = new Map<string, string>();
+  const placeholderItemIds = [...new Set(qBalances.filter((b) => isPlaceholderUom(b.base_uom)).map((b) => b.item_id))];
+  if (placeholderItemIds.length > 0) {
+    await tx.query(
+      `INSERT INTO master.uom (code, name, dimension)
+       VALUES ('pcs', 'Cái / đơn vị', 'COUNT')
+       ON CONFLICT (code) DO NOTHING`
+    );
+    await tx.query(
+      `UPDATE master.item
+          SET base_uom = 'pcs',
+              version = version + 1,
+              updated_at = now(),
+              updated_by = $2
+        WHERE id = ANY($1::uuid[])`,
+      [placeholderItemIds, actor.userId]
+    );
+    for (const id of placeholderItemIds) effectiveUoms.set(id, "pcs");
+  }
+
+  const byWarehouse = new Map<string, typeof qBalances>();
+  for (const b of qBalances) {
+    const arr = byWarehouse.get(b.warehouse_id) ?? [];
+    arr.push(b);
+    byWarehouse.set(b.warehouse_id, arr);
+  }
+
+  let movedBalancesCount = 0;
+  let transferDocsCount = 0;
+  const CHUNK_SIZE = 200;
+
+  for (const [warehouseId, whRows] of byWarehouse) {
+    let shelfId = (
+      await tx.query(
+        `SELECT id
+           FROM master.location
+          WHERE warehouse_id = $1 AND is_quarantine = false AND status = 'ACTIVE'
+          ORDER BY (code = 'A1') DESC, code ASC
+          LIMIT 1`,
+        [warehouseId]
+      )
+    ).rows[0]?.id as string | undefined;
+
+    if (!shelfId) {
+      const a1Occupied = (
+        await tx.query("SELECT 1 FROM master.location WHERE warehouse_id = $1 AND upper(code) = 'A1' LIMIT 1", [warehouseId])
+      ).rowCount;
+      const newCode = a1Occupied ? `KE-CHINH-${warehouseId.slice(0, 4).toUpperCase()}` : "A1";
+      const createdLoc = await insertRecord<{ id: string }>(tx, actor, "master.location", "location", {
+        warehouse_id: warehouseId,
+        code: newCode,
+        name: "Kệ chính",
+        is_quarantine: false,
+        status: "ACTIVE",
+      });
+      shelfId = createdLoc.id;
+    }
+
+    for (let i = 0; i < whRows.length; i += CHUNK_SIZE) {
+      const batch = whRows.slice(i, i + CHUNK_SIZE);
+      const moveDoc = await createStockDocument(
+        tx,
+        actor,
+        {
+          doc_type: "TRANSFER",
+          reason_code: "PUTAWAY",
+          warehouse_id: warehouseId,
+          notes: reason,
+          lines: batch.map((b) => ({
+            item_id: b.item_id,
+            lot_id: b.lot_id,
+            container_id: b.container_id ?? null,
+            from_location_id: b.from_loc_id,
+            to_location_id: shelfId,
+            qty: b.avail_qty,
+            uom: effectiveUoms.get(b.item_id) ?? b.base_uom,
+          })),
+        },
+        { trusted: true }
+      );
+      await runTransition(
+        tx,
+        stockDocumentMachine,
+        actor,
+        { id: moveDoc.id, action: "post", expectedVersion: moveDoc.version },
+        { trusted: true }
+      );
+      transferDocsCount++;
+      movedBalancesCount += batch.length;
+    }
+  }
+
+  return {
+    released_lots: lotIds.length,
+    cancelled_tests: cancelledTestsCount,
+    moved_balances: movedBalancesCount,
+    transfer_docs: transferDocsCount,
+  };
 }

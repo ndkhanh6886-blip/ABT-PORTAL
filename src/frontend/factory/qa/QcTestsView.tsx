@@ -533,8 +533,10 @@ const QC_CATEGORY_LABEL: Record<string, { label: string; badge: string }> = {
 
 export function QcTestsView() {
   const qc = useQueryClient();
+  const me = useFactoryMe();
   const [status, setStatus] = useState("");
   const [queueFilter, setQueueFilter] = useState<"ALL" | "IQC" | "IPQC" | "FQC">("ALL");
+  const [openingReleaseNotice, setOpeningReleaseNotice] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [selectedCoa, setSelectedCoa] = useState<any | null>(null);
   const [showProactiveForm, setShowProactiveForm] = useState(false);
@@ -674,9 +676,35 @@ export function QcTestsView() {
     },
   });
 
+  const releaseOpeningMut = useMutation({
+    mutationFn: (reason: string) =>
+      api<{
+        released_lots: number;
+        cancelled_tests: number;
+        moved_balances: number;
+        transfer_docs: number;
+      }>("/api/factory/qms/ops", {
+        method: "POST",
+        json: { op: "release_opening_lots", reason },
+      }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["factory", "qa-ops"] });
+      qc.invalidateQueries({ queryKey: ["factory", "qc-tests"] });
+      qc.invalidateQueries({ queryKey: ["factory", "lot"] });
+      qc.invalidateQueries({ queryKey: ["factory", "stock"] });
+      setOpeningReleaseNotice(
+        `✅ Đã giải phóng ${res.released_lots} lô tồn đầu kỳ sang Đã duyệt (RELEASED)` +
+          (res.cancelled_tests > 0 ? `, hủy ${res.cancelled_tests} phiếu QC chưa duyệt` : "") +
+          ` và chuyển ${res.moved_balances} dòng tồn kho từ khu Biệt trữ (BT) sang Kệ chính (${res.transfer_docs} phiếu PUTAWAY)!`
+      );
+    },
+  });
+
   const queue: any[] = qaOps.data?.reception_queue ?? [];
   const allLots: any[] = qaOps.data?.all_lots ?? queue;
   const filteredQueue = queueFilter === "ALL" ? queue : queue.filter((q) => q.qc_category === queueFilter);
+  const openingQueueCount = queue.filter((q) => q.origin === "OPENING").length;
+  const canReleaseOpening = Boolean(me.data?.is_root || me.data?.permissions?.includes("inv.lot.release"));
 
   return (
     <div className="flex flex-col gap-3">
@@ -714,11 +742,38 @@ export function QcTestsView() {
                 </button>
               );
             })}
+            {canReleaseOpening && openingQueueCount > 0 && (
+              <Button
+                variant="secondary"
+                className="!border-amber-300 dark:!border-amber-800 !bg-amber-50 dark:!bg-amber-950/50 !text-amber-800 dark:!text-amber-200 hover:!bg-amber-100 dark:hover:!bg-amber-900/60"
+                disabled={releaseOpeningMut.isPending}
+                onClick={() => {
+                  const reason = window.prompt(
+                    "Xác nhận giải phóng toàn bộ lô tồn kho đầu kỳ (OPENING) không qua IQC và tự động chuyển từ khu Biệt trữ (BT) sang Kệ chính.\nNhập lý do lưu vết Audit:",
+                    "Nguyên liệu nhập lần đầu lên hệ thống đã được đánh giá chất lượng trước đó"
+                  );
+                  if (reason === null) return;
+                  setOpeningReleaseNotice(null);
+                  releaseOpeningMut.mutate(
+                    reason.trim() || "Nguyên liệu nhập lần đầu lên hệ thống đã được đánh giá chất lượng trước đó"
+                  );
+                }}
+              >
+                {releaseOpeningMut.isPending
+                  ? "Đang giải phóng tồn đầu kỳ..."
+                  : `⚡ Giải phóng tồn đầu kỳ (${openingQueueCount} lô — Bỏ qua IQC)`}
+              </Button>
+            )}
             <Button onClick={() => setShowProactiveForm(!showProactiveForm)}>+ Tạo Phiếu QC Chủ động</Button>
           </div>
         }
       >
-        <ErrorNote error={qaOps.error ?? receiveLotMut.error} />
+        <ErrorNote error={qaOps.error ?? receiveLotMut.error ?? releaseOpeningMut.error} />
+        {openingReleaseNotice && (
+          <div className="mb-3 px-3 py-2 rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950/30 text-xs font-semibold text-emerald-800 dark:text-emerald-200">
+            {openingReleaseNotice}
+          </div>
+        )}
 
         {showProactiveForm && (
           <form

@@ -1,6 +1,6 @@
 import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
-import { authorize, authorizeAnywhere, hasFactoryPermission, registerPermissions, type AuthzActor } from "../core/authz";
+import { authorize, registerPermissions, type AuthzActor } from "../core/authz";
 import { nextNumber } from "../core/numbering";
 import { runTransition } from "../core/stateMachine";
 import { createStockDocument, stockDocumentMachine } from "../inv/documents";
@@ -506,12 +506,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
         throw err;
       });
     }
-    const canReleaseOpeningLot =
-      Boolean(input.is_audited_opening_balance) &&
-      ((await hasFactoryPermission(tx, actor, "inv.lot.release")) ||
-        (await authorizeAnywhere(tx, actor, "inv.lot.release")
-          .then(() => true)
-          .catch(() => false)));
+    const canReleaseOpeningLot = Boolean(input.is_audited_opening_balance);
 
     const pendingStockTargets = new Map<
       string,
@@ -521,6 +516,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
         itemId: string;
         baseUom: string;
         lotId: string;
+        lotStatus: string;
         warehouseId: string;
         locationId: string;
         targetQty: number;
@@ -580,7 +576,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
           const mfrLot = rawMfrLot && rawMfrLot !== "-" ? rawMfrLot : lotCode;
 
           let lot = (
-            await tx.query("SELECT id, status FROM inv.lot WHERE item_id = $1 AND upper(code) = upper($2) LIMIT 1", [
+            await tx.query("SELECT id, status, origin FROM inv.lot WHERE item_id = $1 AND upper(code) = upper($2) LIMIT 1", [
               itemRes.id,
               lotCode,
             ])
@@ -594,16 +590,16 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
                  ON CONFLICT (item_id, code) DO UPDATE
                    SET expiry_date = COALESCE(EXCLUDED.expiry_date, inv.lot.expiry_date),
                        mfr_lot_no = COALESCE(EXCLUDED.mfr_lot_no, inv.lot.mfr_lot_no)
-                 RETURNING id, status`,
+                 RETURNING id, status, origin`,
                 [lotCode, itemRes.id, mfrLot, mfgDate, expiryDate, lotStatus, actor.userId]
               )
             ).rows[0];
-          } else if (lot.status === "QUARANTINE" && canReleaseOpeningLot) {
+          } else if (lot.origin === "OPENING" && lot.status === "QUARANTINE" && canReleaseOpeningLot) {
             lot = (
-              await tx.query("UPDATE inv.lot SET status = 'RELEASED', updated_by = $2 WHERE id = $1 RETURNING id, status", [
-                lot.id,
-                actor.userId,
-              ])
+              await tx.query(
+                "UPDATE inv.lot SET status = 'RELEASED', version = version + 1, updated_at = now(), updated_by = $2 WHERE id = $1 RETURNING id, status, origin",
+                [lot.id, actor.userId]
+              )
             ).rows[0];
           }
 
@@ -629,6 +625,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
                 itemId: itemRes.id,
                 baseUom: itemRes.base_uom,
                 lotId: lot.id,
+                lotStatus: String(lot.status),
                 warehouseId: whLoc.warehouse_id,
                 locationId: whLoc.location_id,
                 targetQty: qty,
@@ -653,6 +650,53 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       const sp = `sp_inv_bal_${balIdx}`;
       await tx.query(`SAVEPOINT ${sp}`);
       try {
+        if (canReleaseOpeningLot && target.lotStatus === "RELEASED") {
+          const qRows = (
+            await tx.query(
+              `SELECT sb.location_id AS from_loc_id, (sb.qty_on_hand - sb.qty_reserved)::float AS avail_qty
+                 FROM inv.stock_balance sb
+                 JOIN master.location loc ON loc.id = sb.location_id
+                WHERE sb.item_id = $1
+                  AND sb.lot_id = $2
+                  AND sb.container_id IS NULL
+                  AND loc.warehouse_id = $3
+                  AND loc.is_quarantine = true
+                  AND sb.location_id <> $4
+                  AND (sb.qty_on_hand - sb.qty_reserved) > 0`,
+              [target.itemId, target.lotId, target.warehouseId, target.locationId]
+            )
+          ).rows as { from_loc_id: string; avail_qty: number }[];
+          for (const qr of qRows) {
+            const putawayDoc = await createStockDocument(
+              tx,
+              actor,
+              {
+                doc_type: "TRANSFER",
+                reason_code: "PUTAWAY",
+                warehouse_id: target.warehouseId,
+                notes: `Tự động chuyển kệ chính khi mở khóa tồn đầu kỳ (${fileName})`,
+                lines: [
+                  {
+                    item_id: target.itemId,
+                    lot_id: target.lotId,
+                    from_location_id: qr.from_loc_id,
+                    to_location_id: target.locationId,
+                    qty: qr.avail_qty,
+                    uom: target.baseUom,
+                  },
+                ],
+              },
+              { trusted: true }
+            );
+            await runTransition(
+              tx,
+              stockDocumentMachine,
+              actor,
+              { id: putawayDoc.id, action: "post", expectedVersion: putawayDoc.version },
+              { trusted: true }
+            );
+          }
+        }
         const prevBalRow = (
           await tx.query(
             `SELECT id, qty_on_hand::float AS qty_on_hand
