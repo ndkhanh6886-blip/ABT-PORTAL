@@ -264,6 +264,33 @@ export function OrdersEbrView({
     if (selectedOrderId) loadDetail(selectedOrderId);
   }, [selectedOrderId, loadDetail]);
 
+  const reworkCatalogItems = React.useMemo(() => {
+    const byId = new Map<string, KitOptions["items"][number]>();
+    for (const it of options.items || []) {
+      if (it?.id && !byId.has(it.id)) byId.set(it.id, it);
+    }
+    const extraLists = [
+      ...(detail?.materials || []),
+      ...(detail?.exploded_bom || []),
+      ...(detail?.consumptions || []),
+    ];
+    for (const m of extraLists) {
+      const id = m?.item_id || m?.component_item_id;
+      if (id && !byId.has(id)) {
+        byId.set(id, {
+          id,
+          code: m.item_code || m.component_code || "",
+          name: m.item_name || m.component_name || "",
+          item_type: m.item_type || "CONSUMABLE",
+          base_uom: m.base_uom || m.uom || "pcs",
+          tracking: "LOT",
+          shelf_life_days: null,
+        });
+      }
+    }
+    return Array.from(byId.values());
+  }, [options.items, detail]);
+
   const kitProducts = options.items.filter((i) => ["FINISHED_KIT", "SEMI_FINISHED"].includes(i.item_type));
   const deptOperatorOptions = React.useMemo(() => {
     const kitList = (options.kit_staff ?? []).map((s) => s.label);
@@ -936,7 +963,7 @@ export function OrdersEbrView({
     if (!detail) return;
     setError(null);
     try {
-      const compItem = options.items.find((i) => i.id === rwForm.component_item_id);
+      const compItem = reworkCatalogItems.find((i) => i.id === rwForm.component_item_id);
       await api("/api/factory/kit/reworks", {
         method: "POST",
         idempotent: true,
@@ -3697,12 +3724,12 @@ export function OrdersEbrView({
                           className={inputClass}
                           value={rwForm.component_item_id}
                           onChange={(e) => {
-                            const it = options.items.find((x) => x.id === e.target.value);
+                            const it = reworkCatalogItems.find((x) => x.id === e.target.value);
                             setRwForm({ ...rwForm, component_item_id: e.target.value, uom: it?.base_uom ?? "" });
                           }}
                         >
                           <option value="">-- Chọn thành phần thay thế --</option>
-                          {options.items.map((i) => (
+                          {reworkCatalogItems.map((i) => (
                             <option key={i.id} value={i.id}>
                               {i.code} — {i.name} ({i.base_uom})
                             </option>

@@ -69,8 +69,8 @@ export default function FactoryKitModule() {
             onClick={() => {
               setError(null);
               setTab(t.key);
-              if (options.units.length === 0) {
-                loadOptions();
+              if (options.units.length === 0 || t.key === "bom" || t.key === "orders") {
+                void loadOptions();
               }
             }}
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${

@@ -106,6 +106,60 @@ function classifyBomLineForPackaging(l: any): {
   return { kind: "FILLABLE_SOLUTION" };
 }
 
+type CatalogPickerItem = KitOptions["items"][number];
+
+function foldSearchText(s: string): string {
+  return String(s || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase();
+}
+
+function filterCatalogItemsForPicker(
+  items: CatalogPickerItem[],
+  query: string,
+  alwaysKeepId?: string | null
+): { tubeItems: CatalogPickerItem[]; otherItems: CatalogPickerItem[]; totalMatches: number } {
+  const tokens = foldSearchText(query).trim().split(/[\s,;]+/).filter(Boolean);
+  const tubeItems: CatalogPickerItem[] = [];
+  const otherItems: CatalogPickerItem[] = [];
+  const seenIds = new Set<string>();
+  let totalMatches = 0;
+
+  for (const it of items) {
+    if (!it?.id || seenIds.has(it.id)) continue;
+    seenIds.add(it.id);
+
+    const codeFolded = foldSearchText(it.code);
+    const nameFolded = foldSearchText(it.name);
+    const alnumCode = codeFolded.replace(/[^a-z0-9]/g, "");
+    const isMatch =
+      tokens.length === 0 ||
+      tokens.every((tok) => {
+        const alnumTok = tok.replace(/[^a-z0-9]/g, "");
+        return (
+          codeFolded.includes(tok) ||
+          nameFolded.includes(tok) ||
+          (alnumTok.length > 0 && alnumCode.includes(alnumTok))
+        );
+      });
+
+    if (isMatch) totalMatches++;
+    if (!isMatch && it.id !== alwaysKeepId) continue;
+
+    if (String(it.code || "").toUpperCase().startsWith("VT-TUBE-")) {
+      tubeItems.push(it);
+    } else {
+      otherItems.push(it);
+    }
+  }
+
+  tubeItems.sort((a, b) => a.code.localeCompare(b.code));
+  return { tubeItems, otherItems, totalMatches };
+}
+
 export function BomRoutingView({
   options,
   onRefreshOptions,
@@ -136,8 +190,12 @@ export function BomRoutingView({
   const bomDetailRef = useRef<HTMLDivElement>(null);
   const rtDetailRef = useRef<HTMLDivElement>(null);
   const labelPreviewRef = useRef<HTMLDivElement>(null);
+  const lineEditFormRef = useRef<HTMLFormElement | null>(null);
   const [lineSearch, setLineSearch] = useState("");
   const [lineBoxFilter, setLineBoxFilter] = useState("");
+  const [lineItemFilter, setLineItemFilter] = useState("");
+  const [subItemFilter, setSubItemFilter] = useState("");
+  const [extraSearchedItems, setExtraSearchedItems] = useState<CatalogPickerItem[]>([]);
   const [bulkLinesText, setBulkLinesText] = useState("");
   const [showBulkPaste, setShowBulkPaste] = useState(false);
   const [showCreateBom, setShowCreateBom] = useState(false);
@@ -1159,7 +1217,100 @@ export function BomRoutingView({
     if (selectedRoutingId) loadRoutingDetail(selectedRoutingId);
   }, [selectedRoutingId, loadRoutingDetail]);
 
-  const kitProducts = options.items.filter((i) => ["FINISHED_KIT", "KIT", "SEMI_FINISHED"].includes(i.item_type));
+  useEffect(() => {
+    const terms = [lineItemFilter.trim(), subItemFilter.trim()].filter((t) => t.length >= 2);
+    if (terms.length === 0) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void (async () => {
+        for (const term of Array.from(new Set(terms))) {
+          try {
+            const res = await api<{ items: CatalogPickerItem[] }>(
+              `/api/factory/kit/options?items_only=1&q=${encodeURIComponent(term)}`
+            );
+            if (cancelled || !Array.isArray(res?.items) || res.items.length === 0) continue;
+            setExtraSearchedItems((prev) => {
+              const byId = new Map(prev.map((x) => [x.id, x]));
+              let changed = false;
+              for (const it of res.items) {
+                if (it?.id && !byId.has(it.id)) {
+                  byId.set(it.id, it);
+                  changed = true;
+                }
+              }
+              return changed ? Array.from(byId.values()) : prev;
+            });
+          } catch {
+            // Keep existing client-side catalog if live search fails transiently
+          }
+        }
+      })();
+    }, 220);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [lineItemFilter, subItemFilter]);
+
+  const mergedCatalogItems = useMemo(() => {
+    const byId = new Map<string, CatalogPickerItem>();
+    for (const it of options.items || []) {
+      if (it?.id && !byId.has(it.id)) byId.set(it.id, it);
+    }
+    for (const it of extraSearchedItems) {
+      if (it?.id && !byId.has(it.id)) byId.set(it.id, it);
+    }
+    for (const l of bomDetail?.lines || []) {
+      if (l?.component_item_id && !byId.has(l.component_item_id)) {
+        byId.set(l.component_item_id, {
+          id: l.component_item_id,
+          code: l.component_code || l.item_code || "",
+          name: l.component_name || l.item_name || "",
+          item_type: l.item_type || "CONSUMABLE",
+          base_uom: l.component_base_uom || l.uom || "pcs",
+          tracking: "LOT",
+          shelf_life_days: null,
+        });
+      }
+    }
+    for (const s of bomDetail?.substitutes || []) {
+      if (s?.substitute_item_id && !byId.has(s.substitute_item_id)) {
+        byId.set(s.substitute_item_id, {
+          id: s.substitute_item_id,
+          code: s.substitute_code || "",
+          name: s.substitute_name || "",
+          item_type: s.substitute_item_type || "CONSUMABLE",
+          base_uom: s.substitute_uom || "pcs",
+          tracking: "LOT",
+          shelf_life_days: null,
+        });
+      }
+    }
+    if (bomDetail?.bom?.product_item_id && !byId.has(bomDetail.bom.product_item_id)) {
+      byId.set(bomDetail.bom.product_item_id, {
+        id: bomDetail.bom.product_item_id,
+        code: bomDetail.bom.product_code || "",
+        name: bomDetail.bom.product_name || "",
+        item_type: bomDetail.bom.product_type || "FINISHED_KIT",
+        base_uom: bomDetail.bom.base_uom || "kit",
+        tracking: "LOT",
+        shelf_life_days: null,
+      });
+    }
+    return Array.from(byId.values());
+  }, [options.items, extraSearchedItems, bomDetail]);
+
+  const filteredLinePicker = useMemo(
+    () => filterCatalogItemsForPicker(mergedCatalogItems, lineItemFilter, lineForm.component_item_id),
+    [mergedCatalogItems, lineItemFilter, lineForm.component_item_id]
+  );
+
+  const filteredSubPicker = useMemo(
+    () => filterCatalogItemsForPicker(mergedCatalogItems, subItemFilter, subForm.substitute_item_id),
+    [mergedCatalogItems, subItemFilter, subForm.substitute_item_id]
+  );
+
+  const kitProducts = mergedCatalogItems.filter((i) => ["FINISHED_KIT", "KIT", "SEMI_FINISHED"].includes(i.item_type));
   const kitStaffList: Array<{ user_id: number; display_name: string }> = (options as any).kit_staff || [];
   const qaStaffList: Array<{ user_id: number; display_name: string }> = (options as any).qa_staff || [];
 
@@ -1440,7 +1591,7 @@ export function BomRoutingView({
     if (!selectedBomId) return;
     setError(null);
     try {
-      const item = options.items.find((i) => i.id === lineForm.component_item_id);
+      const item = mergedCatalogItems.find((i) => i.id === lineForm.component_item_id);
       await api(`/api/factory/kit/boms/${selectedBomId}`, {
         method: "POST",
         json: {
@@ -1473,6 +1624,7 @@ export function BomRoutingView({
 
   const handleStartEditLine = (l: any) => {
     setEditingLineId(l.id);
+    setLineItemFilter("");
     setLineForm({
       component_item_id: l.component_item_id || "",
       qty_per_base: String(l.qty_per_base ?? 1),
@@ -1490,6 +1642,9 @@ export function BomRoutingView({
       include_in_qc_retention: l.include_in_qc_retention !== false,
     });
     setShowAddLine(true);
+    setTimeout(() => {
+      lineEditFormRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }, 50);
   };
 
   const handleDeleteBomLine = async (lineId: string) => {
@@ -3479,7 +3634,13 @@ export function BomRoutingView({
                         <>
                           <Button
                             onClick={() => {
-                              setEditingLineId(null);
+                              if (editingLineId) {
+                                setEditingLineId(null);
+                                setLineItemFilter("");
+                                setShowAddLine(true);
+                                return;
+                              }
+                              setLineItemFilter("");
                               setShowAddLine((v) => !v);
                             }}
                           >
@@ -3511,7 +3672,7 @@ export function BomRoutingView({
                             if (!bulkLinesText.trim()) return;
                             setError(null);
                             try {
-                              const byCode = new Map(options.items.map((i) => [i.code.toUpperCase(), i]));
+                              const byCode = new Map(mergedCatalogItems.map((i) => [i.code.toUpperCase(), i]));
                               const parsedLines = bulkLinesText
                                 .split(/\r?\n/)
                                 .map((l) => l.trim())
@@ -3558,7 +3719,7 @@ export function BomRoutingView({
                   ) : null}
 
                   {bomDetail.bom.status !== "OBSOLETE" && showAddLine && (
-                    <form onSubmit={handleAddBomLine} className="mb-4 p-3 rounded-xl border-2 border-sky-400/60 bg-sky-50/40 dark:bg-sky-950/20 space-y-2.5">
+                    <form ref={lineEditFormRef} onSubmit={handleAddBomLine} className="mb-4 p-3 rounded-xl border-2 border-sky-400/60 bg-sky-50/40 dark:bg-sky-950/20 space-y-2.5">
                       <div className="flex items-center justify-between">
                         <div className="text-xs font-bold text-sky-900 dark:text-sky-200">
                           {editingLineId
@@ -3570,46 +3731,97 @@ export function BomRoutingView({
                           variant="ghost"
                           onClick={() => {
                             setEditingLineId(null);
+                            setLineItemFilter("");
                             setShowAddLine(false);
                           }}
                         >
                           Đóng
                         </Button>
                       </div>
-                      <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
-                        <Field label="Vật tư / Hóa chất / Bán TP">
-                          <select
-                            className={inputClass}
-                            value={lineForm.component_item_id}
-                            onChange={(e) => {
-                              const it = options.items.find((x) => x.id === e.target.value);
-                              const isPack = it?.item_type === "PACKAGING";
-                              setLineForm({
-                                ...lineForm,
-                                component_item_id: e.target.value,
-                                uom: it?.base_uom ?? "",
-                                component_role: isPack ? "PACKAGING" : lineForm.component_role,
-                                is_mix_component: !isPack,
-                                is_demo_fixed_component: isPack,
-                                include_in_qc_retention: !isPack,
-                              });
-                            }}
-                            required
-                          >
-                            <option value="">-- Chọn vật tư --</option>
-                            {options.items.map((i) => (
-                              <option key={i.id} value={i.id}>
-                                {i.code} — {i.name} ({i.base_uom})
-                              </option>
-                            ))}
-                          </select>
-                        </Field>
+                      <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
+                        <div className="md:col-span-2">
+                          <Field label="Vật tư / Hóa chất / Bán TP">
+                            <div className="space-y-1">
+                              <div className="flex gap-1">
+                                <input
+                                  type="search"
+                                  className={`${inputClass} text-xs`}
+                                  placeholder="🔍 Lọc nhanh mã / tên vật tư (VD: VT-TUBE, T02, CTT1.5...)"
+                                  value={lineItemFilter}
+                                  onChange={(e) => setLineItemFilter(e.target.value)}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setLineItemFilter((prev) =>
+                                      prev.trim().toUpperCase() === "VT-TUBE-" ? "" : "VT-TUBE-"
+                                    )
+                                  }
+                                  className={`px-2 py-1 rounded-lg border text-[11px] font-semibold whitespace-nowrap cursor-pointer transition-colors ${
+                                    lineItemFilter.trim().toUpperCase() === "VT-TUBE-"
+                                      ? "bg-sky-600 text-white border-sky-600"
+                                      : "bg-white dark:bg-slate-900 text-sky-700 dark:text-sky-300 border-sky-300 dark:border-sky-700 hover:bg-sky-50 dark:hover:bg-sky-950"
+                                  }`}
+                                  title="Lọc nhanh danh sách Tube / Strip PCR (VT-TUBE-*)"
+                                >
+                                  🧪 VT-TUBE-*
+                                </button>
+                              </div>
+                              <select
+                                className={inputClass}
+                                value={lineForm.component_item_id}
+                                onChange={(e) => {
+                                  const it = mergedCatalogItems.find((x) => x.id === e.target.value);
+                                  const isTubeStrip = Boolean(
+                                    it?.code && it.code.toUpperCase().startsWith("VT-TUBE-")
+                                  );
+                                  const isPack = it?.item_type === "PACKAGING";
+                                  setLineForm({
+                                    ...lineForm,
+                                    component_item_id: e.target.value,
+                                    uom: it?.base_uom || lineForm.uom || "",
+                                    component_role: isTubeStrip
+                                      ? "PCR_TUBE_STRIP"
+                                      : isPack
+                                        ? "PACKAGING"
+                                        : lineForm.component_role,
+                                    is_mix_component: !(isPack || isTubeStrip),
+                                    is_demo_fixed_component: isPack || isTubeStrip,
+                                    include_in_qc_retention: !(isPack || isTubeStrip),
+                                  });
+                                }}
+                                required
+                              >
+                                <option value="">-- Chọn vật tư --</option>
+                                {filteredLinePicker.tubeItems.length > 0 && (
+                                  <optgroup label="🧪 Tube / Strip PCR cấp kèm (VT-TUBE-*)">
+                                    {filteredLinePicker.tubeItems.map((i) => (
+                                      <option key={i.id} value={i.id}>
+                                        {i.code} — {i.name} ({i.base_uom})
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                )}
+                                {filteredLinePicker.otherItems.length > 0 && (
+                                  <optgroup label="📦 Vật tư / Hóa chất / Bán thành phẩm">
+                                    {filteredLinePicker.otherItems.map((i) => (
+                                      <option key={i.id} value={i.id}>
+                                        {i.code} — {i.name} ({i.base_uom})
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                )}
+                              </select>
+                            </div>
+                          </Field>
+                        </div>
                         <Field label="Vai trò trong Kit">
                           <select
                             className={inputClass}
                             value={lineForm.component_role}
                             onChange={(e) => {
-                              const isPack = e.target.value === "PACKAGING";
+                              const isPack =
+                                e.target.value === "PACKAGING" || e.target.value === "PCR_TUBE_STRIP";
                               setLineForm({
                                 ...lineForm,
                                 component_role: e.target.value,
@@ -3969,19 +4181,41 @@ export function BomRoutingView({
                             </select>
                           </Field>
                           <Field label="Vật tư thay thế khi hết tồn">
-                            <select
-                              className={inputClass}
-                              value={subForm.substitute_item_id}
-                              onChange={(e) => setSubForm({ ...subForm, substitute_item_id: e.target.value })}
-                              required
-                            >
-                              <option value="">-- Chọn VT thay thế --</option>
-                              {options.items.map((i) => (
-                                <option key={i.id} value={i.id}>
-                                  {i.code} — {i.name} ({i.base_uom})
-                                </option>
-                              ))}
-                            </select>
+                            <div className="space-y-1">
+                              <input
+                                type="search"
+                                className={`${inputClass} text-xs`}
+                                placeholder="🔍 Lọc nhanh VT thay thế (VD: VT-TUBE, T02...)"
+                                value={subItemFilter}
+                                onChange={(e) => setSubItemFilter(e.target.value)}
+                              />
+                              <select
+                                className={inputClass}
+                                value={subForm.substitute_item_id}
+                                onChange={(e) => setSubForm({ ...subForm, substitute_item_id: e.target.value })}
+                                required
+                              >
+                                <option value="">-- Chọn VT thay thế --</option>
+                                {filteredSubPicker.tubeItems.length > 0 && (
+                                  <optgroup label="🧪 Tube / Strip PCR cấp kèm (VT-TUBE-*)">
+                                    {filteredSubPicker.tubeItems.map((i) => (
+                                      <option key={i.id} value={i.id}>
+                                        {i.code} — {i.name} ({i.base_uom})
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                )}
+                                {filteredSubPicker.otherItems.length > 0 && (
+                                  <optgroup label="📦 Vật tư / Hóa chất / Bán thành phẩm">
+                                    {filteredSubPicker.otherItems.map((i) => (
+                                      <option key={i.id} value={i.id}>
+                                        {i.code} — {i.name} ({i.base_uom})
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                )}
+                              </select>
+                            </div>
                           </Field>
                           <Field label="Hệ số quy đổi & Ưu tiên">
                             <div className="flex gap-1">

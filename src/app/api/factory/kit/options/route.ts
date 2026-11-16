@@ -1,19 +1,28 @@
 import { authorizeAnywhere, hasFactoryPermission } from "@/factory/core/authz";
-import { factoryRoute } from "@/factory/http";
-import { ensureKitBomRoutingAndIfuSchema, listCustomStepFunctions } from "@/factory/kit/bomRouting";
+import { factoryRoute, queryObject } from "@/factory/http";
+import { ensureKitBomRoutingAndIfuSchema, listCustomStepFunctions, listKitCatalogItems } from "@/factory/kit/bomRouting";
 import { listDepartmentStaffForKitAndQa } from "@/factory/kit/ordersEbr";
 import { ensureDepartmentEquipmentSeed, syncOverdueCalibrationAssets } from "@/factory/asset/service";
 import { ensureInternalOrderLineKitSpecColumns } from "@/factory/intake/kdEvents";
 import { syncPortalCatalogToFactoryItems } from "@/factory/portalCatalogSync";
 import "@/factory/kit/permissions";
 
-export const GET = factoryRoute(async (tx, { actor }) => {
+export const GET = factoryRoute(async (tx, { actor, url }) => {
   await authorizeAnywhere(tx, actor, "kit.view");
   await ensureKitBomRoutingAndIfuSchema(tx);
   await ensureInternalOrderLineKitSpecColumns(tx);
   await ensureDepartmentEquipmentSeed(tx);
   await syncOverdueCalibrationAssets(tx);
   await syncPortalCatalogToFactoryItems(tx);
+
+  const qObj = queryObject(url);
+  if (qObj.items_only === "1" || qObj.items_only === "true") {
+    const items = await listKitCatalogItems(tx, {
+      q: typeof qObj.q === "string" ? qObj.q : null,
+      limit: Number(qObj.limit) || 300,
+    });
+    return { items };
+  }
 
   const allUnits = (
     await tx.query(
@@ -29,11 +38,7 @@ export const GET = factoryRoute(async (tx, { actor }) => {
       "SELECT id, code, name, owner_org_unit_id FROM master.warehouse WHERE status = 'ACTIVE' ORDER BY CASE WHEN code = 'KHO-KIT' THEN 0 ELSE 1 END, code"
     )
   ).rows;
-  const items = (
-    await tx.query(
-      "SELECT id, code, name, item_type, base_uom, tracking, shelf_life_days FROM master.item WHERE status = 'ACTIVE' ORDER BY code LIMIT 5000"
-    )
-  ).rows;
+  const items = await listKitCatalogItems(tx);
   const assets = (
     await tx.query(
       `SELECT a.id, a.code, a.name, a.asset_type, a.status,

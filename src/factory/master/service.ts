@@ -287,7 +287,7 @@ const VI_TO =
   "aaaaaaaaaaaaaaaaaeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyyd" +
   "aaaaaaaaaaaaaaaaaeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyyd";
 
-function foldViText(s: string): string {
+export function foldViText(s: string): string {
   return s
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -296,7 +296,7 @@ function foldViText(s: string): string {
     .toLowerCase();
 }
 
-const foldSql = (expr: string) => `lower(translate(${expr}, '${VI_FROM}', '${VI_TO}'))`;
+export const foldSql = (expr: string) => `lower(translate(${expr}, '${VI_FROM}', '${VI_TO}'))`;
 
 export async function listItems(tx: Tx, actor: AuthzActor, query: unknown) {
   await authorizeAnywhere(tx, actor, "master.data.view");

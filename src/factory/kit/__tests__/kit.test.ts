@@ -13,11 +13,14 @@ import {
   createBom,
   createRouting,
   deleteCustomStepFunction,
+  ensureStandardVtTubeItems,
   getBomDetail,
   getRoutingDetail,
   listCustomStepFunctions,
+  listKitCatalogItems,
   pairBomLineContainer,
   routingMachine,
+  STD_VT_TUBE_ITEMS,
   updateBomLabelIfuSpec,
   updateBomLine,
   upsertCustomStepFunction,
@@ -1833,5 +1836,114 @@ describe("Phase 4b — Module Phòng Sản xuất Kit (kit schema)", () => {
     expect((splitNoIcDetail.order.ifu_files_json as Record<string, { file_name: string | null }>).SPLIT_WITH_IC.file_name).toBe(
       fourIfus.SPLIT_WITH_IC.file_name
     );
+  });
+
+  it("listKitCatalogItems reactivates & prioritizes VT-TUBE-* items and retains INACTIVE BOM-referenced items", async () => {
+    const site = await makeSite();
+    const operator = await createUser("Kỹ sư BOM Kit");
+    await grant(operator, ["kit.view", "kit.bom.manage", "master.data.view"], site.dept);
+
+    const rnd = Math.random().toString(36).slice(2, 7).toUpperCase();
+    const customT02Name = "Strip 8 tube 0.2mL trắng cao + nắp quang học trong (Ký hiệu Lot: T02)";
+
+    const productItem = await makeItem(site, {
+      code: `KIT-TUBE-${rnd}`,
+      name: `Kit test tube ${rnd}`,
+      item_type: "FINISHED_KIT",
+      base_uom: "pcs",
+    });
+    const inactiveCompItem = await makeItem(site, {
+      code: `ZZZ-INACT-${rnd}`,
+      name: `Nguyên liệu đã ngừng ${rnd}`,
+      item_type: "REAGENT",
+      base_uom: "µL",
+    });
+    // Seed extra AAA-* active items that sort alphabetically before VT-TUBE-*
+    for (let k = 0; k < 5; k++) {
+      await makeItem(site, {
+        code: `AAA-EARLY-${k}-${rnd}`,
+        name: `Vật tư đầu bảng ${k} ${rnd}`,
+        item_type: "REAGENT",
+        base_uom: "µL",
+      });
+    }
+
+    const { bom, originalT02Uom } = await withTransaction(async (tx) => {
+      await ensureStandardVtTubeItems(tx);
+      const t02Row = (
+        await tx.query("SELECT id, name, base_uom FROM master.item WHERE code = 'VT-TUBE-T02'")
+      ).rows[0] as { id: string; name: string; base_uom: string };
+
+      const b = await createBom(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: productItem.id,
+        name: `BOM kiểm tra VT-TUBE ${rnd}`,
+        base_qty: 1,
+        base_uom: "pcs",
+      });
+      await addBomLine(tx, operator, {
+        bom_id: b.id,
+        component_item_id: inactiveCompItem.id,
+        component_role: "REAGENT",
+        qty_per_base: 50,
+        uom: "µL",
+      });
+      await addBomLine(tx, operator, {
+        bom_id: b.id,
+        component_item_id: t02Row.id,
+        component_role: "PCR_TUBE_STRIP",
+        qty_per_base: 80,
+        uom: t02Row.base_uom,
+      });
+
+      // Simulate production customization + accidental deactivation of VT-TUBE-T02 and the non-tube component
+      await tx.query(
+        `UPDATE master.item
+            SET name = $1,
+                status = 'INACTIVE'
+          WHERE code = 'VT-TUBE-T02'`,
+        [customT02Name]
+      );
+      await tx.query("UPDATE master.item SET status = 'INACTIVE' WHERE id = $1", [inactiveCompItem.id]);
+      return { bom: b, originalT02Uom: t02Row.base_uom };
+    });
+
+    await withTransaction(async (tx) => {
+      // Even with a tight limit of 10 rows, all 8 VT-TUBE-* items come first and are reactivated while preserving custom name & UOM
+      const top10 = await listKitCatalogItems(tx, { limit: 10 });
+      expect(top10).toHaveLength(10);
+      const topCodes = top10.map((r) => r.code);
+      for (const std of STD_VT_TUBE_ITEMS) {
+        expect(topCodes).toContain(std.code);
+      }
+      expect(top10.slice(0, STD_VT_TUBE_ITEMS.length).every((r) => r.code.startsWith("VT-TUBE-"))).toBe(true);
+
+      const t02After = (
+        await tx.query("SELECT name, base_uom, status FROM master.item WHERE code = 'VT-TUBE-T02'")
+      ).rows[0] as { name: string; base_uom: string; status: string };
+      expect(t02After.status).toBe("ACTIVE");
+      expect(t02After.name).toBe(customT02Name);
+      expect(t02After.base_uom).toBe(originalT02Uom);
+
+      // Full catalog retains the INACTIVE BOM-referenced non-tube component item
+      const fullList = await listKitCatalogItems(tx);
+      expect(fullList.some((r) => r.id === inactiveCompItem.id)).toBe(true);
+
+      // Search filters for "VT-TUBE-" and "T02" work cleanly
+      const tubeHits = await listKitCatalogItems(tx, { q: "VT-TUBE-" });
+      expect(tubeHits.length).toBeGreaterThanOrEqual(STD_VT_TUBE_ITEMS.length);
+      for (const std of STD_VT_TUBE_ITEMS) {
+        expect(tubeHits.some((r) => r.code === std.code)).toBe(true);
+      }
+
+      const t02Hits = await listKitCatalogItems(tx, { q: "T02" });
+      expect(t02Hits.some((r) => r.code === "VT-TUBE-T02")).toBe(true);
+
+      // getBomDetail includes component_base_uom for immediate edit preservation
+      const detail = await getBomDetail(tx, operator, bom.id);
+      const t02Line = detail.lines.find((l: any) => l.component_code === "VT-TUBE-T02");
+      expect(t02Line).toBeTruthy();
+      expect(t02Line.component_base_uom).toBeTruthy();
+    });
   });
 });

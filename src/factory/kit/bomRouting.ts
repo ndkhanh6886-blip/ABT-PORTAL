@@ -6,7 +6,7 @@ import { conflict, invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { insertRecord, parseInput } from "../core/records";
 import { defineMachine, listAllowedActions, runTransition, type Guard } from "../core/stateMachine";
-import { getItem, toBaseQty } from "../master/service";
+import { foldSql, foldViText, getItem, toBaseQty } from "../master/service";
 import "./permissions";
 
 export type SpecDocStatus = "DRAFT" | "IN_REVIEW" | "EFFECTIVE" | "OBSOLETE";
@@ -2199,6 +2199,149 @@ export interface ListFormulaFilter {
   offset?: number;
 }
 
+export const STD_VT_TUBE_ITEMS = [
+  { code: "VT-TUBE-T02", name: "Strip 0.2 mL trong (Strip-8 · Mã nhận diện T02)" },
+  { code: "VT-TUBE-T01", name: "Strip 0.1 mL trong (Strip-8 · Mã nhận diện T01)" },
+  { code: "VT-TUBE-S02", name: "Strip 0.2 mL trắng đục (Strip-8 · Mã nhận diện S02)" },
+  { code: "VT-TUBE-S01", name: "Strip 0.1 mL trắng đục (Strip-8 · Mã nhận diện S01)" },
+  { code: "VT-TUBE-LQ02", name: "Tube qPCR 0.2 mL rời (Mã nhận diện LQ02)" },
+  { code: "VT-TUBE-MIC", name: "MIC TUBES and CAPS (Strip-4 · Mã nhận diện MIC)" },
+  { code: "VT-TUBE-R01", name: "Strip-4 0.1 mL trong (Strip-4 · Mã nhận diện R01)" },
+  { code: "VT-TUBE-LP02", name: "Tube PCR 0.2 mL rời (Mã nhận diện LP02)" },
+] as const;
+
+/**
+ * Ensures the 8 standard PCR Tube / Strip items (`VT-TUBE-*`) exist and remain `ACTIVE`
+ * in `master.item`, preserving any custom name or base UOM configured in production.
+ */
+export async function ensureStandardVtTubeItems(tx: Tx): Promise<void> {
+  const stdCodes = STD_VT_TUBE_ITEMS.map((t) => t.code);
+  const activeCountRes = await tx.query(
+    "SELECT count(*)::int AS c FROM master.item WHERE code = ANY($1::text[]) AND status = 'ACTIVE'",
+    [stdCodes]
+  );
+  if (Number(activeCountRes.rows[0]?.c ?? 0) === STD_VT_TUBE_ITEMS.length) return;
+
+  const existingUomRes = await tx.query(
+    `SELECT i.base_uom
+       FROM master.item i
+       JOIN master.uom u ON u.code = i.base_uom AND u.status = 'ACTIVE'
+      WHERE i.code ILIKE 'VT-TUBE-%'
+      ORDER BY i.updated_at DESC NULLS LAST
+      LIMIT 1`
+  );
+  let tubeBaseUom = existingUomRes.rows[0]?.base_uom as string | undefined;
+  if (!tubeBaseUom) {
+    const uomCheckRows = (await tx.query("SELECT code FROM master.uom WHERE status = 'ACTIVE'")).rows as Array<{ code: string }>;
+    if (uomCheckRows.length === 0) return;
+    const preferred = ["cái", "cai", "pcs", "tube", "ea", "ống"];
+    for (const p of preferred) {
+      const hit = uomCheckRows.find((u) => u.code.toLowerCase() === p);
+      if (hit) {
+        tubeBaseUom = hit.code;
+        break;
+      }
+    }
+    if (!tubeBaseUom) tubeBaseUom = uomCheckRows[0].code;
+  }
+
+  const names = STD_VT_TUBE_ITEMS.map((t) => t.name);
+  await tx.query(
+    `INSERT INTO master.item
+       (code, name, item_type, base_uom, tracking, storage_condition, receipt_qc_required, is_purchasable, is_saleable, is_manufacturable, status)
+     SELECT u.code, u.name, 'CONSUMABLE', $3, 'LOT', 'RT', false, true, false, false, 'ACTIVE'
+       FROM unnest($1::text[], $2::text[]) AS u(code, name)
+     ON CONFLICT (code) DO UPDATE
+       SET status = 'ACTIVE',
+           updated_at = now()
+     WHERE master.item.status <> 'ACTIVE'`,
+    [stdCodes, names, tubeBaseUom]
+  );
+}
+
+/**
+ * Lists catalog items for Kit BOM / Order selectors, prioritizing `VT-TUBE-*` and BOM-referenced
+ * items first (even if inactive) so large catalogs never truncate tube or existing BOM components.
+ */
+export async function listKitCatalogItems(
+  tx: Tx,
+  opts: { q?: string | null; limit?: number } = {}
+) {
+  await ensureStandardVtTubeItems(tx);
+  const rawSearch = opts.q ? opts.q.normalize("NFC").trim() : "";
+  const defaultLimit = rawSearch ? 300 : 25000;
+  const limit = Math.min(Math.max(Number(opts.limit) || defaultLimit, 1), 30000);
+
+  const params: unknown[] = [];
+  const whereClauses = [
+    "(i.status = 'ACTIVE' OR i.code ILIKE 'VT-TUBE-%' OR EXISTS (SELECT 1 FROM bom_refs r WHERE r.id = i.id))",
+  ];
+
+  if (rawSearch) {
+    const tokens = foldViText(rawSearch)
+      .split(/[\s,;]+/)
+      .filter(Boolean)
+      .slice(0, 6);
+    for (const tok of tokens) {
+      params.push(`%${tok}%`);
+      const tokIdx = params.length;
+      const alnumTok = tok.replace(/[^a-z0-9]/g, "");
+      let alnumOr = "";
+      if (alnumTok) {
+        params.push(`%${alnumTok}%`);
+        const alnumIdx = params.length;
+        alnumOr = ` OR regexp_replace(lower(i.code), '[^a-z0-9]', '', 'g') LIKE $${alnumIdx}`;
+      }
+      whereClauses.push(
+        `(${foldSql("i.code")} LIKE $${tokIdx}` +
+          ` OR ${foldSql("i.name")} LIKE $${tokIdx}` +
+          ` OR ${foldSql("coalesce(i.kd_item_code, '')")} LIKE $${tokIdx}` +
+          alnumOr +
+          `)`
+      );
+    }
+  }
+
+  let orderBySql: string;
+  if (rawSearch) {
+    params.push(rawSearch);
+    const rawIdx = params.length;
+    orderBySql = `ORDER BY CASE
+      WHEN lower(i.code) = lower($${rawIdx}) THEN 0
+      WHEN lower(i.code) LIKE lower($${rawIdx}) || '%' THEN 1
+      WHEN i.code ILIKE 'VT-TUBE-%' THEN 2
+      ELSE 3
+    END ASC, i.code ASC`;
+  } else {
+    orderBySql = `ORDER BY CASE
+      WHEN i.code ILIKE 'VT-TUBE-%' THEN 0
+      WHEN EXISTS (SELECT 1 FROM bom_refs r WHERE r.id = i.id) THEN 1
+      ELSE 2
+    END ASC, i.code ASC`;
+  }
+
+  params.push(limit);
+  const limitIdx = params.length;
+
+  return (
+    await tx.query(
+      `WITH bom_refs AS (
+         SELECT product_item_id AS id FROM kit.bom
+         UNION
+         SELECT component_item_id AS id FROM kit.bom_line
+         UNION
+         SELECT substitute_item_id AS id FROM kit.bom_line_substitute
+       )
+       SELECT i.id, i.code, i.name, i.item_type, i.base_uom, i.tracking, i.shelf_life_days
+         FROM master.item i
+        WHERE ${whereClauses.join(" AND ")}
+        ${orderBySql}
+        LIMIT $${limitIdx}`,
+      params
+    )
+  ).rows;
+}
+
 /**
  * Lists BOMs with server-side search, status/product/bom_type filtering, and single-query org-unit scope resolution
  * so thousands of formulas can be searched and paginated cleanly.
@@ -2253,30 +2396,8 @@ export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
      WHERE step_function IS NULL OR functional_flags = '{}'::jsonb
   `);
 
-  // Ensure the 8 standard PCR Tube / Strip items (T02, T01, S02, S01, LQ02, MIC, R01, LP02) exist in master.item
-  const uomCheckRows = (await tx.query("SELECT code FROM master.uom WHERE status = 'ACTIVE'")).rows as Array<{ code: string }>;
-  const tubeBaseUom =
-    uomCheckRows.find((u) => ["tube", "pcs", "ea", "cai", "ống"].includes(u.code.toLowerCase()))?.code ??
-    uomCheckRows[0]?.code ??
-    "pcs";
-  const stdTubeItems = [
-    { code: "VT-TUBE-T02", name: "Strip 0.2 mL trong (Strip-8 · Mã nhận diện T02)" },
-    { code: "VT-TUBE-T01", name: "Strip 0.1 mL trong (Strip-8 · Mã nhận diện T01)" },
-    { code: "VT-TUBE-S02", name: "Strip 0.2 mL trắng đục (Strip-8 · Mã nhận diện S02)" },
-    { code: "VT-TUBE-S01", name: "Strip 0.1 mL trắng đục (Strip-8 · Mã nhận diện S01)" },
-    { code: "VT-TUBE-LQ02", name: "Tube qPCR 0.2 mL rời (Mã nhận diện LQ02)" },
-    { code: "VT-TUBE-MIC", name: "MIC TUBES and CAPS (Strip-4 · Mã nhận diện MIC)" },
-    { code: "VT-TUBE-R01", name: "Strip-4 0.1 mL trong (Strip-4 · Mã nhận diện R01)" },
-    { code: "VT-TUBE-LP02", name: "Tube PCR 0.2 mL rời (Mã nhận diện LP02)" },
-  ];
-  for (const ti of stdTubeItems) {
-    await tx.query(
-      `INSERT INTO master.item (code, name, item_type, base_uom, tracking, storage_condition, receipt_qc_required, is_purchasable, is_saleable, is_manufacturable, status)
-       VALUES ($1, $2, 'CONSUMABLE', $3, 'LOT', 'RT', false, true, false, false, 'ACTIVE')
-       ON CONFLICT (code) DO NOTHING`,
-      [ti.code, ti.name, tubeBaseUom]
-    );
-  }
+  // Ensure the 8 standard PCR Tube / Strip items (T02, T01, S02, S01, LQ02, MIC, R01, LP02) exist and stay ACTIVE
+  await ensureStandardVtTubeItems(tx);
 
   // Seed representative Semi-Finished BOMs & Finished Good BOMs from molecularkit-mes if no semi_finished BOM exists yet
   const semiCheck = await tx.query("SELECT count(*)::int AS c FROM kit.bom WHERE bom_type = 'semi_finished'");
@@ -3355,7 +3476,8 @@ export async function getBomDetail(
       `SELECT bl.*, bl.qty_per_base::float AS qty_per_base,
               bl.qty_per_base_aliquoted::float AS qty_per_base_aliquoted,
               bl.scrap_pct::float AS scrap_pct,
-              it.code AS item_code, it.name AS item_name, it.code AS component_code, it.name AS component_name, it.item_type
+              it.code AS item_code, it.name AS item_name, it.code AS component_code, it.name AS component_name,
+              it.item_type, it.base_uom AS component_base_uom
          FROM kit.bom_line bl
          JOIN master.item it ON it.id = bl.component_item_id
         WHERE bl.bom_id = $1
@@ -3376,6 +3498,7 @@ export async function getBomDetail(
     await tx.query(
       `SELECT s.*, s.conversion_factor::float AS conversion_factor,
               it.code AS substitute_code, it.name AS substitute_name, it.base_uom AS substitute_uom,
+              it.item_type AS substitute_item_type,
               bl.line_no
          FROM kit.bom_line_substitute s
          JOIN kit.bom_line bl ON bl.id = s.bom_line_id
