@@ -64,7 +64,7 @@ export type ProposalStatus =
 export interface ProposalFieldSchema {
   key: string;
   label: string;
-  type: "text" | "number" | "date" | "select" | "textarea";
+  type: "text" | "number" | "date" | "select" | "textarea" | "file";
   placeholder?: string;
   required?: boolean;
   options?: string[];
@@ -1296,6 +1296,21 @@ export function ProposalsApprovalView({
       showToast("Vui lòng nhập nội dung / lý do đề xuất", "warning");
       return;
     }
+    if (submitMode === "PENDING") {
+      for (const f of activeTemplate.fields || []) {
+        if (!f.required) continue;
+        const val = formState.formValues?.[f.key];
+        if (f.type === "file") {
+          if (!Array.isArray(val) || val.length === 0) {
+            showToast(`Vui lòng tải tệp đính kèm cho trường bắt buộc: "${f.label}"`, "warning");
+            return;
+          }
+        } else if (val === undefined || val === null || String(val).trim() === "") {
+          showToast(`Vui lòng điền thông tin bắt buộc: "${f.label}"`, "warning");
+          return;
+        }
+      }
+    }
     if (isDatesMode(formState.formValues) && (parseLeaveDays(formState.formValues) || []).length === 0) {
       showToast("Đơn nghỉ theo các ngày cụ thể: vui lòng chọn ít nhất 1 ngày nghỉ", "warning");
       return;
@@ -1777,8 +1792,14 @@ export function ProposalsApprovalView({
     const fieldsHtml = (tmpl?.fields || [])
       .map((f) => {
         const val = p.formValues?.[f.key];
-        if (!val) return "";
-        const displayVal = f.type === "date" ? formatDayVN(val) : String(val);
+        if (!val || (Array.isArray(val) && val.length === 0)) return "";
+        const displayVal =
+          f.type === "date"
+            ? formatDayVN(val)
+            : Array.isArray(val)
+            ? val.map((a: any) => a?.name || "").filter(Boolean).join(", ")
+            : String(val);
+        if (!displayVal) return "";
         return `<tr><td style="padding:6px 10px;border:1px solid #cbd5e1;font-weight:600;width:36%;background:#f8fafc">${f.label}</td><td style="padding:6px 10px;border:1px solid #cbd5e1">${displayVal}</td></tr>`;
       })
       .join("") + (() => {
@@ -3637,124 +3658,142 @@ export function ProposalsApprovalView({
                 {activeTemplate.fields
                   .filter((f) => !(isDatesMode(formState.formValues) && (f.key === "fromDate" || f.key === "toDate" || f.key === "totalDays")))
                   .map((field) => (
-                  <div key={field.key} className={field.type === "textarea" ? "sm:col-span-2" : ""}>
-                    <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
-                      {field.label} {field.required && <span className="text-rose-500">*</span>}
-                    </label>
-                    {field.type === "select" ? (
-                      <select
-                        value={formState.formValues[field.key] || ""}
-                        onChange={(e) =>
-                          setFormState((prev) => ({
-                            ...prev,
-                            formValues: { ...prev.formValues, [field.key]: e.target.value }
-                          }))
-                        }
-                        className="w-full px-3 py-1.5 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-                      >
-                        <option value="">-- Chọn {field.label} --</option>
-                        {(field.options || []).map((opt) => (
-                          <option key={opt} value={opt}>
-                            {opt}
-                          </option>
-                        ))}
-                      </select>
-                    ) : field.type === "date" ? (
-                      <div className="space-y-1">
-                        <DateInputVN
-                          value={formState.formValues[field.key] || todayVN()}
-                          onChange={(e) => {
-                            const newVal = e.target.value;
-                            setFormState((prev) => {
-                              const nextFV = { ...prev.formValues, [field.key]: newVal };
-                              if (field.key === "fromDate" || field.key === "toDate") {
-                                const fd = field.key === "fromDate" ? newVal : nextFV.fromDate;
-                                const td = field.key === "toDate" ? newVal : nextFV.toDate;
-                                if (fd && td && td >= fd) {
-                                  const diff = Math.round((new Date(td).getTime() - new Date(fd).getTime()) / 86400000) + 1;
-                                  nextFV.totalDays = String(Math.max(1, diff));
-                                } else if (field.key === "fromDate" && (!td || td < newVal)) {
-                                  nextFV.toDate = newVal;
-                                  nextFV.totalDays = "1";
-                                }
-                              }
-                              return { ...prev, formValues: nextFV };
-                            });
-                          }}
-                          className="w-full px-3 py-1.5 rounded-xl text-xs font-semibold border border-teal-300 dark:border-teal-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                  <div key={field.key} className={field.type === "textarea" || field.type === "file" ? "sm:col-span-2" : ""}>
+                    {field.type === "file" ? (
+                      <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
+                        <AttachmentPicker
+                          files={Array.isArray(formState.formValues[field.key]) ? formState.formValues[field.key] : []}
+                          onChange={(files) =>
+                            setFormState((prev) => ({
+                              ...prev,
+                              formValues: { ...prev.formValues, [field.key]: files }
+                            }))
+                          }
+                          label={`${field.label}${field.required ? " *" : ""}`}
+                          hint={field.placeholder || "Hỗ trợ tải lên PDF, Word, Excel, Ảnh chụp chứng từ..."}
                         />
-                        <div className="flex items-center gap-1 flex-wrap">
-                          {[
-                            { label: "Hôm nay", offset: 0 },
-                            { label: "Ngày mai", offset: 1 },
-                            { label: "+2 ngày", offset: 2 },
-                            { label: "+3 ngày", offset: 3 }
-                          ].map((q) => {
-                            const d = new Date();
-                            d.setDate(d.getDate() + q.offset);
-                            const iso = d.toISOString().slice(0, 10);
-                            const isSelected = (formState.formValues[field.key] || todayVN()) === iso;
-                            return (
-                              <button
-                                key={q.label}
-                                type="button"
-                                onClick={() => {
-                                  setFormState((prev) => {
-                                    const nextFV = { ...prev.formValues, [field.key]: iso };
-                                    if (field.key === "fromDate" || field.key === "toDate") {
-                                      const fd = field.key === "fromDate" ? iso : nextFV.fromDate;
-                                      const td = field.key === "toDate" ? iso : nextFV.toDate;
-                                      if (fd && td && td >= fd) {
-                                        const diff = Math.round((new Date(td).getTime() - new Date(fd).getTime()) / 86400000) + 1;
-                                        nextFV.totalDays = String(Math.max(1, diff));
-                                      } else if (field.key === "fromDate" && (!td || td < iso)) {
-                                        nextFV.toDate = iso;
-                                        nextFV.totalDays = "1";
-                                      }
-                                    }
-                                    return { ...prev, formValues: nextFV };
-                                  });
-                                }}
-                                className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-colors cursor-pointer ${
-                                  isSelected
-                                    ? "bg-teal-600 text-white"
-                                    : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-teal-50 dark:hover:bg-teal-950/50"
-                                }`}
-                              >
-                                📅 {q.label}
-                              </button>
-                            );
-                          })}
-                        </div>
                       </div>
-                    ) : field.type === "textarea" ? (
-                      <textarea
-                        rows={2}
-                        value={formState.formValues[field.key] || ""}
-                        onChange={(e) =>
-                          setFormState((prev) => ({
-                            ...prev,
-                            formValues: { ...prev.formValues, [field.key]: e.target.value }
-                          }))
-                        }
-                        placeholder={field.placeholder || ""}
-                        className="w-full px-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-                      />
                     ) : (
-                      <input
-                        type={field.type === "number" ? "number" : "text"}
-                        step={field.type === "number" ? "any" : undefined}
-                        list={field.key === "handoverStaff" ? "proposal-approvers-datalist" : undefined}
-                        value={formState.formValues[field.key] || ""}
-                        onChange={(e) =>
-                          setFormState((prev) => ({
-                            ...prev,
-                            formValues: { ...prev.formValues, [field.key]: e.target.value }
-                          }))
-                        }
-                        placeholder={field.placeholder || ""}
-                        className="w-full px-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-                      />
+                      <>
+                        <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                          {field.label} {field.required && <span className="text-rose-500">*</span>}
+                        </label>
+                        {field.type === "select" ? (
+                          <select
+                            value={formState.formValues[field.key] || ""}
+                            onChange={(e) =>
+                              setFormState((prev) => ({
+                                ...prev,
+                                formValues: { ...prev.formValues, [field.key]: e.target.value }
+                              }))
+                            }
+                            className="w-full px-3 py-1.5 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                          >
+                            <option value="">-- Chọn {field.label} --</option>
+                            {(field.options || []).map((opt) => (
+                              <option key={opt} value={opt}>
+                                {opt}
+                              </option>
+                            ))}
+                          </select>
+                        ) : field.type === "date" ? (
+                          <div className="space-y-1">
+                            <DateInputVN
+                              value={formState.formValues[field.key] || todayVN()}
+                              onChange={(e) => {
+                                const newVal = e.target.value;
+                                setFormState((prev) => {
+                                  const nextFV = { ...prev.formValues, [field.key]: newVal };
+                                  if (field.key === "fromDate" || field.key === "toDate") {
+                                    const fd = field.key === "fromDate" ? newVal : nextFV.fromDate;
+                                    const td = field.key === "toDate" ? newVal : nextFV.toDate;
+                                    if (fd && td && td >= fd) {
+                                      const diff = Math.round((new Date(td).getTime() - new Date(fd).getTime()) / 86400000) + 1;
+                                      nextFV.totalDays = String(Math.max(1, diff));
+                                    } else if (field.key === "fromDate" && (!td || td < newVal)) {
+                                      nextFV.toDate = newVal;
+                                      nextFV.totalDays = "1";
+                                    }
+                                  }
+                                  return { ...prev, formValues: nextFV };
+                                });
+                              }}
+                              className="w-full px-3 py-1.5 rounded-xl text-xs font-semibold border border-teal-300 dark:border-teal-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                            />
+                            <div className="flex items-center gap-1 flex-wrap">
+                              {[
+                                { label: "Hôm nay", offset: 0 },
+                                { label: "Ngày mai", offset: 1 },
+                                { label: "+2 ngày", offset: 2 },
+                                { label: "+3 ngày", offset: 3 }
+                              ].map((q) => {
+                                const d = new Date();
+                                d.setDate(d.getDate() + q.offset);
+                                const iso = d.toISOString().slice(0, 10);
+                                const isSelected = (formState.formValues[field.key] || todayVN()) === iso;
+                                return (
+                                  <button
+                                    key={q.label}
+                                    type="button"
+                                    onClick={() => {
+                                      setFormState((prev) => {
+                                        const nextFV = { ...prev.formValues, [field.key]: iso };
+                                        if (field.key === "fromDate" || field.key === "toDate") {
+                                          const fd = field.key === "fromDate" ? iso : nextFV.fromDate;
+                                          const td = field.key === "toDate" ? iso : nextFV.toDate;
+                                          if (fd && td && td >= fd) {
+                                            const diff = Math.round((new Date(td).getTime() - new Date(fd).getTime()) / 86400000) + 1;
+                                            nextFV.totalDays = String(Math.max(1, diff));
+                                          } else if (field.key === "fromDate" && (!td || td < iso)) {
+                                            nextFV.toDate = iso;
+                                            nextFV.totalDays = "1";
+                                          }
+                                        }
+                                        return { ...prev, formValues: nextFV };
+                                      });
+                                    }}
+                                    className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-colors cursor-pointer ${
+                                      isSelected
+                                        ? "bg-teal-600 text-white"
+                                        : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-teal-50 dark:hover:bg-teal-950/50"
+                                    }`}
+                                  >
+                                    📅 {q.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : field.type === "textarea" ? (
+                          <textarea
+                            rows={2}
+                            value={formState.formValues[field.key] || ""}
+                            onChange={(e) =>
+                              setFormState((prev) => ({
+                                ...prev,
+                                formValues: { ...prev.formValues, [field.key]: e.target.value }
+                              }))
+                            }
+                            placeholder={field.placeholder || ""}
+                            className="w-full px-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                          />
+                        ) : (
+                          <input
+                            type={field.type === "number" ? "number" : "text"}
+                            step={field.type === "number" ? "any" : undefined}
+                            list={field.key === "handoverStaff" ? "proposal-approvers-datalist" : undefined}
+                            value={formState.formValues[field.key] || ""}
+                            onChange={(e) =>
+                              setFormState((prev) => ({
+                                ...prev,
+                                formValues: { ...prev.formValues, [field.key]: e.target.value }
+                              }))
+                            }
+                            placeholder={field.placeholder || ""}
+                            className="w-full px-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                          />
+                        )}
+                      </>
                     )}
                   </div>
                 ))}
@@ -4175,17 +4214,54 @@ export function ProposalsApprovalView({
                   );
                 })()}
                 {/* Các trường thông tin động */}
-                {tmpl && tmpl.fields.some((f) => p.formValues?.[f.key]) && (
+                {tmpl && tmpl.fields.some((f) => {
+                  const v = p.formValues?.[f.key];
+                  return Array.isArray(v) ? v.length > 0 : Boolean(v);
+                }) && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2">
                     {tmpl.fields.map((f) => {
                       const val = p.formValues?.[f.key];
-                      if (!val) return null;
+                      if (!val || (Array.isArray(val) && val.length === 0)) return null;
+                      const isFileList = f.type === "file" || Array.isArray(val);
                       return (
-                        <div key={f.key} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200/60 dark:border-slate-800">
+                        <div key={f.key} className={`p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200/60 dark:border-slate-800 ${isFileList ? "sm:col-span-2" : ""}`}>
                           <div className="text-[10px] font-bold text-slate-400 uppercase">{f.label}</div>
-                          <div className="font-bold text-slate-900 dark:text-white mt-0.5">
-                            {f.type === "date" ? formatDayVN(val) : String(val)}
-                          </div>
+                          {isFileList && Array.isArray(val) ? (
+                            <div className="flex flex-wrap gap-2 mt-1.5">
+                              {val.map((att: Attachment, i: number) => (
+                                <div
+                                  key={i}
+                                  className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-indigo-50/70 dark:bg-slate-800 border border-indigo-200 dark:border-slate-700"
+                                >
+                                  <Paperclip className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                                  <span className="font-bold text-slate-800 dark:text-slate-200 truncate max-w-[220px]">
+                                    {att.name}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => onPreviewAttachment(att)}
+                                    className="px-2 py-0.5 rounded-md bg-indigo-600 text-white text-[10px] font-bold hover:bg-indigo-700 cursor-pointer"
+                                  >
+                                    👁️ Xem trực tiếp
+                                  </button>
+                                  <a
+                                    href={att.url}
+                                    download={att.name}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-slate-500 hover:text-indigo-600"
+                                    title="Tải xuống"
+                                  >
+                                    <Download className="w-3.5 h-3.5" />
+                                  </a>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="font-bold text-slate-900 dark:text-white mt-0.5">
+                              {f.type === "date" ? formatDayVN(val) : String(val)}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -4873,6 +4949,7 @@ export function ProposalsApprovalView({
                         <option value="number">Con số (Number)</option>
                         <option value="date">Ngày tháng (Date)</option>
                         <option value="select">Danh sách chọn (Select)</option>
+                        <option value="file">📎 Tải tệp đính kèm (File Upload)</option>
                       </select>
                     </div>
                     <div className="sm:col-span-4">
@@ -4881,6 +4958,8 @@ export function ProposalsApprovalView({
                           ? "Các lựa chọn (cách nhau dấu phẩy)"
                           : fld.type === "date"
                           ? "📅 Chọn ngày trên lịch (Bấm để mở lịch)"
+                          : fld.type === "file"
+                          ? "📎 Hướng dẫn loại file cần tải lên"
                           : "Gợi ý nhập (Placeholder)"}
                       </label>
                       {fld.type === "select" ? (
