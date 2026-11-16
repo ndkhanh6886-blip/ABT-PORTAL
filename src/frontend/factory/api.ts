@@ -20,6 +20,11 @@ export class ApiError extends Error {
   }
 }
 
+const TRANSIENT_GATEWAY_STATUSES = new Set([502, 503, 504]);
+const RETRY_DELAYS_MS = [700, 1500, 2600];
+
+const waitMs = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 export async function api<T>(path: string, init: RequestInit & { json?: unknown; idempotent?: boolean } = {}): Promise<T> {
   const headers: Record<string, string> = { ...(init.headers as Record<string, string>) };
   const method = (init.method ?? "GET").toUpperCase();
@@ -29,19 +34,49 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown;
   if ((init.idempotent || ["POST", "PUT", "PATCH"].includes(method)) && !headers["Idempotency-Key"]) {
     headers["Idempotency-Key"] = crypto.randomUUID();
   }
-  const res = await fetch(path, {
-    ...init,
-    headers,
-    body: init.json !== undefined ? JSON.stringify(init.json) : init.body,
-    credentials: "same-origin",
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(data.error || `Lỗi ${res.status}`, res.status, data.code, data.details);
-  return data as T;
+  const canRetry = method === "GET" || method === "HEAD" || Boolean(headers["Idempotency-Key"]);
+  const maxAttempts = canRetry ? RETRY_DELAYS_MS.length + 1 : 1;
+  const reqBody = init.json !== undefined ? JSON.stringify(init.json) : init.body;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(path, {
+        ...init,
+        headers,
+        body: reqBody,
+        credentials: "same-origin",
+      });
+    } catch (err) {
+      if (attempt < maxAttempts - 1) {
+        await waitMs(RETRY_DELAYS_MS[attempt]);
+        continue;
+      }
+      throw err;
+    }
+
+    if (TRANSIENT_GATEWAY_STATUSES.has(res.status) && attempt < maxAttempts - 1) {
+      await waitMs(RETRY_DELAYS_MS[attempt]);
+      continue;
+    }
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg =
+        data.error ||
+        (TRANSIENT_GATEWAY_STATUSES.has(res.status)
+          ? `Máy chủ đang khởi động lại bản cập nhật mới (${res.status}). Vui lòng đợi vài giây rồi thử lại.`
+          : `Lỗi ${res.status}`);
+      throw new ApiError(msg, res.status, data.code, data.details);
+    }
+    return data as T;
+  }
+
+  throw new ApiError("Không thể kết nối tới máy chủ.", 502);
 }
 
 export const factoryQueryClient = new QueryClient({
-  defaultOptions: { queries: { staleTime: 15_000, retry: (n, e) => n < 2 && !(e instanceof ApiError && e.status < 500) } },
+  defaultOptions: { queries: { staleTime: 15_000, retry: (n, e) => n < 3 && !(e instanceof ApiError && e.status < 500) } },
 });
 
 export interface FactoryMe {

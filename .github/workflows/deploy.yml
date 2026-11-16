@@ -94,7 +94,8 @@ jobs:
 
             if command -v docker >/dev/null 2>&1 && [ -f docker-compose.yml ]; then
               echo "Building & restarting Docker services..."
-              docker compose up -d --build app worker
+              docker compose build app
+              docker compose up -d app worker
               for i in $(seq 1 30); do
                 if curl -fsS -o /dev/null http://127.0.0.1:3008/api/health; then
                   break
@@ -111,9 +112,13 @@ jobs:
                 echo "SESSION_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")" >> .env.local
               fi
               npm ci || npm install --no-audit --no-fund
-              npm run build
+              NEXT_DIST_DIR=.next_build npm run build
               npm run factory:migrate || true
-              pm2 restart abt-portal --update-env || pm2 start npm --name "abt-portal" -- start
+              rm -rf .next_old
+              [ -d .next ] && mv .next .next_old || true
+              mv .next_build .next
+              pm2 reload abt-portal --update-env || pm2 restart abt-portal --update-env || pm2 start npm --name "abt-portal" -- start
+              rm -rf .next_old
             fi
 
             for i in $(seq 1 30); do
@@ -156,7 +161,8 @@ jobs:
 
           if command -v docker >/dev/null 2>&1 && [ -f docker-compose.yml ]; then
             echo "Building & restarting Docker services..."
-            docker compose up -d --build app worker
+            docker compose build app
+            docker compose up -d app worker
             for i in $(seq 1 30); do
               if curl -fsS -o /dev/null http://127.0.0.1:3008/api/health; then
                 break
@@ -173,9 +179,13 @@ jobs:
               echo "SESSION_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")" >> .env.local
             fi
             npm ci || npm install --no-audit --no-fund
-            npm run build
+            NEXT_DIST_DIR=.next_build npm run build
             npm run factory:migrate || true
-            pm2 restart abt-portal --update-env || pm2 start npm --name "abt-portal" -- start
+            rm -rf .next_old
+            [ -d .next ] && mv .next .next_old || true
+            mv .next_build .next
+            pm2 reload abt-portal --update-env || pm2 restart abt-portal --update-env || pm2 start npm --name "abt-portal" -- start
+            rm -rf .next_old
           fi
 
           for i in $(seq 1 30); do

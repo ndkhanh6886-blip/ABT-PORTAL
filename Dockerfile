@@ -36,4 +36,4 @@ RUN mkdir -p /app/uploads/factory && chown -R nextjs:nodejs /app/uploads
 
 USER nextjs
 EXPOSE 3008
-CMD ["npm", "start"]
+CMD ["node_modules/.bin/next", "start", "-p", "3008"]

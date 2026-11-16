@@ -46,6 +46,7 @@ async function ensureSupplierShortName() {
   if (supplierShortNameEnsured) return;
   try {
     await query("ALTER TABLE procurement_suppliers ADD COLUMN IF NOT EXISTS short_name VARCHAR(100)");
+    await query("ALTER TABLE procurement_suppliers ADD COLUMN IF NOT EXISTS notes TEXT");
     await query("ALTER TABLE procurement_orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50)");
     await query("ALTER TABLE procurement_orders ADD COLUMN IF NOT EXISTS created_by VARCHAR(150)");
     await query(`
@@ -241,9 +242,21 @@ export async function GET(req: NextRequest) {
     }
 
     if (action === "overview") {
-      await ensureDefaultInternalSuppliers();
-      await syncCatalogSuppliersAndProducts();
-      await reconcileHistoricalPOsWithInbound(query);
+      try {
+        await ensureDefaultInternalSuppliers();
+      } catch (e: any) {
+        console.warn("[ensureDefaultInternalSuppliers] warning:", e?.message || e);
+      }
+      try {
+        await syncCatalogSuppliersAndProducts();
+      } catch (e: any) {
+        console.warn("[syncCatalogSuppliersAndProducts] warning:", e?.message || e);
+      }
+      try {
+        await reconcileHistoricalPOsWithInbound(query);
+      } catch (e: any) {
+        console.warn("[reconcileHistoricalPOsWithInbound] warning:", e?.message || e);
+      }
 
       const safeQuery = async (sql: string, params?: any[]) => {
         try {
@@ -636,7 +649,11 @@ export async function POST(req: NextRequest) {
     // 1. Manage Supplier (Create / Update)
     if (action === "supplier") {
       await ensureSupplierShortName();
-      await ensureDefaultInternalSuppliers();
+      try {
+        await ensureDefaultInternalSuppliers();
+      } catch (e: any) {
+        console.warn("[ensureDefaultInternalSuppliers] warning:", e?.message || e);
+      }
       const { id, supplier_code, name, short_name, contact_person, phone, email, address, product_lines, payment_terms, rating, factory_unit } = body;
       const cleanShortName = short_name ? String(short_name).trim() : null;
       await unmarkSupplierDeleted(name, cleanShortName || undefined);

@@ -152,6 +152,8 @@ export function inferFactoryUnitFromSupplierName(
 let schemaReady: Promise<void> | null = null;
 export function ensureBridgeSchema(): Promise<void> {
   schemaReady ??= query(`
+    ALTER TABLE procurement_suppliers ADD COLUMN IF NOT EXISTS short_name VARCHAR(100);
+    ALTER TABLE procurement_suppliers ADD COLUMN IF NOT EXISTS notes TEXT;
     CREATE TABLE IF NOT EXISTS factory_bridge_supplier (
       supplier_id  integer PRIMARY KEY REFERENCES procurement_suppliers (id),
       factory_unit varchar(10) NOT NULL CHECK (factory_unit IN ('KIT', 'OLIGO', 'DEVICE')),
@@ -234,6 +236,30 @@ export async function setInternalSupplier(me: AuthorizedUser, supplierId: number
 }
 
 let internalSuppliersEnsuredAt = 0;
+
+/** Updates supplier references inside `catalog_items.data` JSONB safely without assuming a flat column. */
+async function renameSupplierInCatalogItems(
+  c: { query: (sql: string, params?: any[]) => Promise<any> },
+  oldName: string,
+  newName: string
+): Promise<void> {
+  const regRes = await c.query("SELECT to_regclass('public.catalog_items') AS reg");
+  if (!regRes?.rows?.[0]?.reg) return;
+  await c.query(
+    `UPDATE catalog_items
+        SET data = jsonb_set(
+              CASE
+                WHEN data->>'supplierName' = $2 THEN jsonb_set(data, '{supplierName}', to_jsonb($1::text))
+                ELSE data
+              END,
+              '{supplier}',
+              to_jsonb($1::text)
+            ),
+            updated_at = CURRENT_TIMESTAMP
+      WHERE data->>'supplier' = $2 OR data->>'supplierName' = $2`,
+    [newName, oldName]
+  );
+}
 
 /**
  * Đảm bảo 3 nhà cung cấp nội bộ mặc định của Phòng Cung ứng Khối Kinh doanh luôn tồn tại:
@@ -323,7 +349,7 @@ export async function ensureDefaultInternalSuppliers(force = false): Promise<Rec
             spec.name,
             oldName,
           ]);
-          await c.query("UPDATE catalog_items SET supplier = $1 WHERE supplier = $2", [spec.name, oldName]);
+          await renameSupplierInCatalogItems(c, oldName, spec.name);
         }
       } else {
         const codeTaken = allSuppliers.some((s: any) => String(s.supplier_code || "").toUpperCase() === spec.preferred_code);
@@ -382,9 +408,7 @@ export async function ensureDefaultInternalSuppliers(force = false): Promise<Rec
     }
 
     // Đồng bộ tên nhà cung cấp cũ trong catalog_items sang Phòng Tổng hợp Oligo
-    await c.query(
-      "UPDATE catalog_items SET supplier = 'Phòng Tổng hợp Oligo' WHERE supplier = 'Nhà cung cấp tổng hợp Oligo'"
-    );
+    await renameSupplierInCatalogItems(c, "Nhà cung cấp tổng hợp Oligo", "Phòng Tổng hợp Oligo");
 
     return result;
   });
