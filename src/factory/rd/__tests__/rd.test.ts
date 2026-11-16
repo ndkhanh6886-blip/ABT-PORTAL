@@ -18,6 +18,7 @@ import {
   deleteProject,
   exportRoadmapIcs,
   getProjectDetail,
+  listProjects,
   projectGateMachine,
   projectMachine,
   saveMilestone,
@@ -25,6 +26,7 @@ import {
   updateGateDeliverable,
   updateProject,
 } from "../projects";
+import { saveProjectTask } from "../projectOps";
 import {
   addExperimentEntry,
   consumeExperimentMaterial,
@@ -1046,5 +1048,123 @@ describe("R&D Module (Phase 4d): Idea Funnel, Stage-Gate, ELN, Biobank, Tech Tra
     await expect(
       withTransaction((tx) => deleteProject(tx, researcher, proj2.id, { reason: "Xóa sau khi bị thu hồi quyền" }))
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("9. ELN Project Filtering & Active-Project Guard: excludes stopped/transferred projects and filters by performer (leader & WBS assignee)", async () => {
+    const site = await makeSite();
+    const { rdHead } = await setupRdTeam(site);
+    const resA = await createUser("Nghiên cứu viên A", PIN);
+    const resB = await createUser("Nghiên cứu viên B", PIN);
+    for (const u of [resA, resB]) {
+      await grant(u, ["rd.view", "rd.project.manage", "rd.eln.write", "rd.eln.edit"], site.dept);
+    }
+
+    const projA = await withTransaction((tx) =>
+      createProject(tx, resA, {
+        name: "Dự án A do NCV A chủ trì",
+        owner_org_unit_id: site.dept,
+        target_domain: "KIT",
+        leader_id: resA.userId,
+      })
+    );
+    const projB = await withTransaction((tx) =>
+      createProject(tx, rdHead, {
+        name: "Dự án B do NCV B tham gia WBS",
+        owner_org_unit_id: site.dept,
+        target_domain: "KIT",
+        leader_id: rdHead.userId,
+      })
+    );
+    await withTransaction((tx) =>
+      saveProjectTask(tx, rdHead, {
+        project_id: projB.id,
+        gate_no: 1,
+        title: "Thực hiện thử nghiệm bước 1",
+        assignee_name: resB.name,
+        status: "IN_PROGRESS",
+      })
+    );
+
+    const projKilled = await withTransaction((tx) =>
+      createProject(tx, resA, {
+        name: "Dự án đã dừng thử nghiệm",
+        owner_org_unit_id: site.dept,
+        target_domain: "KIT",
+        leader_id: resA.userId,
+      })
+    );
+    await act(projectMachine, rdHead, projKilled.id, "kill", {
+      ...signed,
+      reason: "Dừng dự án kiểm thử",
+    });
+
+    const projTransferred = await withTransaction((tx) =>
+      createProject(tx, resA, {
+        name: "Dự án đã hoàn thành chuyển giao",
+        owner_org_unit_id: site.dept,
+        target_domain: "KIT",
+        leader_id: resA.userId,
+      })
+    );
+    await act(projectMachine, rdHead, projTransferred.id, "mark_transferred", {});
+
+    // 1. activeOnly excludes KILLED and TRANSFERRED
+    const activeAll = await withTransaction((tx) => listProjects(tx, resA, { activeOnly: true }));
+    expect(activeAll.map((p: any) => p.id)).toContain(projA.id);
+    expect(activeAll.map((p: any) => p.id)).toContain(projB.id);
+    expect(activeAll.map((p: any) => p.id)).not.toContain(projKilled.id);
+    expect(activeAll.map((p: any) => p.id)).not.toContain(projTransferred.id);
+
+    // 2. Filtering by performer returns only that researcher's active projects
+    const resAProjects = await withTransaction((tx) =>
+      listProjects(tx, resA, { activeOnly: true, performer: resA.name })
+    );
+    expect(resAProjects.map((p: any) => p.id)).toEqual([projA.id]);
+
+    const resBProjects = await withTransaction((tx) =>
+      listProjects(tx, resB, { activeOnly: true, performer: resB.name })
+    );
+    expect(resBProjects.map((p: any) => p.id)).toEqual([projB.id]);
+
+    // 3. Backend blocks creating or linking an ELN to non-ACTIVE projects
+    await expect(
+      withTransaction((tx) =>
+        createExperiment(tx, resA, {
+          project_id: projKilled.id,
+          title: "ELN gắn dự án đã dừng",
+          objective: "Kiểm tra chặn gắn dự án KILLED",
+        })
+      )
+    ).rejects.toMatchObject({ status: 422, code: "INVALID" });
+
+    await expect(
+      withTransaction((tx) =>
+        createExperiment(tx, resA, {
+          project_id: projTransferred.id,
+          title: "ELN gắn dự án đã chuyển giao",
+          objective: "Kiểm tra chặn gắn dự án TRANSFERRED",
+        })
+      )
+    ).rejects.toMatchObject({ status: 422, code: "INVALID" });
+
+    const standalone = await withTransaction((tx) =>
+      createExperiment(tx, resA, {
+        org_unit_id: site.dept,
+        title: "ELN độc lập ban đầu",
+        objective: "Kiểm tra chặn liên kết dự án không ACTIVE",
+        start_now: true,
+      })
+    );
+    await expect(
+      withTransaction((tx) =>
+        updateExperimentMeta(tx, resA, standalone.id, { project_id: projKilled.id, version: standalone.version })
+      )
+    ).rejects.toMatchObject({ status: 422, code: "INVALID" });
+
+    await expect(
+      withTransaction((tx) =>
+        editExperiment(tx, resA, standalone.id, { project_id: projTransferred.id, version: standalone.version })
+      )
+    ).rejects.toMatchObject({ status: 422, code: "INVALID" });
   });
 });

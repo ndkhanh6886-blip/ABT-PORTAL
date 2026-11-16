@@ -861,8 +861,19 @@ export async function exportRoadmapIcs(tx: Tx, actor: AuthzActor, projectId?: st
   return lines.join("\r\n");
 }
 
-export async function listProjects(tx: Tx, actor: AuthzActor, domain?: string) {
+export interface ListProjectsFilter {
+  domain?: string | null;
+  activeOnly?: boolean;
+  performer?: string | null;
+}
+
+const normName = (s?: string | null) => (s || "").trim().replace(/\s+/g, " ").toLowerCase();
+
+export async function listProjects(tx: Tx, actor: AuthzActor, domainOrFilter?: string | ListProjectsFilter) {
   await authorizeAnywhere(tx, actor, "rd.view");
+  const filter: ListProjectsFilter =
+    typeof domainOrFilter === "string" ? { domain: domainOrFilter } : domainOrFilter ?? {};
+  const domain = filter.domain || null;
   const rows = (
     await tx.query(
       `SELECT p.*,
@@ -873,9 +884,19 @@ export async function listProjects(tx: Tx, actor: AuthzActor, domain?: string) {
               (SELECT count(*)::int FROM rd.project_gate g WHERE g.project_id = p.id AND g.status = 'PASSED') AS passed_gates,
               (SELECT count(*)::int FROM rd.experiment e WHERE e.project_id = p.id) AS experiment_count,
               coalesce((
-                SELECT jsonb_agg(DISTINCT pt.assignee_name) FILTER (WHERE pt.assignee_name IS NOT NULL AND pt.assignee_name <> '')
-                  FROM rd.project_task pt
-                 WHERE pt.project_id = p.id
+                SELECT jsonb_agg(DISTINCT nm)
+                  FROM (
+                    SELECT trim(pt.assignee_name) AS nm
+                      FROM rd.project_task pt
+                     WHERE pt.project_id = p.id AND pt.assignee_name IS NOT NULL AND trim(pt.assignee_name) <> ''
+                    UNION
+                    SELECT trim(up.display_name) AS nm
+                      FROM rd.project_member pm
+                      JOIN core.user_profile up ON up.user_id = pm.user_id
+                     WHERE pm.project_id = p.id
+                       AND pm.role_in_project <> 'LEADER'
+                       AND up.display_name IS NOT NULL AND trim(up.display_name) <> ''
+                  ) sub
               ), '[]'::jsonb) AS assignees
          FROM rd.project p
          JOIN core.org_unit u ON u.id = p.owner_org_unit_id
@@ -883,12 +904,23 @@ export async function listProjects(tx: Tx, actor: AuthzActor, domain?: string) {
          LEFT JOIN rd.gate_template t ON t.id = p.gate_template_id
         WHERE ($1::text IS NULL OR p.target_domain = $1)
         ORDER BY p.created_at DESC LIMIT 200`,
-      [domain ?? null]
+      [domain]
     )
   ).rows;
+
+  const targetPerformer = normName(filter.performer);
   const visible = [];
   for (const r of rows) {
-    if (await hasFactoryPermission(tx, actor, "rd.view", r.owner_org_unit_id)) visible.push(r);
+    if (!(await hasFactoryPermission(tx, actor, "rd.view", r.owner_org_unit_id))) continue;
+    if (filter.activeOnly && r.status !== "ACTIVE") continue;
+    if (targetPerformer) {
+      const assignees: string[] = Array.isArray(r.assignees) ? r.assignees : [];
+      const matches =
+        normName(r.leader_name) === targetPerformer ||
+        assignees.some((a) => normName(a) === targetPerformer);
+      if (!matches) continue;
+    }
+    visible.push(r);
   }
   return visible;
 }

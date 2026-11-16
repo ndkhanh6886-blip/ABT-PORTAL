@@ -45,3 +45,21 @@ export function staffOfUnit(ctx: RdContextData | undefined, unitId?: string | nu
   const moduleKey = [...(ctx?.units ?? []), ...(ctx?.targetUnits ?? [])].find((u) => u.id === unitId)?.module_key;
   return (moduleKey === "DEVICE" ? ctx?.device_staff : ctx?.rd_staff) ?? [];
 }
+
+export function normRdPersonName(name?: string | null): string {
+  return (name || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+/** True when `personName` is the project leader or an assigned WBS / team researcher on `project`. */
+export function isProjectForPerson(project: any, personName?: string | null): boolean {
+  const target = normRdPersonName(personName);
+  if (!target) return true;
+  if (normRdPersonName(project?.leader_name) === target) return true;
+  const assignees: string[] = Array.isArray(project?.assignees) ? project.assignees : [];
+  return assignees.some((a) => normRdPersonName(a) === target);
+}
+
+/** Only ACTIVE Stage-Gate projects can accept new ELN / sample / weekly task registrations. */
+export function isProjectEligibleForEln(project: any): boolean {
+  return project?.status === "ACTIVE";
+}

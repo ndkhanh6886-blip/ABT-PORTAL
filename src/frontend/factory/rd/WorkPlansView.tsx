@@ -252,7 +252,9 @@ function PlanPanel({ id, onClose }: { id: string; onClose: () => void }) {
               <Field label="Gắn dự án R&D">
                 <select className={inputClass} value={projId} onChange={(e) => setProjId(e.target.value)}>
                   <option value="">— Không gắn —</option>
-                  {projects.data?.map((pr) => <option key={pr.id} value={pr.id}>{pr.code} — {pr.name}</option>)}
+                  {(projects.data ?? [])
+                    .filter((pr) => pr.status === "ACTIVE")
+                    .map((pr) => <option key={pr.id} value={pr.id}>{pr.code} — {pr.name}</option>)}
                 </select>
               </Field>
               <div className="flex gap-1 items-end">

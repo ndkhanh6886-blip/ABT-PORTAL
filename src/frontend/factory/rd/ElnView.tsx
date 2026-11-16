@@ -3,9 +3,9 @@
 import React, { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActionBar, type AllowedAction } from "../actions";
-import { api, fmtDate, fmtQty } from "../api";
+import { api, fmtDate, fmtQty, useFactoryMe } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
-import { useRdContext } from "./shared";
+import { isProjectEligibleForEln, isProjectForPerson, normRdPersonName, useRdContext } from "./shared";
 import { RdPermissionPanel } from "./RdPermissionPanel";
 
 const EXP_STATUS: Record<string, [string, string]> = {
@@ -245,6 +245,10 @@ function ExperimentPanel({
   const effectiveLinkProjId = linkProjId !== null ? linkProjId : (e?.project_id ?? "");
   const isAlcoaLocked = Boolean(e && (e.status === "APPROVED" || e.status === "SUPERSEDED"));
   const hasMaterials = (e?.materials?.length ?? 0) > 0;
+  const panelPerformer = e?.performer_name || e?.created_by_name;
+  const panelEligibleProjects = (projectsList.data ?? []).filter(
+    (p) => (isProjectEligibleForEln(p) && isProjectForPerson(p, panelPerformer)) || p.id === e?.project_id
+  );
 
   return (
     <Card
@@ -320,12 +324,13 @@ function ExperimentPanel({
               }}
             >
               <div className="min-w-64 flex-1">
-                <Field label="Phạm vi gắn kết (Độc lập hoặc gán vào Dự án R&D sau này)">
+                <Field label="Phạm vi gắn kết (Độc lập hoặc gán vào Dự án R&D đang triển khai của NCV)">
                   <select className={inputClass} value={effectiveLinkProjId} onChange={(ev) => setLinkProjId(ev.target.value)}>
                     <option value="">🧪 Thử nghiệm độc lập (Không gắn dự án)</option>
-                    {(projectsList.data ?? []).map((p) => (
+                    {panelEligibleProjects.map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.code} — {p.name}
+                        {!isProjectEligibleForEln(p) ? ` (${p.status})` : ""}
                       </option>
                     ))}
                   </select>
@@ -591,6 +596,7 @@ export function ElnView({
   canManagePermissions?: boolean;
 }) {
   const qc = useQueryClient();
+  const me = useFactoryMe();
   const ctx = useRdContext("rd.view");
   const [projectId, setProjectId] = useState("");
   const [staffFilter, setStaffFilter] = useState("");
@@ -728,12 +734,31 @@ export function ElnView({
   });
 
   const allExps = list.data ?? [];
+  const loggedInName = me.data?.profile?.display_name?.trim() || "";
   const staffOptions = Array.from(
     new Set([
       ...(ctx.data?.rd_staff?.map((s) => s.name) ?? []),
       ...allExps.map((r) => r.performer_name || r.created_by_name).filter(Boolean),
     ])
   );
+  const matchedSelfStaff = !me.data?.is_root
+    ? (staffOptions.find((s) => normRdPersonName(s) === normRdPersonName(loggedInName)) ?? "")
+    : "";
+
+  const allProjectsList = projects.data ?? [];
+  const allActiveProjects = allProjectsList.filter(isProjectEligibleForEln);
+  const historicalWithElnProjects = allProjectsList.filter(
+    (p) => !isProjectEligibleForEln(p) && allExps.some((ex) => ex.project_id === p.id)
+  );
+  const effectivePerformer = performerName || matchedSelfStaff;
+  const availableCreateProjects = effectivePerformer
+    ? allActiveProjects.filter((p) => isProjectForPerson(p, effectivePerformer))
+    : allActiveProjects;
+  const availableEditProjects = editingExp
+    ? allProjectsList.filter(
+        (p) => (isProjectEligibleForEln(p) && isProjectForPerson(p, editPerformer)) || p.id === editingExp.project_id
+      )
+    : [];
 
   const filteredExps = allExps.filter((r) => {
     const performer = r.performer_name || r.created_by_name || "";
@@ -813,11 +838,20 @@ export function ElnView({
             >
               <option value="">Tất cả dự án & Độc lập</option>
               <option value="STANDALONE">🧪 Chỉ ELN độc lập</option>
-              {projects.data?.map((p) => (
+              {allActiveProjects.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.code} — {p.name}
                 </option>
               ))}
+              {historicalWithElnProjects.length > 0 && (
+                <optgroup label="Dự án đã dừng / hoàn thành (có ELN cũ)">
+                  {historicalWithElnProjects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.code} — {p.name} ({p.status})
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
             <select
               className={`${inputClass} sm:w-36 !min-h-8 !py-1 !px-2.5 !text-xs`}
@@ -860,7 +894,12 @@ export function ElnView({
                 className="!min-h-8 !py-1 !px-3 whitespace-nowrap"
                 onClick={() => {
                   if (!adding) {
-                    setNewProjId(projectId && projectId !== "STANDALONE" ? projectId : "");
+                    const initialPerf = staffFilter || matchedSelfStaff || "";
+                    setPerformerName(initialPerf);
+                    const toolbarProj = allActiveProjects.find(
+                      (p) => p.id === projectId && (!initialPerf || isProjectForPerson(p, initialPerf))
+                    );
+                    setNewProjId(toolbarProj ? toolbarProj.id : "");
                   }
                   setAdding(!adding);
                 }}
@@ -881,13 +920,57 @@ export function ElnView({
               createMut.mutate();
             }}
           >
+            <Field label="Nghiên cứu viên thực hiện (Phòng R&D)">
+              <select
+                className={inputClass}
+                value={performerName}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setPerformerName(val);
+                  const nextEff = val || matchedSelfStaff;
+                  if (
+                    newProjId &&
+                    !allActiveProjects.some((p) => p.id === newProjId && (!nextEff || isProjectForPerson(p, nextEff)))
+                  ) {
+                    setNewProjId("");
+                  }
+                }}
+              >
+                <option value="">
+                  {loggedInName
+                    ? `-- Mặc định theo người đăng nhập (${loggedInName}) --`
+                    : "-- Mặc định theo người đăng nhập --"}
+                </option>
+                {staffOptions.map((st) => (
+                  <option key={st} value={st}>
+                    {st}
+                  </option>
+                ))}
+              </select>
+            </Field>
             <Field label="Phạm vi / Dự án R&D">
               <select className={inputClass} value={newProjId} onChange={(e) => setNewProjId(e.target.value)}>
                 <option value="">🧪 Thử nghiệm độc lập / Thăm dò (Không gắn dự án)</option>
-                {(projects.data?.length ?? 0) > 0 && (
-                  <optgroup label="Gắn vào dự án nghiên cứu R&D">
-                    {projects.data?.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
+                {availableCreateProjects.length > 0 ? (
+                  <optgroup
+                    label={
+                      effectivePerformer
+                        ? `Dự án đang triển khai của ${effectivePerformer} (${availableCreateProjects.length})`
+                        : `Dự án nghiên cứu R&D đang triển khai (${availableCreateProjects.length})`
+                    }
+                  >
+                    {availableCreateProjects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.code} — {p.name}
+                      </option>
+                    ))}
                   </optgroup>
+                ) : (
+                  effectivePerformer && (
+                    <option value="__no_proj__" disabled>
+                      — Chưa có dự án đang triển khai nào của {effectivePerformer} —
+                    </option>
+                  )
                 )}
               </select>
             </Field>
@@ -902,16 +985,6 @@ export function ElnView({
                 </select>
               </Field>
             )}
-            <Field label="Nghiên cứu viên thực hiện (Phòng R&D)">
-              <select className={inputClass} value={performerName} onChange={(e) => setPerformerName(e.target.value)}>
-                <option value="">-- Mặc định theo người đăng nhập --</option>
-                {staffOptions.map((st) => (
-                  <option key={st} value={st}>
-                    {st}
-                  </option>
-                ))}
-              </select>
-            </Field>
             <Field label="Mã công việc WBS liên kết (Tùy chọn)">
               <input
                 className={inputClass}
@@ -1067,21 +1140,38 @@ export function ElnView({
                   <input className={inputClass} value={editTitle} onChange={(ev) => setEditTitle(ev.target.value)} required minLength={3} />
                 </Field>
               </div>
-              <Field label="Phạm vi / Dự án R&D">
-                <select className={inputClass} value={editProjId} onChange={(ev) => setEditProjId(ev.target.value)}>
-                  <option value="">🧪 Thử nghiệm độc lập (Không gắn dự án)</option>
-                  {(projects.data ?? []).map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.code} — {p.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
               <Field label="Nghiên cứu viên thực hiện">
-                <select className={inputClass} value={editPerformer} onChange={(ev) => setEditPerformer(ev.target.value)}>
+                <select
+                  className={inputClass}
+                  value={editPerformer}
+                  onChange={(ev) => {
+                    const nextPerf = ev.target.value;
+                    setEditPerformer(nextPerf);
+                    if (
+                      editProjId &&
+                      editProjId !== editingExp.project_id &&
+                      !allActiveProjects.some(
+                        (p) => p.id === editProjId && (!nextPerf || isProjectForPerson(p, nextPerf))
+                      )
+                    ) {
+                      setEditProjId("");
+                    }
+                  }}
+                >
                   <option value="">-- Mặc định --</option>
                   {Array.from(new Set([...staffOptions, ...(editPerformer ? [editPerformer] : [])])).map((st) => (
                     <option key={st} value={st}>{st}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Phạm vi / Dự án R&D">
+                <select className={inputClass} value={editProjId} onChange={(ev) => setEditProjId(ev.target.value)}>
+                  <option value="">🧪 Thử nghiệm độc lập (Không gắn dự án)</option>
+                  {availableEditProjects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.code} — {p.name}
+                      {!isProjectEligibleForEln(p) ? ` (${p.status})` : ""}
+                    </option>
                   ))}
                 </select>
               </Field>

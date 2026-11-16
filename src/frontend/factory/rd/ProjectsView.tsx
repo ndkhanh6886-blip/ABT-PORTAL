@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActionBar, type AllowedAction } from "../actions";
 import { api, fmtDate, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
-import { DOMAIN_LABEL, IVD_CLASS_LABEL, staffOfUnit, useRdContext } from "./shared";
+import { DOMAIN_LABEL, isProjectForPerson, IVD_CLASS_LABEL, staffOfUnit, useRdContext } from "./shared";
 import { RdPermissionPanel } from "./RdPermissionPanel";
 
 const PROJ_STATUS: Record<string, [string, string]> = {
@@ -2350,11 +2350,7 @@ export function ProjectsView({
     ])
   );
 
-  const matchesProjectStaff = (r: any, staff: string) => {
-    if (!staff) return true;
-    const assignees: string[] = Array.isArray(r.assignees) ? r.assignees : [];
-    return r.leader_name === staff || assignees.includes(staff);
-  };
+  const matchesProjectStaff = (r: any, staff: string) => isProjectForPerson(r, staff);
 
   const filteredProjects = allProjects.filter((r) => {
     if (stageFilter && matchStageKey(r.current_stage || "", r.status || "", Number(r.passed_gates || 0)) !== stageFilter) {

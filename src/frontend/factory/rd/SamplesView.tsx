@@ -217,7 +217,10 @@ export function SamplesView({ canManage = true }: { canManage?: boolean } = {}) 
   }, [orgUnits.data]);
 
   const samples: NormalizedSample[] = useMemo(() => (q.data ?? []).map(mapRowToSample), [q.data]);
-  const rdProjects = projects.data ?? [];
+  const rdProjects = useMemo(
+    () => (projects.data ?? []).filter((p: any) => p.status === "ACTIVE"),
+    [projects.data]
+  );
 
   // Filter & Search States (matching old R&D software)
   const [sampleCategoryFilter, setSampleCategoryFilter] = useState("Tất Cả");

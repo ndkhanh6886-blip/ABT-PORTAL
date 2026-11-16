@@ -231,7 +231,16 @@ export async function createExperiment(tx: Tx, actor: AuthzActor, input: unknown
   const d = parseInput(createExpSchema, input);
   let owner: string;
   if (d.project_id) {
-    owner = await expOwner(tx, { project_id: d.project_id });
+    const proj = (
+      await tx.query("SELECT id, owner_org_unit_id, status FROM rd.project WHERE id = $1", [d.project_id])
+    ).rows[0];
+    if (!proj) throw notFound("dự án R&D");
+    if (proj.status !== "ACTIVE") {
+      throw invalid(
+        "Chỉ được đăng ký sổ thí nghiệm ELN mới cho dự án R&D đang triển khai (ACTIVE). Không thể gắn vào dự án đã dừng hoặc đã hoàn thành."
+      );
+    }
+    owner = proj.owner_org_unit_id;
     await authorize(tx, actor, "rd.eln.write", owner);
   } else {
     owner = await resolveStandaloneOrgUnit(tx, actor, d.org_unit_id);
@@ -288,8 +297,10 @@ export async function updateExperimentMeta(tx: Tx, actor: AuthzActor, id: string
         await tx.query("SELECT id, owner_org_unit_id, status FROM rd.project WHERE id = $1", [d.project_id])
       ).rows[0];
       if (!targetProj) throw notFound("dự án R&D");
-      if (cur.status === "IN_PROGRESS" && targetProj.status !== "ACTIVE") {
-        throw invalid("Chỉ được gắn thí nghiệm đang thực hiện vào dự án R&D đang ACTIVE.");
+      if (d.project_id !== cur.project_id && targetProj.status !== "ACTIVE") {
+        throw invalid(
+          "Chỉ được gắn sổ thí nghiệm ELN vào dự án R&D đang triển khai (ACTIVE). Không thể gắn vào dự án đã dừng hoặc đã hoàn thành."
+        );
       }
       await authorize(tx, actor, "rd.eln.write", targetProj.owner_org_unit_id);
       patch.project_id = targetProj.id;
@@ -359,8 +370,10 @@ export async function editExperiment(tx: Tx, actor: AuthzActor, id: string, inpu
         await tx.query("SELECT id, owner_org_unit_id, status FROM rd.project WHERE id = $1", [d.project_id])
       ).rows[0];
       if (!targetProj) throw notFound("dự án R&D");
-      if (nextStatus === "IN_PROGRESS" && targetProj.status !== "ACTIVE") {
-        throw invalid("Chỉ được gắn thí nghiệm đang thực hiện vào dự án R&D đang ACTIVE.");
+      if (d.project_id !== cur.project_id && targetProj.status !== "ACTIVE") {
+        throw invalid(
+          "Chỉ được gắn sổ thí nghiệm ELN vào dự án R&D đang triển khai (ACTIVE). Không thể gắn vào dự án đã dừng hoặc đã hoàn thành."
+        );
       }
       if (!actor.isRootAdmin && !actor.isSystem) {
         await authorize(tx, actor, "rd.eln.edit", targetProj.owner_org_unit_id);
