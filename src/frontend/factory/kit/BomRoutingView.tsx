@@ -7,16 +7,22 @@ import { printElementHtml } from "../coa";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import {
   ABT_KIT_SUPPLY_FORMS,
+  type AbtKitSupplyFormKey,
   ABT_TUBE_STRIP_CATALOG,
   ACTION_LABELS,
   buildAbtKitLotCode,
   buildEquipmentGroupOptions,
   buildMergedStepFunctionCatalog,
   CONTAINER_LABELS,
+  emptyIfuFilesMap,
   formatEquipmentGroupLabel,
+  type KitIfuFileSlot,
   type KitOptions,
   matchesEquipmentGroup,
+  openOrPrintDataFile,
   parseAbtKitLotCode,
+  PCR_IFU_VARIANT_CARDS,
+  resolveBomIfuFilesMap,
   resolveStepFunctionSpec,
   ROLE_LABELS,
   ROUTING_STANDARD_TEMPLATES,
@@ -180,6 +186,7 @@ export function BomRoutingView({
     ifu_aliquoted_file_name: "",
     ifu_aliquoted_file_url: "",
     ifu_aliquoted_file_size: "",
+    ifu_files_json: emptyIfuFilesMap() as Record<AbtKitSupplyFormKey, KitIfuFileSlot>,
   });
 
   const [labelBundle, setLabelBundle] = useState<KitLabelDesignBundle>(() => normalizeLabelBundle(null));
@@ -1071,12 +1078,18 @@ export function BomRoutingView({
             (isPcrCat
               ? "Dương tính: Ct (FAM) ≤ 38.0 có đường cong khuếch đại dạng chữ S · Âm tính: Không lên FAM và Ct (HEX/IC) ≤ 35.0 · Không hợp lệ: Không lên cả FAM và HEX/IC."
               : "Đánh giá độ tinh sạch / hiệu suất thu hồi hoặc vạch băng điện di theo tiêu chuẩn chất lượng trong TCCS."),
-          ifu_file_name: d.bom.ifu_file_name ?? `HDSD_${baseCode}_Rev0${d.bom.bom_version || 1}.pdf`,
-          ifu_file_url: d.bom.ifu_file_url ?? "",
-          ifu_file_size: d.bom.ifu_file_size ?? "428 KB (PDF chuẩn ISO 13485)",
-          ifu_aliquoted_file_name: d.bom.ifu_aliquoted_file_name ?? `HDSD_${baseCode}.D.IC_ChiaSan_Rev0${d.bom.bom_version || 1}.pdf`,
-          ifu_aliquoted_file_url: d.bom.ifu_aliquoted_file_url ?? "",
-          ifu_aliquoted_file_size: d.bom.ifu_aliquoted_file_size ?? "452 KB (PDF bản chia sẵn .D.IC)",
+          ...(() => {
+            const resolvedMap = resolveBomIfuFilesMap(d.bom);
+            return {
+              ifu_file_name: resolvedMap.NO_SPLIT_NO_IC.file_name,
+              ifu_file_url: resolvedMap.NO_SPLIT_NO_IC.file_url,
+              ifu_file_size: resolvedMap.NO_SPLIT_NO_IC.file_size,
+              ifu_aliquoted_file_name: resolvedMap.SPLIT_WITH_IC.file_name,
+              ifu_aliquoted_file_url: resolvedMap.SPLIT_WITH_IC.file_url,
+              ifu_aliquoted_file_size: resolvedMap.SPLIT_WITH_IC.file_size,
+              ifu_files_json: resolvedMap,
+            };
+          })(),
         });
 
         setLabelBundle(
@@ -1291,22 +1304,39 @@ export function BomRoutingView({
     }
   };
 
-  const openAndPrintIfuFile = (mode: "STANDARD" | "ALIQUOTED", autoPrint = false) => {
+  const openAndPrintIfuFile = (variantKey: AbtKitSupplyFormKey, autoPrint = false) => {
     if (!bomDetail?.bom) return;
     const b = bomDetail.bom;
-    const fileUrl = mode === "ALIQUOTED" ? labelIfuForm.ifu_aliquoted_file_url || b.ifu_aliquoted_file_url : labelIfuForm.ifu_file_url || b.ifu_file_url;
-    const fileName =
-      mode === "ALIQUOTED"
-        ? labelIfuForm.ifu_aliquoted_file_name || b.ifu_aliquoted_file_name || `HDSD_${b.product_code}.D.IC.pdf`
-        : labelIfuForm.ifu_file_name || b.ifu_file_name || `HDSD_${b.product_code}.pdf`;
+    const isSemi = (b.bom_type || (b.product_type === "SEMI_FINISHED" ? "semi_finished" : "finished_good")) === "semi_finished";
+    const isPcrCat = !isSemi && (b.bom_category ?? "PCR Kit") === "PCR Kit";
+    const sfSpec = ABT_KIT_SUPPLY_FORMS[variantKey] || ABT_KIT_SUPPLY_FORMS.NO_SPLIT_NO_IC;
+    const cardMeta = PCR_IFU_VARIANT_CARDS.find((c) => c.key === variantKey) || PCR_IFU_VARIANT_CARDS[0];
+    const resolvedMap = resolveBomIfuFilesMap(b);
+    const slot = labelIfuForm.ifu_files_json?.[variantKey] || resolvedMap[variantKey];
+    const fileUrl = String(slot?.file_url || "");
+    const baseCode = String(b.product_code || "").replace(/\.D\.IC$/i, "");
+    const defaultName = isPcrCat
+      ? `HDSD_${baseCode}${cardMeta.suffix}_${cardMeta.file_tag}_Rev0${b.bom_version || 1}.pdf`
+      : `HDSD_${baseCode}_Rev0${b.bom_version || 1}.pdf`;
+    const fileName = String(slot?.file_name || defaultName);
 
-    if (fileUrl && (fileUrl.startsWith("data:application/pdf") || fileUrl.startsWith("http"))) {
-      const win = window.open(fileUrl, "_blank");
-      if (win && autoPrint) {
-        setTimeout(() => win.print(), 600);
-      }
+    if (fileUrl && !fileUrl.startsWith("data:image/")) {
+      openOrPrintDataFile(fileUrl, fileName, autoPrint);
       return;
     }
+
+    const filteredLines = (bomDetail.lines || []).filter((ln: any) => {
+      if (!isPcrCat) return true;
+      const role = String(ln.component_role || "");
+      const nameStr = String(ln.component_name || "").toLowerCase();
+      if (!sfSpec.include_ic_tube && (role === "INTERNAL_CONTROL" || /\bic\b|chứng nội/i.test(nameStr))) {
+        return false;
+      }
+      if (!sfSpec.include_mix_1_5ml_tubes && role === "PACKAGING" && /1\.?5\s*ml|cryotube/i.test(nameStr)) {
+        return false;
+      }
+      return true;
+    });
 
     const win = window.open("", "_blank", "width=920,height=860");
     if (!win) return;
@@ -1339,7 +1369,7 @@ export function BomRoutingView({
             <img src="${typeof window !== "undefined" ? window.location.origin : ""}/logo-abt.png" alt="ABT" style="height: 34px; object-fit: contain; display: block; margin-bottom: 4px;" />
             <div style="font-size: 11px; font-weight: bold; color: #0284c7;">CÔNG TY TNHH GIẢI PHÁP Y SINH ABT</div>
             <h1>HƯỚNG DẪN SỬ DỤNG (INSTRUCTIONS FOR USE — IFU)</h1>
-            <div style="font-size: 13px; font-weight: bold;">${b.product_name} (${mode === "ALIQUOTED" ? `${b.product_code} — Dạng Chia Sẵn .D.IC` : b.product_code})</div>
+            <div style="font-size: 13px; font-weight: bold;">${b.product_name} (${isPcrCat ? `${baseCode} — ${sfSpec.short_label}` : b.product_code})</div>
           </div>
           <div style="text-align: right;">
             <span class="badge">IVD · ISO 13485:2016</span>
@@ -1349,7 +1379,7 @@ export function BomRoutingView({
         </div>
         <div class="meta-grid">
           <div><b>Mã sản phẩm (REF):</b> ${b.product_code}</div>
-          <div><b>Quy cách đóng gói:</b> ${b.specification || `Hộp ${b.tests_per_kit || 50} test`}</div>
+          <div><b>Quy cách đóng gói:</b> ${isPcrCat ? `${sfSpec.short_label} (${sfSpec.mix_tests_per_kit}T Mix · ${sfSpec.pcr_tubes_per_kit} tube)` : b.specification || `Hộp ${b.tests_per_kit || 50} test`}</div>
           <div><b>Tiêu chuẩn cơ sở:</b> ${b.tccs_code || "TCCS 01:2026/ABT"}</div>
           <div><b>Điều kiện bảo quản:</b> ${b.storage_condition || "-20°C ± 2°C"}</div>
           <div><b>Hạn sử dụng:</b> ${b.shelf_life_months || 12} tháng kể từ NSX</div>
@@ -1365,22 +1395,22 @@ export function BomRoutingView({
           <div>${labelIfuForm.ifu_intended_use}</div>
         </div>
         <div class="sec">
-          <div class="sec-title">2. Thành phần Bộ Kit & Quy cách ống (${mode === "ALIQUOTED" ? "Bản chia sẵn vào strip/tube .D.IC" : "Bản tiêu chuẩn"})</div>
+          <div class="sec-title">2. Thành phần Bộ Kit & Quy cách ống (${isPcrCat ? sfSpec.short_label : "Bản tiêu chuẩn"})</div>
           <table>
             <thead><tr><th>Hộp</th><th>Tên thành phần</th><th>Định mức / Đơn vị</th><th>Bảo quản</th></tr></thead>
             <tbody>
               ${
-                (bomDetail.packaging || []).length > 0
+                (bomDetail.packaging || []).length > 0 && !isPcrCat
                   ? (bomDetail.packaging || [])
                       .map(
                         (pk: any) =>
                           `<tr><td>Hộp ${pk.box_no}: ${pk.box_name}</td><td><b>${pk.component_name}</b></td><td>${pk.units_per_kit} ống × ${pk.fill_qty} ${pk.fill_uom}</td><td>${pk.storage_temp}</td></tr>`
                       )
                       .join("")
-                  : (bomDetail.lines || [])
+                  : filteredLines
                       .map(
                         (ln: any) =>
-                          `<tr><td>Hộp ${ln.box_no}</td><td><b>${ln.component_code}</b> — ${ln.component_name}</td><td>${mode === "ALIQUOTED" && ln.qty_per_base_aliquoted != null ? ln.qty_per_base_aliquoted : ln.qty_per_base} ${ln.uom}</td><td>${b.storage_condition || "-20°C"}</td></tr>`
+                          `<tr><td>Hộp ${ln.box_no}</td><td><b>${ln.component_code}</b> — ${ln.component_name}</td><td>${sfSpec.is_aliquoted && ln.qty_per_base_aliquoted != null ? ln.qty_per_base_aliquoted : ln.qty_per_base} ${ln.uom}</td><td>${b.storage_condition || "-20°C"}</td></tr>`
                       )
                       .join("")
               }
@@ -4222,42 +4252,74 @@ export function BomRoutingView({
                     tccsCode: bomDetail.bom.tccs_code || "TCCS 01:2026/ABT",
                   };
 
-                  const handleUploadIfuAttachment = (mode: "STANDARD" | "ALIQUOTED", file: File) => {
+                  const persistIfuFilesUpdate = async (nextFilesMap: Record<AbtKitSupplyFormKey, KitIfuFileSlot>) => {
+                    const nextForm = {
+                      ...labelIfuForm,
+                      ifu_files_json: nextFilesMap,
+                      ifu_file_name: nextFilesMap.NO_SPLIT_NO_IC.file_name,
+                      ifu_file_url: nextFilesMap.NO_SPLIT_NO_IC.file_url,
+                      ifu_file_size: nextFilesMap.NO_SPLIT_NO_IC.file_size,
+                      ifu_aliquoted_file_name: nextFilesMap.SPLIT_WITH_IC.file_name,
+                      ifu_aliquoted_file_url: nextFilesMap.SPLIT_WITH_IC.file_url,
+                      ifu_aliquoted_file_size: nextFilesMap.SPLIT_WITH_IC.file_size,
+                    };
+                    setLabelIfuForm(nextForm);
+                    try {
+                      await api(`/api/factory/kit/boms/${selectedBomId}`, {
+                        method: "POST",
+                        json: {
+                          kind: "label_ifu",
+                          ...nextForm,
+                          label_design_json: labelBundle,
+                        },
+                      });
+                      await loadBomDetail(selectedBomId);
+                    } catch (err) {
+                      setError(err);
+                    }
+                  };
+
+                  const handleUploadIfuAttachment = (variantKey: AbtKitSupplyFormKey, file: File) => {
                     const reader = new FileReader();
                     reader.onload = async () => {
                       const dataUrl = String(reader.result || "");
                       const sizeStr = `${Math.max(1, Math.round(file.size / 1024))} KB (${file.name.split(".").pop()?.toUpperCase() || "FILE"})`;
-                      const nextForm =
-                        mode === "ALIQUOTED"
-                          ? {
-                              ...labelIfuForm,
-                              ifu_aliquoted_file_name: file.name,
-                              ifu_aliquoted_file_url: dataUrl,
-                              ifu_aliquoted_file_size: sizeStr,
-                            }
-                          : {
-                              ...labelIfuForm,
-                              ifu_file_name: file.name,
-                              ifu_file_url: dataUrl,
-                              ifu_file_size: sizeStr,
-                            };
-                      setLabelIfuForm(nextForm);
-                      try {
-                        await api(`/api/factory/kit/boms/${selectedBomId}`, {
-                          method: "POST",
-                          json: {
-                            kind: "label_ifu",
-                            ...nextForm,
-                            label_design_json: labelBundle,
-                          },
-                        });
-                        await loadBomDetail(selectedBomId);
-                      } catch (err) {
-                        setError(err);
-                      }
+                      const curMap = labelIfuForm.ifu_files_json || resolveBomIfuFilesMap(bomDetail.bom);
+                      await persistIfuFilesUpdate({
+                        ...curMap,
+                        [variantKey]: {
+                          file_name: file.name,
+                          file_url: dataUrl,
+                          file_size: sizeStr,
+                        },
+                      });
                     };
                     reader.readAsDataURL(file);
                   };
+
+                  const handleClearIfuAttachment = async (variantKey: AbtKitSupplyFormKey) => {
+                    const curMap = labelIfuForm.ifu_files_json || resolveBomIfuFilesMap(bomDetail.bom);
+                    await persistIfuFilesUpdate({
+                      ...curMap,
+                      [variantKey]: { file_name: "", file_url: "", file_size: "" },
+                    });
+                  };
+
+                  const baseCodeForIfu = String(bomDetail.bom.product_code || "").replace(/\.D\.IC$/i, "");
+                  const ifuCardsToShow = isPcrKit
+                    ? PCR_IFU_VARIANT_CARDS
+                    : [
+                        {
+                          key: "NO_SPLIT_NO_IC" as AbtKitSupplyFormKey,
+                          index: 1,
+                          title: "FILE HDSD TIÊU CHUẨN CỦA BỘ KIT",
+                          lot_pattern: "",
+                          suffix: "",
+                          file_tag: "TieuChuan",
+                          summary: "Tài liệu Hướng dẫn sử dụng (IFU) áp dụng cho mọi lệnh sản xuất bộ Kit này",
+                          badge_class: "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300",
+                        },
+                      ];
 
                   return (
                     <Card
@@ -4279,98 +4341,100 @@ export function BomRoutingView({
                         </div>
                       }
                     >
-                      {/* PHẦN A: FILE ĐÍNH KÈM HƯỚNG DẪN SỬ DỤNG (IFU) — CHỈ HIỂN THỊ CHO THÀNH PHẨM KIT */}
+                      {/* PHẦN A: FILE ĐÍNH KÈM HƯỚNG DẪN SỬ DỤNG (IFU) — HỖ TRỢ ĐỦ 4 DẠNG KIT PCR */}
                       {!isSemi && (
-                        <div className="mb-4 p-3.5 rounded-xl border border-emerald-500/35 bg-emerald-950/15 space-y-2.5">
+                        <div className="mb-4 p-3.5 rounded-xl border border-emerald-500/35 bg-emerald-50/50 dark:bg-emerald-950/15 space-y-2.5">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <div>
-                              <div className="text-xs font-extrabold text-emerald-300 uppercase">
+                              <div className="text-xs font-extrabold text-emerald-800 dark:text-emerald-300 uppercase">
                                 📎 Tài Liệu Hướng Dẫn Sử Dụng Đính Kèm Theo BOM (Truy xuất tự động &amp; In ngay tại xưởng sản xuất)
                               </div>
-                              <div className="text-[11px] text-slate-400">
+                              <div className="text-[11px] text-slate-600 dark:text-slate-400">
                                 {isPcrKit
-                                  ? "Khi tạo Lệnh sản xuất (Thường hoặc Chia sẵn .D.IC), hệ thống tự động lấy đúng file HDSD đính kèm dưới đây để nhân viên sản xuất xem và in đóng vào hộp Kit."
+                                  ? "Đối với Kit PCR có 4 file HDSD riêng biệt (Chia sẵn / Không chia sẵn × Sẵn IC / Không sẵn IC). Khi phát Lệnh sản xuất theo quy cách nào, hệ thống tự động lấy đúng file HDSD của quy cách đó để xem và in đóng vào hộp Kit."
                                   : "Khi tạo Lệnh sản xuất, hệ thống tự động lấy file HDSD tiêu chuẩn đính kèm dưới đây để nhân viên sản xuất xem và in đóng vào hộp Kit."}
                               </div>
                             </div>
                           </div>
 
                           <div className={`grid grid-cols-1 ${isPcrKit ? "md:grid-cols-2" : ""} gap-3`}>
-                            {/* File 1: HDSD Mặc định */}
-                            <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 flex flex-col justify-between gap-2">
-                              <div className="flex items-start justify-between gap-2">
-                                <div>
-                                  <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
-                                    📄 {isPcrKit ? "1. FILE HDSD TIÊU CHUẨN (MẶC ĐỊNH)" : "FILE HDSD TIÊU CHUẨN CỦA BỘ KIT"}
-                                  </span>
-                                  <div className="font-mono font-bold text-xs text-slate-100 mt-1">
-                                    {labelIfuForm.ifu_file_name || `HDSD_${bomDetail.bom.product_code}_Rev01.pdf`}
-                                  </div>
-                                  <div className="text-[11px] text-slate-400">
-                                    Mã: {labelIfuForm.ifu_code} · {labelIfuForm.ifu_version} · {labelIfuForm.ifu_file_size || "428 KB"}
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="flex flex-wrap gap-1.5 pt-1 border-t border-slate-800/80">
-                                <Button variant="ghost" onClick={() => openAndPrintIfuFile("STANDARD", false)}>
-                                  👁️ Xem file HDSD
-                                </Button>
-                                <Button variant="secondary" onClick={() => openAndPrintIfuFile("STANDARD", true)}>
-                                  🖨️ In ngay HDSD
-                                </Button>
-                                <label className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-700 hover:border-sky-500 text-sky-300 cursor-pointer inline-flex items-center gap-1">
-                                  📤 Đính kèm / Thay file (PDF/DOCX/Ảnh)
-                                  <input
-                                    type="file"
-                                    accept=".pdf,.doc,.docx,image/*"
-                                    style={{ display: "none" }}
-                                    onChange={(e) => {
-                                      const f = e.target.files?.[0];
-                                      if (f) handleUploadIfuAttachment("STANDARD", f);
-                                    }}
-                                  />
-                                </label>
-                              </div>
-                            </div>
-
-                            {/* File 2: HDSD Dạng chia sẵn (.D.IC) — Chỉ áp dụng cho Kit PCR */}
-                            {isPcrKit && (
-                              <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 flex flex-col justify-between gap-2">
-                                <div className="flex items-start justify-between gap-2">
-                                  <div>
-                                    <span className="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 text-[10px] font-bold">
-                                      🧪 2. FILE HDSD DẠNG CHIA SẴN (.D.IC — ALIQUOTED)
-                                    </span>
-                                    <div className="font-mono font-bold text-xs text-slate-100 mt-1">
-                                      {labelIfuForm.ifu_aliquoted_file_name || `HDSD_${bomDetail.bom.product_code}.D.IC_ChiaSan_Rev01.pdf`}
+                            {ifuCardsToShow.map((card) => {
+                              const curMap = labelIfuForm.ifu_files_json || resolveBomIfuFilesMap(bomDetail.bom);
+                              const slot = curMap[card.key] || { file_name: "", file_url: "", file_size: "" };
+                              const hasUploaded = Boolean(slot.file_url);
+                              const displayFileName =
+                                slot.file_name ||
+                                `HDSD_${baseCodeForIfu}${card.suffix}_${card.file_tag}_Rev0${bomDetail.bom.bom_version || 1}.pdf`;
+                              return (
+                                <div
+                                  key={card.key}
+                                  className={`p-3 rounded-lg bg-white dark:bg-slate-900/80 border flex flex-col justify-between gap-2 ${
+                                    hasUploaded
+                                      ? "border-emerald-400 dark:border-emerald-700"
+                                      : "border-slate-200 dark:border-slate-800"
+                                  }`}
+                                >
+                                  <div className="space-y-1">
+                                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${card.badge_class}`}>
+                                        {card.title}
+                                      </span>
+                                      <span
+                                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                          hasUploaded
+                                            ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                                            : "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+                                        }`}
+                                      >
+                                        {hasUploaded ? "✓ Đã đính kèm file" : "Mẫu tự động (Chưa tải file)"}
+                                      </span>
                                     </div>
-                                    <div className="text-[11px] text-slate-400">
-                                      Tự động kích hoạt khi PO đặt hàng Kit PCR dạng chia sẵn (.C / .C.IC) · {labelIfuForm.ifu_aliquoted_file_size || "452 KB"}
+                                    <div className="font-mono font-bold text-xs text-slate-900 dark:text-slate-100 break-all">
+                                      {displayFileName}
+                                    </div>
+                                    <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                                      {card.summary}
+                                      {card.lot_pattern ? ` · Lot: ${card.lot_pattern}` : ""}
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 font-mono">
+                                      Mã IFU: {labelIfuForm.ifu_code} · {labelIfuForm.ifu_version}
+                                      {slot.file_size ? ` · ${slot.file_size}` : ""}
                                     </div>
                                   </div>
+                                  <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-slate-200 dark:border-slate-800/80">
+                                    <Button variant="ghost" onClick={() => openAndPrintIfuFile(card.key, false)}>
+                                      👁️ Xem HDSD
+                                    </Button>
+                                    <Button variant="secondary" onClick={() => openAndPrintIfuFile(card.key, true)}>
+                                      🖨️ In ngay
+                                    </Button>
+                                    <label className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-300 dark:border-slate-700 hover:border-sky-500 text-sky-700 dark:text-sky-300 cursor-pointer inline-flex items-center gap-1">
+                                      📤 {hasUploaded ? "Thay file" : "Đính kèm (PDF/DOCX/Ảnh)"}
+                                      <input
+                                        type="file"
+                                        accept=".pdf,.doc,.docx,image/*"
+                                        style={{ display: "none" }}
+                                        onChange={(e) => {
+                                          const f = e.target.files?.[0];
+                                          if (f) handleUploadIfuAttachment(card.key, f);
+                                          e.target.value = "";
+                                        }}
+                                      />
+                                    </label>
+                                    {hasUploaded && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleClearIfuAttachment(card.key)}
+                                        className="px-2 py-1.5 rounded-lg text-xs font-semibold border border-rose-200 dark:border-rose-900 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                                        title="Xóa file đính kèm của quy cách này"
+                                      >
+                                        🗑️ Xóa file
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
-                                <div className="flex flex-wrap gap-1.5 pt-1 border-t border-slate-800/80">
-                                  <Button variant="ghost" onClick={() => openAndPrintIfuFile("ALIQUOTED", false)}>
-                                    👁️ Xem file .D.IC
-                                  </Button>
-                                  <Button variant="secondary" onClick={() => openAndPrintIfuFile("ALIQUOTED", true)}>
-                                    🖨️ In ngay .D.IC
-                                  </Button>
-                                  <label className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-700 hover:border-sky-500 text-sky-300 cursor-pointer inline-flex items-center gap-1">
-                                    📤 Đính kèm file .D.IC
-                                    <input
-                                      type="file"
-                                      accept=".pdf,.doc,.docx,image/*"
-                                      style={{ display: "none" }}
-                                      onChange={(e) => {
-                                        const f = e.target.files?.[0];
-                                        if (f) handleUploadIfuAttachment("ALIQUOTED", f);
-                                      }}
-                                    />
-                                  </label>
-                                </div>
-                              </div>
-                            )}
+                              );
+                            })}
                           </div>
                         </div>
                       )}

@@ -11,6 +11,7 @@ import { BarcodeScanVerifier } from "../BarcodeScanVerifier";
 import { barcode128SvgMarkup } from "../barcodeSvg";
 import {
   ABT_KIT_SUPPLY_FORMS,
+  type AbtKitSupplyFormKey,
   ABT_TUBE_STRIP_CATALOG,
   ACTION_LABELS,
   buildAbtKitLotCode,
@@ -18,7 +19,9 @@ import {
   type KitAssetOption,
   type KitOptions,
   matchesEquipmentGroup,
+  openOrPrintDataFile,
   parseAbtKitLotCode,
+  resolveBomIfuFilesMap,
   ROLE_LABELS,
   STEP_CATEGORY_LABELS,
 } from "./shared";
@@ -2228,7 +2231,35 @@ export function OrdersEbrView({
                   </div>
                 )}
 
-                {showLabelSheet && (
+                {showLabelSheet && (() => {
+                  const isSemiOrder =
+                    detail.order.bom_type === "semi_finished" || detail.order.product_type === "SEMI_FINISHED";
+                  const isPcrOrder = !isSemiOrder && (detail.order.bom_category ?? "PCR Kit") === "PCR Kit";
+                  const parsedOrderLot = parseAbtKitLotCode(detail.order.lot_code);
+                  const rawOrderSf = String(detail.order.supply_form || "").trim().toUpperCase();
+                  const activeSfKey: AbtKitSupplyFormKey =
+                    rawOrderSf && ABT_KIT_SUPPLY_FORMS[rawOrderSf]
+                      ? (rawOrderSf as AbtKitSupplyFormKey)
+                      : parsedOrderLot.supplyForm
+                        ? parsedOrderLot.supplyForm.key
+                        : detail.order.is_aliquoted || detail.order.order_mode === "ALIQUOTED"
+                          ? "SPLIT_WITH_IC"
+                          : "NO_SPLIT_NO_IC";
+                  const activeSfSpec = ABT_KIT_SUPPLY_FORMS[activeSfKey] || ABT_KIT_SUPPLY_FORMS.NO_SPLIT_NO_IC;
+                  const resolvedIfu =
+                    detail.order.resolved_ifu && detail.order.resolved_ifu.variant_key === activeSfKey
+                      ? detail.order.resolved_ifu
+                      : resolveBomIfuFilesMap(detail.order)[activeSfKey];
+                  const activeIfuUrl = String(resolvedIfu?.file_url || "");
+                  const activeIfuName = String(
+                    resolvedIfu?.file_name || `HDSD_${detail.order.product_code}_${activeSfSpec.variant_code}.pdf`
+                  );
+                  const poQty = Number(detail.order.planned_qty || 0);
+                  const retQty = detail.order.no_retention
+                    ? 0
+                    : Number(detail.order.qc_retention_qty ?? detail.order.retain_qty ?? 0);
+                  const totalKits = poQty + retQty;
+                  return (
                   <div className="mt-3 p-4 rounded-xl border-2 border-sky-600 bg-white dark:bg-slate-950 space-y-4">
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-2.5">
                       <div>
@@ -2241,27 +2272,25 @@ export function OrdersEbrView({
                           <b>{detail.order.ifu_code ?? `IFU-${detail.order.product_code}`} ({detail.order.ifu_version ?? "Rev 01"})</b>
                         </div>
                       </div>
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <Button
                           title="Mở cửa sổ Bản in Tem Nhãn Thực Tế (Nhãn hộp ngoài 95×65mm + Nhãn ống thành phần 38×19mm kèm mã vạch GS1-128 & 2D Matrix) và phát lệnh in"
                           onClick={() => printVisualStickersWindow(detail)}
                         >
                           🖨️ {detail.order.label_printed_at ? "In Lại Bộ Tem Nhãn Thực Tế" : "Xem Bản In & Nhấn Lệnh In Tem Nhãn"}
                         </Button>
-                        {(detail.order.ifu_file_url || detail.order.ifu_aliquoted_file_url) && (
+                        {activeIfuUrl ? (
                           <Button
                             variant="secondary"
-                            onClick={() => {
-                              const url =
-                                (detail.order.is_aliquoted || detail.order.order_mode === "ALIQUOTED") && detail.order.ifu_aliquoted_file_url
-                                  ? detail.order.ifu_aliquoted_file_url
-                                  : detail.order.ifu_file_url || detail.order.ifu_aliquoted_file_url;
-                              if (url) window.open(url, "_blank");
-                            }}
+                            onClick={() => openOrPrintDataFile(activeIfuUrl, activeIfuName, false)}
                           >
-                            📄 Mở &amp; In File HDSD (IFU) Đính Kèm
+                            📄 Mở &amp; In HDSD ({isPcrOrder ? activeSfSpec.short_label : "Tiêu chuẩn"})
                           </Button>
-                        )}
+                        ) : isPcrOrder ? (
+                          <span className="px-2.5 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 text-[11px] font-bold text-amber-800 dark:text-amber-200">
+                            ⚠️ BOM chưa đính kèm file HDSD cho dạng &ldquo;{activeSfSpec.short_label}&rdquo;
+                          </span>
+                        ) : null}
                         <Button variant="ghost" onClick={() => setShowLabelSheet(false)}>
                           Đóng
                         </Button>
@@ -2269,34 +2298,28 @@ export function OrdersEbrView({
                     </div>
 
                     {/* Bảng 1: Tự động tính Số lượng bản in Nhãn Hộp, Nhãn Ống & Tờ HDSD theo PO */}
-                    {(() => {
-                      const poQty = Number(detail.order.planned_qty || 0);
-                      const retQty = detail.order.no_retention ? 0 : Number(detail.order.qc_retention_qty ?? detail.order.retain_qty ?? 0);
-                      const totalKits = poQty + retQty;
-                      return (
-                        <div className="rounded-lg border border-sky-200 dark:border-sky-900 bg-sky-50/60 dark:bg-sky-950/30 p-2.5 text-xs space-y-1.5">
-                          <div className="font-bold text-sky-900 dark:text-sky-200">
-                            🧮 Bảng Định Mức Số Lượng Bản In Tự Động Cho Lệnh {detail.order.code} {detail.order.kd_po_code ? `(PO: ${detail.order.kd_po_code})` : ""}:
-                          </div>
-                          <div className="flex flex-wrap gap-3 text-[11px]">
-                            <span className="px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-                              📦 Nhãn Hộp Ngoài: <b>{totalKits} tem</b> ({poQty} bộ PO + {retQty} bộ mẫu lưu)
-                            </span>
-                            <span className="px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-                              📖 Tờ Hướng dẫn sử dụng ({detail.order.ifu_code ?? `IFU-${detail.order.product_code}`}): <b>{totalKits} tờ</b> (1 tờ/hộp)
-                            </span>
-                            {(detail.packaging || []).map((pk: any) => (
-                              <span
-                                key={pk.id}
-                                className="px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
-                              >
-                                🧪 Nhãn ống <b>{pk.component_name}</b>: <b>{totalKits * Number(pk.units_per_kit || 1)} tem</b> ({pk.units_per_kit} ống/bộ)
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })()}
+                    <div className="rounded-lg border border-sky-200 dark:border-sky-900 bg-sky-50/60 dark:bg-sky-950/30 p-2.5 text-xs space-y-1.5">
+                      <div className="font-bold text-sky-900 dark:text-sky-200">
+                        🧮 Bảng Định Mức Số Lượng Bản In Tự Động Cho Lệnh {detail.order.code} {detail.order.kd_po_code ? `(PO: ${detail.order.kd_po_code})` : ""}:
+                      </div>
+                      <div className="flex flex-wrap gap-3 text-[11px]">
+                        <span className="px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                          📦 Nhãn Hộp Ngoài: <b>{totalKits} tem</b> ({poQty} bộ PO + {retQty} bộ mẫu lưu)
+                        </span>
+                        <span className="px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                          📖 Tờ HDSD ({isPcrOrder ? activeSfSpec.short_label : detail.order.ifu_code ?? `IFU-${detail.order.product_code}`}
+                          {resolvedIfu?.file_name ? ` · ${resolvedIfu.file_name}` : ""}): <b>{totalKits} tờ</b> (1 tờ/hộp)
+                        </span>
+                        {(detail.packaging || []).map((pk: any) => (
+                          <span
+                            key={pk.id}
+                            className="px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
+                          >
+                            🧪 Nhãn ống <b>{pk.component_name}</b>: <b>{totalKits * Number(pk.units_per_kit || 1)} tem</b> ({pk.units_per_kit} ống/bộ)
+                          </span>
+                        ))}
+                      </div>
+                    </div>
 
                     {/* Bảng 2: Mô phỏng Hình Ảnh Tem Nhãn Thực Tế Trên Nền Giấy In Nhiệt Trắng (ISO 15223-1 + GS1-128 Barcode + 2D DataMatrix) */}
                     <div className="space-y-2">
@@ -2479,7 +2502,8 @@ export function OrdersEbrView({
                     <div className="p-3.5 rounded-xl border-2 border-emerald-700 bg-emerald-50/30 dark:bg-emerald-950/20 text-xs space-y-2">
                       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-300 dark:border-emerald-800 pb-1.5">
                         <div className="font-extrabold text-emerald-950 dark:text-emerald-200 uppercase">
-                          📖 TỜ HƯỚNG DẪN SỬ DỤNG ĐI KÈM BỘ KIT (IFU — {detail.order.ifu_code ?? `IFU-${detail.order.product_code}`})
+                          📖 TỜ HƯỚNG DẪN SỬ DỤNG ĐI KÈM BỘ KIT (IFU — {detail.order.ifu_code ?? `IFU-${detail.order.product_code}`}
+                          {isPcrOrder ? ` · ${activeSfSpec.short_label}` : ""})
                         </div>
                         <div className="font-mono text-[11px] text-emerald-800 dark:text-emerald-300">
                           Phiên bản: {detail.order.ifu_version ?? "Rev 01 (ISO 13485)"} · Áp dụng Lô: <b>{detail.order.lot_code}</b> (HSD: {fmtDate(detail.order.expiry_date)})
@@ -2516,7 +2540,8 @@ export function OrdersEbrView({
                       </div>
                     </div>
                   </div>
-                )}
+                  );
+                })()}
 
                 {detail.order.lot_id && (
                   <div className="mt-3 pt-3 border-t border-stone-200 space-y-2">

@@ -23,10 +23,14 @@ import { createQcTest, registerQcSubject } from "../qms/qcTests";
 import { findEffectiveSpec } from "../qms/specs";
 import { stripVnAccents } from "../../frontend/factory/qcSignatures";
 import {
+  buildIfuFilesMapFromRow,
   ensureKitBomRoutingAndIfuSchema,
   loadStandardKitRoutingSteps,
+  PCR_IFU_VARIANT_KEYS,
   visibleKitOrgUnits,
   type KitBomRow,
+  type KitIfuFileSlot,
+  type PcrIfuVariantKey,
   type RoutingStepParamDef,
 } from "./bomRouting";
 import "./permissions";
@@ -3810,6 +3814,14 @@ export async function getProductionOrderDetail(tx: Tx, actor: AuthzActor, id: st
               b.label_template_code, b.label_dimensions, b.udi_di,
               b.ifu_code, b.ifu_version, b.ifu_intended_use, b.ifu_thermal_profile, b.ifu_channels, b.ifu_interpretation,
               b.ifu_file_name, b.ifu_file_url, b.ifu_file_size, b.ifu_aliquoted_file_name, b.ifu_aliquoted_file_url, b.ifu_aliquoted_file_size,
+              b.ifu_files_json,
+              base_b.ifu_files_json AS base_ifu_files_json,
+              base_b.ifu_file_name AS base_ifu_file_name,
+              base_b.ifu_file_url AS base_ifu_file_url,
+              base_b.ifu_file_size AS base_ifu_file_size,
+              base_b.ifu_aliquoted_file_name AS base_ifu_aliquoted_file_name,
+              base_b.ifu_aliquoted_file_url AS base_ifu_aliquoted_file_url,
+              base_b.ifu_aliquoted_file_size AS base_ifu_aliquoted_file_size,
               b.label_design_json,
               r.code AS routing_code, r.routing_version,
               l.code AS lot_code, l.status AS lot_status,
@@ -3821,6 +3833,16 @@ export async function getProductionOrderDetail(tx: Tx, actor: AuthzActor, id: st
          FROM kit.production_order o
          JOIN master.item i ON i.id = o.product_item_id
          JOIN kit.bom b ON b.id = o.bom_id
+         LEFT JOIN LATERAL (
+           SELECT pb.ifu_files_json, pb.ifu_file_name, pb.ifu_file_url, pb.ifu_file_size,
+                  pb.ifu_aliquoted_file_name, pb.ifu_aliquoted_file_url, pb.ifu_aliquoted_file_size
+             FROM kit.bom pb
+            WHERE pb.product_item_id = o.product_item_id
+              AND upper(coalesce(nullif(trim(pb.variant_code), ''), 'BASE')) = 'BASE'
+              AND pb.id <> b.id
+            ORDER BY (pb.status = 'EFFECTIVE') DESC, pb.bom_version DESC
+            LIMIT 1
+         ) base_b ON true
          JOIN kit.routing r ON r.id = o.routing_id
          JOIN master.warehouse w ON w.id = o.warehouse_id
          LEFT JOIN inv.lot l ON l.id = o.lot_id
@@ -3838,6 +3860,40 @@ export async function getProductionOrderDetail(tx: Tx, actor: AuthzActor, id: st
   if (!(await hasFactoryPermission(tx, actor, "qms.qc.view"))) {
     await authorize(tx, actor, "kit.view", order.org_unit_id);
   }
+
+  const ownIfuMap = buildIfuFilesMapFromRow(order);
+  const baseIfuMap = buildIfuFilesMapFromRow({
+    ifu_files_json: order.base_ifu_files_json,
+    ifu_file_name: order.base_ifu_file_name,
+    ifu_file_url: order.base_ifu_file_url,
+    ifu_file_size: order.base_ifu_file_size,
+    ifu_aliquoted_file_name: order.base_ifu_aliquoted_file_name,
+    ifu_aliquoted_file_url: order.base_ifu_aliquoted_file_url,
+    ifu_aliquoted_file_size: order.base_ifu_aliquoted_file_size,
+  });
+  const mergedOrderIfuMap = {} as Record<PcrIfuVariantKey, KitIfuFileSlot>;
+  for (const key of PCR_IFU_VARIANT_KEYS) {
+    const own = ownIfuMap[key];
+    const base = baseIfuMap[key];
+    mergedOrderIfuMap[key] = own.file_url || own.file_name ? own : base;
+  }
+  const parsedLotForIfu = parseLotCodeToSupplyFormAndTube(String(order.lot_code || ""));
+  const rawOrderSf = String(order.supply_form || "").trim().toUpperCase();
+  const resolvedVariantKey: PcrIfuVariantKey = (PCR_IFU_VARIANT_KEYS as readonly string[]).includes(rawOrderSf)
+    ? (rawOrderSf as PcrIfuVariantKey)
+    : parsedLotForIfu.supplyForm
+      ? parsedLotForIfu.supplyForm
+      : order.is_aliquoted || order.order_mode === "ALIQUOTED"
+        ? "SPLIT_WITH_IC"
+        : "NO_SPLIT_NO_IC";
+  const resolvedIfuSlot = mergedOrderIfuMap[resolvedVariantKey];
+  order.ifu_files_json = mergedOrderIfuMap;
+  order.resolved_ifu = {
+    variant_key: resolvedVariantKey,
+    file_name: resolvedIfuSlot?.file_name ?? null,
+    file_url: resolvedIfuSlot?.file_url ?? null,
+    file_size: resolvedIfuSlot?.file_size ?? null,
+  };
 
   const stepsRaw = (
     await tx.query(

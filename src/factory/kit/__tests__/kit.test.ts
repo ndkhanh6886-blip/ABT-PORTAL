@@ -18,6 +18,7 @@ import {
   listCustomStepFunctions,
   pairBomLineContainer,
   routingMachine,
+  updateBomLabelIfuSpec,
   updateBomLine,
   upsertCustomStepFunction,
 } from "../bomRouting";
@@ -1620,5 +1621,217 @@ describe("Phase 4b — Module Phòng Sản xuất Kit (kit schema)", () => {
     );
     const detailAfterOrder = await withTransaction((tx) => getBomDetail(tx, operator, bom.id));
     expect(detailAfterOrder.lines.find((l: any) => l.id === mmLine.id).bundle_parent_code).toBe(cttItem.code);
+  });
+
+  it("10. Kit PCR quản lý đủ 4 file HDSD riêng biệt (Không chia sẵn / Chia sẵn × Không sẵn IC / Sẵn IC) và tự động khớp đúng file theo Lệnh sản xuất", async () => {
+    const site = await makeSite();
+    const { operator, checker } = await setupKitTeam(site);
+    const suffix = Date.now().toString(36).slice(-5).toUpperCase();
+
+    const pcrKitItem = await makeItem(site, {
+      code: `MQS-${suffix}`,
+      name: `Kit Real-time PCR Test ${suffix}`,
+      item_type: "FINISHED_KIT",
+      base_uom: "pcs",
+      shelf_life_days: 365,
+    });
+    const mmItem = await makeItem(site, {
+      code: `MM-IFU-${suffix}`,
+      name: "PCR Master Mix",
+      item_type: "REAGENT",
+      base_uom: "test",
+    });
+    await stockedLot(site, mmItem.id, 5000, "2028-06-01", { uom: "test" });
+
+    const rt = await withTransaction(async (tx) => {
+      const r = await createRouting(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: pcrKitItem.id,
+        name: `Routing 4 IFU ${suffix}`,
+      });
+      await addRoutingStep(tx, operator, {
+        routing_id: r.id,
+        seq: 10,
+        step_code: "STEP-IFU-10",
+        step_name: "Đóng gói & Kẹp tờ HDSD",
+        category: "PACKAGING",
+        required_asset_id: "",
+        instructions: "Kiểm tra đúng tờ HDSD theo dạng cung cấp của lệnh SX.",
+      });
+      return r;
+    });
+    await act(routingMachine, operator, rt.id, "submit_review");
+    await act(routingMachine, checker, rt.id, "approve", signed);
+
+    const fourIfus = {
+      NO_SPLIT_NO_IC: {
+        file_name: `HDSD_MQS-${suffix}_KhongChiaSan_KhongIC.pdf`,
+        file_url: "data:application/pdf;base64,Tk9fU1BMSVRfTk9fSUM=",
+        file_size: "120 KB (PDF)",
+      },
+      NO_SPLIT_WITH_IC: {
+        file_name: `HDSD_MQS-${suffix}_IC_KhongChiaSan_SanIC.pdf`,
+        file_url: "data:application/pdf;base64,Tk9fU1BMSVRfV0lUSF9JQw==",
+        file_size: "125 KB (PDF)",
+      },
+      SPLIT_NO_IC: {
+        file_name: `HDSD_MQS-${suffix}_C_ChiaSan_KhongIC.pdf`,
+        file_url: "data:application/pdf;base64,U1BMSVRfTk9fSUM=",
+        file_size: "130 KB (PDF)",
+      },
+      SPLIT_WITH_IC: {
+        file_name: `HDSD_MQS-${suffix}_C_IC_ChiaSan_SanIC.pdf`,
+        file_url: "data:application/pdf;base64,U1BMSVRfV0lUSF9JQw==",
+        file_size: "135 KB (PDF)",
+      },
+    };
+
+    const baseBom = await withTransaction(async (tx) => {
+      const b = await createBom(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: pcrKitItem.id,
+        name: `BOM 4 IFU ${suffix}`,
+        bom_category: "PCR Kit",
+        variant_code: "BASE",
+        supply_form: "NO_SPLIT_NO_IC",
+        base_qty: 1,
+        base_uom: "pcs",
+        tests_per_kit: 75,
+        shelf_life_days: 365,
+        routing_id: rt.id,
+      });
+      await addBomLine(tx, operator, {
+        bom_id: b.id,
+        line_no: 1,
+        box_no: 1,
+        component_item_id: mmItem.id,
+        component_role: "MASTER_MIX",
+        qty_per_base: 75,
+        qty_per_base_aliquoted: 64,
+        uom: "test",
+      });
+      await updateBomLabelIfuSpec(tx, operator, b.id, {
+        ifu_code: `IFU-MQS-${suffix}`,
+        ifu_version: "Rev 01",
+        ifu_files_json: fourIfus,
+      });
+      return b;
+    });
+
+    await act(bomMachine, operator, baseBom.id, "submit_review");
+    await act(bomMachine, checker, baseBom.id, "approve", signed);
+
+    const baseDetail = await withTransaction((tx) => getBomDetail(tx, operator, baseBom.id));
+    expect(baseDetail.ifu_files_json).toEqual(fourIfus);
+    expect(baseDetail.ifu_file_name).toBe(fourIfus.NO_SPLIT_NO_IC.file_name);
+    expect(baseDetail.ifu_aliquoted_file_name).toBe(fourIfus.SPLIT_WITH_IC.file_name);
+
+    // Clone to a child BOM for variant C -> preserves all 4 IFUs cleanly
+    const clonedChildBom = await withTransaction((tx) =>
+      createBom(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: pcrKitItem.id,
+        clone_from_bom_id: baseBom.id,
+        name: `BOM Variant C ${suffix}`,
+        bom_category: "PCR Kit",
+        variant_code: "C",
+        supply_form: "SPLIT_NO_IC",
+        base_qty: 1,
+        base_uom: "pcs",
+        tests_per_kit: 64,
+        shelf_life_days: 365,
+        routing_id: rt.id,
+      })
+    );
+    await act(bomMachine, operator, clonedChildBom.id, "submit_review");
+    await act(bomMachine, checker, clonedChildBom.id, "approve", signed);
+    const clonedDetail = await withTransaction((tx) => getBomDetail(tx, operator, clonedChildBom.id));
+    expect(clonedDetail.ifu_files_json).toEqual(fourIfus);
+
+    // Child variant IC created without cloning its own IFUs still falls back to BASE BOM at Production Order time
+    const childIcBom = await withTransaction(async (tx) => {
+      const b = await createBom(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: pcrKitItem.id,
+        name: `BOM Variant IC ${suffix}`,
+        bom_category: "PCR Kit",
+        variant_code: "IC",
+        supply_form: "NO_SPLIT_WITH_IC",
+        base_qty: 1,
+        base_uom: "pcs",
+        tests_per_kit: 75,
+        shelf_life_days: 365,
+        routing_id: rt.id,
+      });
+      await addBomLine(tx, operator, {
+        bom_id: b.id,
+        line_no: 1,
+        box_no: 1,
+        component_item_id: mmItem.id,
+        component_role: "MASTER_MIX",
+        qty_per_base: 75,
+        uom: "test",
+      });
+      return b;
+    });
+    await act(bomMachine, operator, childIcBom.id, "submit_review");
+    await act(bomMachine, checker, childIcBom.id, "approve", signed);
+
+    // Create 4 production orders across the 4 supply forms and verify exact IFU matching
+    for (const sf of ["NO_SPLIT_NO_IC", "NO_SPLIT_WITH_IC", "SPLIT_NO_IC", "SPLIT_WITH_IC"] as const) {
+      const ord = await withTransaction((tx) =>
+        createProductionOrder(tx, operator, {
+          org_unit_id: site.dept,
+          product_item_id: pcrKitItem.id,
+          warehouse_id: site.warehouse,
+          planned_qty: 2,
+          supply_form: sf,
+          tube_code: "T02",
+          is_aliquoted: sf === "SPLIT_NO_IC" || sf === "SPLIT_WITH_IC",
+          order_mode: sf === "SPLIT_NO_IC" || sf === "SPLIT_WITH_IC" ? "ALIQUOTED" : "STANDARD",
+          no_retention: true,
+        })
+      );
+      const ordDetail = await withTransaction((tx) => getProductionOrderDetail(tx, operator, ord.id));
+      expect(ordDetail.order.resolved_ifu).toEqual({
+        variant_key: sf,
+        file_name: fourIfus[sf].file_name,
+        file_url: fourIfus[sf].file_url,
+        file_size: fourIfus[sf].file_size,
+      });
+    }
+
+    // Clearing SPLIT_NO_IC on clonedChildBom + baseBom removes only SPLIT_NO_IC without cross-fallback
+    await withTransaction(async (tx) => {
+      await updateBomLabelIfuSpec(tx, operator, clonedChildBom.id, {
+        ifu_files_json: { SPLIT_NO_IC: null },
+      });
+      await updateBomLabelIfuSpec(tx, operator, baseBom.id, {
+        ifu_files_json: { SPLIT_NO_IC: null },
+      });
+    });
+    const ordSplitNoIc = await withTransaction((tx) =>
+      createProductionOrder(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: pcrKitItem.id,
+        warehouse_id: site.warehouse,
+        planned_qty: 1,
+        supply_form: "SPLIT_NO_IC",
+        tube_code: "T02",
+        is_aliquoted: true,
+        order_mode: "ALIQUOTED",
+        no_retention: true,
+      })
+    );
+    const splitNoIcDetail = await withTransaction((tx) => getProductionOrderDetail(tx, operator, ordSplitNoIc.id));
+    expect(splitNoIcDetail.order.resolved_ifu).toEqual({
+      variant_key: "SPLIT_NO_IC",
+      file_name: null,
+      file_url: null,
+      file_size: null,
+    });
+    expect((splitNoIcDetail.order.ifu_files_json as Record<string, { file_name: string | null }>).SPLIT_WITH_IC.file_name).toBe(
+      fourIfus.SPLIT_WITH_IC.file_name
+    );
   });
 });

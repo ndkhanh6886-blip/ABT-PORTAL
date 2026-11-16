@@ -239,6 +239,101 @@ export const routingMachine = defineMachine<SpecDocStatus, KitRoutingRow>({
   ],
 });
 
+export const PCR_IFU_VARIANT_KEYS = [
+  "NO_SPLIT_NO_IC",
+  "NO_SPLIT_WITH_IC",
+  "SPLIT_NO_IC",
+  "SPLIT_WITH_IC",
+] as const;
+
+export type PcrIfuVariantKey = (typeof PCR_IFU_VARIANT_KEYS)[number];
+
+export interface KitIfuFileSlot {
+  file_name: string | null;
+  file_url: string | null;
+  file_size: string | null;
+}
+
+function normalizeIfuSlot(raw: any): KitIfuFileSlot {
+  const file_name = raw?.file_name ? String(raw.file_name).trim() || null : null;
+  const file_url = raw?.file_url ? String(raw.file_url) || null : null;
+  const file_size = raw?.file_size ? String(raw.file_size).trim() || null : null;
+  return { file_name, file_url, file_size };
+}
+
+export function buildIfuFilesMapFromRow(row: Record<string, unknown> | null | undefined): Record<PcrIfuVariantKey, KitIfuFileSlot> {
+  const json = (row?.ifu_files_json && typeof row.ifu_files_json === "object" ? row.ifu_files_json : {}) as Record<string, any>;
+  const map = {} as Record<PcrIfuVariantKey, KitIfuFileSlot>;
+  for (const key of PCR_IFU_VARIANT_KEYS) {
+    map[key] = normalizeIfuSlot(json[key]);
+  }
+  if (!map.NO_SPLIT_NO_IC.file_url && !map.NO_SPLIT_NO_IC.file_name && (row?.ifu_file_url || row?.ifu_file_name)) {
+    map.NO_SPLIT_NO_IC = normalizeIfuSlot({
+      file_name: row.ifu_file_name,
+      file_url: row.ifu_file_url,
+      file_size: row.ifu_file_size,
+    });
+  }
+  if (!map.SPLIT_WITH_IC.file_url && !map.SPLIT_WITH_IC.file_name && (row?.ifu_aliquoted_file_url || row?.ifu_aliquoted_file_name)) {
+    map.SPLIT_WITH_IC = normalizeIfuSlot({
+      file_name: row.ifu_aliquoted_file_name,
+      file_url: row.ifu_aliquoted_file_url,
+      file_size: row.ifu_aliquoted_file_size,
+    });
+  }
+  return map;
+}
+
+export function compactIfuFilesForStorage(map: Record<PcrIfuVariantKey, KitIfuFileSlot>): Record<string, KitIfuFileSlot> {
+  const out: Record<string, KitIfuFileSlot> = {};
+  for (const key of PCR_IFU_VARIANT_KEYS) {
+    const slot = normalizeIfuSlot(map[key]);
+    if (slot.file_name || slot.file_url) {
+      out[key] = slot;
+    }
+  }
+  return out;
+}
+
+export function mergeAndNormalizeIfuFiles(opts: {
+  existingRow?: Record<string, unknown> | null;
+  incomingJson?: unknown;
+  legacyStd?: Partial<KitIfuFileSlot>;
+  legacyAliq?: Partial<KitIfuFileSlot>;
+}): Record<PcrIfuVariantKey, KitIfuFileSlot> {
+  const merged = buildIfuFilesMapFromRow(opts.existingRow);
+  const incObj =
+    opts.incomingJson && typeof opts.incomingJson === "object" && !Array.isArray(opts.incomingJson)
+      ? (opts.incomingJson as Record<string, any>)
+      : null;
+
+  if (opts.legacyStd) {
+    const cur = merged.NO_SPLIT_NO_IC;
+    merged.NO_SPLIT_NO_IC = normalizeIfuSlot({
+      file_name: opts.legacyStd.file_name !== undefined ? opts.legacyStd.file_name : cur.file_name,
+      file_url: opts.legacyStd.file_url !== undefined ? opts.legacyStd.file_url : cur.file_url,
+      file_size: opts.legacyStd.file_size !== undefined ? opts.legacyStd.file_size : cur.file_size,
+    });
+  }
+  if (opts.legacyAliq) {
+    const cur = merged.SPLIT_WITH_IC;
+    merged.SPLIT_WITH_IC = normalizeIfuSlot({
+      file_name: opts.legacyAliq.file_name !== undefined ? opts.legacyAliq.file_name : cur.file_name,
+      file_url: opts.legacyAliq.file_url !== undefined ? opts.legacyAliq.file_url : cur.file_url,
+      file_size: opts.legacyAliq.file_size !== undefined ? opts.legacyAliq.file_size : cur.file_size,
+    });
+  }
+  if (incObj) {
+    for (const key of PCR_IFU_VARIANT_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(incObj, key)) {
+        const rawSlot = incObj[key];
+        merged[key] = rawSlot ? normalizeIfuSlot(rawSlot) : { file_name: null, file_url: null, file_size: null };
+      }
+    }
+  }
+  return merged;
+}
+
 const createBomSchema = z.object({
   org_unit_id: z.string().uuid("chọn phòng Sản xuất Kit"),
   product_item_id: z.string().uuid("chọn sản phẩm Kit / Bán thành phẩm"),
@@ -275,6 +370,7 @@ const createBomSchema = z.object({
   ifu_aliquoted_file_name: z.string().trim().max(250).optional().nullable(),
   ifu_aliquoted_file_url: z.string().optional().nullable(),
   ifu_aliquoted_file_size: z.string().trim().max(60).optional().nullable(),
+  ifu_files_json: z.record(z.string(), z.any()).optional().nullable(),
 });
 
 export function inferParentItemCode(code: string): string | null {
@@ -333,9 +429,21 @@ export async function createBom(tx: Tx, actor: AuthzActor, input: unknown) {
   });
 
   let resolvedRoutingId: string | null = d.routing_id ? String(d.routing_id).trim() || null : null;
-  if (!resolvedRoutingId && d.clone_from_bom_id) {
-    const srcBom = (await tx.query("SELECT routing_id FROM kit.bom WHERE id = $1", [d.clone_from_bom_id])).rows[0];
-    if (srcBom?.routing_id) resolvedRoutingId = String(srcBom.routing_id);
+  let clonedSrcBom: Record<string, any> | undefined;
+  if (d.clone_from_bom_id) {
+    clonedSrcBom = (
+      await tx.query(
+        `SELECT routing_id, label_template_code, label_dimensions, udi_di, label_design_json,
+                ifu_code, ifu_version, ifu_intended_use, ifu_thermal_profile, ifu_channels, ifu_interpretation,
+                ifu_file_name, ifu_file_url, ifu_file_size,
+                ifu_aliquoted_file_name, ifu_aliquoted_file_url, ifu_aliquoted_file_size, ifu_files_json
+           FROM kit.bom WHERE id = $1`,
+        [d.clone_from_bom_id]
+      )
+    ).rows[0];
+    if (!resolvedRoutingId && clonedSrcBom?.routing_id) {
+      resolvedRoutingId = String(clonedSrcBom.routing_id);
+    }
   }
   if (!resolvedRoutingId) {
     const prefCode =
@@ -354,6 +462,24 @@ export async function createBom(tx: Tx, actor: AuthzActor, input: unknown) {
     ).rows[0];
     if (defRt?.id) resolvedRoutingId = String(defRt.id);
   }
+
+  const mergedIfuFiles = mergeAndNormalizeIfuFiles({
+    existingRow: clonedSrcBom ?? null,
+    incomingJson: d.ifu_files_json ?? undefined,
+    legacyStd:
+      d.ifu_file_name !== undefined || d.ifu_file_url !== undefined || d.ifu_file_size !== undefined
+        ? { file_name: d.ifu_file_name ?? null, file_url: d.ifu_file_url ?? null, file_size: d.ifu_file_size ?? null }
+        : undefined,
+    legacyAliq:
+      d.ifu_aliquoted_file_name !== undefined || d.ifu_aliquoted_file_url !== undefined || d.ifu_aliquoted_file_size !== undefined
+        ? {
+            file_name: d.ifu_aliquoted_file_name ?? null,
+            file_url: d.ifu_aliquoted_file_url ?? null,
+            file_size: d.ifu_aliquoted_file_size ?? null,
+          }
+        : undefined,
+  });
+  const compactedIfuJson = JSON.stringify(compactIfuFilesForStorage(mergedIfuFiles));
 
   await tx.query(
     `UPDATE kit.bom
@@ -379,9 +505,20 @@ export async function createBom(tx: Tx, actor: AuthzActor, input: unknown) {
             ifu_aliquoted_file_name = $21,
             ifu_aliquoted_file_url = $22,
             ifu_aliquoted_file_size = $23,
-            variant_code = $24,
-            supply_form = $25,
-            routing_id = $26
+            ifu_files_json = $24::jsonb,
+            variant_code = $25,
+            supply_form = $26,
+            routing_id = $27,
+            label_template_code = coalesce($28, label_template_code),
+            label_dimensions = coalesce($29, label_dimensions),
+            udi_di = coalesce($30, udi_di),
+            ifu_code = coalesce($31, ifu_code),
+            ifu_version = coalesce($32, ifu_version),
+            ifu_intended_use = coalesce($33, ifu_intended_use),
+            ifu_thermal_profile = coalesce($34, ifu_thermal_profile),
+            ifu_channels = coalesce($35, ifu_channels),
+            ifu_interpretation = coalesce($36, ifu_interpretation),
+            label_design_json = coalesce($37::jsonb, label_design_json)
       WHERE id = $1`,
     [
       bom.id,
@@ -401,15 +538,26 @@ export async function createBom(tx: Tx, actor: AuthzActor, input: unknown) {
       d.qc_retention_qty ?? (inferredBomType === "finished_good" ? 1 : 0),
       d.ph_min ?? null,
       d.ph_max ?? null,
-      d.ifu_file_name?.trim() || null,
-      d.ifu_file_url || null,
-      d.ifu_file_size?.trim() || null,
-      d.ifu_aliquoted_file_name?.trim() || null,
-      d.ifu_aliquoted_file_url || null,
-      d.ifu_aliquoted_file_size?.trim() || null,
+      mergedIfuFiles.NO_SPLIT_NO_IC.file_name,
+      mergedIfuFiles.NO_SPLIT_NO_IC.file_url,
+      mergedIfuFiles.NO_SPLIT_NO_IC.file_size,
+      mergedIfuFiles.SPLIT_WITH_IC.file_name,
+      mergedIfuFiles.SPLIT_WITH_IC.file_url,
+      mergedIfuFiles.SPLIT_WITH_IC.file_size,
+      compactedIfuJson,
       d.variant_code?.trim().toUpperCase() || "BASE",
       d.supply_form || "NO_SPLIT_NO_IC",
       resolvedRoutingId,
+      clonedSrcBom?.label_template_code ?? null,
+      clonedSrcBom?.label_dimensions ?? null,
+      clonedSrcBom?.udi_di ?? null,
+      clonedSrcBom?.ifu_code ?? null,
+      clonedSrcBom?.ifu_version ?? null,
+      clonedSrcBom?.ifu_intended_use ?? null,
+      clonedSrcBom?.ifu_thermal_profile ?? null,
+      clonedSrcBom?.ifu_channels ?? null,
+      clonedSrcBom?.ifu_interpretation ?? null,
+      clonedSrcBom?.label_design_json ? JSON.stringify(clonedSrcBom.label_design_json) : null,
     ]
   );
 
@@ -2062,6 +2210,8 @@ export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
   await tx.query("SELECT pg_advisory_xact_lock(2026111401)");
   if (kitBomRoutingIfuSchemaEnsured) return;
 
+  await tx.query("ALTER TABLE kit.bom ADD COLUMN IF NOT EXISTS ifu_files_json jsonb NOT NULL DEFAULT '{}'::jsonb");
+
   // Backfill neutral operational defaults (never inject fake registration numbers or PDF file sizes)
   await tx.query(`
     UPDATE kit.bom_line
@@ -2439,6 +2589,30 @@ export async function updateBomLabelIfuSpec(tx: Tx, actor: AuthzActor, bomId: st
         : JSON.stringify(input.label_design_json ?? {})
       : JSON.stringify(bom.label_design_json ?? {});
 
+  const mergedIfuFiles = mergeAndNormalizeIfuFiles({
+    existingRow: bom,
+    incomingJson: input.ifu_files_json,
+    legacyStd:
+      input.ifu_file_name !== undefined || input.ifu_file_url !== undefined || input.ifu_file_size !== undefined
+        ? {
+            file_name: input.ifu_file_name ? String(input.ifu_file_name).trim() : null,
+            file_url: input.ifu_file_url ? String(input.ifu_file_url) : null,
+            file_size: input.ifu_file_size ? String(input.ifu_file_size).trim() : null,
+          }
+        : undefined,
+    legacyAliq:
+      input.ifu_aliquoted_file_name !== undefined ||
+      input.ifu_aliquoted_file_url !== undefined ||
+      input.ifu_aliquoted_file_size !== undefined
+        ? {
+            file_name: input.ifu_aliquoted_file_name ? String(input.ifu_aliquoted_file_name).trim() : null,
+            file_url: input.ifu_aliquoted_file_url ? String(input.ifu_aliquoted_file_url) : null,
+            file_size: input.ifu_aliquoted_file_size ? String(input.ifu_aliquoted_file_size).trim() : null,
+          }
+        : undefined,
+  });
+  const compactedIfuJson = JSON.stringify(compactIfuFilesForStorage(mergedIfuFiles));
+
   const updated = (
     await tx.query(
       `UPDATE kit.bom
@@ -2458,9 +2632,10 @@ export async function updateBomLabelIfuSpec(tx: Tx, actor: AuthzActor, bomId: st
               ifu_aliquoted_file_name = $14,
               ifu_aliquoted_file_url = $15,
               ifu_aliquoted_file_size = $16,
-              label_design_json = $17::jsonb,
+              ifu_files_json = $17::jsonb,
+              label_design_json = $18::jsonb,
               updated_at = now(),
-              updated_by = $18
+              updated_by = $19
         WHERE id = $1
         RETURNING *`,
       [
@@ -2474,12 +2649,13 @@ export async function updateBomLabelIfuSpec(tx: Tx, actor: AuthzActor, bomId: st
         input.ifu_thermal_profile !== undefined ? (input.ifu_thermal_profile ? String(input.ifu_thermal_profile).trim() : null) : bom.ifu_thermal_profile,
         input.ifu_channels !== undefined ? (input.ifu_channels ? String(input.ifu_channels).trim() : null) : bom.ifu_channels,
         input.ifu_interpretation !== undefined ? (input.ifu_interpretation ? String(input.ifu_interpretation).trim() : null) : bom.ifu_interpretation,
-        input.ifu_file_name !== undefined ? (input.ifu_file_name ? String(input.ifu_file_name).trim() : null) : bom.ifu_file_name,
-        input.ifu_file_url !== undefined ? (input.ifu_file_url ? String(input.ifu_file_url) : null) : bom.ifu_file_url,
-        input.ifu_file_size !== undefined ? (input.ifu_file_size ? String(input.ifu_file_size).trim() : null) : bom.ifu_file_size,
-        input.ifu_aliquoted_file_name !== undefined ? (input.ifu_aliquoted_file_name ? String(input.ifu_aliquoted_file_name).trim() : null) : bom.ifu_aliquoted_file_name,
-        input.ifu_aliquoted_file_url !== undefined ? (input.ifu_aliquoted_file_url ? String(input.ifu_aliquoted_file_url) : null) : bom.ifu_aliquoted_file_url,
-        input.ifu_aliquoted_file_size !== undefined ? (input.ifu_aliquoted_file_size ? String(input.ifu_aliquoted_file_size).trim() : null) : bom.ifu_aliquoted_file_size,
+        mergedIfuFiles.NO_SPLIT_NO_IC.file_name,
+        mergedIfuFiles.NO_SPLIT_NO_IC.file_url,
+        mergedIfuFiles.NO_SPLIT_NO_IC.file_size,
+        mergedIfuFiles.SPLIT_WITH_IC.file_name,
+        mergedIfuFiles.SPLIT_WITH_IC.file_url,
+        mergedIfuFiles.SPLIT_WITH_IC.file_size,
+        compactedIfuJson,
         labelDesignJson,
         actor.userId,
       ]
@@ -2492,6 +2668,15 @@ export async function updateBomLabelIfuSpec(tx: Tx, actor: AuthzActor, bomId: st
     changes: {
       ifu_code: [null, updated.ifu_code],
       ifu_file_name: [null, updated.ifu_file_name],
+      ifu_files: [
+        null,
+        {
+          NO_SPLIT_NO_IC: mergedIfuFiles.NO_SPLIT_NO_IC.file_name,
+          NO_SPLIT_WITH_IC: mergedIfuFiles.NO_SPLIT_WITH_IC.file_name,
+          SPLIT_NO_IC: mergedIfuFiles.SPLIT_NO_IC.file_name,
+          SPLIT_WITH_IC: mergedIfuFiles.SPLIT_WITH_IC.file_name,
+        },
+      ],
       label_template_code: [null, updated.label_template_code],
     },
   });

@@ -1284,6 +1284,169 @@ export function parseAbtKitLotCode(lotCode: string | null | undefined): {
   };
 }
 
+export interface KitIfuFileSlot {
+  file_name: string;
+  file_url: string;
+  file_size: string;
+}
+
+export const PCR_IFU_VARIANT_CARDS: {
+  key: AbtKitSupplyFormKey;
+  index: number;
+  title: string;
+  lot_pattern: string;
+  suffix: string;
+  file_tag: string;
+  summary: string;
+  badge_class: string;
+}[] = [
+  {
+    key: "NO_SPLIT_NO_IC",
+    index: 1,
+    title: "1. KHÔNG CHIA SẴN · KHÔNG SẴN IC",
+    lot_pattern: "B2611001.[Mã tube]",
+    suffix: "",
+    file_tag: "KhongChiaSan_KhongIC",
+    summary: "75 test Mix (ống 1.5 mL) + Kèm ống IC rời + 80 tube PCR",
+    badge_class: "bg-emerald-500/20 text-emerald-300",
+  },
+  {
+    key: "NO_SPLIT_WITH_IC",
+    index: 2,
+    title: "2. KHÔNG CHIA SẴN · SẴN IC (.IC)",
+    lot_pattern: "B2611001.IC.[Mã tube]",
+    suffix: ".IC",
+    file_tag: "KhongChiaSan_SanIC",
+    summary: "75 test Mix (pha sẵn IC trong ống 1.5 mL) + Không kèm IC rời + 80 tube PCR",
+    badge_class: "bg-sky-500/20 text-sky-300",
+  },
+  {
+    key: "SPLIT_NO_IC",
+    index: 3,
+    title: "3. CHIA SẴN · KHÔNG SẴN IC (.C)",
+    lot_pattern: "B2611001.C.[Mã tube]",
+    suffix: ".C",
+    file_tag: "ChiaSan_KhongIC",
+    summary: "64 test Mix chia sẵn vào 64 tube/strip PCR + Kèm ống IC rời",
+    badge_class: "bg-indigo-500/20 text-indigo-300",
+  },
+  {
+    key: "SPLIT_WITH_IC",
+    index: 4,
+    title: "4. CHIA SẴN · SẴN IC (.C.IC)",
+    lot_pattern: "B2611001.C.IC.[Mã tube]",
+    suffix: ".C.IC",
+    file_tag: "ChiaSan_SanIC",
+    summary: "64 test Mix (có sẵn IC) chia sẵn vào 64 tube/strip PCR + Không kèm IC rời",
+    badge_class: "bg-violet-500/20 text-violet-300",
+  },
+];
+
+export function emptyIfuFilesMap(): Record<AbtKitSupplyFormKey, KitIfuFileSlot> {
+  return {
+    NO_SPLIT_NO_IC: { file_name: "", file_url: "", file_size: "" },
+    NO_SPLIT_WITH_IC: { file_name: "", file_url: "", file_size: "" },
+    SPLIT_NO_IC: { file_name: "", file_url: "", file_size: "" },
+    SPLIT_WITH_IC: { file_name: "", file_url: "", file_size: "" },
+  };
+}
+
+export function resolveBomIfuFilesMap(bom: any): Record<AbtKitSupplyFormKey, KitIfuFileSlot> {
+  const out = emptyIfuFilesMap();
+  const json = bom?.ifu_files_json && typeof bom.ifu_files_json === "object" ? bom.ifu_files_json : {};
+  for (const key of ["NO_SPLIT_NO_IC", "NO_SPLIT_WITH_IC", "SPLIT_NO_IC", "SPLIT_WITH_IC"] as AbtKitSupplyFormKey[]) {
+    const slot = json[key];
+    if (slot && typeof slot === "object") {
+      out[key] = {
+        file_name: String(slot.file_name || "").trim(),
+        file_url: String(slot.file_url || ""),
+        file_size: String(slot.file_size || "").trim(),
+      };
+    }
+  }
+  if (!out.NO_SPLIT_NO_IC.file_url && !out.NO_SPLIT_NO_IC.file_name && (bom?.ifu_file_url || bom?.ifu_file_name)) {
+    out.NO_SPLIT_NO_IC = {
+      file_name: String(bom.ifu_file_name || "").trim(),
+      file_url: String(bom.ifu_file_url || ""),
+      file_size: String(bom.ifu_file_size || "").trim(),
+    };
+  }
+  if (!out.SPLIT_WITH_IC.file_url && !out.SPLIT_WITH_IC.file_name && (bom?.ifu_aliquoted_file_url || bom?.ifu_aliquoted_file_name)) {
+    out.SPLIT_WITH_IC = {
+      file_name: String(bom.ifu_aliquoted_file_name || "").trim(),
+      file_url: String(bom.ifu_aliquoted_file_url || ""),
+      file_size: String(bom.ifu_aliquoted_file_size || "").trim(),
+    };
+  }
+  return out;
+}
+
+/**
+ * Safely opens or prints a stored IFU file (`data:` base64 URL via Blob URL so Chrome allows opening PDF/images,
+ * triggers download for DOCX/Word files, or opens http/relative URLs).
+ */
+export function openOrPrintDataFile(fileUrl: string, fileName: string, autoPrint = false): boolean {
+  if (!fileUrl) return false;
+  if (fileUrl.startsWith("data:")) {
+    try {
+      const commaIdx = fileUrl.indexOf(",");
+      if (commaIdx < 0) return false;
+      const header = fileUrl.slice(5, commaIdx);
+      const dataPart = fileUrl.slice(commaIdx + 1);
+      const isBase64 = header.includes(";base64");
+      const mime = header.split(";")[0] || "application/octet-stream";
+      let blob: Blob;
+      if (isBase64) {
+        const binary = atob(dataPart);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        blob = new Blob([bytes], { type: mime });
+      } else {
+        blob = new Blob([decodeURIComponent(dataPart)], { type: mime });
+      }
+      const blobUrl = URL.createObjectURL(blob);
+      const isViewable = mime === "application/pdf" || mime.startsWith("image/") || mime.startsWith("text/");
+      if (isViewable) {
+        const win = window.open(blobUrl, "_blank");
+        if (win && autoPrint) {
+          const trigger = () => {
+            try {
+              win.print();
+            } catch {
+              /* ignore cross-origin print guard */
+            }
+          };
+          win.addEventListener?.("load", () => setTimeout(trigger, 250));
+          setTimeout(trigger, 700);
+        }
+      } else {
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = fileName || "HDSD";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+      return true;
+    } catch {
+      window.open(fileUrl, "_blank");
+      return true;
+    }
+  }
+  const win = window.open(fileUrl, "_blank");
+  if (win && autoPrint) {
+    setTimeout(() => {
+      try {
+        win.print();
+      } catch {
+        /* ignore */
+      }
+    }, 600);
+  }
+  return true;
+}
+
 export const ASSET_TYPE_GROUP_LABELS: Record<string, string> = {
   PCR: "Máy Real-time PCR / Luân nhiệt",
   BALANCE: "Cân phân tích / Máy đo pH chuẩn",
