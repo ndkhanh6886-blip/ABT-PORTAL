@@ -2017,20 +2017,47 @@ export const UnifiedWorkspace: React.FC = () => {
     attachments: []
   });
 
+  // Effective department filter (Manager is strictly locked to managerDept; Staff to userDept; only Director can view "all")
+  const effectiveSelectedDept = useMemo(() => {
+    if (rolePerspective === "manager") {
+      return managerDept || userDept || "Kinh Doanh";
+    }
+    if (rolePerspective === "staff") {
+      return userDept && userDept !== "Ban Giám Đốc" ? userDept : "Kinh Doanh";
+    }
+    return selectedDept;
+  }, [rolePerspective, managerDept, userDept, selectedDept]);
+
   // Automatically initialize department according to user role
   useEffect(() => {
-    if (isManager && userDept && userDept !== "Ban Giám Đốc") {
-      setSelectedDept(userDept);
-    } else if (isDirector) {
+    if (rolePerspective === "manager") {
+      const lockedDept = managerDept || userDept || "Kinh Doanh";
+      setSelectedDept(lockedDept);
+    } else if (rolePerspective === "director") {
       setSelectedDept("all");
     } else {
-      setSelectedDept(userDept && userDept !== "Ban Giám Đốc" ? userDept : "all");
+      setSelectedDept(userDept && userDept !== "Ban Giám Đốc" ? userDept : "Kinh Doanh");
     }
-  }, [isDirector, isManager, userDept]);
+  }, [rolePerspective, isDirector, isManager, userDept, managerDept]);
+
+  // Strictly enforce department lock for Manager & Staff if selectedDept ever drifts
+  useEffect(() => {
+    if (rolePerspective === "manager") {
+      const lockedDept = managerDept || userDept || "Kinh Doanh";
+      if (selectedDept !== lockedDept) {
+        setSelectedDept(lockedDept);
+      }
+    } else if (rolePerspective === "staff") {
+      const lockedDept = userDept && userDept !== "Ban Giám Đốc" ? userDept : "Kinh Doanh";
+      if (selectedDept !== lockedDept) {
+        setSelectedDept(lockedDept);
+      }
+    }
+  }, [rolePerspective, managerDept, userDept, selectedDept]);
 
   useEffect(() => {
     setSelectedAssignee("all");
-  }, [selectedDept]);
+  }, [effectiveSelectedDept]);
 
   // Core Data Lists
   const [tasks, setTasks] = useState<any[]>([]);
@@ -2863,7 +2890,7 @@ export const UnifiedWorkspace: React.FC = () => {
 
   // Dynamic list of staff for the active department (chỉ trả về đúng nhân sự thuộc phòng ban đang chọn)
   const departmentStaffList = useMemo(() => {
-    const currentDept = selectedDept !== "all" ? selectedDept : (rolePerspective === "manager" ? managerDept : "all");
+    const currentDept = effectiveSelectedDept;
 
     if (!currentDept || currentDept === "all") {
       return personnelList || [];
@@ -2896,12 +2923,12 @@ export const UnifiedWorkspace: React.FC = () => {
     }
 
     return list;
-  }, [personnelList, selectedDept, rolePerspective, managerDept]);
+  }, [personnelList, effectiveSelectedDept]);
 
   // Tự động đồng bộ nhân sự đang chọn ở Bảng việc & Nhật ký Daily khi chuyển Phòng ban
   useEffect(() => {
     if (rolePerspective === "staff") return;
-    const currentDept = selectedDept !== "all" ? selectedDept : (rolePerspective === "manager" ? managerDept : "all");
+    const currentDept = effectiveSelectedDept;
     if (currentDept && currentDept !== "all") {
       if (
         selectedAssignee !== "all" &&
@@ -2918,7 +2945,7 @@ export const UnifiedWorkspace: React.FC = () => {
         setSelectedDailyStaff(firstStaff);
       }
     }
-  }, [selectedDept, departmentStaffList, rolePerspective, managerDept, selectedAssignee, selectedDailyStaff]);
+  }, [effectiveSelectedDept, departmentStaffList, rolePerspective, selectedAssignee, selectedDailyStaff]);
 
   // Đồng bộ khi người dùng chọn 1 nhân sự cụ thể trên thanh lọc chung
   useEffect(() => {
@@ -2989,10 +3016,143 @@ export const UnifiedWorkspace: React.FC = () => {
     return isRequester || isAssignee;
   }, [currentStaffName]);
 
+  // Kiểm tra một Phiếu phối hợp liên phòng ban có liên quan tới phòng ban targetDept hay không
+  const workflowInvolvesDept = useCallback((w: any, targetDept: string): boolean => {
+    if (!w) return false;
+    if (!targetDept || targetDept === "all") return true;
+
+    // 1. Phòng ban yêu cầu hoặc phòng ban nhận chính
+    if (isSameWorkspaceDept(w.requester_dept, targetDept)) return true;
+    if (
+      String(w.target_dept || "")
+        .split(/[,;\n]+/)
+        .some((d: string) => isSameWorkspaceDept(d.trim(), targetDept))
+    ) {
+      return true;
+    }
+
+    // 2. Bất kỳ bước nào trong quy trình phối hợp có gán phòng ban targetDept
+    const steps = Array.isArray(w.steps) ? w.steps : [];
+    const stepDepts = steps.flatMap((s: any) => {
+      const arr = Array.isArray(s?.departments) ? s.departments : [];
+      const split = s?.dept ? String(s.dept).split(/[,;\n]+/).map((d: string) => d.trim()) : [];
+      return [...arr, ...split].filter(Boolean);
+    });
+    if (stepDepts.some((d: string) => isSameWorkspaceDept(d, targetDept))) {
+      return true;
+    }
+
+    // 3. Nếu đang kiểm tra đúng phòng ban của user hiện tại và phiếu liên quan trực tiếp tới user
+    if (isSameWorkspaceDept(targetDept, userDept) && wfInvolvesMe(w, "any")) {
+      return true;
+    }
+
+    // 4. Bất kỳ nhân sự nào thuộc phòng ban đang lọc là người yêu cầu hoặc người xử lý
+    if (isSameWorkspaceDept(targetDept, effectiveSelectedDept)) {
+      const staffInvolved = departmentStaffList.some((p: any) => {
+        const pName = p.full_name || p;
+        if (sameStaffName(w.requester_name, pName) || taskHasAssignee(w.assignee_name, pName)) {
+          return true;
+        }
+        return steps.some((s: any) =>
+          taskHasAssignee(
+            Array.isArray(s?.assignees) && s.assignees.length > 0 ? s.assignees.join(", ") : s?.assignee_name,
+            pName
+          )
+        );
+      });
+      if (staffInvolved) return true;
+    }
+
+    return false;
+  }, [userDept, wfInvolvesMe, effectiveSelectedDept, departmentStaffList, taskHasAssignee]);
+
+  // Kiểm tra một Công việc (bao gồm công việc nội bộ phòng ban và công việc liên phòng ban) có thuộc / liên quan tới phòng ban targetDept hay không
+  const taskInvolvesDept = useCallback((t: any, targetDept: string): boolean => {
+    if (!t) return false;
+    if (!targetDept || targetDept === "all") return true;
+
+    // 1. Công việc thuộc trực tiếp phòng ban targetDept
+    if (t.department && t.department !== "Liên Phòng Ban" && isSameWorkspaceDept(t.department, targetDept)) {
+      return true;
+    }
+
+    // 2. Công việc giao cho hoặc khởi tạo bởi chính người dùng đang đăng nhập (khi lọc đúng phòng ban của mình)
+    if (isSameWorkspaceDept(targetDept, userDept)) {
+      if (
+        taskHasAssignee(t.assignee_name, currentStaffName) ||
+        isTaskCreatedByStaff(t, currentStaffName, (user as any)?.username)
+      ) {
+        return true;
+      }
+    }
+
+    // 3. Công việc giao cho hoặc khởi tạo bởi nhân sự thuộc phòng ban đang lọc
+    if (isSameWorkspaceDept(targetDept, effectiveSelectedDept)) {
+      const hasDeptMember = departmentStaffList.some((p: any) => {
+        const pName = p.full_name || p;
+        return taskHasAssignee(t.assignee_name, pName) || isTaskCreatedByStaff(t, pName);
+      });
+      if (hasDeptMember) return true;
+    }
+
+    // 4. Công việc liên phòng ban gắn mã Phiếu phối hợp (related_workflow_code hoặc mã TSK-WF...)
+    const relWfCode = String(t.related_workflow_code || "").trim();
+    const codeWfMatch = !relWfCode
+      ? String(t.task_code || "").match(/^TSK-(WF\d*-[A-Z0-9-]+?)(?:-S\d+)?$/i)
+      : null;
+    const effectiveWfCode = relWfCode || (codeWfMatch ? codeWfMatch[1] : "");
+    if (effectiveWfCode) {
+      const linkedWf = workflows.find(
+        (w: any) => String(w.workflow_code || "").toUpperCase() === effectiveWfCode.toUpperCase()
+      );
+      if (linkedWf && workflowInvolvesDept(linkedWf, targetDept)) {
+        return true;
+      }
+    }
+
+    // 5. Công việc liên phòng ban có nhãn luồng phối hợp dạng [Phòng A -> Phòng B] trong tiêu đề hoặc mô tả
+    const combinedText = `${t.title || ""}\n${t.description || ""}`;
+    const routeMatches = Array.from(combinedText.matchAll(/\[([^\[\]\n]*?(?:->|→)[^\[\]\n]*?)\]/g));
+    for (const m of routeMatches) {
+      const parts = m[1]
+        .split(/->|→|,|;|\//)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (parts.some((d) => isSameWorkspaceDept(d, targetDept))) {
+        return true;
+      }
+    }
+
+    // 6. Công việc sinh từ Dự án liên phòng ban (TSK-PRJ-...)
+    const prjCode = String(t.task_code || "");
+    if (prjCode.startsWith("TSK-PRJ-") || t.department === "Liên Phòng Ban") {
+      const matchedPrj = labProjects.find((p: any) => {
+        const pid = String(p?.id || "");
+        return pid && (prjCode.includes(pid) || combinedText.includes(`[${pid}]`) || combinedText.includes(`(${pid})`));
+      });
+      if (matchedPrj) {
+        const partDepts: string[] = Array.isArray(matchedPrj.participatingDepts) ? matchedPrj.participatingDepts : [];
+        const stageDepts: string[] = Array.isArray(matchedPrj.stages)
+          ? matchedPrj.stages.map((s: any) => s?.dept).filter(Boolean)
+          : [];
+        if (
+          isSameWorkspaceDept(matchedPrj.dept, targetDept) ||
+          partDepts.some((d) => isSameWorkspaceDept(d, targetDept)) ||
+          stageDepts.some((d) => isSameWorkspaceDept(d, targetDept))
+        ) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }, [userDept, currentStaffName, user, effectiveSelectedDept, departmentStaffList, taskHasAssignee, isTaskCreatedByStaff, workflows, workflowInvolvesDept, labProjects]);
+
   // RBAC Filtered Tasks:
   // - Staff: Views their assigned tasks + tasks they created/requested + unassigned tasks in their department
-  // - Manager: Views all tasks in their department (or selected department) + tasks involving them or their department staff
-  // - Director: Views company-wide or selected department
+  // - Manager: Strictly views ONLY tasks belonging to their department + cross-department tasks involving their department
+  // - Director: Views company-wide ("all") or selected department
   const filteredTasks = useMemo(() => {
     return tasks.filter((t) => {
       const cleanAssignee = cleanWorkspaceAssignee(t.assignee_name);
@@ -3005,18 +3165,9 @@ export const UnifiedWorkspace: React.FC = () => {
           return false;
         }
       } else {
-        const activeFilterDept = selectedDept === "all" ? "all" : selectedDept;
-        if (activeFilterDept !== "all") {
-          const matchesDept = isSameWorkspaceDept(t.department, activeFilterDept);
-          const isMyOwnDeptFilter = isSameWorkspaceDept(activeFilterDept, userDept);
-          const involvesMeInOwnDept = isMyOwnDeptFilter && (isAssignedToMe || isCreatedByMe);
-          const involvesDeptStaff = departmentStaffList.some((p: any) => {
-            const pName = p.full_name || p;
-            return taskHasAssignee(t.assignee_name, pName) || isTaskCreatedByStaff(t, pName);
-          });
-          if (!matchesDept && !involvesMeInOwnDept && !involvesDeptStaff) {
-            return false;
-          }
+        const activeFilterDept = effectiveSelectedDept;
+        if (activeFilterDept !== "all" && !taskInvolvesDept(t, activeFilterDept)) {
+          return false;
         }
       }
 
@@ -3041,7 +3192,7 @@ export const UnifiedWorkspace: React.FC = () => {
         (t.customer_name && t.customer_name.toLowerCase().includes(q));
       return matchStatus && matchSearch;
     });
-  }, [tasks, rolePerspective, managerDept, userDept, selectedDept, selectedAssignee, currentStaffName, statusFilter, searchQuery, user, departmentStaffList, taskHasAssignee, isTaskCreatedByStaff]);
+  }, [tasks, rolePerspective, userDept, effectiveSelectedDept, selectedAssignee, currentStaffName, statusFilter, searchQuery, user, taskHasAssignee, isTaskCreatedByStaff, taskInvolvesDept]);
 
   // RBAC Filtered Weekly Schedules:
   // - Staff: ONLY sees their own schedule items
@@ -3052,10 +3203,10 @@ export const UnifiedWorkspace: React.FC = () => {
       if (rolePerspective === "staff") {
         return Boolean(s.actor) && sameStaffName(s.actor, currentStaffName);
       }
-      if (rolePerspective === "manager") {
-        if (selectedDept !== "all" && !isSameWorkspaceDept(s.category, selectedDept)) return false;
-      } else if (selectedDept !== "all" && !isSameWorkspaceDept(s.category, selectedDept)) {
-        return false;
+      if (effectiveSelectedDept !== "all") {
+        const matchScheduleDept = isSameWorkspaceDept(s.category, effectiveSelectedDept);
+        const matchDeptStaff = Boolean(s.actor) && departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, s.actor));
+        if (!matchScheduleDept && !matchDeptStaff) return false;
       }
       if (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__") {
         const actor = (s.actor || "").toLowerCase().trim();
@@ -3064,11 +3215,11 @@ export const UnifiedWorkspace: React.FC = () => {
       }
       return true;
     });
-  }, [weeklySchedule, rolePerspective, managerDept, selectedDept, selectedAssignee, currentStaffName]);
+  }, [weeklySchedule, rolePerspective, effectiveSelectedDept, departmentStaffList, selectedAssignee, currentStaffName]);
 
   // RBAC Filtered Thematic Projects:
   // - Staff: Sees projects they lead, collaborate on, or in their department
-  // - Manager: Sees all thematic projects belonging to their department (can filter by staff)
+  // - Manager: Sees thematic projects belonging to or involving their department (can filter by staff)
   // - Director: Sees whole company or selected department (can filter by staff)
   const filteredLabProjects = useMemo(() => {
     return labProjects.filter((p) => {
@@ -3076,18 +3227,23 @@ export const UnifiedWorkspace: React.FC = () => {
       const stageDepts: string[] = Array.isArray(p.stages) ? p.stages.map((s: any) => s.dept).filter(Boolean) : [];
       const matchesDeptFilter = (targetDept: string) => {
         if (!targetDept || targetDept === "all") return true;
-        if (p.dept === "Liên Phòng Ban") {
-          if (partDepts.length === 0 && stageDepts.length === 0) return true;
-        }
+        const involvesDeptStaff = departmentStaffList.some((st: any) => {
+          const stName = st.full_name || st;
+          const isLead = sameStaffName(p.lead, stName);
+          const isCollab = Array.isArray(p.collaborators) && p.collaborators.some((c: string) => sameStaffName(c, stName));
+          const isStageAssignee = Array.isArray(p.stages) && p.stages.some((s: any) => s.assignee && sameStaffName(s.assignee, stName));
+          return isLead || isCollab || isStageAssignee;
+        });
         return (
           isSameWorkspaceDept(p.dept, targetDept) ||
           partDepts.some((d) => isSameWorkspaceDept(d, targetDept)) ||
-          stageDepts.some((d) => isSameWorkspaceDept(d, targetDept))
+          stageDepts.some((d) => isSameWorkspaceDept(d, targetDept)) ||
+          involvesDeptStaff
         );
       };
 
       // Filter by department
-      if (selectedDept !== "all" && !matchesDeptFilter(selectedDept)) {
+      if (effectiveSelectedDept !== "all" && !matchesDeptFilter(effectiveSelectedDept)) {
         return false;
       }
 
@@ -3114,7 +3270,7 @@ export const UnifiedWorkspace: React.FC = () => {
 
       return true;
     });
-  }, [labProjects, rolePerspective, managerDept, userDept, selectedDept, selectedAssignee, currentStaffName, thematicFilterType]);
+  }, [labProjects, rolePerspective, userDept, effectiveSelectedDept, departmentStaffList, selectedAssignee, currentStaffName, thematicFilterType]);
 
   // RBAC Filtered Sales Targets:
   // - Staff: ONLY sees their assigned pipeline targets
@@ -3128,9 +3284,9 @@ export const UnifiedWorkspace: React.FC = () => {
       if (rolePerspective === "manager") {
         return isSameWorkspaceDept(managerDept, "Kinh Doanh");
       }
-      return selectedDept === "all" || isSameWorkspaceDept(selectedDept, "Kinh Doanh");
+      return effectiveSelectedDept === "all" || isSameWorkspaceDept(effectiveSelectedDept, "Kinh Doanh");
     });
-  }, [salesTargets, rolePerspective, managerDept, selectedDept, currentStaffName]);
+  }, [salesTargets, rolePerspective, managerDept, effectiveSelectedDept, currentStaffName]);
 
   // Ngày ISO ("YYYY-MM-DD") của thứ đang chọn trong tuần đang xem tại Nhật ký Daily
   const selectedDailyDayObj = useMemo(() => {
@@ -3147,7 +3303,7 @@ export const UnifiedWorkspace: React.FC = () => {
       if (rolePerspective === "staff") {
         if (!emp || !sameStaffName(emp, currentStaffName)) return false;
       } else {
-        const activeDept = selectedDept !== "all" ? selectedDept : (rolePerspective === "manager" ? managerDept : "all");
+        const activeDept = effectiveSelectedDept;
         if (activeDept !== "all") {
           const matchLogDept = isSameWorkspaceDept(log.department, activeDept);
           const matchStaffDept = departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, emp));
@@ -3169,19 +3325,11 @@ export const UnifiedWorkspace: React.FC = () => {
       }
       return true;
     });
-  }, [dailyLogs, rolePerspective, managerDept, selectedDept, currentStaffName, departmentStaffList, dailyLogStaffScope, selectedDailyStaff, dailyLogTimeScope, selectedDailyDayObj.date, viewedWeek.startDate, viewedWeek.endDate]);
+  }, [dailyLogs, rolePerspective, effectiveSelectedDept, currentStaffName, departmentStaffList, dailyLogStaffScope, selectedDailyStaff, dailyLogTimeScope, selectedDailyDayObj.date, viewedWeek.startDate, viewedWeek.endDate]);
 
   // Filtered Workflows
   const filteredWorkflows = useMemo(() => {
     return workflows.filter((w) => {
-      const stepDepts = Array.isArray(w.steps)
-        ? w.steps.flatMap((s: any) => {
-            const arr = Array.isArray(s?.departments) ? s.departments : [];
-            const split = s?.dept ? String(s.dept).split(/[,;\n]+/).map((d: string) => d.trim()) : [];
-            return [...arr, ...split].filter(Boolean);
-          })
-        : [];
-      const involvesCurrentUser = wfInvolvesMe(w, "any");
       const involvesSelectedStaff =
         selectedAssignee !== "all" &&
         selectedAssignee !== "__UNASSIGNED__" &&
@@ -3194,20 +3342,12 @@ export const UnifiedWorkspace: React.FC = () => {
                 selectedAssignee
               )
             )));
-      const involvesDeptStaff =
-        selectedDept !== "all" &&
-        departmentStaffList.some((p: any) => {
-          const pName = p.full_name || p;
-          return sameStaffName(w.requester_name, pName) || taskHasAssignee(w.assignee_name, pName);
-        });
       const matchDept =
-        selectedDept === "all" ||
-        involvesCurrentUser ||
-        involvesSelectedStaff ||
-        involvesDeptStaff ||
-        isSameWorkspaceDept(w.requester_dept, selectedDept) ||
-        String(w.target_dept || "").split(/[,;\n]+/).some((d: string) => isSameWorkspaceDept(d.trim(), selectedDept)) ||
-        stepDepts.some((d: string) => isSameWorkspaceDept(d, selectedDept));
+        effectiveSelectedDept === "all" ||
+        workflowInvolvesDept(w, effectiveSelectedDept);
+      if (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__" && !involvesSelectedStaff) {
+        return false;
+      }
       const q = searchQuery.trim().toLowerCase();
       const matchSearch =
         q === "" ||
@@ -3225,7 +3365,7 @@ export const UnifiedWorkspace: React.FC = () => {
           ));
       return matchDept && matchSearch;
     });
-  }, [workflows, selectedDept, selectedAssignee, searchQuery, wfInvolvesMe, taskHasAssignee, departmentStaffList]);
+  }, [workflows, effectiveSelectedDept, selectedAssignee, searchQuery, workflowInvolvesDept, taskHasAssignee]);
 
   // Helper to re-index & normalize multi-department / multi-assignee workflow steps
   const reindexWorkflowSteps = useCallback((rawSteps: any[]) => {
@@ -3283,13 +3423,22 @@ export const UnifiedWorkspace: React.FC = () => {
     const extractedCode = (codeMatch ? codeMatch[1] : rawCode || rawId).toUpperCase();
     const quoteMatches = Array.from(`${rawTitle} ${rawMsg}`.matchAll(/"([^"]{3,140})"/g)).map((m) => m[1].trim());
 
+    const defaultDeptForRole =
+      rolePerspective === "director"
+        ? "all"
+        : rolePerspective === "manager"
+        ? managerDept || userDept || "Kinh Doanh"
+        : userDept && userDept !== "Ban Giám Đốc"
+        ? userDept
+        : "Kinh Doanh";
+
     if (
       subTab === "proposals" ||
       /^(?:DXNP|DX|DNTT|DNTU|QT|TTR|DXM)-/i.test(extractedCode) ||
       fullText.includes("trình duyệt") ||
       fullText.includes("nghỉ phép")
     ) {
-      setSelectedDept("all");
+      setSelectedDept(defaultDeptForRole);
       setActiveSubTab("proposals");
       const targetPropId = String(extractedCode || rawId || rawCode || "").trim();
       setProposals((prev) => {
@@ -3378,7 +3527,7 @@ export const UnifiedWorkspace: React.FC = () => {
 
     const finalWf = matchedWf || fallbackWf;
     if (finalWf) {
-      setSelectedDept("all");
+      setSelectedDept(defaultDeptForRole);
       setWfStatusFilter("all");
       setWfMineFilter("all");
       setWfPriorityFilter("all");
@@ -3393,7 +3542,7 @@ export const UnifiedWorkspace: React.FC = () => {
     }
 
     if (matchedTask) {
-      setSelectedDept("all");
+      setSelectedDept(defaultDeptForRole);
       setSelectedAssignee("all");
       setStatusFilter("all");
       setSearchQuery("");
@@ -3406,7 +3555,7 @@ export const UnifiedWorkspace: React.FC = () => {
     }
 
     if (subTab === "proposals" || extractedCode.startsWith("DX") || extractedCode.startsWith("DNTT") || extractedCode.startsWith("DNTU") || extractedCode.startsWith("TTR")) {
-      setSelectedDept("all");
+      setSelectedDept(defaultDeptForRole);
       setActiveSubTab("proposals");
       const targetPropId = String(rawId || rawCode || extractedCode || "").trim();
       if (targetPropId) {
@@ -3419,7 +3568,7 @@ export const UnifiedWorkspace: React.FC = () => {
     }
 
     if (subTab === "announcements") {
-      setSelectedDept("all");
+      setSelectedDept(defaultDeptForRole);
       setActiveSubTab("announcements");
       const targetAnnId = String(rawId || rawCode || "").trim();
       const matchedAnn = announcements.find(
@@ -3435,21 +3584,21 @@ export const UnifiedWorkspace: React.FC = () => {
     }
 
     if (subTab === "workflows") {
-      setSelectedDept("all");
+      setSelectedDept(defaultDeptForRole);
       setWfStatusFilter("all");
       setWfMineFilter("all");
       setActiveSubTab("workflows");
     } else if (subTab === "projects") {
-      setSelectedDept("all");
+      setSelectedDept(defaultDeptForRole);
       setActiveSubTab("projects");
     } else if (subTab === "planner" || subTab === "plans") {
-      setSelectedDept("all");
+      setSelectedDept(defaultDeptForRole);
       setActiveSubTab("planner");
     } else if (subTab === "daily" || subTab === "reports") {
-      setSelectedDept("all");
+      setSelectedDept(defaultDeptForRole);
       setActiveSubTab("daily");
     } else if (subTab === "tasks") {
-      setSelectedDept("all");
+      setSelectedDept(defaultDeptForRole);
       setSelectedAssignee("all");
       setStatusFilter("all");
       setActiveSubTab("tasks");
@@ -4044,8 +4193,8 @@ export const UnifiedWorkspace: React.FC = () => {
 
   // Comprehensive Real-time Analytics & KPI Metrics
   const analyticsData = useMemo(() => {
-    const isDeptScoped = selectedDept !== "all";
-    const currentScopeDept = rolePerspective === "manager" ? managerDept : selectedDept;
+    const isDeptScoped = effectiveSelectedDept !== "all";
+    const currentScopeDept = effectiveSelectedDept;
     const todayStr = todayVN();
     const currentMonthPrefix = todayStr.slice(0, 7); // YYYY-MM
     const weekStartStr = viewedWeek.days[0]?.date || todayStr;
@@ -4069,33 +4218,23 @@ export const UnifiedWorkspace: React.FC = () => {
     };
 
     const scopeTasks = tasks.filter(t => {
-      if (selectedDept !== "all" && !isSameWorkspaceDept(t.department, selectedDept)) return false;
+      if (effectiveSelectedDept !== "all" && !taskInvolvesDept(t, effectiveSelectedDept)) return false;
       if (selectedAssignee === "__UNASSIGNED__" && cleanWorkspaceAssignee(t.assignee_name)) return false;
-      if (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__" && !sameStaffName(cleanWorkspaceAssignee(t.assignee_name), selectedAssignee)) return false;
+      if (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__" && !taskHasAssignee(t.assignee_name, selectedAssignee) && !isTaskCreatedByStaff(t, selectedAssignee)) return false;
       if (!matchesSearch(t.title, t.task_code, t.assignee_name, t.customer_name, t.department)) return false;
       return true;
     });
 
     const scopeWorkflows = workflows.filter(w => {
-      if (selectedDept !== "all") {
-        const stepDepts = Array.isArray(w.steps)
-          ? w.steps.flatMap((s: any) => [
-              ...(Array.isArray(s?.departments) ? s.departments : []),
-              ...(s?.dept ? String(s.dept).split(",").map((d: string) => d.trim()) : [])
-            ])
-          : [];
-        const matchWfDept =
-          isSameWorkspaceDept(w.requester_dept, selectedDept) ||
-          String(w.target_dept || "").split(",").some((d: string) => isSameWorkspaceDept(d.trim(), selectedDept)) ||
-          stepDepts.some((d: string) => isSameWorkspaceDept(d, selectedDept));
-        if (!matchWfDept) return false;
+      if (effectiveSelectedDept !== "all" && !workflowInvolvesDept(w, effectiveSelectedDept)) {
+        return false;
       }
       if (!matchesSearch(w.title, w.workflow_code, w.requester_name, w.assignee_name, w.customer_name, w.product_info)) return false;
       return true;
     });
 
     const scopeDailyLogs = dailyLogs.filter(d => {
-      if (selectedDept !== "all" && !isSameWorkspaceDept(d.department, selectedDept)) return false;
+      if (effectiveSelectedDept !== "all" && !isSameWorkspaceDept(d.department, effectiveSelectedDept)) return false;
       if (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__" && !sameStaffName(d.employee_name, selectedAssignee)) return false;
       if (!matchesPeriod(d.log_date || d.created_at)) return false;
       if (!matchesSearch(d.employee_name, d.work_content, d.result, d.issues, d.department)) return false;
@@ -4103,14 +4242,22 @@ export const UnifiedWorkspace: React.FC = () => {
     });
 
     const scopeThematicPlans = labProjects.filter(p => {
-      if (selectedDept !== "all" && !isSameWorkspaceDept(p.dept, selectedDept)) return false;
+      if (effectiveSelectedDept !== "all") {
+        const partDepts: string[] = Array.isArray(p.participatingDepts) ? p.participatingDepts : [];
+        const stageDepts: string[] = Array.isArray(p.stages) ? p.stages.map((s: any) => s.dept).filter(Boolean) : [];
+        const matchesPrjDept =
+          isSameWorkspaceDept(p.dept, effectiveSelectedDept) ||
+          partDepts.some((d) => isSameWorkspaceDept(d, effectiveSelectedDept)) ||
+          stageDepts.some((d) => isSameWorkspaceDept(d, effectiveSelectedDept));
+        if (!matchesPrjDept) return false;
+      }
       if (!matchesSearch(p.id, p.name, p.lead, p.dept, p.description)) return false;
       return true;
     });
 
     const scopePersonnel = personnelList.filter(p => {
-      if (selectedDept === "all") return true;
-      return isSameWorkspaceDept(p.department, selectedDept);
+      if (effectiveSelectedDept === "all") return true;
+      return isSameWorkspaceDept(p.department, effectiveSelectedDept);
     });
 
     // Task metrics
@@ -4388,7 +4535,7 @@ export const UnifiedWorkspace: React.FC = () => {
       scoreColor,
       deptScorecards
     };
-  }, [tasks, workflows, dailyLogs, labProjects, personnelList, selectedDept, selectedAssignee, rolePerspective, managerDept, searchQuery, analyticsPeriod, viewedWeek]);
+  }, [tasks, workflows, dailyLogs, labProjects, personnelList, effectiveSelectedDept, selectedAssignee, searchQuery, analyticsPeriod, viewedWeek, taskInvolvesDept, workflowInvolvesDept, taskHasAssignee, isTaskCreatedByStaff]);
 
   // Handle Save Task
   const handleSaveTask = async (e: React.FormEvent) => {
@@ -8031,11 +8178,19 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
         {/* Left: Department Dropdown + Search + Status */}
         <div className="flex flex-wrap items-center gap-2.5 flex-1">
-          {/* Department Selector with Staff Personal Locking */}
+          {/* Department Selector with Staff Personal Locking & Manager Department Locking */}
           {rolePerspective === "staff" ? (
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/80 shrink-0">
               <Lock className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
               <span>Kế hoạch cá nhân: {currentStaffName}</span>
+            </div>
+          ) : rolePerspective === "manager" ? (
+            <div
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/80 shrink-0"
+              title="Trưởng / Phó phòng chỉ được phép xem công việc thuộc phòng ban mình hoặc công việc liên phòng ban có liên quan tới phòng ban mình"
+            >
+              <Lock className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+              <span>Phòng ban: {effectiveSelectedDept}</span>
             </div>
           ) : (
             <div className="relative shrink-0">
@@ -8089,11 +8244,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 title="Lọc công việc & lịch công tác theo từng nhân viên trong phòng ban"
               >
                 <option value="all">
-                  {selectedDept === "all" ? "👥 Tất cả nhân sự" : `👥 Tất cả (${departmentStaffList.length} người)`}
+                  {effectiveSelectedDept === "all" ? "👥 Tất cả nhân sự" : `👥 Tất cả (${departmentStaffList.length} người)`}
                 </option>
                 {activeSubTab === "tasks" && (
                   <option value="__UNASSIGNED__">
-                    ⏳ Chờ phân công ({tasks.filter(t => (selectedDept === "all" || isSameWorkspaceDept(t.department, selectedDept)) && !cleanWorkspaceAssignee(t.assignee_name)).length})
+                    ⏳ Chờ phân công ({tasks.filter(t => (effectiveSelectedDept === "all" || taskInvolvesDept(t, effectiveSelectedDept)) && !cleanWorkspaceAssignee(t.assignee_name)).length})
                   </option>
                 )}
                 {departmentStaffList.map((p: any) => {
@@ -8101,13 +8256,13 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   const code = p.employee_code ? ` (${p.employee_code})` : "";
                   const count = activeSubTab === "planner"
                     ? weeklySchedule.filter(s => {
-                        const matchesDept = selectedDept === "all" || isSameWorkspaceDept(s.category, selectedDept);
+                        const matchesDept = effectiveSelectedDept === "all" || isSameWorkspaceDept(s.category, effectiveSelectedDept) || departmentStaffList.some((st: any) => sameStaffName(st.full_name || st, s.actor));
                         const actor = (s.actor || "").toLowerCase().trim();
                         const target = name.toLowerCase().trim();
                         return matchesDept && (actor.includes(target) || target.includes(actor));
                       }).length
                     : tasks.filter(t => {
-                        const matchesDept = selectedDept === "all" || isSameWorkspaceDept(t.department, selectedDept) || isTaskCreatedByStaff(t, name);
+                        const matchesDept = effectiveSelectedDept === "all" || taskInvolvesDept(t, effectiveSelectedDept);
                         return matchesDept && (taskHasAssignee(t.assignee_name, name) || isTaskCreatedByStaff(t, name));
                       }).length;
                   return (
@@ -8351,7 +8506,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           rolePerspective={rolePerspective}
           isDirector={isDirector}
           isManager={isManager}
-          selectedDept={selectedDept}
+          selectedDept={effectiveSelectedDept}
           searchQuery={searchQuery}
           departments={DEPARTMENTS}
           personnelList={personnelList}
@@ -8402,7 +8557,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               </button>
               {(() => {
                 const unassignedCount = tasks.filter(t => {
-                  const matchesDept = selectedDept === "all" || isSameWorkspaceDept(t.department, selectedDept);
+                  const matchesDept = effectiveSelectedDept === "all" || taskInvolvesDept(t, effectiveSelectedDept);
                   return matchesDept && !cleanWorkspaceAssignee(t.assignee_name);
                 }).length;
                 if (unassignedCount === 0 && selectedAssignee !== "__UNASSIGNED__") return null;
@@ -8429,7 +8584,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               {departmentStaffList.map((p: any) => {
                 const name = p.full_name || p;
                 const count = tasks.filter(t => {
-                  const matchesDept = selectedDept === "all" || isSameWorkspaceDept(t.department, selectedDept) || isTaskCreatedByStaff(t, name);
+                  const matchesDept = effectiveSelectedDept === "all" || taskInvolvesDept(t, effectiveSelectedDept);
                   return matchesDept && (taskHasAssignee(t.assignee_name, name) || isTaskCreatedByStaff(t, name));
                 }).length;
                 const isSelected = selectedAssignee === name;
@@ -10758,16 +10913,16 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 {rolePerspective === "director" || rolePerspective === "manager" ? (
                   <div className="flex items-center gap-2 min-w-[290px]">
                     <span className="text-xs text-slate-500 font-semibold shrink-0">
-                      Nhân sự ({selectedDept !== "all" ? selectedDept : (rolePerspective === "manager" ? managerDept : "Toàn công ty")}):
+                      Nhân sự ({effectiveSelectedDept !== "all" ? effectiveSelectedDept : "Toàn công ty"}):
                     </span>
                     <SearchablePersonnelSelect
                       value={activeDailyStaff}
                       onChange={(val) => setSelectedDailyStaff(val)}
                       personnelList={departmentStaffList}
-                      filterDepartment={selectedDept !== "all" ? selectedDept : (rolePerspective === "manager" ? managerDept : "all")}
+                      filterDepartment={effectiveSelectedDept}
                       placeholder={
-                        selectedDept !== "all"
-                          ? `Chọn nhân sự thuộc ${selectedDept} (${departmentStaffList.length} người)...`
+                        effectiveSelectedDept !== "all"
+                          ? `Chọn nhân sự thuộc ${effectiveSelectedDept} (${departmentStaffList.length} người)...`
                           : "Chọn nhân sự để theo dõi..."
                       }
                     />
@@ -10787,7 +10942,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 <span className="text-[11px] font-bold text-slate-500 shrink-0 mr-1 flex items-center gap-1">
                   <Users className="w-3.5 h-3.5 text-indigo-500" />
                   <span>
-                    Nhân sự {selectedDept !== "all" ? `phòng ${selectedDept}` : "toàn công ty"} ({departmentStaffList.length}):
+                    Nhân sự {effectiveSelectedDept !== "all" ? `phòng ${effectiveSelectedDept}` : "toàn công ty"} ({departmentStaffList.length}):
                   </span>
                 </span>
                 {departmentStaffList.map((p: any) => {
@@ -11257,7 +11412,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               : "text-slate-500 hover:text-slate-700"
                           }`}
                         >
-                          🏢 {selectedDept !== "all" ? selectedDept : "Cả công ty"}
+                          🏢 {effectiveSelectedDept !== "all" ? effectiveSelectedDept : "Cả công ty"}
                         </button>
                         <button
                           type="button"
