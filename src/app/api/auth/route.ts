@@ -60,18 +60,26 @@ export async function GET(req: NextRequest) {
 
     const fetchUser = async (where: string, params: any[]) => {
       const res = await query(
-        `SELECT id, username, full_name, role, department, email, avatar, is_active, permissions, COALESCE(must_change_password, false) AS must_change_password FROM users WHERE ${where} LIMIT 1`,
+        `SELECT id, username, full_name, role, department, email, avatar, is_active, permissions,
+                COALESCE(must_change_password, false) AS must_change_password,
+                COALESCE(session_version, 0) AS session_version
+           FROM users WHERE ${where} LIMIT 1`,
         params
       );
       return res.rows[0] ? { ...res.rows[0], permissions: parsePermissions(res.rows[0].permissions) } : null;
     };
 
-    // Current session (used by the client to validate a restored login)
+    // Current session (used by the client to validate a restored login):
+    // Tự động làm mới thời hạn phiên (sliding session 7 ngày) mỗi khi người dùng mở ứng dụng
     if (action === "session" || !searchParams.get("username")) {
       const user = await fetchUser("id = $1", [me.id]);
-      if (!user) return unauthorizedResponse();
+      if (!user || user.is_active === false) return unauthorizedResponse();
+      const sessionVersion = user.session_version;
+      delete user.session_version;
       user.permissions = { ...(user.permissions || {}), ...(me.permissions || {}) };
-      return NextResponse.json({ user });
+      const response = NextResponse.json({ user });
+      await issueSession(req, { ...user, session_version: sessionVersion }, response);
+      return response;
     }
 
     // Looking up another account is reserved to administrators
@@ -81,6 +89,7 @@ export async function GET(req: NextRequest) {
     if (!isSelf && !isAdminUser(me)) return forbiddenResponse();
     const user = isSelf ? await fetchUser("id = $1", [me.id]) : await fetchUser(`(${USER_LOOKUP_WHERE}) ${USER_LOOKUP_ORDER}`, [username]);
     if (!user) return NextResponse.json({ error: "Người dùng không tồn tại" }, { status: 404 });
+    delete user.session_version;
     return NextResponse.json({ user });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -100,13 +109,29 @@ export async function POST(req: NextRequest) {
       if (!me || me.role === "customer") return NextResponse.json({ success: false }, { status: 401 });
       const timeExpr = status === "offline" ? "NOW() - INTERVAL '1 hour'" : "NOW()";
       await query(`UPDATE users SET last_seen_at = ${timeExpr} WHERE id = $1`, [me.id]).catch(() => {});
-      return NextResponse.json({
+      const response = NextResponse.json({
         success: true,
         timestamp: new Date().toISOString(),
         role: me.role,
         department: me.department,
         permissions: me.permissions || {}
       });
+      if (status !== "offline") {
+        await issueSession(
+          req,
+          {
+            id: me.id,
+            username: me.username,
+            role: me.role,
+            department: me.department,
+            full_name: me.full_name,
+            session_version: me.sv,
+            must_change_password: me.mcp,
+          },
+          response
+        );
+      }
+      return response;
     }
 
     if (action === "logout") {
@@ -140,7 +165,7 @@ export async function POST(req: NextRequest) {
       if (user.locked_until && new Date(user.locked_until) > new Date()) {
         return NextResponse.json({ error: "Tài khoản đang tạm khóa do nhập sai nhiều lần. Vui lòng thử lại sau." }, { status: 429 });
       }
-      if (!verifyPassword(String(currentPassword), user.password_hash)) {
+      if (!verifyPassword(String(currentPassword), user.password_hash) && !verifyPassword(String(currentPassword).trim(), user.password_hash)) {
         hitRateLimit(ipKey, IP_FAILURE_LIMIT, IP_WINDOW_MS);
         await query(
           `UPDATE users SET failed_login_count = failed_login_count + 1,
@@ -155,13 +180,31 @@ export async function POST(req: NextRequest) {
       if (String(newPassword) === String(currentPassword)) {
         return NextResponse.json({ error: "Mật khẩu mới phải khác mật khẩu hiện tại" }, { status: 400 });
       }
+      const newHash = hashPassword(String(newPassword));
       // New password + revoke every other session of this account
       const upd = await query(
         `UPDATE users SET password_hash = $1, must_change_password = false, failed_login_count = 0, locked_until = NULL,
                 session_version = COALESCE(session_version, 0) + 1
           WHERE id = $2 RETURNING id, username, full_name, role, department, session_version, must_change_password`,
-        [hashPassword(String(newPassword)), user.id]
+        [newHash, user.id]
       );
+      // Đồng bộ mật khẩu mới sang các bản ghi tài khoản alias cùng mã nhân viên / họ tên (VD: NV-TBR-016 <-> TBR016)
+      await query(
+        `UPDATE users
+            SET password_hash = $1,
+                must_change_password = false,
+                failed_login_count = 0,
+                locked_until = NULL
+          WHERE id != $2
+            AND (
+              ($3 <> '' AND (
+                LOWER(username) = LOWER(REGEXP_REPLACE($3, '^NV-(TBRS|TBR|VIA|ABT)-?', '\\1', 'i'))
+                OR LOWER(username) = LOWER(REGEXP_REPLACE($3, '^(TBRS|TBR|VIA|ABT)-?([0-9]+)$', 'NV-\\1-\\2', 'i'))
+              ))
+              OR ($4 <> '' AND LOWER(TRIM(full_name)) = LOWER(TRIM($4)))
+            )`,
+        [newHash, user.id, String(user.username || ""), String(user.full_name || "")]
+      ).catch(() => {});
       await logAudit("CHANGE_PASSWORD", "AUTH", `Người dùng ${user.full_name} (${user.username}) đã đổi mật khẩu thành công`, user.username, user.full_name);
       const response = NextResponse.json({ success: true, message: "Đổi mật khẩu thành công" });
       await issueSession(req, upd.rows[0], response);
@@ -174,31 +217,48 @@ export async function POST(req: NextRequest) {
     }
 
     const loginName = String(username).trim();
+    const rawPass = String(password);
+    const trimmedPass = rawPass.trim();
     const res = await query(
       `SELECT id, username, password_hash, full_name, role, department, email, avatar, is_active, permissions,
               locked_until, COALESCE(must_change_password, false) AS must_change_password, COALESCE(session_version, 0) AS session_version
-       FROM users WHERE ${USER_LOOKUP_WHERE} ${USER_LOOKUP_ORDER} LIMIT 1`,
+       FROM users WHERE ${USER_LOOKUP_WHERE} ${USER_LOOKUP_ORDER} LIMIT 10`,
       [loginName]
     );
 
-    const user = res.rows[0];
-    if (user?.locked_until && new Date(user.locked_until) > new Date()) {
-      const mins = Math.max(1, Math.ceil((new Date(user.locked_until).getTime() - Date.now()) / 60000));
+    const candidates: any[] = res.rows || [];
+    // Kiểm tra mật khẩu trên tất cả bản ghi khớp (tránh trường hợp có 2 dòng NV-TBR-016 và TBR016 mà LIMIT 1 lấy nhầm dòng chưa đổi mật khẩu)
+    let matchedPass = rawPass;
+    let user = candidates.find((c) => {
+      if (verifyPassword(rawPass, c.password_hash)) {
+        matchedPass = rawPass;
+        return true;
+      }
+      if (trimmedPass !== rawPass && verifyPassword(trimmedPass, c.password_hash)) {
+        matchedPass = trimmedPass;
+        return true;
+      }
+      return false;
+    });
+    const primaryCandidate = user || candidates[0];
+
+    if (primaryCandidate?.locked_until && new Date(primaryCandidate.locked_until) > new Date()) {
+      const mins = Math.max(1, Math.ceil((new Date(primaryCandidate.locked_until).getTime() - Date.now()) / 60000));
       return NextResponse.json({ error: `Tài khoản tạm khóa do nhập sai mật khẩu ${MAX_FAILED_LOGINS} lần. Vui lòng thử lại sau ${mins} phút hoặc liên hệ Quản trị viên.` }, { status: 429 });
     }
 
-    if (!user || !verifyPassword(String(password), user.password_hash)) {
+    if (!user) {
       hitRateLimit(ipKey, IP_FAILURE_LIMIT, IP_WINDOW_MS);
-      if (user) {
+      if (primaryCandidate) {
         const upd = await query(
           `UPDATE users SET failed_login_count = failed_login_count + 1,
                   locked_until = CASE WHEN failed_login_count + 1 >= $2 THEN NOW() + ($3 || ' minutes')::interval ELSE locked_until END
             WHERE id = $1 RETURNING failed_login_count`,
-          [user.id, MAX_FAILED_LOGINS, String(LOCK_MINUTES)]
+          [primaryCandidate.id, MAX_FAILED_LOGINS, String(LOCK_MINUTES)]
         );
         if (Number(upd.rows[0]?.failed_login_count) >= MAX_FAILED_LOGINS) {
-          await query("UPDATE users SET failed_login_count = 0 WHERE id = $1", [user.id]);
-          await logAudit("ACCOUNT_LOCKED", "AUTH", `Tạm khóa ${LOCK_MINUTES} phút tài khoản ${user.username} sau ${MAX_FAILED_LOGINS} lần sai mật khẩu (IP ${ip})`, user.username, user.full_name);
+          await query("UPDATE users SET failed_login_count = 0 WHERE id = $1", [primaryCandidate.id]);
+          await logAudit("ACCOUNT_LOCKED", "AUTH", `Tạm khóa ${LOCK_MINUTES} phút tài khoản ${primaryCandidate.username} sau ${MAX_FAILED_LOGINS} lần sai mật khẩu (IP ${ip})`, primaryCandidate.username, primaryCandidate.full_name);
         }
       }
       await logAudit("LOGIN_FAILED", "AUTH", `Đăng nhập thất bại cho tài khoản ${loginName} (IP ${ip})`, loginName, "Chưa xác thực");
@@ -213,13 +273,24 @@ export async function POST(req: NextRequest) {
     }
 
     // Mật khẩu mặc định / dễ đoán: được vào một lần để đổi mật khẩu, mọi API khác bị chặn cho tới khi đổi
-    const mustChange = Boolean(user.must_change_password) || DEFAULT_PASSWORDS.has(String(password));
+    const mustChange = Boolean(user.must_change_password) || DEFAULT_PASSWORDS.has(matchedPass);
+    const syncedHash = needsRehash(user.password_hash) ? hashPassword(matchedPass) : user.password_hash;
     await query(
       `UPDATE users SET last_seen_at = NOW(), failed_login_count = 0, locked_until = NULL, must_change_password = $2
          ${needsRehash(user.password_hash) ? ", password_hash = $3" : ""}
         WHERE id = $1`,
-      needsRehash(user.password_hash) ? [user.id, mustChange, hashPassword(String(password))] : [user.id, mustChange]
+      needsRehash(user.password_hash) ? [user.id, mustChange, syncedHash] : [user.id, mustChange]
     );
+    // Nếu có các bản ghi tài khoản trùng của cùng nhân sự (VD: NV-TBR-016 và TBR016), tự động đồng bộ mật khẩu đúng sang các bản ghi đó
+    if (candidates.length > 1) {
+      const otherIds = candidates.filter((c) => c.id !== user.id).map((c) => c.id);
+      if (otherIds.length > 0) {
+        await query(
+          `UPDATE users SET password_hash = $1, must_change_password = $2, failed_login_count = 0, locked_until = NULL WHERE id = ANY($3::int[])`,
+          [syncedHash, mustChange, otherIds]
+        ).catch(() => {});
+      }
+    }
 
     delete user.password_hash;
     delete user.locked_until;

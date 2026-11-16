@@ -1260,6 +1260,29 @@ async function runIntegrityMigrations() {
 
       await setFlag("migration_normalize_dedupe_personnel_v1");
     });
+
+    // Đồng bộ mật khẩu từ bản ghi đã đổi mật khẩu (must_change_password = false) sang bản ghi alias trùng mã nhân viên (VD: TBR016 -> NV-TBR-016)
+    // bị gán mật khẩu tạm khi đồng bộ nhân sự, đồng thời gỡ tạm khóa đăng nhập do thử lại nhiều lần.
+    await step("heal_alias_user_passwords_v1", async () => {
+      await client.query(`
+        UPDATE users u_target
+           SET password_hash = u_src.password_hash,
+               must_change_password = false,
+               failed_login_count = 0,
+               locked_until = NULL
+          FROM users u_src
+         WHERE u_target.id != u_src.id
+           AND COALESCE(u_target.must_change_password, false) = true
+           AND COALESCE(u_src.must_change_password, false) = false
+           AND u_src.password_hash IS NOT NULL AND u_src.password_hash <> ''
+           AND (
+             LOWER(u_target.username) = LOWER(REGEXP_REPLACE(u_src.username, '^(TBRS|TBR|VIA|ABT)-?([0-9]+)$', 'NV-\\1-\\2', 'i'))
+             OR LOWER(u_target.username) = LOWER(REGEXP_REPLACE(u_src.username, '^NV-(TBRS|TBR|VIA|ABT)-?', '\\1', 'i'))
+             OR (COALESCE(TRIM(u_target.full_name), '') <> '' AND LOWER(TRIM(u_target.full_name)) = LOWER(TRIM(u_src.full_name)))
+           );
+        UPDATE users SET failed_login_count = 0, locked_until = NULL WHERE failed_login_count > 0 OR locked_until IS NOT NULL;
+      `);
+    });
   } finally {
     if (locked) {
       await client.query("SELECT pg_advisory_unlock($1)", [INTEGRITY_MIGRATION_LOCK_KEY]).catch((e) =>

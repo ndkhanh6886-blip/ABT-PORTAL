@@ -172,7 +172,27 @@ async function syncPersonnelToUsers(): Promise<InitialCredential[]> {
     if (!r.inserted) continue;
     const position = (await query("SELECT position FROM personnel WHERE employee_code = $1", [r.username])).rows[0]?.position ?? "";
     await query("UPDATE users SET role = $2 WHERE username = $1", [r.username, inferSystemRoleFromPosition(r.department, position)]);
-    created.push(await assignTemporaryPassword(r.username, r.full_name));
+    const sibling = await query(
+      `SELECT password_hash, COALESCE(must_change_password, false) AS must_change_password
+         FROM users
+        WHERE username != $1
+          AND password_hash IS NOT NULL AND password_hash <> ''
+          AND (
+            LOWER(username) = LOWER(REGEXP_REPLACE($1, '^NV-(TBRS|TBR|VIA|ABT)-?', '\\1', 'i'))
+            OR LOWER(username) = LOWER(REGEXP_REPLACE($1, '^(TBRS|TBR|VIA|ABT)-?([0-9]+)$', 'NV-\\1-\\2', 'i'))
+            OR ($2 <> '' AND LOWER(TRIM(full_name)) = LOWER(TRIM($2)))
+          )
+        ORDER BY id ASC LIMIT 1`,
+      [r.username, String(r.full_name || "")]
+    ).catch(() => ({ rows: [] as any[] }));
+    if (sibling.rows[0]?.password_hash) {
+      await query(
+        "UPDATE users SET password_hash = $1, must_change_password = $2 WHERE username = $3",
+        [sibling.rows[0].password_hash, Boolean(sibling.rows[0].must_change_password), r.username]
+      );
+    } else {
+      created.push(await assignTemporaryPassword(r.username, r.full_name));
+    }
   }
   await ensureFactoryRolesAndSyncAllUsers().catch((e) => console.warn("Factory sync warning:", e?.message));
   return created;
@@ -611,11 +631,28 @@ export async function POST(req: NextRequest) {
       const email = normalizePersonText(body.email).toLowerCase();
       if (id) {
         if (password) {
+          const newHash = hashPassword(String(password));
           await query(
             `UPDATE users SET full_name=$1, role=$2, department=$3, email=$4, is_active=$5, password_hash=$6,
-                must_change_password = true, session_version = COALESCE(session_version, 0) + 1 WHERE id=$7`,
-            [full_name, role, department, email, is_active !== false, hashPassword(String(password)), id]
+                must_change_password = true, failed_login_count = 0, locked_until = NULL,
+                session_version = COALESCE(session_version, 0) + 1 WHERE id=$7`,
+            [full_name, role, department, email, is_active !== false, newHash, id]
           );
+          if (username || full_name) {
+            await query(
+              `UPDATE users SET password_hash=$1, must_change_password = true, failed_login_count = 0, locked_until = NULL,
+                      session_version = COALESCE(session_version, 0) + 1
+                WHERE id != $2
+                  AND (
+                    ($3 <> '' AND (
+                      LOWER(username) = LOWER(REGEXP_REPLACE($3, '^NV-(TBRS|TBR|VIA|ABT)-?', '\\1', 'i'))
+                      OR LOWER(username) = LOWER(REGEXP_REPLACE($3, '^(TBRS|TBR|VIA|ABT)-?([0-9]+)$', 'NV-\\1-\\2', 'i'))
+                    ))
+                    OR ($4 <> '' AND LOWER(TRIM(full_name)) = LOWER(TRIM($4)))
+                  )`,
+              [newHash, id, String(username || ""), String(full_name || "")]
+            ).catch(() => {});
+          }
         } else {
           await query(
             `UPDATE users SET full_name=$1, role=$2, department=$3, email=$4, is_active=$5,
@@ -664,12 +701,31 @@ export async function POST(req: NextRequest) {
       if (!password || String(password).length < 6) {
         return NextResponse.json({ error: "Mật khẩu mới phải có tối thiểu 6 ký tự" }, { status: 400 });
       }
+      const newHash = hashPassword(String(password));
       // Mật khẩu do quản trị viên đặt là tạm thời: người dùng phải đổi ở lần đăng nhập kế tiếp; các phiên cũ bị thu hồi
-      await query(
+      const upd = await query(
         `UPDATE users SET password_hash=$1, must_change_password = true, failed_login_count = 0, locked_until = NULL,
-                session_version = COALESCE(session_version, 0) + 1 WHERE id=$2`,
-        [hashPassword(String(password)), id]
+                session_version = COALESCE(session_version, 0) + 1 WHERE id=$2 RETURNING username, full_name`,
+        [newHash, id]
       );
+      const targetUsername = String(username || upd.rows[0]?.username || "").trim();
+      const targetFullName = String(upd.rows[0]?.full_name || "").trim();
+      if (targetUsername || targetFullName) {
+        await query(
+          `UPDATE users SET password_hash=$1, must_change_password = true, failed_login_count = 0, locked_until = NULL,
+                  session_version = COALESCE(session_version, 0) + 1
+            WHERE id != $2
+              AND (
+                ($3 <> '' AND (
+                  LOWER(username) = LOWER($3)
+                  OR LOWER(username) = LOWER(REGEXP_REPLACE($3, '^NV-(TBRS|TBR|VIA|ABT)-?', '\\1', 'i'))
+                  OR LOWER(username) = LOWER(REGEXP_REPLACE($3, '^(TBRS|TBR|VIA|ABT)-?([0-9]+)$', 'NV-\\1-\\2', 'i'))
+                ))
+                OR ($4 <> '' AND LOWER(TRIM(full_name)) = LOWER(TRIM($4)))
+              )`,
+          [newHash, id, targetUsername, targetFullName]
+        ).catch(() => {});
+      }
       await logAudit("RESET_PASSWORD", "USER", `Đổi mật khẩu tài khoản ${username || id}`);
       return NextResponse.json({ success: true });
     }

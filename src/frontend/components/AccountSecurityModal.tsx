@@ -118,9 +118,10 @@ export function AccountSecurityModal({ forced = false, onClose }: Props) {
 
       {(forced || tab === "password") && (
         <form onSubmit={submitPassword} className="space-y-3">
-          <input type="password" autoComplete="current-password" placeholder="Mật khẩu hiện tại" className={inputCls} value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} required />
-          <input type="password" autoComplete="new-password" placeholder="Mật khẩu mới (tối thiểu 8 ký tự)" className={inputCls} value={newPassword} onChange={e => setNewPassword(e.target.value)} required minLength={8} />
-          <input type="password" autoComplete="new-password" placeholder="Nhập lại mật khẩu mới" className={inputCls} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} required minLength={8} />
+          <input type="text" name="username" autoComplete="username" value={user?.username || ""} readOnly className="sr-only" tabIndex={-1} aria-hidden="true" />
+          <input type="password" name="currentPassword" autoComplete="current-password" placeholder="Mật khẩu hiện tại" className={inputCls} value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} required />
+          <input type="password" name="newPassword" autoComplete="new-password" placeholder="Mật khẩu mới (tối thiểu 8 ký tự)" className={inputCls} value={newPassword} onChange={e => setNewPassword(e.target.value)} required minLength={8} />
+          <input type="password" name="confirmPassword" autoComplete="new-password" placeholder="Nhập lại mật khẩu mới" className={inputCls} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} required minLength={8} />
           <button type="submit" disabled={busy} className="w-full rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 text-sm disabled:opacity-60 cursor-pointer">
             {busy ? "Đang xử lý..." : "Đổi mật khẩu"}
           </button>

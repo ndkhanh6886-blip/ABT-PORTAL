@@ -38,9 +38,14 @@ export const LoginScreen: React.FC = () => {
     return <CustomerPortalView onBackToStaffLogin={() => setPortalMode("staff")} />;
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!username.trim() || !password.trim()) {
+    const form = e.currentTarget;
+    const domUser = (form.elements.namedItem("username") as HTMLInputElement | null)?.value || "";
+    const domPass = (form.elements.namedItem("password") as HTMLInputElement | null)?.value || "";
+    const resolvedUser = (username || domUser).trim();
+    const resolvedPass = password || domPass;
+    if (!resolvedUser || !resolvedPass.trim()) {
       setErrorMsg("Vui lòng nhập tên đăng nhập và mật khẩu");
       return;
     }
@@ -50,7 +55,7 @@ export const LoginScreen: React.FC = () => {
     setSuccessMsg("");
 
     try {
-      const res = await login(username.trim(), password.trim());
+      const res = await login(resolvedUser, resolvedPass);
       if (res.success) {
         setSuccessMsg("Đăng nhập thành công! Đang chuyển hướng...");
       } else {
@@ -211,6 +216,8 @@ export const LoginScreen: React.FC = () => {
                     </div>
                     <input
                       type="text"
+                      name="username"
+                      autoComplete="username"
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
                       placeholder="admin, sales_head, hoặc email..."
@@ -231,6 +238,8 @@ export const LoginScreen: React.FC = () => {
                     </div>
                     <input
                       type={showPassword ? "text" : "password"}
+                      name="password"
+                      autoComplete="current-password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="••••••••"
