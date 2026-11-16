@@ -21,6 +21,7 @@ import {
 } from "../bomRouting";
 import {
   createProductionOrder,
+  deleteDraftProductionOrder,
   getProductionOrderDetail,
   issueOrderMaterials,
   printOrderLabel,
@@ -1287,5 +1288,124 @@ describe("Phase 4b — Module Phòng Sản xuất Kit (kit schema)", () => {
 
     const rtStillExists = await withTransaction((tx) => getRoutingDetail(tx, operator, rt.id));
     expect(rtStillExists.steps[0].step_function).toBe(expectedNormalizedKey);
+  });
+
+  it("8. Xóa Lệnh sản xuất ở trạng thái Bản nháp (DRAFT): giải phóng mã lô nháp để cấp lại, ghi audit log và chặn xóa khi đã xác nhận", async () => {
+    const site = await makeSite();
+    const { operator, checker } = await setupKitTeam(site);
+    const viewer = await createUser("Người xem Kit", PIN);
+    await grant(viewer, ["kit.view"], site.dept);
+
+    const suffix = Date.now().toString(36).slice(-4).toUpperCase();
+    const kitItem = await makeItem(site, {
+      code: `KIT-DEL-${suffix}`,
+      item_type: "FINISHED_KIT",
+      base_uom: "pcs",
+      shelf_life_days: 365,
+    });
+    const reagentItem = await makeItem(site, {
+      code: `REA-DEL-${suffix}`,
+      item_type: "REAGENT",
+      base_uom: "mL",
+    });
+    await stockedLot(site, reagentItem.id, 100, "2028-06-01", { uom: "mL" });
+
+    const bom = await withTransaction(async (tx) => {
+      const b = await createBom(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: kitItem.id,
+        name: "BOM Test Xóa Nháp",
+        base_qty: 1,
+        base_uom: "pcs",
+        tests_per_kit: 50,
+        shelf_life_days: 365,
+      });
+      await addBomLine(tx, operator, {
+        bom_id: b.id,
+        line_no: 1,
+        box_no: 1,
+        component_item_id: reagentItem.id,
+        component_role: "MASTER_MIX",
+        qty_per_base: 2,
+        uom: "mL",
+      });
+      return b;
+    });
+    await act(bomMachine, operator, bom.id, "submit_review");
+    await act(bomMachine, checker, bom.id, "approve", signed);
+
+    const rt = await withTransaction(async (tx) => {
+      const r = await createRouting(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: kitItem.id,
+        name: "Routing Test Xóa Nháp",
+      });
+      await addRoutingStep(tx, operator, {
+        routing_id: r.id,
+        seq: 10,
+        step_code: "STEP-DEL-10",
+        step_name: "Pha chế dung dịch chuẩn",
+        category: "FORMULATION",
+        required_asset_id: "",
+        instructions: "Thực hiện pha chế mẫu thử",
+      });
+      return r;
+    });
+    await act(routingMachine, operator, rt.id, "submit_review");
+    await act(routingMachine, checker, rt.id, "approve", signed);
+
+    const reusableLotCode = `K2611D${suffix}`;
+    const draftOrder = await withTransaction((tx) =>
+      createProductionOrder(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: kitItem.id,
+        warehouse_id: site.warehouse,
+        planned_qty: 10,
+        lot_code: reusableLotCode,
+        no_retention: true,
+      })
+    );
+    expect(draftOrder.status).toBe("DRAFT");
+
+    // 1. User without kit.order.manage must be rejected with FORBIDDEN
+    await expect(
+      withTransaction((tx) => deleteDraftProductionOrder(tx, viewer, draftOrder.id))
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    // 2. Delete draft production order -> deletes order, steps, and releases pre-allocated QUARANTINE lot code
+    const delRes = await withTransaction((tx) =>
+      deleteDraftProductionOrder(tx, operator, draftOrder.id, { reason: "Xóa lệnh nháp tạo nhầm" })
+    );
+    expect(delRes.deleted).toBe(true);
+    expect(delRes.lot_freed).toBe(true);
+
+    const orderCheck = await getFactoryPool().query("SELECT 1 FROM kit.production_order WHERE id = $1", [draftOrder.id]);
+    expect(orderCheck.rowCount).toBe(0);
+    const stepCheck = await getFactoryPool().query("SELECT 1 FROM kit.production_step WHERE order_id = $1", [draftOrder.id]);
+    expect(stepCheck.rowCount).toBe(0);
+    const auditCheck = await getFactoryPool().query(
+      "SELECT action, reason FROM core.audit_log WHERE entity_type = 'kit_production_order' AND entity_id = $1 AND action = 'delete'",
+      [draftOrder.id]
+    );
+    expect(auditCheck.rowCount).toBe(1);
+    expect(auditCheck.rows[0].reason).toBe("Xóa lệnh nháp tạo nhầm");
+
+    // 3. Reusing the freed lot code for a new production order succeeds
+    const order2 = await withTransaction((tx) =>
+      createProductionOrder(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: kitItem.id,
+        warehouse_id: site.warehouse,
+        planned_qty: 10,
+        lot_code: reusableLotCode,
+        no_retention: true,
+      })
+    );
+
+    // 4. Confirm order2 -> cannot delete once CONFIRMED
+    await act(productionOrderMachine, operator, order2.id, "confirm");
+    await expect(
+      withTransaction((tx) => deleteDraftProductionOrder(tx, operator, order2.id))
+    ).rejects.toMatchObject({ status: 409, code: "CONFLICT" });
   });
 });

@@ -132,6 +132,7 @@ export function ProductionPlanView({
   onOpenOrder,
   onPlanFromPo,
   onCreateOrder,
+  onOrderDeleted,
 }: {
   /** LEAD: Trưởng nhóm sản xuất lập & theo dõi kế hoạch · QA: Phòng QA/QC phân bổ nhân viên giám sát */
   mode: "LEAD" | "QA";
@@ -139,6 +140,7 @@ export function ProductionPlanView({
   onPlanFromPo?: (poLineId: string) => void;
   /** Opens the "Phát hành lệnh sản xuất" form (a plan is a production order with leader and planned dates). */
   onCreateOrder?: () => void;
+  onOrderDeleted?: (orderId: string) => void;
 }) {
   const [data, setData] = useState<PlanResponse | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -150,6 +152,9 @@ export function ProductionPlanView({
   const [showUnplanned, setShowUnplanned] = useState(false);
   const [showStageSummary, setShowStageSummary] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deletingOrder, setDeletingOrder] = useState<PlanOrder | null>(null);
+  const [deleteReason, setDeleteReason] = useState("Xóa lệnh sản xuất bản nháp");
+  const [deleting, setDeleting] = useState(false);
   const [expandedStepsIds, setExpandedStepsIds] = useState<Record<string, boolean>>({});
   const [hoveredStep, setHoveredStep] = useState<{ orderId: string; stepId: string } | null>(null);
 
@@ -248,6 +253,28 @@ export function ProductionPlanView({
       setError(e);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const confirmDeleteDraftOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!deletingOrder) return;
+    setError(null);
+    setDeleting(true);
+    const targetId = deletingOrder.id;
+    try {
+      await api(`/api/factory/kit/orders/${targetId}`, {
+        method: "DELETE",
+        json: { reason: deleteReason.trim() || "Xóa lệnh sản xuất bản nháp" },
+      });
+      setDeletingOrder(null);
+      if (editingId === targetId) setEditingId("");
+      await load();
+      onOrderDeleted?.(targetId);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -635,6 +662,19 @@ export function ProductionPlanView({
                             🔎 Mở Hồ sơ Lô (EBR)
                           </Button>
                         )}
+                        {canPlan && o.status === "DRAFT" && (
+                          <Button
+                            variant="ghost"
+                            className="text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                            title="Xóa Lệnh sản xuất đang ở trạng thái Bản nháp (giải phóng luôn mã lô dự kiến chưa xuất kho)"
+                            onClick={() => {
+                              setDeletingOrder(o);
+                              setDeleteReason("Xóa lệnh sản xuất bản nháp");
+                            }}
+                          >
+                            🗑️ Xóa lệnh nháp
+                          </Button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -737,6 +777,50 @@ export function ProductionPlanView({
             </Table>
           ))}
       </Card>
+
+      {deletingOrder && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-[1px] flex items-center justify-center p-4"
+          onClick={() => !deleting && setDeletingOrder(null)}
+        >
+          <form
+            className="w-full max-w-lg rounded-2xl border border-rose-200 dark:border-rose-900 bg-white dark:bg-slate-900 p-5 shadow-xl space-y-3"
+            onClick={(ev) => ev.stopPropagation()}
+            onSubmit={confirmDeleteDraftOrder}
+          >
+            <div className="text-sm font-bold text-rose-700 dark:text-rose-400">
+              🗑️ Xác nhận xóa Lệnh sản xuất bản nháp {deletingOrder.code}
+            </div>
+            <div className="text-xs text-slate-700 dark:text-slate-200 space-y-1">
+              <p>
+                Bạn đang yêu cầu xóa lệnh sản xuất <b>{deletingOrder.code}</b> ({deletingOrder.product_code}
+                {deletingOrder.lot_code ? ` · Lô dự kiến ${deletingOrder.lot_code}` : ""}).
+              </p>
+              <p className="text-slate-500 dark:text-slate-400">
+                Vì lệnh chưa xác nhận / chưa xuất kho, thao tác này sẽ xóa bản nháp, giải phóng mã lô dự kiến để có thể cấp lại{deletingOrder.kd_po_code ? ` và trả dòng PO ${deletingOrder.kd_po_code} về danh sách chờ lập kế hoạch` : ""}, đồng thời ghi Nhật ký kiểm toán.
+              </p>
+            </div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 space-y-1">
+              <span>Lý do xóa (ghi Nhật ký kiểm toán)</span>
+              <input
+                className={inputClass}
+                value={deleteReason}
+                onChange={(ev) => setDeleteReason(ev.target.value)}
+                placeholder="Xóa lệnh sản xuất bản nháp..."
+                autoFocus
+              />
+            </label>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="ghost" disabled={deleting} onClick={() => setDeletingOrder(null)}>
+                Hủy
+              </Button>
+              <Button type="submit" variant="danger" disabled={deleting}>
+                {deleting ? "Đang xóa..." : "Xác nhận Xóa lệnh nháp"}
+              </Button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

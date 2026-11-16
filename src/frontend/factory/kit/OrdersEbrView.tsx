@@ -5,7 +5,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import QRCode from "qrcode";
 import JsBarcode from "jsbarcode";
 import { ActionBar } from "../actions";
-import { api, fmtDate, fmtDateTime, fmtQty, vnToday } from "../api";
+import { api, fmtDate, fmtDateTime, fmtQty, useFactoryMe, vnToday } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { BarcodeScanVerifier } from "../BarcodeScanVerifier";
 import { barcode128SvgMarkup } from "../barcodeSvg";
@@ -120,6 +120,8 @@ export function OrdersEbrView({
   focusOrderId?: string;
   onClearFocusOrder?: () => void;
 }) {
+  const me = useFactoryMe();
+  const canManageOrder = Boolean(me.data?.is_root || me.data?.permissions?.includes("kit.order.manage"));
   const [viewMode, setViewMode] = useState<"EBR" | "DAILY_TRACKER" | "PLAN">(focusOrderId ? "EBR" : "PLAN");
   const [orders, setOrders] = useState<any[]>([]);
   const [dailySteps, setDailySteps] = useState<any[]>([]);
@@ -127,6 +129,9 @@ export function OrdersEbrView({
   const [detail, setDetail] = useState<any | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [showCreateOrder, setShowCreateOrder] = useState(false);
+  const [deletingDraftOrder, setDeletingDraftOrder] = useState<any | null>(null);
+  const [deleteDraftReason, setDeleteDraftReason] = useState("Xóa lệnh sản xuất bản nháp");
+  const [deletingDraft, setDeletingDraft] = useState(false);
   const [showSplitForm, setShowSplitForm] = useState(false);
   const [showReworkForm, setShowReworkForm] = useState(false);
   const [dailyShiftFilter, setDailyShiftFilter] = useState<string>("ALL");
@@ -1053,6 +1058,31 @@ export function OrdersEbrView({
     }
   };
 
+  const confirmDeleteDraftOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!deletingDraftOrder) return;
+    setError(null);
+    setDeletingDraft(true);
+    const targetId = deletingDraftOrder.id;
+    try {
+      await api(`/api/factory/kit/orders/${targetId}`, {
+        method: "DELETE",
+        json: { reason: deleteDraftReason.trim() || "Xóa lệnh sản xuất bản nháp" },
+      });
+      setDeletingDraftOrder(null);
+      if (selectedOrderId === targetId) {
+        setSelectedOrderId("");
+        setDetail(null);
+      }
+      await loadOrders();
+      onRefreshOptions();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setDeletingDraft(false);
+    }
+  };
+
   const waitingQcCount = dailySteps.filter((s) => isStepActivelyWaitingQc(s, dailySteps)).length;
   const inProgressCount = dailySteps.filter((s) => s.status === "IN_PROGRESS" || s.status === "AWAITING_CHECK").length;
 
@@ -1115,6 +1145,14 @@ export function OrdersEbrView({
           onCreateOrder={() => {
             setShowCreateOrder(true);
             setViewMode("EBR");
+          }}
+          onOrderDeleted={(deletedId) => {
+            if (selectedOrderId === deletedId) {
+              setSelectedOrderId("");
+              setDetail(null);
+            }
+            loadOrders();
+            onRefreshOptions();
           }}
         />
       )}
@@ -1604,7 +1642,23 @@ export function OrdersEbrView({
                         {o.done_steps}/{o.total_steps} bước
                       </td>
                       <td className="px-3 py-2">
-                        <StatusBadge status={o.status} />
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <StatusBadge status={o.status} />
+                          {canManageOrder && o.status === "DRAFT" && (
+                            <Button
+                              variant="ghost"
+                              className="!px-2 !py-0.5 !text-[11px] text-rose-600 dark:text-rose-400"
+                              title="Xóa Lệnh sản xuất bản nháp"
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                setDeletingDraftOrder(o);
+                                setDeleteDraftReason("Xóa lệnh sản xuất bản nháp");
+                              }}
+                            >
+                              🗑️ Xóa
+                            </Button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1621,6 +1675,19 @@ export function OrdersEbrView({
               actions={
                 <div className="flex items-center gap-2">
                   <StatusBadge status={detail.order.status} />
+                  {canManageOrder && detail.order.status === "DRAFT" && (
+                    <Button
+                      variant="ghost"
+                      className="text-rose-600 dark:text-rose-400"
+                      title="Xóa Lệnh sản xuất đang ở trạng thái Bản nháp"
+                      onClick={() => {
+                        setDeletingDraftOrder(detail.order);
+                        setDeleteDraftReason("Xóa lệnh sản xuất bản nháp");
+                      }}
+                    >
+                      🗑️ Xóa lệnh nháp
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     onClick={() => {
@@ -3651,6 +3718,50 @@ export function OrdersEbrView({
           </div>
         )}
       </div>
+      )}
+
+      {deletingDraftOrder && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-[1px] flex items-center justify-center p-4"
+          onClick={() => !deletingDraft && setDeletingDraftOrder(null)}
+        >
+          <form
+            className="w-full max-w-lg rounded-2xl border border-rose-200 dark:border-rose-900 bg-white dark:bg-slate-900 p-5 shadow-xl space-y-3"
+            onClick={(ev) => ev.stopPropagation()}
+            onSubmit={confirmDeleteDraftOrder}
+          >
+            <div className="text-sm font-bold text-rose-700 dark:text-rose-400">
+              🗑️ Xác nhận xóa Lệnh sản xuất bản nháp {deletingDraftOrder.code}
+            </div>
+            <div className="text-xs text-slate-700 dark:text-slate-200 space-y-1">
+              <p>
+                Bạn đang yêu cầu xóa lệnh sản xuất <b>{deletingDraftOrder.code}</b> (
+                {deletingDraftOrder.product_code}
+                {deletingDraftOrder.lot_code ? ` · Lô dự kiến ${deletingDraftOrder.lot_code}` : ""}).
+              </p>
+              <p className="text-slate-500 dark:text-slate-400">
+                Vì lệnh đang ở trạng thái Bản nháp (chưa xác nhận / chưa xuất kho), hệ thống sẽ xóa bản nháp, giải phóng mã lô dự kiến để có thể dùng lại và ghi Nhật ký kiểm toán.
+              </p>
+            </div>
+            <Field label="Lý do xóa (ghi Nhật ký kiểm toán)">
+              <input
+                className={inputClass}
+                value={deleteDraftReason}
+                onChange={(ev) => setDeleteDraftReason(ev.target.value)}
+                placeholder="Xóa lệnh sản xuất bản nháp..."
+                autoFocus
+              />
+            </Field>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="ghost" disabled={deletingDraft} onClick={() => setDeletingDraftOrder(null)}>
+                Hủy
+              </Button>
+              <Button type="submit" variant="danger" disabled={deletingDraft}>
+                {deletingDraft ? "Đang xóa..." : "Xác nhận Xóa lệnh nháp"}
+              </Button>
+            </div>
+          </form>
+        </div>
       )}
     </div>
   );

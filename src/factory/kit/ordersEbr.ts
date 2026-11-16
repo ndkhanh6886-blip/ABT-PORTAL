@@ -3,7 +3,7 @@ import type { Tx } from "../core/db";
 import { diffChanges, writeAudit } from "../core/audit";
 import { authorize, authorizeAnywhere, hasFactoryPermission, type AuthzActor } from "../core/authz";
 import { addDays, vnToday } from "../core/dates";
-import { invalid, notFound } from "../core/errors";
+import { conflict, invalid, notFound } from "../core/errors";
 import { notifyUsers, usersWithPermission } from "../core/notifications";
 import { nextNumber } from "../core/numbering";
 import { listPortalActivePersonnel, type PortalPersonnelEntry } from "../core/hrDirectory";
@@ -4160,5 +4160,133 @@ export async function getProductionOrderDetail(tx: Tx, actor: AuthzActor, id: st
     preferred_lots,
     available_lots_by_item,
     available_lots_by_bom_line,
+  };
+}
+
+/**
+ * Deletes a DRAFT Kit Production Order completely (and releases its unused pre-allocated QUARANTINE lot code)
+ * while enforcing strict GxP guards so confirmed/executed/released orders can never be removed.
+ */
+export async function deleteDraftProductionOrder(
+  tx: Tx,
+  actor: AuthzActor,
+  orderId: string,
+  input?: unknown
+) {
+  await ensureKitDailyTrackerAndQcGateSchema(tx);
+  const parsed = parseInput(
+    z.object({ reason: z.string().trim().max(1000).optional().nullable() }),
+    input ?? {}
+  );
+  const auditReason = parsed.reason || "Xóa lệnh sản xuất ở trạng thái nháp";
+
+  const cur = (
+    await tx.query("SELECT * FROM kit.production_order WHERE id = $1 FOR UPDATE", [orderId])
+  ).rows[0] as ProductionOrderRow | undefined;
+  if (!cur) throw notFound("lệnh sản xuất Kit");
+
+  if (!actor.isRootAdmin && !actor.isSystem) {
+    await authorize(tx, actor, "kit.order.manage", cur.org_unit_id);
+  }
+
+  if (cur.status !== "DRAFT") {
+    throw conflict(
+      "Chỉ được phép xóa Lệnh sản xuất khi đang ở trạng thái Bản nháp (DRAFT). Với lệnh đã xác nhận, vui lòng dùng thao tác Hủy lệnh."
+    );
+  }
+  if (cur.materials_issued) {
+    throw conflict("Không thể xóa lệnh sản xuất đã xuất nguyên vật liệu kho.");
+  }
+
+  const startedSteps = await tx.query(
+    "SELECT 1 FROM kit.production_step WHERE order_id = $1 AND status <> 'PENDING' LIMIT 1",
+    [orderId]
+  );
+  if (startedSteps.rowCount) {
+    throw conflict("Không thể xóa lệnh sản xuất đã có công đoạn bắt đầu thực hiện.");
+  }
+
+  const hasStockDocs = await tx.query(
+    "SELECT 1 FROM inv.stock_document WHERE source_entity_type IN ('KIT_ORDER', 'PRODUCTION_ORDER') AND source_entity_id = $1 AND status <> 'CANCELLED' LIMIT 1",
+    [orderId]
+  );
+  if (hasStockDocs.rowCount) {
+    throw conflict("Không thể xóa lệnh sản xuất đã phát sinh chứng từ kho.");
+  }
+
+  const [hasQc, hasCoa, hasRework, hasGenealogy, hasRetain] = await Promise.all([
+    cur.qc_test_id
+      ? Promise.resolve({ rowCount: 1 })
+      : tx.query("SELECT 1 FROM qms.qc_test WHERE entity_type = 'PRODUCTION_ORDER' AND entity_id = $1 LIMIT 1", [orderId]),
+    tx.query("SELECT 1 FROM kit.coa_certificate WHERE production_order_id = $1 LIMIT 1", [orderId]),
+    tx.query("SELECT 1 FROM kit.rework_order WHERE production_order_id = $1 LIMIT 1", [orderId]),
+    tx.query("SELECT 1 FROM kit.lot_genealogy WHERE production_order_id = $1 LIMIT 1", [orderId]),
+    tx.query("SELECT 1 FROM kit.retain_sample WHERE production_order_id = $1 LIMIT 1", [orderId]),
+  ]);
+  if (hasQc.rowCount || hasCoa.rowCount || hasRework.rowCount || hasGenealogy.rowCount || hasRetain.rowCount) {
+    throw conflict("Không thể xóa lệnh sản xuất đã phát sinh hồ sơ QC, COA hoặc truy xuất lô.");
+  }
+
+  await releaseDemandReservations(tx, actor, "PRODUCTION_ORDER", orderId, auditReason);
+
+  const lotRow = cur.lot_id
+    ? (
+        await tx.query(
+          "SELECT id, code, status, origin_entity_type, origin_entity_id FROM inv.lot WHERE id = $1 FOR UPDATE",
+          [cur.lot_id]
+        )
+      ).rows[0]
+    : null;
+
+  await tx.query("DELETE FROM kit.material_consumption WHERE order_id = $1", [orderId]);
+  await tx.query("DELETE FROM kit.production_step WHERE order_id = $1", [orderId]);
+  await tx.query("DELETE FROM kit.lot_split WHERE production_order_id = $1", [orderId]);
+  await tx.query("DELETE FROM kit.production_order WHERE id = $1", [orderId]);
+
+  let lotFreed = false;
+  if (
+    lotRow &&
+    lotRow.origin_entity_type === "KIT_ORDER" &&
+    lotRow.origin_entity_id === orderId &&
+    lotRow.status === "QUARANTINE"
+  ) {
+    const lotRefs = await tx.query(
+      `SELECT (
+         EXISTS(SELECT 1 FROM inv.stock_ledger WHERE lot_id = $1) OR
+         EXISTS(SELECT 1 FROM inv.stock_balance WHERE lot_id = $1) OR
+         EXISTS(SELECT 1 FROM inv.stock_document_line WHERE lot_id = $1) OR
+         EXISTS(SELECT 1 FROM inv.reservation WHERE lot_id = $1) OR
+         EXISTS(SELECT 1 FROM inv.container WHERE lot_id = $1) OR
+         EXISTS(SELECT 1 FROM qms.qc_test WHERE entity_type = 'LOT' AND entity_id = $1) OR
+         EXISTS(SELECT 1 FROM qms.ncr WHERE lot_id = $1) OR
+         EXISTS(SELECT 1 FROM kit.production_order WHERE lot_id = $1)
+       ) AS has_refs`,
+      [lotRow.id]
+    );
+    if (!lotRefs.rows[0]?.has_refs) {
+      await tx.query("DELETE FROM inv.lot WHERE id = $1", [lotRow.id]);
+      lotFreed = true;
+    }
+  }
+
+  await writeAudit(tx, actor, {
+    entityType: "kit_production_order",
+    entityId: orderId,
+    action: "delete",
+    changes: {
+      deleted: [false, true],
+      code: [cur.code, null],
+      lot_code: [lotRow?.code ?? null, lotFreed ? null : lotRow?.code ?? null],
+      status: [cur.status, null],
+    },
+    reason: auditReason,
+  });
+
+  return {
+    deleted: true,
+    id: orderId,
+    code: cur.code,
+    lot_code: lotRow?.code ?? null,
+    lot_freed: lotFreed,
   };
 }

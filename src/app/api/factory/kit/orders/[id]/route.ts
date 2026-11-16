@@ -2,6 +2,7 @@ import { factoryRoute } from "@/factory/http";
 import { invalid } from "@/factory/core/errors";
 import {
   assignStepOperator,
+  deleteDraftProductionOrder,
   getProductionOrderDetail,
   issueOrderMaterials,
   printOrderLabel,
@@ -78,3 +79,9 @@ export const POST = factoryRoute(async (tx, { actor, params, body }) => {
   }
   throw invalid(`Thao tác lệnh sản xuất không hợp lệ: ${String(b.operation ?? "")}`);
 });
+
+export const DELETE = factoryRoute((tx, { actor, params, body, url }) =>
+  deleteDraftProductionOrder(tx, actor, params.id, {
+    reason: (body as Record<string, unknown>)?.reason ?? url.searchParams.get("reason"),
+  })
+);
