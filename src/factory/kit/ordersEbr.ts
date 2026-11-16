@@ -4234,16 +4234,29 @@ export async function deleteDraftProductionOrder(
     throw conflict("Không thể xóa lệnh sản xuất đã phát sinh chứng từ kho.");
   }
 
-  const [hasQc, hasLotQcResult, hasLotNcr, hasCoa, hasRework, hasGenealogy, hasRetain] = await Promise.all([
-    cur.qc_test_id
-      ? Promise.resolve({ rowCount: 1 })
-      : tx.query("SELECT 1 FROM qms.qc_test WHERE entity_type = 'PRODUCTION_ORDER' AND entity_id = $1 LIMIT 1", [orderId]),
-    cur.lot_id
-      ? tx.query(
-          "SELECT 1 FROM qms.qc_test WHERE entity_type = 'LOT' AND entity_id = $1 AND status IN ('RESULTS_ENTERED', 'REVIEWED') LIMIT 1",
-          [cur.lot_id]
+  const [hasEvaluatedQc, hasLotNcr, hasCoa, hasRework, hasGenealogy, hasRetain] = await Promise.all([
+    tx.query(
+      `SELECT 1
+         FROM qms.qc_test t
+        WHERE (
+          ($2::uuid IS NOT NULL AND t.id = $2::uuid)
+          OR (t.entity_type = 'PRODUCTION_ORDER' AND t.entity_id = $1)
+          OR ($3::uuid IS NOT NULL AND t.entity_type = 'LOT' AND t.entity_id = $3::uuid)
         )
-      : Promise.resolve({ rowCount: 0 }),
+          AND (
+            t.status IN ('RESULTS_ENTERED', 'REVIEWED')
+            OR t.overall_result IS NOT NULL
+            OR t.reviewed_at IS NOT NULL
+            OR EXISTS (SELECT 1 FROM qms.qc_result qr WHERE qr.test_id = t.id)
+            OR EXISTS (SELECT 1 FROM qms.reference_standard_usage u WHERE u.test_id = t.id)
+            OR EXISTS (SELECT 1 FROM kit.coa_certificate c WHERE c.qc_test_id = t.id)
+            OR EXISTS (SELECT 1 FROM kit.stability_timepoint st WHERE st.qc_test_id = t.id)
+            OR EXISTS (SELECT 1 FROM device.device_unit du WHERE du.fqc_test_id = t.id)
+            OR EXISTS (SELECT 1 FROM core.e_signature es WHERE es.entity_id::text = t.id::text)
+          )
+        LIMIT 1`,
+      [orderId, cur.qc_test_id ?? null, cur.lot_id ?? null]
+    ),
     cur.lot_id
       ? tx.query("SELECT 1 FROM qms.ncr WHERE lot_id = $1 LIMIT 1", [cur.lot_id])
       : Promise.resolve({ rowCount: 0 }),
@@ -4253,8 +4266,7 @@ export async function deleteDraftProductionOrder(
     tx.query("SELECT 1 FROM kit.retain_sample WHERE production_order_id = $1 LIMIT 1", [orderId]),
   ]);
   if (
-    hasQc.rowCount ||
-    hasLotQcResult.rowCount ||
+    hasEvaluatedQc.rowCount ||
     hasLotNcr.rowCount ||
     hasCoa.rowCount ||
     hasRework.rowCount ||
@@ -4266,6 +4278,26 @@ export async function deleteDraftProductionOrder(
 
   await releaseDemandReservations(tx, actor, "PRODUCTION_ORDER", orderId, auditReason);
 
+  const prematureOrderTests = (
+    await tx.query(
+      `SELECT t.id
+         FROM qms.qc_test t
+        WHERE (
+          ($2::uuid IS NOT NULL AND t.id = $2::uuid)
+          OR (t.entity_type = 'PRODUCTION_ORDER' AND t.entity_id = $1)
+        )
+          AND t.status IN ('PLANNED', 'IN_PROGRESS', 'CANCELLED')
+          AND NOT EXISTS (SELECT 1 FROM kit.production_order po2 WHERE po2.qc_test_id = t.id AND po2.id <> $1)
+          AND NOT EXISTS (SELECT 1 FROM qms.qc_result qr WHERE qr.test_id = t.id)
+          AND NOT EXISTS (SELECT 1 FROM qms.reference_standard_usage u WHERE u.test_id = t.id)
+          AND NOT EXISTS (SELECT 1 FROM kit.coa_certificate c WHERE c.qc_test_id = t.id)
+          AND NOT EXISTS (SELECT 1 FROM kit.stability_timepoint st WHERE st.qc_test_id = t.id)
+          AND NOT EXISTS (SELECT 1 FROM device.device_unit du WHERE du.fqc_test_id = t.id)
+          AND NOT EXISTS (SELECT 1 FROM core.e_signature es WHERE es.entity_id::text = t.id::text)`,
+      [orderId, cur.qc_test_id ?? null]
+    )
+  ).rows.map((r: { id: string }) => r.id);
+
   const lotRow = cur.lot_id
     ? (
         await tx.query(
@@ -4275,10 +4307,20 @@ export async function deleteDraftProductionOrder(
       ).rows[0]
     : null;
 
+  if (cur.qc_test_id) {
+    await tx.query("UPDATE kit.production_order SET qc_test_id = NULL WHERE id = $1", [orderId]);
+  }
   await tx.query("DELETE FROM kit.material_consumption WHERE order_id = $1", [orderId]);
   await tx.query("DELETE FROM kit.production_step WHERE order_id = $1", [orderId]);
   await tx.query("DELETE FROM kit.lot_split WHERE production_order_id = $1", [orderId]);
   await tx.query("DELETE FROM kit.production_order WHERE id = $1", [orderId]);
+
+  if (prematureOrderTests.length > 0) {
+    await tx.query("UPDATE qms.qc_test SET retest_of_id = NULL WHERE retest_of_id = ANY($1::uuid[])", [
+      prematureOrderTests,
+    ]);
+    await tx.query("DELETE FROM qms.qc_test WHERE id = ANY($1::uuid[])", [prematureOrderTests]);
+  }
 
   let lotFreed = false;
   if (

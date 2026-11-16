@@ -132,6 +132,7 @@ export function OrdersEbrView({
   const [deletingDraftOrder, setDeletingDraftOrder] = useState<any | null>(null);
   const [deleteDraftReason, setDeleteDraftReason] = useState("");
   const [deletingDraft, setDeletingDraft] = useState(false);
+  const [deleteDraftError, setDeleteDraftError] = useState<unknown>(null);
   const [showSplitForm, setShowSplitForm] = useState(false);
   const [showReworkForm, setShowReworkForm] = useState(false);
   const [dailyShiftFilter, setDailyShiftFilter] = useState<string>("ALL");
@@ -1062,6 +1063,7 @@ export function OrdersEbrView({
     e.preventDefault();
     if (!deletingDraftOrder) return;
     setError(null);
+    setDeleteDraftError(null);
     setDeletingDraft(true);
     const targetId = deletingDraftOrder.id;
     try {
@@ -1070,6 +1072,7 @@ export function OrdersEbrView({
         json: { reason: deleteDraftReason.trim() || "Xóa lệnh sản xuất bản nháp" },
       });
       setDeletingDraftOrder(null);
+      setDeleteDraftError(null);
       if (selectedOrderId === targetId) {
         setSelectedOrderId("");
         setDetail(null);
@@ -1077,6 +1080,7 @@ export function OrdersEbrView({
       await loadOrders();
       onRefreshOptions();
     } catch (err) {
+      setDeleteDraftError(err);
       setError(err);
     } finally {
       setDeletingDraft(false);
@@ -1654,6 +1658,7 @@ export function OrdersEbrView({
                                 ev.stopPropagation();
                                 setDeletingDraftOrder(o);
                                 setDeleteDraftReason("");
+                                setDeleteDraftError(null);
                               }}
                             >
                               🗑️ Xóa
@@ -1684,6 +1689,7 @@ export function OrdersEbrView({
                       onClick={() => {
                         setDeletingDraftOrder(detail.order);
                         setDeleteDraftReason("");
+                        setDeleteDraftError(null);
                       }}
                     >
                       🗑️ Xóa lệnh nháp
@@ -3724,7 +3730,12 @@ export function OrdersEbrView({
       {deletingDraftOrder && (
         <div
           className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-[1px] flex items-center justify-center p-4"
-          onClick={() => !deletingDraft && setDeletingDraftOrder(null)}
+          onClick={() => {
+            if (!deletingDraft) {
+              setDeletingDraftOrder(null);
+              setDeleteDraftError(null);
+            }
+          }}
         >
           <form
             className="w-full max-w-lg rounded-2xl border border-rose-200 dark:border-rose-900 bg-white dark:bg-slate-900 p-5 shadow-xl space-y-3"
@@ -3744,6 +3755,7 @@ export function OrdersEbrView({
                 Vì lệnh đang ở trạng thái Bản nháp (chưa xác nhận / chưa xuất kho), hệ thống sẽ xóa bản nháp, giải phóng mã lô dự kiến để có thể dùng lại và ghi Nhật ký kiểm toán.
               </p>
             </div>
+            <ErrorNote error={deleteDraftError} />
             <Field label="Lý do xóa (ghi Nhật ký kiểm toán)">
               <input
                 className={inputClass}
@@ -3754,7 +3766,15 @@ export function OrdersEbrView({
               />
             </Field>
             <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="ghost" disabled={deletingDraft} onClick={() => setDeletingDraftOrder(null)}>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={deletingDraft}
+                onClick={() => {
+                  setDeletingDraftOrder(null);
+                  setDeleteDraftError(null);
+                }}
+              >
                 Hủy
               </Button>
               <Button type="submit" variant="danger" disabled={deletingDraft}>

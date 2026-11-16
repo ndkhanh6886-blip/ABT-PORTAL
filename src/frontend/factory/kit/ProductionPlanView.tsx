@@ -170,6 +170,7 @@ export function ProductionPlanView({
   const [deletingOrder, setDeletingOrder] = useState<PlanOrder | null>(null);
   const [deleteReason, setDeleteReason] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [deleteModalError, setDeleteModalError] = useState<unknown>(null);
   const [expandedStepsIds, setExpandedStepsIds] = useState<Record<string, boolean>>({});
   const [hoveredStep, setHoveredStep] = useState<{ orderId: string; stepId: string } | null>(null);
 
@@ -276,6 +277,7 @@ export function ProductionPlanView({
     e.preventDefault();
     if (!deletingOrder) return;
     setError(null);
+    setDeleteModalError(null);
     setDeleting(true);
     const targetId = deletingOrder.id;
     try {
@@ -284,10 +286,12 @@ export function ProductionPlanView({
         json: { reason: deleteReason.trim() || "Xóa lệnh sản xuất bản nháp" },
       });
       setDeletingOrder(null);
+      setDeleteModalError(null);
       if (editingId === targetId) setEditingId("");
       await load();
       onOrderDeleted?.(targetId);
     } catch (err) {
+      setDeleteModalError(err);
       setError(err);
     } finally {
       setDeleting(false);
@@ -686,6 +690,7 @@ export function ProductionPlanView({
                             onClick={() => {
                               setDeletingOrder(o);
                               setDeleteReason("");
+                              setDeleteModalError(null);
                             }}
                           >
                             🗑️ Xóa lệnh nháp
@@ -797,7 +802,12 @@ export function ProductionPlanView({
       {deletingOrder && (
         <div
           className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-[1px] flex items-center justify-center p-4"
-          onClick={() => !deleting && setDeletingOrder(null)}
+          onClick={() => {
+            if (!deleting) {
+              setDeletingOrder(null);
+              setDeleteModalError(null);
+            }
+          }}
         >
           <form
             className="w-full max-w-lg rounded-2xl border border-rose-200 dark:border-rose-900 bg-white dark:bg-slate-900 p-5 shadow-xl space-y-3"
@@ -816,6 +826,7 @@ export function ProductionPlanView({
                 Vì lệnh chưa xác nhận / chưa xuất kho, thao tác này sẽ xóa bản nháp, giải phóng mã lô dự kiến để có thể cấp lại{deletingOrder.kd_po_code ? ` và trả dòng PO ${deletingOrder.kd_po_code} về danh sách chờ lập kế hoạch` : ""}, đồng thời ghi Nhật ký kiểm toán.
               </p>
             </div>
+            <ErrorNote error={deleteModalError} />
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 space-y-1">
               <span>Lý do xóa (ghi Nhật ký kiểm toán)</span>
               <input
@@ -827,7 +838,15 @@ export function ProductionPlanView({
               />
             </label>
             <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="ghost" disabled={deleting} onClick={() => setDeletingOrder(null)}>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={deleting}
+                onClick={() => {
+                  setDeletingOrder(null);
+                  setDeleteModalError(null);
+                }}
+              >
                 Hủy
               </Button>
               <Button type="submit" variant="danger" disabled={deleting}>

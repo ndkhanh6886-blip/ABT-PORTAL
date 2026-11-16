@@ -282,6 +282,12 @@ export async function getQaOpsDashboard(tx: Tx, actor: AuthzActor) {
          FROM inv.lot l
          JOIN master.item i ON i.id = l.item_id
         WHERE l.status IN ('QUARANTINE', 'PENDING_QC', 'RELEASED')
+          AND NOT EXISTS (
+            SELECT 1 FROM kit.production_order po
+             WHERE po.lot_id = l.id
+               AND l.origin_entity_type = 'KIT_ORDER'
+               AND po.status IN ('DRAFT', 'CANCELLED')
+          )
         ORDER BY CASE WHEN l.status IN ('QUARANTINE', 'PENDING_QC') THEN 0 ELSE 1 END, l.created_at DESC
         LIMIT 150`
     )
@@ -430,6 +436,24 @@ const receiveLotQcSchema = z.object({
  * - Transitions the lot from `QUARANTINE` to `PENDING_QC` if needed
  * - Creates and returns the `qms.qc_test`
  */
+/** Guards against receiving QC tests or releasing pre-allocated lots of DRAFT/CANCELLED Kit orders. */
+async function assertLotNotDraftKitOrder(
+  tx: Tx,
+  lot: { id: string; code: string; origin_entity_type?: string | null },
+  actionLabel: string
+) {
+  if (lot.origin_entity_type !== "KIT_ORDER") return;
+  const draftPo = await tx.query(
+    "SELECT code FROM kit.production_order WHERE lot_id = $1 AND status IN ('DRAFT', 'CANCELLED') LIMIT 1",
+    [lot.id]
+  );
+  if (draftPo.rowCount) {
+    throw invalid(
+      `Lô ${lot.code} thuộc Lệnh sản xuất ${draftPo.rows[0].code} đang ở trạng thái Bản nháp hoặc Đã hủy — chưa thể ${actionLabel}.`
+    );
+  }
+}
+
 export async function receiveAndCreateQcTest(tx: Tx, actor: AuthzActor, input: unknown) {
   await ensureQaOpsSchema(tx);
   await authorize(tx, actor, "qms.qc.analyze");
@@ -445,6 +469,8 @@ export async function receiveAndCreateQcTest(tx: Tx, actor: AuthzActor, input: u
     )
   ).rows[0];
   if (!lot) throw notFound("lô hàng");
+
+  await assertLotNotDraftKitOrder(tx, lot, "tiếp nhận và lập phiếu QC");
 
   // Check if an open test already exists for this lot (either LOT or linked PRODUCTION_ORDER)
   const existingOpen = (
@@ -988,6 +1014,8 @@ export async function releaseLotFromQcTest(
     )
   ).rows[0];
   if (!lot) throw notFound("lô hàng");
+
+  await assertLotNotDraftKitOrder(tx, lot, "giải phóng lô");
 
   if (lot.status !== "RELEASED") {
     await tx.query(

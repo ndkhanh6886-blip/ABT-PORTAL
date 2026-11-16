@@ -47,6 +47,7 @@ import {
 } from "../qualityTrace";
 import { lotMachine } from "../../inv/lots";
 import { ncrMachine } from "../../qms/ncr";
+import { receiveAndCreateQcTest } from "../../qms/qaOps";
 import { createQcTest } from "../../qms/qcTests";
 import { approveSpec, createSpecDraft, specMachine } from "../../qms/specs";
 import "../../modules";
@@ -1371,7 +1372,7 @@ describe("Phase 4b — Module Phòng Sản xuất Kit (kit schema)", () => {
     );
     expect(draftOrder.status).toBe("DRAFT");
 
-    await grant(operator, ["qms.spec.manage", "inv.lot.sample"]);
+    await grant(operator, ["qms.spec.manage", "inv.lot.sample", "qms.qc.analyze"]);
     await grant(checker, ["qms.spec.approve"]);
     const spec = await withTransaction((tx) =>
       createSpecDraft(tx, operator, {
@@ -1410,19 +1411,25 @@ describe("Phase 4b — Module Phòng Sản xuất Kit (kit schema)", () => {
       details: [{ code: "DRAFT_KIT_ORDER" }],
     });
 
-    // 1c. Simulate legacy corrupted state on a DRAFT order (unsigned IN_PROGRESS/WAITING_QC step + premature PENDING_QC lot & PLANNED test)
+    await expect(
+      withTransaction((tx) => receiveAndCreateQcTest(tx, operator, { lot_id: draftOrder.lot_id! }))
+    ).rejects.toMatchObject({ code: "INVALID" });
+
+    // 1c. Simulate legacy corrupted state on a DRAFT order (unsigned IN_PROGRESS/WAITING_QC step + premature PENDING_QC lot, PLANNED test & cur.qc_test_id)
     const legacyQcTest = await withTransaction(async (tx) => {
       await tx.query(
         "UPDATE kit.production_step SET status = 'IN_PROGRESS', qc_gate_status = 'WAITING_QC' WHERE id = $1",
         [draftStep.id]
       );
       await tx.query("UPDATE inv.lot SET status = 'PENDING_QC' WHERE id = $1", [draftOrder.lot_id]);
-      return createQcTest(tx, operator, {
+      const t = await createQcTest(tx, operator, {
         entity_type: "LOT",
         entity_id: draftOrder.lot_id!,
         spec_id: spec.id,
         test_kind: "RELEASE",
       });
+      await tx.query("UPDATE kit.production_order SET qc_test_id = $2 WHERE id = $1", [draftOrder.id, t.id]);
+      return t;
     });
 
     // 2. Delete draft production order -> deletes order, premature flags/PLANNED test, and releases lot code
