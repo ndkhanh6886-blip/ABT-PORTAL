@@ -3,16 +3,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import {
-  isPcrKitProduct,
-  kitSpecOf,
-  hasKitSpec,
-  withPackagingNote,
-  PCR_TUBE_CODES,
-  type PackagingForm,
-  type IcForm,
-  type TubeType,
-} from "@/frontend/utils/packagingForm";
-import {
   ShoppingCart,
   Building2,
   Plus,
@@ -530,9 +520,98 @@ export const ProcurementModule: React.FC = () => {
     ]
   });
 
-  // Full merged product catalog combining products + allSupplierProducts
+  // Full merged product catalog combining products + allSupplierProducts + Make-to-order Oligo/Custom templates
   const mergedCatalogProducts = useMemo(() => {
     const map = new Map<string, any>();
+    const defaultCustomTemplates = [
+      {
+        id: "tpl-oligo-primer",
+        code: "OLIGO-PRIMER",
+        parent_code: "",
+        name: "Đoạn mồi Oligo Primer tổng hợp theo trình tự (5'→3')",
+        specification: "Nhập trình tự 5'-...-3' | Scale (25/50/100 nmol) | Tinh sạch (DSL/HPLC/PAGE)",
+        unit: "Tube",
+        cost_price: 120000,
+        brand: "IDT / Macrogen / PhuSa",
+        manufacturer: "IDT / Macrogen / PhuSa",
+        storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
+      },
+      {
+        id: "tpl-oligo-probe",
+        code: "OLIGO-PROBE",
+        parent_code: "",
+        name: "Đầu dò huỳnh quang TaqMan / Real-time PCR Probe theo trình tự (5'→3')",
+        specification: "Nhập trình tự 5'[Reporter]-...-[Quencher]3' (VD: FAM-BHQ1 / HEX-BHQ1 / CY5-BHQ2 | HPLC)",
+        unit: "Tube",
+        cost_price: 950000,
+        brand: "IDT / Macrogen / PhuSa",
+        manufacturer: "IDT / Macrogen / PhuSa",
+        storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
+      },
+      {
+        id: "tpl-oligo-base",
+        code: "OLIGO-BASE",
+        parent_code: "",
+        name: "Tổng hợp chuỗi Nucleotide chuẩn theo trình tự (5'→3')",
+        specification: "[Tên trình tự] 5'-...-3' (Số base | Scale 25/50/100 nmol)",
+        unit: "Base",
+        cost_price: 5500,
+        brand: "IDT / Macrogen / PhuSa",
+        manufacturer: "IDT / Macrogen / PhuSa",
+        storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
+      },
+      {
+        id: "tpl-oligo-mod",
+        code: "OLIGO-MOD",
+        parent_code: "",
+        name: "Đánh dấu biến đổi Oligo (5'/3'/Internal Modification: FAM, HEX, VIC, CY5, BHQ1/2, MGB...)",
+        specification: "[Tên trình tự] Nhãn biến đổi 5'/3' (VD: 5'-FAM / 3'-BHQ1)",
+        unit: "Nhãn",
+        cost_price: 450000,
+        brand: "IDT / Macrogen / PhuSa",
+        manufacturer: "IDT / Macrogen / PhuSa",
+        storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
+      },
+      {
+        id: "tpl-oligo-pur",
+        code: "OLIGO-PUR",
+        parent_code: "",
+        name: "Dịch vụ tinh sạch Oligo chuyên sâu (HPLC / PAGE / Cartridge / Desalt)",
+        specification: "[Tên trình tự] Tinh sạch: HPLC / PAGE / Cartridge / Desalt",
+        unit: "Tube",
+        cost_price: 200000,
+        brand: "IDT / Macrogen / PhuSa",
+        manufacturer: "IDT / Macrogen / PhuSa",
+        storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
+      },
+      {
+        id: "tpl-oligo-svc",
+        code: "OLIGO-SVC",
+        parent_code: "",
+        name: "Dịch vụ điều chế Oligo (Đông khô / Pha sẵn chuẩn 100 µM TE Buffer / Chia aliquot)",
+        specification: "[Tên trình tự] Dịch vụ điều chế: Đông khô / Pha sẵn chuẩn 100 µM",
+        unit: "Tube",
+        cost_price: 80000,
+        brand: "IDT / Macrogen / PhuSa",
+        manufacturer: "IDT / Macrogen / PhuSa",
+        storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
+      },
+      {
+        id: "tpl-custom-order",
+        code: "CUSTOM-ORDER",
+        parent_code: "",
+        name: "Hàng hóa / Sinh phẩm đặt riêng theo thông số đặc thù (Make-to-Order)",
+        specification: "Nhập quy cách / đặc tính kỹ thuật riêng của lần đặt hàng này",
+        unit: "Bộ",
+        cost_price: 0,
+        brand: "Theo đơn đặt",
+        manufacturer: "Theo đơn đặt",
+        storage_condition: "2-8°C (Kho mát - Hóa chất, Kháng thể)"
+      }
+    ];
+    for (const tpl of defaultCustomTemplates) {
+      map.set(tpl.code, tpl);
+    }
     for (const p of products) {
       const codeKey = String(p.code || "").trim().toUpperCase();
       if (!codeKey) continue;
@@ -1550,15 +1629,7 @@ export const ProcurementModule: React.FC = () => {
       return;
     }
     const targetStatusUpper = String(poForm.status || "PENDING").toUpperCase();
-    const selectedSupObj = suppliers.find(
-      (s: any) => Number(s.id) === Number(poForm.supplier_id) || s.name === poForm.supplier_name
-    );
-    const isInternalPOSupplier = Boolean(
-      selectedSupObj?.is_internal ||
-      selectedSupObj?.factory_unit ||
-      ["Phòng Tổng hợp Oligo", "Phòng Sản xuất Kit", "Phòng Kỹ thuật - Thiết bị"].includes(String(poForm.supplier_name || "").trim())
-    );
-    if (!["DRAFT", "PENDING", "CANCELLED"].includes(targetStatusUpper) && !isInternalPOSupplier) {
+    if (!["DRAFT", "PENDING", "CANCELLED"].includes(targetStatusUpper)) {
       const zeroPriceItems = (poForm.items || []).filter((it: any) => !(roundPrice3(it?.unit_price) > 0));
       if (zeroPriceItems.length > 0) {
         const missingList = zeroPriceItems.map((it: any) => it?.product_code || it?.product_name || "SP").join(", ");
@@ -1598,13 +1669,6 @@ export const ProcurementModule: React.FC = () => {
       if (data.success) {
         setIsPOModalOpen(false);
         fetchData();
-        if (data.internal_order?.synced) {
-          alert(
-            `✅ Đã lưu PO ${data.po_code} và tự động chuyển đến Đơn hàng nội bộ${
-              data.internal_order.factory_order_code ? ` (${data.internal_order.factory_order_code})` : ""
-            } của ${data.internal_order.department_name || poForm.supplier_name}!`
-          );
-        }
       } else if (res.status === 409) {
         alert(`${data.error || "Đơn PO vừa được người khác cập nhật."}
 
@@ -3100,44 +3164,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
           return keywords.some(kw => hay.includes(kw));
         });
 
-      const matchInternalUnit = (unit: "OLIGO" | "KIT" | "DEVICE") =>
-        suppliers.find((s: any) => s.factory_unit === unit);
-
-      if (
-        pCode.startsWith("oligo-") ||
-        pCode.startsWith("oli-") ||
-        pCode.startsWith("primer-") ||
-        pCode.startsWith("probe-") ||
-        combined.includes("tong hop oligo") ||
-        combined.includes("oligo primer") ||
-        combined.includes("taqman")
-      ) {
-        matchedSup = matchInternalUnit("OLIGO") || matchSupplierByKeyword(["phong tong hop oligo", "oligo"]);
-      } else if (
-        pCode.startsWith("eq-") ||
-        pCode.startsWith("dev-") ||
-        pCode.startsWith("abt-m") ||
-        ((combined.includes("abt") || combined.includes("toppure")) &&
-          (combined.includes("may ") || combined.includes("thiet bi")))
-      ) {
-        matchedSup = matchInternalUnit("DEVICE") || matchSupplierByKeyword(["phong ky thuat", "thiet bi"]);
-      } else if (
-        combined.includes("abt") ||
-        combined.includes("toppure") ||
-        combined.includes("topspec") ||
-        combined.includes("topsensi") ||
-        pCode.startsWith("sq") ||
-        pCode.startsWith("mq") ||
-        pCode.startsWith("sp") ||
-        pCode.startsWith("mp") ||
-        pCode.startsWith("dd-") ||
-        pCode.startsWith("hi-") ||
-        pCode.startsWith("eh-") ||
-        pCode.startsWith("ab-") ||
-        pCode.startsWith("vk-") ||
-        pCode.startsWith("kit-")
-      ) {
-        matchedSup = matchInternalUnit("KIT") || matchSupplierByKeyword(["phong san xuat kit", "abt", "toppure"]);
+      if (combined.includes("abt") || combined.includes("toppure") || combined.includes("topspec") || pCode.startsWith("dd-") || pCode.startsWith("hi-") || pCode.startsWith("eh-") || pCode.startsWith("ab-") || pCode.startsWith("vk-")) {
+        matchedSup = matchSupplierByKeyword(["abt", " viet nam", "toppure"]);
       } else if (combined.includes("ssi") || pCode.startsWith("1110") || pCode.startsWith("84") || combined.includes("antisera") || combined.includes("salmonella")) {
         matchedSup = matchSupplierByKeyword(["ssi", "diagnostica"]);
       } else if (combined.includes("liferiver") || pCode.startsWith("hd-") || pCode.startsWith("od-") || pCode.startsWith("rd-") || pCode.startsWith("td-") || pCode.startsWith("zd-")) {
@@ -3239,20 +3267,14 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       const resolved = resolveItemSupplierAndPrice(it);
       const price = roundPrice3(resolved.unitPrice > 0 ? resolved.unitPrice : Number(it.estimated_price || it.unit_price || it.price || 0));
       const qty = Number(it.quantity) || 1;
-      const ks = kitSpecOf(it);
-      const specText = hasKitSpec(ks) ? withPackagingNote(it.specification || "", ks) : (it.specification || "");
-      const noteText = hasKitSpec(ks) ? withPackagingNote(it.notes || "", ks) : (it.notes || "");
-      const nameWithSpec = specText && !it.product_name?.includes(specText) 
-        ? `${it.product_name} (${specText})` 
+      const nameWithSpec = it.specification && !it.product_name?.includes(it.specification) 
+        ? `${it.product_name} (${it.specification})` 
         : (it.product_name || it.product_code);
       poItems.push({
         product_code: it.product_code,
         product_name: nameWithSpec,
-        specification: specText,
-        notes: noteText,
-        packagingForm: ks.packagingForm,
-        icForm: ks.icForm,
-        tubeType: ks.tubeType,
+        specification: it.specification || "",
+        notes: it.notes || "",
         source_pr_code: pr.workflow_code || undefined,
         is_stock: !forCustomer,
         target_customer_name: forCustomer ? pr.customer_name : undefined,
@@ -3411,18 +3433,12 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             const forCustomer = isCustomerPR(pr);
             const prOrderCode = soCodeIn(pr.title) || soCodeIn(pr.description);
             const qty = it.quantity || 1;
-            const ks = kitSpecOf(it);
-            const specText = hasKitSpec(ks) ? withPackagingNote(it.specification || "", ks) : (it.specification || "");
-            const noteText = hasKitSpec(ks) ? withPackagingNote(it.notes || "", ks) : (it.notes || "");
-            const nameWithSpec = specText ? `${it.product_name} (${specText})` : it.product_name;
+            const nameWithSpec = it.specification ? `${it.product_name} (${it.specification})` : it.product_name;
             combinedItems.push({
               product_code: it.product_code,
               product_name: nameWithSpec,
-              specification: specText,
-              notes: noteText,
-              packagingForm: ks.packagingForm,
-              icForm: ks.icForm,
-              tubeType: ks.tubeType,
+              specification: it.specification || "",
+              notes: it.notes || "",
               source_pr_code: pr.workflow_code || undefined,
               is_stock: !forCustomer,
               target_customer_name: forCustomer ? pr.customer_name : undefined,
@@ -3456,12 +3472,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       const data = await res.json();
       if (res.ok && data.success) {
         alert(
-          `Đã gom thành công ${combinedItems.length} mặt hàng (từ ${involvedPRKeys.size} đề xuất PR) vào Đơn PO tổng ${data.po_code}!` +
-            (data.internal_order?.synced
-              ? `\n\n🏭 Đã tự động chuyển sang Đơn hàng nội bộ${
-                  data.internal_order.factory_order_code ? ` (${data.internal_order.factory_order_code})` : ""
-                } cho ${data.internal_order.department_name || targetSupplier.name}!`
-              : "")
+          `Đã gom thành công ${combinedItems.length} mặt hàng (từ ${involvedPRKeys.size} đề xuất PR) vào Đơn PO tổng ${data.po_code}!`
         );
         setIsConsolidateModalOpen(false);
         setSelectedItemKeysForConsolidate([]);
@@ -4338,21 +4349,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 <span className="font-bold text-slate-900 dark:text-white text-xs truncate">
                                   {po.supplier_name || "Chưa xác định"}
                                 </span>
-                                {(po.is_internal_po || supp?.is_internal) && (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      window.location.href = "/?tab=factory_orders";
-                                    }}
-                                    title="PO Nhà cung cấp nội bộ — Bấm để mở phân hệ Đơn Nội Bộ (Khối Kỹ thuật)"
-                                    className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-700 hover:bg-indigo-200 dark:hover:bg-indigo-900 transition-colors cursor-pointer shrink-0 inline-flex items-center gap-1"
-                                  >
-                                    <span>🏭 Đơn hàng nội bộ{po.factory_order_code ? `: ${po.factory_order_code}` : ""}</span>
-                                    <span>→ {po.factory_unit_label || supp?.factory_unit_label || po.supplier_name}</span>
-                                  </button>
-                                )}
-                                {supp?.short_name && !supp?.is_internal && (
+                                {supp?.short_name && (
                                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-50 dark:bg-orange-950/50 text-orange-700 dark:text-orange-300 border border-orange-200 dark:border-orange-800/60 shrink-0">
                                     {supp.short_name}
                                   </span>
@@ -5574,77 +5571,6 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             </div>
           </div>
 
-          {/* 3 Nhà cung cấp nội bộ mặc định của Phòng Cung ứng Khối Kinh doanh */}
-          <div className="p-3.5 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/80 space-y-2.5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-xs font-bold text-indigo-900 dark:text-indigo-200">
-                <span>🏭 3 Nhà Cung Cấp Nội Bộ Mặc Định (Phòng Cung ứng Khối Kinh doanh → Đơn hàng nội bộ Khối Kỹ thuật)</span>
-              </div>
-              <span className="text-[11px] text-indigo-700 dark:text-indigo-300 font-medium">
-                Khi chọn 1 trong 3 phòng ban dưới đây trên PO, đơn hàng sẽ tự động chuyển đến <strong>Đơn hàng nội bộ</strong> của đúng phòng ban liên quan
-              </span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
-              {[
-                {
-                  unit: "OLIGO",
-                  icon: "🧬",
-                  title: "Phòng Tổng hợp Oligo",
-                  code: "NCC-NB-OLIGO",
-                  desc: "Tổng hợp Oligo (Primer, Probe, Amplicon & dịch vụ tinh sạch/điều chế) → Chuyển đến Đơn hàng nội bộ Phòng Tổng hợp Oligo",
-                },
-                {
-                  unit: "KIT",
-                  icon: "🧪",
-                  title: "Phòng Sản xuất Kit",
-                  code: "NCC-NB-KIT",
-                  desc: "Cung cấp các Kit PCR, Kit tách chiết và hóa chất, vật tư do Phòng sản xuất cung cấp → Chuyển đến Đơn hàng nội bộ Phòng Sản xuất Kit",
-                },
-                {
-                  unit: "DEVICE",
-                  icon: "⚙️",
-                  title: "Phòng Kỹ thuật - Thiết bị",
-                  code: "NCC-NB-DEVICE",
-                  desc: "Cung cấp thiết bị chẩn đoán, máy PCR, máy tách chiết & phụ kiện → Chuyển đến Đơn hàng nội bộ Phòng Kỹ thuật - Thiết bị",
-                },
-              ].map((card) => {
-                const matchedInternal = suppliers.find((s: any) => s.factory_unit === card.unit || s.name === card.title);
-                return (
-                  <div
-                    key={card.unit}
-                    className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-indigo-200/80 dark:border-indigo-800/70 flex flex-col justify-between gap-1.5"
-                  >
-                    <div>
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-bold text-slate-900 dark:text-white">
-                          {card.icon} {matchedInternal?.name || card.title}
-                        </span>
-                        <span className="px-1.5 py-0.5 rounded font-mono text-[10px] font-bold bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-700">
-                          {matchedInternal?.supplier_code || card.code}
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">{card.desc}</p>
-                    </div>
-                    <div className="flex items-center justify-between pt-1.5 border-t border-slate-100 dark:border-slate-800 text-[11px]">
-                      <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
-                        ✓ Tự động liên kết Đơn nội bộ ({matchedInternal?.order_count || 0} PO)
-                      </span>
-                      {matchedInternal && (
-                        <button
-                          type="button"
-                          onClick={() => handleOpenSupplierCatalog(matchedInternal)}
-                          className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline cursor-pointer"
-                        >
-                          Xem {matchedInternal.product_count || 0} SP →
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
@@ -5666,15 +5592,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                     <td className="py-3.5 px-4">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-bold text-slate-900 dark:text-white text-sm">{s.name}</span>
-                        {s.is_internal && (
-                          <span
-                            className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-700"
-                            title="Nhà cung cấp nội bộ mặc định — Khi lập PO chọn phòng ban này, đơn hàng tự động chuyển sang Đơn hàng nội bộ của đúng phòng ban"
-                          >
-                            🏭 NCC Nội bộ Mặc định → Đơn hàng nội bộ ({s.factory_unit_label || s.name})
-                          </span>
-                        )}
-                        {s.short_name && !s.is_internal && (
+                        {s.short_name && (
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-orange-100 dark:bg-orange-950/80 text-orange-700 dark:text-orange-300 border border-orange-300 dark:border-orange-800" title="Tên viết tắt trên báo giá">
                             🏷️ {s.short_name}
                           </span>
@@ -6431,38 +6349,12 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                     {!suppliers.some(s => s.name === poForm.supplier_name) && poForm.supplier_name && (
                       <option value={poForm.supplier_name}>{poForm.supplier_name}</option>
                     )}
-                    {suppliers.some((s: any) => s.is_internal) && (
-                      <optgroup label="🏭 3 PHÒNG BAN CUNG CẤP NỘI BỘ MẶC ĐỊNH (Tự động chuyển sang Đơn hàng nội bộ)">
-                        {suppliers
-                          .filter((s: any) => s.is_internal)
-                          .map((s: any) => (
-                            <option key={s.id} value={s.name}>
-                              🏭 [Nội bộ] {s.name} → Đơn hàng nội bộ ({s.factory_unit_label || s.name})
-                            </option>
-                          ))}
-                      </optgroup>
-                    )}
-                    <optgroup label="🏢 NHÀ CUNG CẤP / HÃNG SẢN XUẤT BÊN NGOÀI">
-                      {suppliers
-                        .filter((s: any) => !s.is_internal)
-                        .map((s: any) => (
-                          <option key={s.id} value={s.name}>
-                            {s.name} ({s.payment_terms || "30 ngày"})
-                          </option>
-                        ))}
-                    </optgroup>
+                    {suppliers.map((s) => (
+                      <option key={s.id} value={s.name}>
+                        {s.name} ({s.payment_terms || "30 ngày"})
+                      </option>
+                    ))}
                   </select>
-                  {(() => {
-                    const selSup = suppliers.find((s: any) => s.name === poForm.supplier_name);
-                    if (!selSup?.is_internal) return null;
-                    return (
-                      <div className="mt-1 px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/70 border border-indigo-200 dark:border-indigo-800 text-[11px] text-indigo-700 dark:text-indigo-300 font-semibold flex items-center justify-between gap-2">
-                        <span>
-                          🏭 Khi lưu PO này, hệ thống sẽ tự động chuyển đơn đến <strong>Đơn hàng nội bộ</strong> của <strong>{selSup.factory_unit_label || selSup.name}</strong>.
-                        </span>
-                      </div>
-                    );
-                  })()}
                 </div>
                 <div>
                   <label className="block font-bold text-slate-500 dark:text-slate-400 mb-0.5 text-[10px] uppercase">Ngày lập</label>
@@ -6673,74 +6565,6 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 </span>
                               )}
                             </div>
-                            {(() => {
-                              const matchedProd = mergedCatalogProducts.find((pp: any) => pp.code === item.product_code) || products.find((pp: any) => pp.code === item.product_code) || { code: item.product_code };
-                              if (!isPcrKitProduct(matchedProd)) return null;
-                              const ks = kitSpecOf(item);
-                              const setPoKitSpec = (patch: Partial<{ packagingForm?: PackagingForm; icForm?: IcForm; tubeType?: TubeType }>) => {
-                                const next = { ...ks, ...patch };
-                                updatePOLine(idx, {
-                                  packagingForm: next.packagingForm,
-                                  icForm: next.icForm,
-                                  tubeType: next.tubeType,
-                                  specification: withPackagingNote(item.specification || "", next),
-                                  notes: withPackagingNote(item.notes || "", next),
-                                });
-                              };
-                              return (
-                                <div className="mt-1 p-1.5 rounded-lg bg-sky-50/70 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800/80 space-y-1">
-                                  <div className="text-[10px] font-bold text-sky-800 dark:text-sky-300 flex items-center gap-1">
-                                    <span>🧬 Quy cách Kit PCR (đồng bộ sang Lệnh SX):</span>
-                                  </div>
-                                  <div className="grid grid-cols-3 gap-1">
-                                    <select
-                                      value={ks.packagingForm || ""}
-                                      onChange={(e) => setPoKitSpec({ packagingForm: (e.target.value as PackagingForm) || undefined })}
-                                      className={`px-1.5 py-0.5 text-[10px] font-bold rounded border cursor-pointer ${
-                                        ks.packagingForm === "PREALIQUOT"
-                                          ? "bg-amber-50 text-amber-800 border-amber-300"
-                                          : ks.packagingForm === "WITH_ACCESSORIES"
-                                            ? "bg-emerald-50 text-emerald-800 border-emerald-300"
-                                            : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-300"
-                                      }`}
-                                    >
-                                      <option value="">-- Chia sẵn? --</option>
-                                      <option value="PREALIQUOT">Chia sẵn (.C)</option>
-                                      <option value="WITH_ACCESSORIES">Không chia sẵn</option>
-                                    </select>
-                                    <select
-                                      value={ks.icForm || ""}
-                                      onChange={(e) => setPoKitSpec({ icForm: (e.target.value as IcForm) || undefined })}
-                                      className={`px-1.5 py-0.5 text-[10px] font-bold rounded border cursor-pointer ${
-                                        ks.icForm === "IC"
-                                          ? "bg-indigo-50 text-indigo-800 border-indigo-300"
-                                          : ks.icForm === "NO_IC"
-                                            ? "bg-slate-100 text-slate-700 border-slate-300"
-                                            : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-300"
-                                      }`}
-                                    >
-                                      <option value="">-- IC? --</option>
-                                      <option value="IC">Sẵn IC (.IC)</option>
-                                      <option value="NO_IC">Không sẵn IC</option>
-                                    </select>
-                                    <select
-                                      value={ks.tubeType || ""}
-                                      onChange={(e) => setPoKitSpec({ tubeType: (e.target.value as TubeType) || undefined })}
-                                      className={`px-1.5 py-0.5 text-[10px] font-bold rounded border cursor-pointer ${
-                                        ks.tubeType
-                                          ? "bg-sky-100 text-sky-800 border-sky-300"
-                                          : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-300"
-                                      }`}
-                                    >
-                                      <option value="">-- Loại tube --</option>
-                                      {PCR_TUBE_CODES.map((tc) => (
-                                        <option key={tc} value={tc}>Tube {tc}</option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                </div>
-                              );
-                            })()}
                           </td>
                           <td className="p-2 text-center pt-3 text-slate-600 dark:text-slate-300">{item.unit || "Hộp"}</td>
                           <td className="p-2 text-center pt-3 font-mono cursor-help" title={stockTitle}>
@@ -7245,6 +7069,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
         const someVisibleSelected = visibleIndices.some(({ l }) => l.selected !== false) && !allVisibleSelected;
         const activeReceiveLines = receiveLines.filter(l => l.selected !== false && (Number(l.quantity) || 0) > 0);
         const totalSelectedQty = activeReceiveLines.reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
+        const totalSelectedAmount = activeReceiveLines.reduce((sum, l) => sum + (Number(l.quantity) || 0) * (Number(l.unit_price) || 0), 0);
+        const poTotalAmount = Number(receiveTarget.total_amount) || (Array.isArray(receiveTarget.items) ? receiveTarget.items.reduce((s: number, it: any) => s + (Number(it?.quantity) || 0) * (Number(it?.unit_price) || 0), 0) : 0);
         const initialPoLinesCount = buildReceiveLinesFromPO(receiveTarget).length;
 
         return (
@@ -7298,6 +7124,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                       className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold cursor-pointer"
                     >
                       <option value="Kho Trung Tâm">Kho Trung Tâm</option>
+                      <option value="Kho Trung tâm sửa chữa">Kho Trung tâm sửa chữa</option>
+                      <option value="Kho thầu&Pháp danh">Kho thầu&amp;Pháp danh</option>
                       <option value="Kho Lạnh Âm Sâu -20°C (Khu A)">Kho Lạnh Âm Sâu -20°C (Khu A)</option>
                       <option value="Kho Mát 2-8°C (Khu B)">Kho Mát 2-8°C (Khu B)</option>
                       <option value="Kho Thiết Bị & Demo (Khu C)">Kho Thiết Bị & Demo (Khu C)</option>
@@ -7472,6 +7300,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                       <th className="p-2 text-center w-20">Đặt / Đã nhập</th>
                       <th className="p-2 w-20 text-center">SL thực nhận *</th>
                       <th className="p-2 w-32 text-right">Đơn giá nhập (VNĐ) *</th>
+                      <th className="p-2 w-32 text-right text-emerald-600 dark:text-emerald-400">Thành tiền (VNĐ)</th>
                       <th className="p-2 w-28">Số lô (LOT) *</th>
                       <th className="p-2 w-32">Ngày SX (MFG)</th>
                       <th className="p-2 w-32">Hạn dùng (EXP) *</th>
@@ -7486,7 +7315,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {visibleIndices.length === 0 ? (
                       <tr>
-                        <td colSpan={14} className="p-6 text-center text-slate-400 italic">
+                        <td colSpan={15} className="p-6 text-center text-slate-400 italic">
                           Không có dòng hàng nào khớp bộ lọc hiện tại.
                         </td>
                       </tr>
@@ -7648,6 +7477,11 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               }`}
                             />
                           </td>
+                          <td className="p-2 text-right font-mono font-bold text-[11px] pt-3 text-emerald-700 dark:text-emerald-400 whitespace-nowrap">
+                            {isSelected && (Number(l.quantity) || 0) > 0 && (Number(l.unit_price) || 0) > 0
+                              ? `${Math.round((Number(l.quantity) || 0) * (Number(l.unit_price) || 0)).toLocaleString("vi-VN")} đ`
+                              : "0 đ"}
+                          </td>
                           <td className="p-2">
                             <input
                               type="text"
@@ -7780,6 +7614,31 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                       );
                     })}
                   </tbody>
+                  {visibleIndices.length > 0 && (
+                    <tfoot>
+                      <tr className="bg-emerald-50/70 dark:bg-slate-800/90 border-t-2 border-emerald-200 dark:border-slate-700 font-bold text-xs">
+                        <td colSpan={3} className="p-2.5 text-right text-slate-700 dark:text-slate-200 uppercase">
+                          Tổng cộng đợt nhập này ({activeReceiveLines.length} dòng):
+                        </td>
+                        <td className="p-2.5 text-center font-mono text-emerald-700 dark:text-emerald-400">
+                          {totalSelectedQty}
+                        </td>
+                        <td className="p-2.5 text-right text-slate-400 font-normal text-[10px]">
+                          Thành tiền đợt nhập:
+                        </td>
+                        <td className="p-2.5 text-right font-mono text-emerald-700 dark:text-emerald-400 whitespace-nowrap">
+                          {Math.round(totalSelectedAmount).toLocaleString("vi-VN")} đ
+                        </td>
+                        <td colSpan={9} className="p-2.5 text-left font-mono text-[11px] text-slate-600 dark:text-slate-300">
+                          {poTotalAmount > 0 && (
+                            <span>
+                              • Tổng giá trị đơn hàng PO ({receiveTarget.po_code}): <strong className="text-orange-600 dark:text-orange-400">{Math.round(poTotalAmount).toLocaleString("vi-VN")} đ</strong>
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  )}
                 </table>
                 <div className="p-2.5 bg-slate-50 dark:bg-slate-800/60 border-t border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
@@ -7858,12 +7717,12 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
               {/* PHẦN 3: GHI CHÚ PHIẾU NHẬP & TỔNG HỢP */}
               <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
-                <div className="md:col-span-8">
+                <div className="md:col-span-6">
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">3. Ghi chú chung phiếu nhập kho (PNK)</label>
                   <input type="text" value={receiveNotes} onChange={(e) => setReceiveNotes(e.target.value)} placeholder="Tình trạng thùng bảo ôn / đá khô khi nhận, biên bản giao nhận kèm theo..."
                     className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
                 </div>
-                <div className="md:col-span-4 flex items-center justify-end gap-4 p-2.5 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/70 dark:border-emerald-800/60">
+                <div className="md:col-span-6 flex flex-wrap items-center justify-end gap-4 p-2.5 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/70 dark:border-emerald-800/60">
                   <div>
                     <span className="text-[10px] text-slate-500 block">Dòng thực nhận</span>
                     <strong className="text-slate-900 dark:text-white font-mono text-sm">
@@ -7876,6 +7735,20 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                       {totalSelectedQty}
                     </strong>
                   </div>
+                  <div>
+                    <span className="text-[10px] text-slate-500 block">Tổng tiền nhập đợt này</span>
+                    <strong className="text-emerald-600 dark:text-emerald-400 font-mono text-sm">
+                      {Math.round(totalSelectedAmount).toLocaleString("vi-VN")} đ
+                    </strong>
+                  </div>
+                  {poTotalAmount > 0 && (
+                    <div>
+                      <span className="text-[10px] text-slate-500 block">Tổng giá trị đơn PO</span>
+                      <strong className="text-orange-600 dark:text-orange-400 font-mono text-sm">
+                        {Math.round(poTotalAmount).toLocaleString("vi-VN")} đ
+                      </strong>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -8025,22 +7898,6 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   onChange={(e) => setSupplierForm({ ...supplierForm, address: e.target.value })}
                   className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
                 />
-              </div>
-
-              <div>
-                <label className="block font-bold text-indigo-700 dark:text-indigo-300 mb-1">
-                  🏭 Liên Kết Phòng Ban Nội Bộ Khối Kỹ Thuật (Tự động chuyển PO sang Đơn hàng nội bộ)
-                </label>
-                <select
-                  value={supplierForm.factory_unit || ""}
-                  onChange={(e) => setSupplierForm({ ...supplierForm, factory_unit: e.target.value || null })}
-                  className="w-full p-2.5 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/30 text-slate-900 dark:text-white font-semibold"
-                >
-                  <option value="">-- Không phải phòng ban nội bộ (Nhà cung cấp thương mại bên ngoài) --</option>
-                  <option value="OLIGO">🧬 Phòng Tổng hợp Oligo (Tổng hợp Oligo)</option>
-                  <option value="KIT">🧪 Phòng Sản xuất Kit (Cung cấp Kit PCR, hóa chất, vật tư do Phòng SX cung cấp)</option>
-                  <option value="DEVICE">⚙️ Phòng Kỹ thuật - Thiết bị (Cung cấp thiết bị)</option>
-                </select>
               </div>
             </div>
 
@@ -9287,60 +9144,6 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               />
                             </div>
                           </div>
-                          {(() => {
-                            const matchedProd = mergedCatalogProducts.find((pp: any) => pp.code === it.product_code) || products.find((pp: any) => pp.code === it.product_code) || { code: it.product_code };
-                            if (!isPcrKitProduct(matchedProd)) return null;
-                            const ks = kitSpecOf(it);
-                            const setPrKitSpec = (patch: Partial<{ packagingForm?: PackagingForm; icForm?: IcForm; tubeType?: TubeType }>) => {
-                              const next = { ...ks, ...patch };
-                              setPRForm((prev: any) => {
-                                const nextItems = [...(prev.items || [])];
-                                const cur = nextItems[idx] || {};
-                                nextItems[idx] = {
-                                  ...cur,
-                                  packagingForm: next.packagingForm,
-                                  icForm: next.icForm,
-                                  tubeType: next.tubeType,
-                                  specification: withPackagingNote(cur.specification || "", next),
-                                  notes: withPackagingNote(cur.notes || "", next),
-                                };
-                                return { ...prev, items: nextItems };
-                              });
-                            };
-                            return (
-                              <div className="p-2 rounded-lg bg-sky-50/70 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800/80 flex flex-wrap items-center gap-2">
-                                <span className="text-[11px] font-bold text-sky-800 dark:text-sky-300">🧬 Quy cách Kit PCR:</span>
-                                <select
-                                  value={ks.packagingForm || ""}
-                                  onChange={(e) => setPrKitSpec({ packagingForm: (e.target.value as PackagingForm) || undefined })}
-                                  className="px-2 py-1 text-xs font-bold rounded border border-sky-300 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 cursor-pointer"
-                                >
-                                  <option value="">-- Chia sẵn / Không chia sẵn --</option>
-                                  <option value="PREALIQUOT">Chia sẵn (.C — 64 test)</option>
-                                  <option value="WITH_ACCESSORIES">Không chia sẵn (75 test Mix + 80 tube)</option>
-                                </select>
-                                <select
-                                  value={ks.icForm || ""}
-                                  onChange={(e) => setPrKitSpec({ icForm: (e.target.value as IcForm) || undefined })}
-                                  className="px-2 py-1 text-xs font-bold rounded border border-sky-300 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 cursor-pointer"
-                                >
-                                  <option value="">-- Sẵn IC / Không sẵn IC --</option>
-                                  <option value="IC">Sẵn IC (.IC — pha sẵn trong Mix)</option>
-                                  <option value="NO_IC">Không sẵn IC (cấp kèm ống IC rời)</option>
-                                </select>
-                                <select
-                                  value={ks.tubeType || ""}
-                                  onChange={(e) => setPrKitSpec({ tubeType: (e.target.value as TubeType) || undefined })}
-                                  className="px-2 py-1 text-xs font-bold rounded border border-sky-300 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 cursor-pointer"
-                                >
-                                  <option value="">-- Loại tube PCR --</option>
-                                  {PCR_TUBE_CODES.map((tc) => (
-                                    <option key={tc} value={tc}>Tube {tc}</option>
-                                  ))}
-                                </select>
-                              </div>
-                            );
-                          })()}
                         </div>
                       ) : (
                         /* Mode 2: First-time New Custom Item */
@@ -9834,26 +9637,11 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                       }}
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold outline-none"
                     >
-                      {suppliers.some((s: any) => s.is_internal) && (
-                        <optgroup label="🏭 3 PHÒNG BAN CUNG CẤP NỘI BỘ MẶC ĐỊNH (Tự động chuyển sang Đơn hàng nội bộ)">
-                          {suppliers
-                            .filter((s: any) => s.is_internal)
-                            .map((s: any) => (
-                              <option key={s.id} value={s.id}>
-                                🏭 [Nội bộ] {s.name} ({s.supplier_code}) → Đơn hàng nội bộ ({s.factory_unit_label || s.name})
-                              </option>
-                            ))}
-                        </optgroup>
-                      )}
-                      <optgroup label="🏢 NHÀ CUNG CẤP / HÃNG SẢN XUẤT BÊN NGOÀI">
-                        {suppliers
-                          .filter((s: any) => !s.is_internal)
-                          .map((s: any) => (
-                            <option key={s.id} value={s.id}>
-                              {s.name} ({s.supplier_code})
-                            </option>
-                          ))}
-                      </optgroup>
+                      {suppliers.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name} ({s.supplier_code})
+                        </option>
+                      ))}
                     </select>
                   </div>
 

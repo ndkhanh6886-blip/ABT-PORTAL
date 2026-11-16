@@ -63,7 +63,6 @@ import { todayVN, toVNDateString, normalizeExcelDateToISO, normalizeExcelRowDate
 import { DateInputVN, formatDayVN, toISODate } from "@/frontend/components/DateInputVN";
 import { printWarehouseSlip, exportWarehouseSlipExcel, txPartnerName } from "@/frontend/components/warehouse/warehouseSlipDocs";
 import { packagingFormOfLot, isPcrKitProduct, PACKAGING_LABEL } from "@/frontend/utils/packagingForm";
-import { isOligoMtoProduct } from "@/backend/services/catalogRules";
 
 /**
  * Hỏi lại khi có dòng hàng mà hạn dùng ≤ ngày nhập kho (thường là gõ nhầm ngày sản xuất vào ô hạn dùng).
@@ -424,7 +423,36 @@ export const WarehouseModule: React.FC = () => {
       if (data) {
         setItems(data.items || []);
         setTransactions(data.transactions || []);
-        setProducts(data.products || []);
+        const apiProds: any[] = Array.isArray(data.products) ? [...data.products] : [];
+        if (typeof window !== "undefined") {
+          try {
+            const rawComm = localStorage.getItem("sales_commercial_products");
+            if (rawComm) {
+              const parsedComm = JSON.parse(rawComm);
+              if (Array.isArray(parsedComm)) {
+                const seenCodes = new Set(apiProds.map((p: any) => String(p?.code || "").trim().toUpperCase()));
+                for (const cp of parsedComm) {
+                  const cCode = String(cp?.code || "").trim();
+                  if (!cCode || seenCodes.has(cCode.toUpperCase())) continue;
+                  seenCodes.add(cCode.toUpperCase());
+                  apiProds.push({
+                    code: cCode,
+                    name: String(cp.name || cCode).trim(),
+                    category: String(cp.category || "Hàng Thương Mại").trim(),
+                    manufacturer: String(cp.brand || cp.manufacturer || cp.supplier || "").trim(),
+                    origin: String(cp.origin || "").trim(),
+                    specification: String(cp.specification || "").trim(),
+                    unit: String(cp.unit || "Cái").trim(),
+                    cost_price: Number(cp.costPrice ?? cp.cost_price ?? 0) || 0,
+                    standard_price: Number(cp.price ?? cp.standard_price ?? 0) || 0,
+                    storage_condition: String(cp.storageCondition || cp.storage_condition || "15-25°C (Nhiệt độ phòng)").trim(),
+                  });
+                }
+              }
+            }
+          } catch { /* ignore */ }
+        }
+        setProducts(apiProds);
         setReservations(data.reservations || []);
         if (data.product_components) {
           setProductComponents(data.product_components);
@@ -627,12 +655,20 @@ export const WarehouseModule: React.FC = () => {
     for (const p of products) {
       if (!p?.code) continue;
       const raw = String(p.code);
-      const norm = raw.trim().toLowerCase();
+      const trimmed = raw.trim();
+      const norm = trimmed.toLowerCase();
       map.set(raw, p);
-      if (!map.has(norm)) map.set(norm, p);
+      if (trimmed && !map.has(trimmed)) map.set(trimmed, p);
+      if (norm && !map.has(norm)) map.set(norm, p);
     }
     return map;
   }, [products]);
+
+  const findCatalogProduct = (rawCode: any) => {
+    const c = String(rawCode || "").trim();
+    if (!c) return null;
+    return productByCodeMap.get(c) || productByCodeMap.get(c.toLowerCase()) || null;
+  };
 
   const componentsByParentMap = useMemo(() => {
     const map = new Map<string, any[]>();
@@ -655,7 +691,6 @@ export const WarehouseModule: React.FC = () => {
         const pCat = String(item.category || "").trim().toLowerCase();
         if (pCode === "DVSC" || pCode === "OLIGO-SVC" || pCode.startsWith("DV-") || pCode.startsWith("SVC-")) return false;
         if (pCat.includes("dịch vụ") || pName.startsWith("dịch vụ") || pName.includes("dịch vụ sửa chữa") || pName.includes("dịch vụ bảo trì") || pName.includes("dịch vụ hiệu chuẩn")) return false;
-        if (isOligoMtoProduct(item) && Number(item.stock_quantity ?? item.quantity ?? 0) <= 0) return false;
         return true;
       })
       .map((item) => {
@@ -2263,14 +2298,17 @@ export const WarehouseModule: React.FC = () => {
       updated[index] = { ...updated[index], [field]: value };
 
       if (field === "product_code") {
-        const prod = products.find((p) => p.code === value);
+        const cleanVal = String(value || "").trim();
+        const prod = cleanVal ? (productByCodeMap.get(cleanVal) || productByCodeMap.get(cleanVal.toLowerCase())) : null;
         if (prod) {
+          updated[index].product_code = prod.code;
           updated[index].product_name = prod.name;
           updated[index].unit = prod.unit || updated[index].unit || "Hộp";
           updated[index].specification = prod.specification || updated[index].specification || "";
           updated[index].unit_price = prod.cost_price || prod.standard_price || updated[index].unit_price || 0;
           updated[index].storage_condition = prod.storage_condition || "";
           updated[index].shelf_position = (prod as any).shelf_position || updated[index].shelf_position || "Chưa phân bổ kệ";
+          updated[index].is_new_master_product = false;
 
           // Xóa trắng số lô và hạn dùng cũ khi đổi mã sản phẩm để người dùng nhập đúng thực tế lô hàng
           updated[index].lot_number = "";
@@ -2278,7 +2316,7 @@ export const WarehouseModule: React.FC = () => {
           updated[index].expiry_date = "";
 
           // Tự động gắn các thành phần con cấu thành nếu có trong định mức BOM
-          const comps = productComponents.filter((c) => c.parent_product_code === value);
+          const comps = productComponents.filter((c) => String(c.parent_product_code || "").trim().toLowerCase() === cleanVal.toLowerCase());
           if (comps.length > 0) {
             updated[index].components = comps.map((c, i) => ({
               ...c,
@@ -2455,7 +2493,7 @@ export const WarehouseModule: React.FC = () => {
         alert(`Dòng hàng thứ ${i + 1} bắt buộc phải nhập đầy đủ Mã Hàng & Tên Sản Phẩm (*)`);
         return;
       }
-      const isNewMaster = !productByCodeMap.has(it.product_code.trim()) || it.is_new_master_product;
+      const isNewMaster = !findCatalogProduct(it.product_code) || it.is_new_master_product;
       if (isNewMaster) {
         const catVal = it.category || "Kít Real-time PCR";
         const mfgVal = it.manufacturer ?? "TopSPEC";
@@ -5200,6 +5238,7 @@ export const WarehouseModule: React.FC = () => {
                   <th className="py-3 px-3">Mã Tham Chiếu / PO / SO</th>
                   <th className="py-3 px-3">Kho Lưu Trữ</th>
                   <th className="py-3 px-3 w-[260px] max-w-[260px]">Chi Tiết Hàng Hóa</th>
+                  <th className="py-3 px-3 text-right whitespace-nowrap">Thành Tiền</th>
                   <th className="py-3 px-3 w-[170px] max-w-[170px]">Ghi Chú</th>
                   <th className="py-3 px-3 whitespace-nowrap">Người Thực Hiện</th>
                   <th className="py-3 px-3 whitespace-nowrap">Ngày Giao Dịch</th>
@@ -5276,14 +5315,19 @@ export const WarehouseModule: React.FC = () => {
                               Khớp {matchedItems.length}/{itemsList.length} dòng hàng
                             </div>
                           )}
-                          {shownItems.slice(0, 5).map((it: any, idx: number) => (
-                            <div key={idx} className="text-[11px] text-slate-800 dark:text-slate-200 leading-snug break-words">
-                              • <span className="inline-block px-1.5 rounded bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-mono font-black text-[11px] tracking-tight"><Hl text={it.product_code || it.productCode} q={txQ} /></span>{" "}
-                              <span className="text-slate-600 dark:text-slate-400"><Hl text={it.product_name || it.name} q={txQ} /></span> (SL: <strong>{it.quantity}</strong> {it.unit || ""})
-                              {it.lot_number && <span className="ml-1 text-slate-500 font-mono text-[10px]">[Lô: <Hl text={it.lot_number} q={txQ} />]</span>}
-                              {it.expiry_date && <span className="ml-1 text-emerald-600 font-mono text-[10px]">[EXP: {it.expiry_date}]</span>}
-                            </div>
-                          ))}
+                          {shownItems.slice(0, 5).map((it: any, idx: number) => {
+                            const uPrice = Number(it.unit_price ?? it.cost_price ?? it.price) || 0;
+                            const lTotal = Math.round((Number(it.quantity) || 0) * uPrice);
+                            return (
+                              <div key={idx} className="text-[11px] text-slate-800 dark:text-slate-200 leading-snug break-words">
+                                • <span className="inline-block px-1.5 rounded bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-mono font-black text-[11px] tracking-tight"><Hl text={it.product_code || it.productCode} q={txQ} /></span>{" "}
+                                <span className="text-slate-600 dark:text-slate-400"><Hl text={it.product_name || it.name} q={txQ} /></span> (SL: <strong>{it.quantity}</strong> {it.unit || ""})
+                                {lTotal > 0 && <span className="ml-1 text-emerald-700 dark:text-emerald-400 font-mono font-bold text-[10px]">• {lTotal.toLocaleString("vi-VN")} đ</span>}
+                                {it.lot_number && <span className="ml-1 text-slate-500 font-mono text-[10px]">[Lô: <Hl text={it.lot_number} q={txQ} />]</span>}
+                                {it.expiry_date && <span className="ml-1 text-emerald-600 font-mono text-[10px]">[EXP: {it.expiry_date}]</span>}
+                              </div>
+                            );
+                          })}
                           {hiddenCount > 0 && (
                             <button
                               type="button"
@@ -5297,6 +5341,18 @@ export const WarehouseModule: React.FC = () => {
                             </button>
                           )}
                         </div>
+                      </td>
+                      <td className="py-3.5 px-3 text-right font-mono font-bold whitespace-nowrap">
+                        {(() => {
+                          const txTotal = fin.total || itemsList.reduce((acc: number, it: any) => acc + (Number(it?.quantity) || 0) * (Number(it?.unit_price ?? it?.cost_price ?? it?.price) || 0), 0);
+                          return txTotal > 0 ? (
+                            <span className={isInbound ? "text-emerald-600 dark:text-emerald-400" : "text-orange-600 dark:text-orange-400"}>
+                              {Math.round(txTotal).toLocaleString("vi-VN")} đ
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 font-normal">—</span>
+                          );
+                        })()}
                       </td>
                       <td className="py-3.5 px-3 w-[170px] max-w-[170px] text-[11px] text-slate-600 dark:text-slate-300">
                         {cleanNote ? (
@@ -8161,7 +8217,7 @@ export const WarehouseModule: React.FC = () => {
                     <input
                       type="text"
                       value={inboundForm.transaction_code}
-                      onChange={(e) => setInboundForm({ ...inboundForm, transaction_code: e.target.value })}
+                      onChange={(e) => setInboundForm((prev: any) => ({ ...prev, transaction_code: e.target.value }))}
                       className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-bold"
                     />
                   </div>
@@ -8169,7 +8225,7 @@ export const WarehouseModule: React.FC = () => {
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Ngày Nhập Kho *</label>
                     <DateInputVN
                       value={inboundForm.date}
-                      onChange={(e) => setInboundForm({ ...inboundForm, date: e.target.value })}
+                      onChange={(e) => setInboundForm((prev: any) => ({ ...prev, date: e.target.value }))}
                       className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold"
                     />
                   </div>
@@ -8177,7 +8233,7 @@ export const WarehouseModule: React.FC = () => {
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Loại Hình / Lý Do Nhập</label>
                     <select
                       value={inboundForm.inbound_type}
-                      onChange={(e) => setInboundForm({ ...inboundForm, inbound_type: e.target.value })}
+                      onChange={(e) => setInboundForm((prev: any) => ({ ...prev, inbound_type: e.target.value }))}
                       className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold"
                     >
                       <option value="Nhập mua hàng theo Đơn PO từ NCC">Nhập mua hàng theo PO từ NCC</option>
@@ -8200,7 +8256,11 @@ export const WarehouseModule: React.FC = () => {
                         type="text"
                         value={inboundForm.reference_code}
                         onFocus={() => setIsInboundPODropdownOpen(true)}
-                        onChange={(e) => { setInboundForm({ ...inboundForm, reference_code: e.target.value }); setIsInboundPODropdownOpen(true); }}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setInboundForm((prev: any) => ({ ...prev, reference_code: val }));
+                          setIsInboundPODropdownOpen(true);
+                        }}
                         placeholder="Gõ mã PO / tên NCC / mã hàng để tìm..."
                         className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono"
                       />
@@ -8279,7 +8339,7 @@ export const WarehouseModule: React.FC = () => {
                     <input
                       type="text"
                       value={inboundForm.vat_invoice_no}
-                      onChange={(e) => setInboundForm({ ...inboundForm, vat_invoice_no: e.target.value })}
+                      onChange={(e) => setInboundForm((prev: any) => ({ ...prev, vat_invoice_no: e.target.value }))}
                       placeholder="VD: HD-2026-0412 / TK-109283"
                       className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono"
                     />
@@ -8298,7 +8358,8 @@ export const WarehouseModule: React.FC = () => {
                         value={inboundForm.supplier_name}
                         onFocus={() => setIsInboundSupplierDropdownOpen(true)}
                         onChange={(e) => {
-                          setInboundForm({ ...inboundForm, supplier_name: e.target.value });
+                          const val = e.target.value;
+                          setInboundForm((prev: any) => ({ ...prev, supplier_name: val }));
                           setIsInboundSupplierDropdownOpen(true);
                         }}
                         placeholder="Gõ tìm nhanh hoặc bấm mũi tên chọn NCC (*)..."
@@ -8313,7 +8374,7 @@ export const WarehouseModule: React.FC = () => {
                           <button
                             type="button"
                             onClick={() => {
-                              setInboundForm({ ...inboundForm, supplier_name: "" });
+                              setInboundForm((prev: any) => ({ ...prev, supplier_name: "" }));
                               setIsInboundSupplierDropdownOpen(true);
                             }}
                             className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
@@ -8350,7 +8411,7 @@ export const WarehouseModule: React.FC = () => {
                                 key={sup.id || sup.name}
                                 type="button"
                                 onClick={() => {
-                                  setInboundForm({ ...inboundForm, supplier_name: sup.name });
+                                  setInboundForm((prev: any) => ({ ...prev, supplier_name: sup.name }));
                                   setIsInboundSupplierDropdownOpen(false);
                                 }}
                                 className="w-full px-3.5 py-2.5 text-left hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors flex items-center justify-between gap-2 group cursor-pointer"
@@ -8390,7 +8451,7 @@ export const WarehouseModule: React.FC = () => {
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Kho Tiếp Nhận *</label>
                     <select
                       value={inboundForm.warehouse_name}
-                      onChange={(e) => setInboundForm({ ...inboundForm, warehouse_name: e.target.value })}
+                      onChange={(e) => setInboundForm((prev: any) => ({ ...prev, warehouse_name: e.target.value }))}
                       className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold"
                     >
                       <option value="Kho Trung Tâm">Kho Trung Tâm</option>
@@ -8411,7 +8472,8 @@ export const WarehouseModule: React.FC = () => {
                       value={inboundForm.performed_by}
                       readOnly={Boolean(editingInboundTxId)}
                       onChange={(e) => {
-                        if (!editingInboundTxId) setInboundForm({ ...inboundForm, performed_by: e.target.value });
+                        const val = e.target.value;
+                        if (!editingInboundTxId) setInboundForm((prev: any) => ({ ...prev, performed_by: val }));
                       }}
                       className={`w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 font-semibold ${
                         editingInboundTxId
@@ -8425,7 +8487,7 @@ export const WarehouseModule: React.FC = () => {
                     <input
                       type="text"
                       value={inboundForm.shipping_unit}
-                      onChange={(e) => setInboundForm({ ...inboundForm, shipping_unit: e.target.value })}
+                      onChange={(e) => setInboundForm((prev: any) => ({ ...prev, shipping_unit: e.target.value }))}
                       placeholder="Xe tải lạnh, Viettel Post, Giao trực tiếp..."
                       className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
                     />
@@ -8490,7 +8552,7 @@ export const WarehouseModule: React.FC = () => {
                           </label>
                           <div className="flex gap-1.5">
                             <select
-                              value={productByCodeMap.has(item.product_code) ? item.product_code : "__custom__"}
+                              value={findCatalogProduct(item.product_code)?.code || "__custom__"}
                               onChange={(e) => {
                                 if (e.target.value === "__custom__") {
                                   handleInboundItemChange(idx, "product_code", "");
@@ -8560,7 +8622,7 @@ export const WarehouseModule: React.FC = () => {
                       </div>
 
                       {/* On-The-Fly Master Data Product Creation (Requirement 2) */}
-                      {(!productByCodeMap.has(item.product_code) || item.is_new_master_product) && (
+                      {(!findCatalogProduct(item.product_code) || item.is_new_master_product) && (
                         <div className="p-3 bg-emerald-50/70 dark:bg-emerald-950/40 rounded-xl border border-emerald-200 dark:border-emerald-800/80 space-y-2">
                           <div className="flex items-center justify-between">
                             <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5 uppercase">
@@ -8945,16 +9007,30 @@ export const WarehouseModule: React.FC = () => {
 
               {/* PHẦN 3: GHI CHÚ CHUNG VÀ TÓM TẮT PHIẾU */}
               <div className="bg-slate-50/80 dark:bg-slate-800/40 p-4 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3">
-                <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-2">
+                <div className="flex flex-wrap items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-2 gap-2">
                   <span className="font-bold text-slate-800 dark:text-slate-200 uppercase text-[11px] tracking-wide">
                     3. Ghi Chú & Tóm Tắt Phiếu Nhập Kho
                   </span>
+                  <div className="flex flex-wrap items-center gap-4 text-xs">
+                    <span className="text-slate-600 dark:text-slate-400">
+                      Số mặt hàng: <strong className="text-slate-900 dark:text-white font-mono">{inboundSummary.count}</strong>
+                    </span>
+                    <span className="text-slate-600 dark:text-slate-400">
+                      Tổng SL nhập: <strong className="text-emerald-600 dark:text-emerald-400 font-mono">{inboundSummary.totalQty}</strong>
+                    </span>
+                    <span className="text-slate-600 dark:text-slate-400">
+                      Tổng giá trị phiếu nhập: <strong className="text-emerald-600 dark:text-emerald-400 font-mono">{formatCurrency(inboundSummary.totalAmount)}</strong>
+                    </span>
+                  </div>
                 </div>
                 <div>
                   <textarea
                     rows={2}
                     value={inboundForm.notes}
-                    onChange={(e) => setInboundForm({ ...inboundForm, notes: e.target.value })}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setInboundForm((prev: any) => ({ ...prev, notes: val }));
+                    }}
                     placeholder="Ghi chú thêm về biên bản giao nhận, COA/CQ đính kèm, tình trạng nhiệt độ data logger..."
                     className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs resize-none"
                   />
@@ -8965,18 +9041,16 @@ export const WarehouseModule: React.FC = () => {
 
             {/* Modal Footer */}
             <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-50 dark:bg-slate-900/80">
-              <div className="flex items-center gap-4 text-xs font-bold w-full sm:w-auto justify-between sm:justify-start">
+              <div className="flex flex-wrap items-center gap-4 text-xs font-bold w-full sm:w-auto justify-between sm:justify-start">
                 <span className="text-slate-600 dark:text-slate-400">
                   Tổng mặt hàng: <strong className="text-slate-900 dark:text-white font-mono">{inboundSummary.count}</strong>
                 </span>
                 <span className="text-slate-600 dark:text-slate-400">
                   Tổng SL: <strong className="text-emerald-600 dark:text-emerald-400 font-mono">{inboundSummary.totalQty}</strong>
                 </span>
-                {inboundSummary.totalAmount > 0 && (
-                  <span className="text-slate-600 dark:text-slate-400">
-                    Tổng tiền: <strong className="text-emerald-600 dark:text-emerald-400 font-mono">{formatCurrency(inboundSummary.totalAmount)}</strong>
-                  </span>
-                )}
+                <span className="text-slate-600 dark:text-slate-400">
+                  Tổng giá trị phiếu: <strong className="text-emerald-600 dark:text-emerald-400 font-mono">{formatCurrency(inboundSummary.totalAmount)}</strong>
+                </span>
               </div>
 
               <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
@@ -9626,6 +9700,30 @@ export const WarehouseModule: React.FC = () => {
                         <tr><td colSpan={12} className="py-6 text-center text-slate-500">Không có dòng hàng khớp "{txDetailSearch}"</td></tr>
                       )}
                     </tbody>
+                    {shown.length > 0 && (() => {
+                      const sumQty = shown.reduce((s, { it }) => s + (Number(it.quantity) || 0), 0);
+                      const sumAmt = shown.reduce((s, { it }) => s + (Number(it.quantity) || 0) * (Number(it.unit_price ?? it.cost_price ?? it.price) || 0), 0);
+                      return (
+                        <tfoot className="bg-slate-100 dark:bg-slate-800/90 border-t-2 border-slate-200 dark:border-slate-700 font-bold text-xs">
+                          <tr>
+                            <td colSpan={5} className="py-2.5 px-3 text-right uppercase text-slate-700 dark:text-slate-200">
+                              Tổng cộng ({shown.length} dòng):
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono font-black text-emerald-600 dark:text-emerald-400">
+                              {sumQty}
+                            </td>
+                            <td className="py-2.5 px-3"></td>
+                            <td className="py-2.5 px-3 text-right text-slate-500 font-normal text-[10px]">
+                              Tổng thành tiền:
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono font-black text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                              {sumAmt > 0 ? `${Math.round(sumAmt).toLocaleString("vi-VN")} đ` : "—"}
+                            </td>
+                            <td colSpan={3} className="py-2.5 px-3"></td>
+                          </tr>
+                        </tfoot>
+                      );
+                    })()}
                   </table>
                 </div>
               </div>

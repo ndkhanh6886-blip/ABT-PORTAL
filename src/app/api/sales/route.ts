@@ -53,9 +53,9 @@ async function firstDeliveryDates(orderCodes: string[]): Promise<Map<string, Dat
     extra = extra && typeof extra === "object" ? extra : {};
     const st = String(extra.deliveryStatus || "").toUpperCase();
     const cancelled = st === "CANCELLED" || String(r.status || "").toUpperCase() === "CANCELLED";
-    const delivered = extra.isDelivered === true || extra.isDelivered === "true" || ["DELIVERED", "FULLY_DELIVERED", "PARTIALLY_DELIVERED"].includes(st);
+    const delivered = extra.isDelivered === true || extra.isDelivered === "true" || ["WAREHOUSE_DELIVERED", "SHIPPED", "DELIVERED", "FULLY_DELIVERED", "PARTIALLY_DELIVERED"].includes(st);
     if (!delivered || cancelled) continue;
-    const d = parseLooseDate(extra.deliveredAt) || parseLooseDate(r.delivery_date);
+    const d = parseLooseDate(r.delivery_date) || parseLooseDate(extra.deliveredAt);
     if (!d) continue;
     const prev = out.get(r.order_code);
     if (!prev || d < prev) out.set(r.order_code, d);
@@ -120,7 +120,7 @@ async function openOrdersOfCustomer(cust: any, excludeOrderId: number | null = n
       ex = ex && typeof ex === "object" ? ex : {};
       const st = String(ex.deliveryStatus || sl.status || "").toUpperCase();
       if (st === "CANCELLED") continue;
-      const isDel = ex.isDelivered === true || ex.isDelivered === "true" || st === "DELIVERED" || st === "FULLY_DELIVERED";
+      const isDel = ex.isDelivered === true || ex.isDelivered === "true" || ["WAREHOUSE_DELIVERED", "SHIPPED", "DELIVERED", "FULLY_DELIVERED"].includes(st);
       if (!isDel) continue;
       anyDeliveredSlip = true;
       deliveredAmt += parseJsonArray(sl.items).reduce((s: number, it: any) => {
@@ -1519,17 +1519,34 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Đồng bộ lại ngày giao thực tế (delivered_at) của đơn hàng gốc theo ngày giao của phiếu
+      // Đồng bộ lại ngày giao thực tế (delivered_at) và trạng thái giao của đơn hàng gốc theo ngày giao của phiếu
+      // (Khi Kho xác nhận đã giao [WAREHOUSE_DELIVERED] hoặc Đã nhận [DELIVERED] là hoàn tất xuất kho & kích hoạt yêu cầu xuất HĐ)
       if (oCode && dDate) {
         try {
-          const parsedSlipDate = parseSqlDate(body.deliveredAt || dDate);
-          await query(
-            `UPDATE sales_orders
-                SET delivered_at = $1::date
-              WHERE order_code = $2
-                AND delivery_status IN ('DELIVERED', 'PARTIALLY_DELIVERED')`,
-            [parsedSlipDate, String(oCode).trim()]
-          );
+          const parsedSlipDate = parseSqlDate(dDate);
+          const upperSt = String(body.deliveryStatus || "").toUpperCase();
+          if (["WAREHOUSE_DELIVERED", "DELIVERED"].includes(upperSt) || body.isDelivered === true) {
+            const targetOrderDelStatus = String(body.deliveryMode || "").toUpperCase() === "PARTIAL" ? "PARTIALLY_DELIVERED" : "DELIVERED";
+            await query(
+              `UPDATE sales_orders
+                  SET delivered_at = $1::date,
+                      delivery_status = CASE
+                        WHEN delivery_status = 'DELIVERED' THEN 'DELIVERED'
+                        ELSE $3
+                      END
+                WHERE order_code = $2
+                  AND COALESCE(UPPER(delivery_status), '') <> 'CANCELLED'`,
+              [parsedSlipDate, String(oCode).trim(), targetOrderDelStatus]
+            );
+          } else {
+            await query(
+              `UPDATE sales_orders
+                  SET delivered_at = $1::date
+                WHERE order_code = $2
+                  AND delivery_status IN ('DELIVERED', 'PARTIALLY_DELIVERED', 'SHIPPED')`,
+              [parsedSlipDate, String(oCode).trim()]
+            );
+          }
         } catch (err) {
           console.error("Failed to sync sales_orders.delivered_at from delivery_slip:", err);
         }

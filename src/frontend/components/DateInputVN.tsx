@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { CalendarDays } from "lucide-react";
+import { formatVNDate } from "@/backend/services/dates";
 
 /** "YYYY-MM-DD" từ chuỗi ngày bất kỳ ("YYYY-MM-DD...", "DD/MM/YYYY", "DD.MM.YYYY"); không hợp lệ -> "". */
 export function toISODate(v: any): string {
@@ -13,10 +14,10 @@ export function toISODate(v: any): string {
     return "";
 }
 
-/** "DD/MM/YYYY" từ chuỗi ngày ISO (hiển thị theo kiểu Việt Nam). */
+/** "DD-MM-YYYY" từ chuỗi ngày ISO (hiển thị theo chuẩn Việt Nam). */
 export function formatDateVN(v: any): string {
     const iso = toISODate(v);
-    return iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "";
+    return iso ? `${iso.slice(8, 10)}-${iso.slice(5, 7)}-${iso.slice(0, 4)}` : "";
 }
 
 const isValidISO = (iso: string) => {
@@ -25,16 +26,16 @@ const isValidISO = (iso: string) => {
     return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === iso;
 };
 
-/** Gõ số -> tự chèn "/" thành dd/mm/yyyy. Gõ kèm dấu phân cách ("4/9/2031", "4.9.31") thì giữ nguyên cách gõ. */
+/** Gõ số -> tự chèn "-" thành dd-mm-yyyy. Gõ kèm dấu phân cách ("4/9/2031", "4.9.31") thì giữ nguyên cách gõ. */
 const mask = (raw: string) => {
     const parts = raw.replace(/[^\d/.\-]/g, "").split(/[/.\-]/);
     if (parts.length > 1 && parts.length <= 3 && (parts[0] || "").length <= 2 && (parts[1] || "").length <= 2 && (parts[2] || "").length <= 4) {
-        return parts.join("/");
+        return parts.join("-");
     }
     const digits = raw.replace(/\D/g, "").slice(0, 8);
     if (digits.length <= 2) return digits;
-    if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
-    return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+    if (digits.length <= 4) return `${digits.slice(0, 2)}-${digits.slice(2)}`;
+    return `${digits.slice(0, 2)}-${digits.slice(2, 4)}-${digits.slice(4)}`;
 };
 
 /** Ngày gõ tay -> "YYYY-MM-DD": d/m/yyyy, d/m/yy, ddmmyy, ddmmyyyy (năm 2 số = 20yy). `full`: chỉ nhận năm 4 số. */
@@ -62,7 +63,7 @@ type Props = Omit<React.InputHTMLAttributes<HTMLInputElement>, "type" | "value" 
 };
 
 /**
- * Ô chọn ngày luôn hiển thị theo kiểu Việt Nam (dd/mm/yyyy), không phụ thuộc ngôn ngữ của trình duyệt
+ * Ô chọn ngày luôn hiển thị theo chuẩn Việt Nam (dd-mm-yyyy), không phụ thuộc ngôn ngữ của trình duyệt
  * (ô <input type="date"> hiện mm/dd/yyyy trên trình duyệt tiếng Anh). Gõ tay hoặc bấm biểu tượng lịch.
  * Giá trị vào / ra vẫn là "YYYY-MM-DD" như ô ngày gốc, nên thay thế trực tiếp được.
  */
@@ -91,6 +92,7 @@ export function DateInputVN({ value, onChange, className = "", min, max, disable
     const openPicker = () => {
         const el = pickerRef.current as any;
         if (!el || disabled) return;
+        setFocused(false);
         try { if (typeof el.showPicker === "function") { el.showPicker(); return; } } catch { /* trình duyệt cũ */ }
         el.focus();
         el.click();
@@ -104,7 +106,7 @@ export function DateInputVN({ value, onChange, className = "", min, max, disable
                 type="text"
                 inputMode="numeric"
                 autoComplete="off"
-                placeholder={placeholder || "dd/mm/yyyy"}
+                placeholder={placeholder || "dd-mm-yyyy"}
                 value={text}
                 disabled={disabled}
                 required={required}
@@ -133,6 +135,10 @@ export function DateInputVN({ value, onChange, className = "", min, max, disable
             <button
                 type="button"
                 tabIndex={-1}
+                onMouseDown={(e) => {
+                    // Ngăn ô text giữ focus cũ làm onBlur ghi đè lại ngày vừa chọn trên lịch
+                    e.preventDefault();
+                }}
                 onClick={openPicker}
                 disabled={disabled}
                 title="Bấm để chọn ngày trên lịch"
@@ -150,7 +156,12 @@ export function DateInputVN({ value, onChange, className = "", min, max, disable
                 min={min ? toISODate(min) : undefined}
                 max={max ? toISODate(max) : undefined}
                 disabled={disabled}
-                onChange={(e) => emit(e.target.value)}
+                onChange={(e) => {
+                    const nextIso = e.target.value;
+                    setText(formatDateVN(nextIso));
+                    setFocused(false);
+                    emit(nextIso);
+                }}
                 className="absolute right-0 bottom-0 w-px h-px opacity-0 pointer-events-none"
             />
         </span>
@@ -158,17 +169,12 @@ export function DateInputVN({ value, onChange, className = "", min, max, disable
 }
 
 /**
- * Ngày hiển thị kiểu Việt Nam (dd/mm/yyyy) cho mọi giá trị: chuỗi ngày "YYYY-MM-DD" giữ nguyên ngày;
- * thời điểm (ISO có giờ / Date) đổi sang ngày theo giờ Việt Nam. `short`: chỉ dd/mm.
+ * Ngày hiển thị chuẩn Việt Nam (dd-mm-yyyy) cho mọi giá trị: chuỗi ngày "YYYY-MM-DD" giữ nguyên ngày;
+ * thời điểm (ISO có giờ / Date) đổi sang ngày theo giờ Việt Nam. `short`: chỉ dd-mm.
  */
 export function formatDayVN(v: any, short = false): string {
     if (v === null || v === undefined || v === "") return "";
-    const s = v instanceof Date ? "" : String(v).trim();
-    let iso = /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : "";
-    if (!iso) {
-        const d = v instanceof Date ? v : new Date(s);
-        iso = isNaN(d.getTime()) ? toISODate(s) : new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
-    }
-    const full = formatDateVN(iso);
+    // ngày kiểu Việt Nam đọc trước (new Date("05/11/2026") hiểu là 11/05 kiểu Mỹ)
+    const full = formatVNDate(v) || formatDateVN(v);
     return short ? full.slice(0, 5) : full;
 }
