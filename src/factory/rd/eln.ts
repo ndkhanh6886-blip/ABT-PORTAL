@@ -18,12 +18,15 @@ export type ExperimentStatus = "PLANNED" | "IN_PROGRESS" | "SUBMITTED" | "APPROV
 export interface ExperimentRow {
   id: string;
   code: string;
-  project_id: string;
+  project_id: string | null;
+  org_unit_id: string | null;
   title: string;
   objective: string;
   hypothesis: string | null;
   protocol_summary: string | null;
   conclusion: string | null;
+  performer_name?: string | null;
+  wbs_task_code?: string | null;
   status: ExperimentStatus;
   revision: number;
   parent_experiment_id: string | null;
@@ -38,10 +41,64 @@ export interface ExperimentRow {
   version: number;
 }
 
-async function expOwner(tx: Tx, projectId: string): Promise<string> {
-  const p = (await tx.query("SELECT owner_org_unit_id FROM rd.project WHERE id = $1", [projectId])).rows[0];
-  if (!p) throw notFound("dự án R&D");
-  return p.owner_org_unit_id;
+const optUuid = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? null : v),
+  z.string().uuid("mã định danh không hợp lệ").nullable().optional()
+);
+
+async function expOwner(tx: Tx, exp: { project_id?: string | null; org_unit_id?: string | null }): Promise<string> {
+  if (exp.org_unit_id) return exp.org_unit_id;
+  if (exp.project_id) {
+    const p = (await tx.query("SELECT owner_org_unit_id FROM rd.project WHERE id = $1", [exp.project_id])).rows[0];
+    if (!p) throw notFound("dự án R&D");
+    return p.owner_org_unit_id;
+  }
+  const fallback = (
+    await tx.query(
+      `SELECT id FROM core.org_unit
+        WHERE status = 'ACTIVE' AND module_key IN ('RD', 'DEVICE')
+        ORDER BY CASE module_key WHEN 'RD' THEN 0 ELSE 1 END, code LIMIT 1`
+    )
+  ).rows[0];
+  if (!fallback) throw notFound("đơn vị chủ quản thí nghiệm R&D");
+  return fallback.id;
+}
+
+async function resolveStandaloneOrgUnit(tx: Tx, actor: AuthzActor, requestedOrgUnitId?: string | null): Promise<string> {
+  if (requestedOrgUnitId) {
+    const unit = (await tx.query("SELECT id FROM core.org_unit WHERE id = $1 AND status = 'ACTIVE'", [requestedOrgUnitId])).rows[0];
+    if (!unit) throw notFound("phòng ban R&D");
+    await authorize(tx, actor, "rd.eln.write", requestedOrgUnitId);
+    return requestedOrgUnitId;
+  }
+
+  const candidates = (
+    await tx.query(
+      `SELECT u.id
+         FROM core.org_unit u
+         LEFT JOIN core.user_profile up ON up.user_id = $1
+        WHERE u.status = 'ACTIVE' AND u.unit_type <> 'COMPANY'
+        ORDER BY
+          CASE WHEN EXISTS (
+            SELECT 1 FROM core.user_role ur
+             WHERE ur.user_id = $1 AND ur.scope_org_unit_id = u.id AND ur.revoked_at IS NULL
+               AND (ur.valid_to IS NULL OR ur.valid_to > now())
+          ) THEN 0 ELSE 1 END,
+          CASE WHEN u.id = up.org_unit_id THEN 0 ELSE 1 END,
+          CASE u.module_key WHEN 'RD' THEN 0 WHEN 'DEVICE' THEN 1 ELSE 2 END,
+          u.code ASC`,
+      [actor.userId]
+    )
+  ).rows as { id: string }[];
+
+  for (const u of candidates) {
+    if (await hasFactoryPermission(tx, actor, "rd.eln.write", u.id)) {
+      return u.id;
+    }
+  }
+
+  await authorize(tx, actor, "rd.eln.write", null);
+  throw notFound("phòng ban R&D");
 }
 
 /**
@@ -54,7 +111,7 @@ export const experimentMachine = defineMachine<ExperimentStatus, ExperimentRow>(
   table: "rd.experiment",
   states: ["PLANNED", "IN_PROGRESS", "SUBMITTED", "APPROVED", "SUPERSEDED", "CANCELLED"],
   terminal: ["SUPERSEDED", "CANCELLED"],
-  scopeOf: (row, tx) => expOwner(tx!, row.project_id),
+  scopeOf: (row, tx) => expOwner(tx!, row),
   transitions: [
     {
       action: "start",
@@ -66,6 +123,7 @@ export const experimentMachine = defineMachine<ExperimentStatus, ExperimentRow>(
           code: "PROJECT_ACTIVE",
           message: "Dự án phải đang ở trạng thái ACTIVE mới được bắt đầu thí nghiệm.",
           check: async ({ tx, row }) => {
+            if (!row.project_id) return true;
             const p = (await tx.query("SELECT status FROM rd.project WHERE id = $1", [row.project_id])).rows[0];
             return p?.status === "ACTIVE";
           },
@@ -158,7 +216,8 @@ export const experimentMachine = defineMachine<ExperimentStatus, ExperimentRow>(
 });
 
 const createExpSchema = z.object({
-  project_id: z.string().uuid("chọn dự án R&D"),
+  project_id: optUuid,
+  org_unit_id: optUuid,
   title: z.string().trim().min(3, "nhập tiêu đề thí nghiệm").max(300),
   objective: z.string().trim().min(5, "nhập mục tiêu thí nghiệm").max(3000),
   hypothesis: z.string().trim().max(3000).optional().nullable(),
@@ -170,12 +229,18 @@ const createExpSchema = z.object({
 
 export async function createExperiment(tx: Tx, actor: AuthzActor, input: unknown) {
   const d = parseInput(createExpSchema, input);
-  const owner = await expOwner(tx, d.project_id);
-  await authorize(tx, actor, "rd.eln.write", owner);
+  let owner: string;
+  if (d.project_id) {
+    owner = await expOwner(tx, { project_id: d.project_id });
+    await authorize(tx, actor, "rd.eln.write", owner);
+  } else {
+    owner = await resolveStandaloneOrgUnit(tx, actor, d.org_unit_id);
+  }
   const code = await nextNumber(tx, "RD_EXPERIMENT");
   const exp = await insertRecord<ExperimentRow>(tx, actor, "rd.experiment", "rd_experiment", {
     code,
-    project_id: d.project_id,
+    project_id: d.project_id ?? null,
+    org_unit_id: owner,
     title: d.title,
     objective: d.objective,
     hypothesis: d.hypothesis ?? null,
@@ -193,12 +258,13 @@ export async function updateExperimentMeta(tx: Tx, actor: AuthzActor, id: string
   const raw = (input ?? {}) as Record<string, unknown>;
   const cur = (await tx.query("SELECT * FROM rd.experiment WHERE id = $1 FOR UPDATE", [id])).rows[0] as ExperimentRow | undefined;
   if (!cur) throw notFound("thí nghiệm ELN");
-  const owner = await expOwner(tx, cur.project_id);
+  const owner = await expOwner(tx, cur);
   await authorize(tx, actor, "rd.eln.write", owner);
   if (!["PLANNED", "IN_PROGRESS"].includes(cur.status)) {
     throw invalid("Chỉ được sửa mục tiêu / quy trình / kết luận khi thí nghiệm đang ở trạng thái PLANNED hoặc IN_PROGRESS.");
   }
   const schema = z.object({
+    project_id: optUuid,
     title: z.string().trim().min(3).max(300).optional(),
     objective: z.string().trim().min(5).max(3000).optional(),
     hypothesis: z.string().trim().max(3000).optional().nullable(),
@@ -206,7 +272,33 @@ export async function updateExperimentMeta(tx: Tx, actor: AuthzActor, id: string
     conclusion: z.string().trim().max(4000).optional().nullable(),
   });
   const d = parseInput(schema, input);
-  return updateRecord<ExperimentRow>(tx, actor, "rd.experiment", "rd_experiment", id, Number(raw.version ?? cur.version), d);
+  const patch: Record<string, unknown> = {
+    ...(d.title !== undefined ? { title: d.title } : {}),
+    ...(d.objective !== undefined ? { objective: d.objective } : {}),
+    ...(d.hypothesis !== undefined ? { hypothesis: d.hypothesis } : {}),
+    ...(d.protocol_summary !== undefined ? { protocol_summary: d.protocol_summary } : {}),
+    ...(d.conclusion !== undefined ? { conclusion: d.conclusion } : {}),
+  };
+
+  if (d.project_id !== undefined) {
+    if (d.project_id) {
+      const targetProj = (
+        await tx.query("SELECT id, owner_org_unit_id, status FROM rd.project WHERE id = $1", [d.project_id])
+      ).rows[0];
+      if (!targetProj) throw notFound("dự án R&D");
+      if (cur.status === "IN_PROGRESS" && targetProj.status !== "ACTIVE") {
+        throw invalid("Chỉ được gắn thí nghiệm đang thực hiện vào dự án R&D đang ACTIVE.");
+      }
+      await authorize(tx, actor, "rd.eln.write", targetProj.owner_org_unit_id);
+      patch.project_id = targetProj.id;
+      patch.org_unit_id = targetProj.owner_org_unit_id;
+    } else {
+      patch.project_id = null;
+      patch.org_unit_id = cur.org_unit_id ?? owner;
+    }
+  }
+
+  return updateRecord<ExperimentRow>(tx, actor, "rd.experiment", "rd_experiment", id, Number(raw.version ?? cur.version), patch);
 }
 
 const entrySchema = z.object({
@@ -222,7 +314,7 @@ const entrySchema = z.object({
 export async function addExperimentEntry(tx: Tx, actor: AuthzActor, experimentId: string, input: unknown) {
   const exp = (await tx.query("SELECT * FROM rd.experiment WHERE id = $1 FOR UPDATE", [experimentId])).rows[0] as ExperimentRow | undefined;
   if (!exp) throw notFound("thí nghiệm ELN");
-  const owner = await expOwner(tx, exp.project_id);
+  const owner = await expOwner(tx, exp);
   await authorize(tx, actor, "rd.eln.write", owner);
   if (!["IN_PROGRESS", "SUBMITTED"].includes(exp.status)) {
     throw invalid(`Không thể ghi thêm nhật ký khi thí nghiệm đang ở trạng thái ${exp.status}.`);
@@ -253,7 +345,7 @@ export async function attachExperimentEntryFile(
 ) {
   const exp = (await tx.query("SELECT * FROM rd.experiment WHERE id = $1 FOR UPDATE", [experimentId])).rows[0] as ExperimentRow | undefined;
   if (!exp) throw notFound("thí nghiệm ELN");
-  const owner = await expOwner(tx, exp.project_id);
+  const owner = await expOwner(tx, exp);
   await authorize(tx, actor, "rd.eln.write", owner);
   if (!["IN_PROGRESS", "SUBMITTED"].includes(exp.status)) {
     throw invalid(`Không thể đính kèm dữ liệu thô khi thí nghiệm ở trạng thái ${exp.status}.`);
@@ -272,9 +364,9 @@ export async function attachExperimentEntryFile(
 }
 
 export async function readExperimentEntryFile(tx: Tx, actor: AuthzActor, experimentId: string, entryId: string) {
-  const exp = (await tx.query("SELECT project_id FROM rd.experiment WHERE id = $1", [experimentId])).rows[0];
+  const exp = (await tx.query("SELECT project_id, org_unit_id FROM rd.experiment WHERE id = $1", [experimentId])).rows[0];
   if (!exp) throw notFound("thí nghiệm ELN");
-  await authorize(tx, actor, "rd.view", await expOwner(tx, exp.project_id));
+  await authorize(tx, actor, "rd.view", await expOwner(tx, exp));
   const entry = (await tx.query("SELECT attachment_id FROM rd.experiment_entry WHERE id = $1 AND experiment_id = $2", [entryId, experimentId])).rows[0];
   if (!entry?.attachment_id) throw notFound("file dữ liệu thô");
   return readAttachment(tx, entry.attachment_id);
@@ -298,7 +390,7 @@ export async function consumeExperimentMaterial(tx: Tx, actor: AuthzActor, exper
   const d = parseInput(consumeMaterialSchema, input);
   const exp = (await tx.query("SELECT * FROM rd.experiment WHERE id = $1 FOR UPDATE", [experimentId])).rows[0] as ExperimentRow | undefined;
   if (!exp) throw notFound("thí nghiệm ELN");
-  const owner = await expOwner(tx, exp.project_id);
+  const owner = await expOwner(tx, exp);
   await authorize(tx, actor, "rd.eln.write", owner);
   if (exp.status !== "IN_PROGRESS") {
     throw invalid("Chỉ được xuất nguyên liệu kho R&D khi thí nghiệm đang thực hiện (IN_PROGRESS).");
@@ -371,7 +463,7 @@ export async function logExperimentAsset(tx: Tx, actor: AuthzActor, experimentId
   const d = parseInput(useAssetSchema, input);
   const exp = (await tx.query("SELECT * FROM rd.experiment WHERE id = $1 FOR UPDATE", [experimentId])).rows[0] as ExperimentRow | undefined;
   if (!exp) throw notFound("thí nghiệm ELN");
-  const owner = await expOwner(tx, exp.project_id);
+  const owner = await expOwner(tx, exp);
   await authorize(tx, actor, "rd.eln.write", owner);
   if (exp.status !== "IN_PROGRESS") {
     throw invalid("Chỉ gắn thiết bị khi thí nghiệm đang ở trạng thái IN_PROGRESS.");
@@ -403,7 +495,7 @@ export async function createExperimentRevision(tx: Tx, actor: AuthzActor, experi
   const { reason } = parseInput(z.object({ reason: z.string().trim().min(5, "nhập lý do tạo phiên bản sửa đổi (tối thiểu 5 ký tự)").max(1000) }), input);
   const oldExp = (await tx.query("SELECT * FROM rd.experiment WHERE id = $1 FOR UPDATE", [experimentId])).rows[0] as ExperimentRow | undefined;
   if (!oldExp) throw notFound("thí nghiệm ELN");
-  const owner = await expOwner(tx, oldExp.project_id);
+  const owner = await expOwner(tx, oldExp);
   await authorize(tx, actor, "rd.eln.write", owner);
   if (oldExp.status !== "APPROVED") {
     throw invalid("Chỉ tạo phiên bản mới cho thí nghiệm đã được phê duyệt (APPROVED).");
@@ -413,12 +505,15 @@ export async function createExperimentRevision(tx: Tx, actor: AuthzActor, experi
   const newCode = `${oldExp.code.replace(/-R\d+$/, "")}-R${oldExp.revision + 1}`;
   const rev = await insertRecord<ExperimentRow>(tx, actor, "rd.experiment", "rd_experiment", {
     code: newCode,
-    project_id: oldExp.project_id,
+    project_id: oldExp.project_id ?? null,
+    org_unit_id: owner,
     title: oldExp.title,
     objective: oldExp.objective,
     hypothesis: oldExp.hypothesis,
     protocol_summary: oldExp.protocol_summary,
     conclusion: oldExp.conclusion,
+    performer_name: oldExp.performer_name ?? null,
+    wbs_task_code: oldExp.wbs_task_code ?? null,
     status: "IN_PROGRESS",
     revision: oldExp.revision + 1,
     parent_experiment_id: oldExp.id,
@@ -435,28 +530,45 @@ export async function createExperimentRevision(tx: Tx, actor: AuthzActor, experi
   return getExperimentDetail(tx, actor, rev.id);
 }
 
-export async function listExperiments(tx: Tx, actor: AuthzActor, projectId?: string) {
+export async function listExperiments(tx: Tx, actor: AuthzActor, projectFilter?: string) {
   await authorizeAnywhere(tx, actor, "rd.view");
+  const isStandaloneOnly = projectFilter === "STANDALONE";
+  const projectIdParam = projectFilter && !isStandaloneOnly ? projectFilter : null;
+  if (projectIdParam && !z.string().uuid().safeParse(projectIdParam).success) {
+    throw invalid("Mã dự án lọc không hợp lệ.");
+  }
+
   const rows = (
     await tx.query(
-      `SELECT e.*, p.code AS project_code, p.name AS project_name, p.owner_org_unit_id,
+      `SELECT e.*,
+              p.code AS project_code,
+              p.name AS project_name,
+              coalesce(e.org_unit_id, p.owner_org_unit_id) AS owner_org_unit_id,
+              ou.code AS org_unit_code,
+              ou.name AS org_unit_name,
               coalesce(nullif(e.performer_name, ''), cb.display_name) AS created_by_name,
               coalesce(nullif(e.performer_name, ''), cb.display_name) AS performer_name,
               ab.display_name AS approved_by_name,
               (SELECT count(*)::int FROM rd.experiment_entry en WHERE en.experiment_id = e.id) AS entry_count,
               (SELECT count(*)::int FROM rd.experiment_material em WHERE em.experiment_id = e.id) AS material_count
          FROM rd.experiment e
-         JOIN rd.project p ON p.id = e.project_id
+         LEFT JOIN rd.project p ON p.id = e.project_id
+         LEFT JOIN core.org_unit ou ON ou.id = coalesce(e.org_unit_id, p.owner_org_unit_id)
          LEFT JOIN core.user_profile cb ON cb.user_id = e.created_by
          LEFT JOIN core.user_profile ab ON ab.user_id = e.approved_by
-        WHERE ($1::uuid IS NULL OR e.project_id = $1)
+        WHERE (
+          ($1::boolean AND e.project_id IS NULL)
+          OR (NOT $1::boolean AND ($2::uuid IS NULL OR e.project_id = $2::uuid))
+        )
         ORDER BY e.created_at DESC LIMIT 300`,
-      [projectId ?? null]
+      [isStandaloneOnly, projectIdParam]
     )
   ).rows;
   const visible = [];
   for (const r of rows) {
-    if (await hasFactoryPermission(tx, actor, "rd.view", r.owner_org_unit_id)) visible.push(r);
+    if (r.owner_org_unit_id && (await hasFactoryPermission(tx, actor, "rd.view", r.owner_org_unit_id))) {
+      visible.push(r);
+    }
   }
   return visible;
 }
@@ -464,13 +576,20 @@ export async function listExperiments(tx: Tx, actor: AuthzActor, projectId?: str
 export async function getExperimentDetail(tx: Tx, actor: AuthzActor, id: string) {
   const exp = (
     await tx.query(
-      `SELECT e.*, p.code AS project_code, p.name AS project_name, p.owner_org_unit_id,
+      `SELECT e.*,
+              p.code AS project_code,
+              p.name AS project_name,
+              coalesce(e.org_unit_id, p.owner_org_unit_id) AS owner_org_unit_id,
+              ou.code AS org_unit_code,
+              ou.name AS org_unit_name,
               coalesce(nullif(e.performer_name, ''), cb.display_name) AS created_by_name,
               coalesce(nullif(e.performer_name, ''), cb.display_name) AS performer_name,
-              sb.display_name AS submitted_by_name, ab.display_name AS approved_by_name,
+              sb.display_name AS submitted_by_name,
+              ab.display_name AS approved_by_name,
               pe.code AS parent_code
          FROM rd.experiment e
-         JOIN rd.project p ON p.id = e.project_id
+         LEFT JOIN rd.project p ON p.id = e.project_id
+         LEFT JOIN core.org_unit ou ON ou.id = coalesce(e.org_unit_id, p.owner_org_unit_id)
          LEFT JOIN core.user_profile cb ON cb.user_id = e.created_by
          LEFT JOIN core.user_profile sb ON sb.user_id = e.submitted_by
          LEFT JOIN core.user_profile ab ON ab.user_id = e.approved_by

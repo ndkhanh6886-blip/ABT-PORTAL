@@ -171,9 +171,25 @@ async function backlog(tx: Tx, unit: string) {
   for (const st of (await tx.query("SELECT st.id, st.code, st.symptom AS issue_summary, st.ticket_type AS priority FROM device.service_ticket st WHERE st.org_unit_id = $1 AND st.status IN ('OPEN', 'DIAGNOSING', 'IN_REPAIR') ORDER BY st.created_at", [unit])).rows) {
     items.push({ kind: "EQUIPMENT", title: `Xử lý phiếu kỹ thuật ${st.code}`, detail: `${st.issue_summary} (${st.priority})`, ref_type: "SERVICE_TICKET", ref_id: st.id });
   }
-  // R&D active experiments
-  for (const ex of (await tx.query("SELECT e.id, e.code, e.title, p.code AS proj_code FROM rd.experiment e JOIN rd.project p ON p.id = e.project_id WHERE p.owner_org_unit_id = $1 AND e.status IN ('DRAFT', 'IN_PROGRESS') ORDER BY e.created_at DESC LIMIT 15", [unit])).rows) {
-    items.push({ kind: "OTHER", title: `Thí nghiệm ELN ${ex.code}`, detail: `Dự án ${ex.proj_code} · ${ex.title}`, ref_type: "RD_EXPERIMENT", ref_id: ex.id });
+  // R&D active experiments (project-linked & standalone)
+  for (const ex of (
+    await tx.query(
+      `SELECT e.id, e.code, e.title, p.code AS proj_code
+         FROM rd.experiment e
+         LEFT JOIN rd.project p ON p.id = e.project_id
+        WHERE coalesce(e.org_unit_id, p.owner_org_unit_id) = $1
+          AND e.status IN ('PLANNED', 'IN_PROGRESS')
+        ORDER BY e.created_at DESC LIMIT 15`,
+      [unit]
+    )
+  ).rows) {
+    items.push({
+      kind: "OTHER",
+      title: `Thí nghiệm ELN ${ex.code}`,
+      detail: ex.proj_code ? `Dự án ${ex.proj_code} · ${ex.title}` : `Thử nghiệm độc lập · ${ex.title}`,
+      ref_type: "RD_EXPERIMENT",
+      ref_id: ex.id,
+    });
   }
   return items.filter((i) => !linked.has(`${i.ref_type}:${i.ref_id}`));
 }

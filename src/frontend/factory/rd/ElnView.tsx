@@ -28,9 +28,12 @@ const EXP_ACTIONS = {
 interface ExperimentDetail {
   id: string;
   code: string;
-  project_id: string;
-  project_code: string;
-  project_name: string;
+  project_id: string | null;
+  project_code: string | null;
+  project_name: string | null;
+  org_unit_id?: string | null;
+  org_unit_code?: string | null;
+  org_unit_name?: string | null;
   title: string;
   objective: string;
   hypothesis: string | null;
@@ -107,9 +110,11 @@ function ExperimentPanel({
   const qc = useQueryClient();
   const ctx = useRdContext("rd.view");
   const detail = useQuery({ queryKey: ["factory", "rd", "experiment", id], queryFn: () => api<ExperimentDetail>(`/api/factory/rd/experiments/${id}`) });
+  const projectsList = useQuery({ queryKey: ["factory", "rd", "projects", ""], queryFn: () => api<any[]>("/api/factory/rd/projects"), enabled: canWrite });
   const assetsList = useQuery({ queryKey: ["factory", "assets", "P-RD"], queryFn: () => api<any[]>("/api/factory/assets?dept=P-RD") });
 
   const [conclusion, setConclusion] = useState("");
+  const [linkProjId, setLinkProjId] = useState<string | null>(null);
   const [entryType, setEntryType] = useState("OBSERVATION");
   const [entryTitle, setEntryTitle] = useState("");
   const [entryBody, setEntryBody] = useState("");
@@ -140,6 +145,18 @@ function ExperimentPanel({
         json: { conclusion, version: detail.data!.version },
       }),
     onSuccess: refresh,
+  });
+
+  const linkProjectMut = useMutation({
+    mutationFn: (targetProjId: string | null) =>
+      api(`/api/factory/rd/experiments/${id}`, {
+        method: "PUT",
+        json: { project_id: targetProjId, version: detail.data!.version },
+      }),
+    onSuccess: () => {
+      setLinkProjId(null);
+      refresh();
+    },
   });
 
   const addEntryMut = useMutation({
@@ -216,15 +233,22 @@ function ExperimentPanel({
 
   const e = detail.data;
   const selectedItem = ctx.data?.items.find((i) => i.id === (itemId || ctx.data?.items[0]?.id));
+  const effectiveLinkProjId = linkProjId !== null ? linkProjId : (e?.project_id ?? "");
 
   return (
     <Card title={e ? `Sổ thí nghiệm ELN ${e.code} (Rev ${e.revision}) — ${e.title}` : "Chi tiết thí nghiệm ELN"} actions={<Button variant="ghost" onClick={onClose}>Đóng</Button>}>
-      <ErrorNote error={detail.error ?? saveConclusionMut.error ?? addEntryMut.error ?? uploadFileMut.error ?? consumeMatMut.error ?? logAssetMut.error ?? createRevMut.error} />
+      <ErrorNote error={detail.error ?? saveConclusionMut.error ?? linkProjectMut.error ?? addEntryMut.error ?? uploadFileMut.error ?? consumeMatMut.error ?? logAssetMut.error ?? createRevMut.error} />
       {e && (
         <div className="flex flex-col gap-3 text-xs">
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={EXP_STATUS[e.status]?.[0] ?? "QUARANTINE"} label={EXP_STATUS[e.status]?.[1] ?? e.status} />
-            <span>· Dự án: <b className="font-mono">{e.project_code}</b> ({e.project_name})</span>
+            {e.project_code ? (
+              <span>· Dự án: <b className="font-mono">{e.project_code}</b> ({e.project_name})</span>
+            ) : (
+              <span className="px-2 py-0.5 rounded bg-violet-100 dark:bg-violet-950/70 text-violet-800 dark:text-violet-300 font-semibold">
+                🧪 Thử nghiệm độc lập ({e.org_unit_name || "Phòng R&D"})
+              </span>
+            )}
             {e.wbs_task_code && (
               <span className="px-2 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950/70 text-indigo-800 dark:text-indigo-300 font-mono font-bold">
                 📌 Công việc WBS: {e.wbs_task_code}
@@ -241,6 +265,36 @@ function ExperimentPanel({
             {e.protocol_summary && <div><b>Tóm tắt quy trình / công thức:</b> {e.protocol_summary}</div>}
             <div><b>Kết luận:</b> {e.conclusion || <span className="text-slate-400">Chưa nhập kết luận</span>}</div>
           </div>
+
+          {canWrite && (e.status === "PLANNED" || e.status === "IN_PROGRESS") && (
+            <form
+              className="flex flex-wrap gap-2 items-end"
+              onSubmit={(ev) => {
+                ev.preventDefault();
+                linkProjectMut.mutate(effectiveLinkProjId || null);
+              }}
+            >
+              <div className="min-w-64 flex-1">
+                <Field label="Phạm vi gắn kết (Độc lập hoặc gán vào Dự án R&D sau này)">
+                  <select className={inputClass} value={effectiveLinkProjId} onChange={(ev) => setLinkProjId(ev.target.value)}>
+                    <option value="">🧪 Thử nghiệm độc lập (Không gắn dự án)</option>
+                    {(projectsList.data ?? []).map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.code} — {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              <Button
+                type="submit"
+                variant="ghost"
+                disabled={linkProjectMut.isPending || effectiveLinkProjId === (e.project_id ?? "")}
+              >
+                Cập nhật phạm vi
+              </Button>
+            </form>
+          )}
 
           {canWrite && e.status === "IN_PROGRESS" && (
             <form
@@ -491,6 +545,7 @@ export function ElnView({ canWrite }: { canWrite: boolean }) {
   const [adding, setAdding] = useState(false);
 
   const [newProjId, setNewProjId] = useState("");
+  const [newUnitId, setNewUnitId] = useState("");
   const [performerName, setPerformerName] = useState("");
   const [wbsTaskCode, setWbsTaskCode] = useState("");
   const [title, setTitle] = useState("");
@@ -510,7 +565,8 @@ export function ElnView({ canWrite }: { canWrite: boolean }) {
         method: "POST",
         idempotent: true,
         json: {
-          project_id: newProjId || projects.data?.[0]?.id,
+          project_id: newProjId || null,
+          org_unit_id: newProjId ? null : (newUnitId || ctx.data?.units?.[0]?.id || null),
           title,
           objective,
           hypothesis: hypothesis || null,
@@ -546,7 +602,7 @@ export function ElnView({ canWrite }: { canWrite: boolean }) {
     if (statusFilter && r.status !== statusFilter) return false;
     if (searchQuery.trim() !== "") {
       const q = searchQuery.toLowerCase();
-      const hay = `${r.code || ""} ${r.title || ""} ${r.project_code || ""} ${r.wbs_task_code || ""} ${performer}`.toLowerCase();
+      const hay = `${r.code || ""} ${r.title || ""} ${r.project_code || "độc lập standalone"} ${r.org_unit_name || ""} ${r.wbs_task_code || ""} ${performer}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -582,8 +638,9 @@ export function ElnView({ canWrite }: { canWrite: boolean }) {
                 </option>
               ))}
             </select>
-            <select className={`${inputClass} w-52`} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-              <option value="">Mọi dự án R&D</option>
+            <select className={`${inputClass} w-56`} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+              <option value="">Tất cả (Dự án & Độc lập)</option>
+              <option value="STANDALONE">🧪 Chỉ thử nghiệm độc lập</option>
               {projects.data?.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
             </select>
             <select className={`${inputClass} w-40`} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
@@ -594,7 +651,18 @@ export function ElnView({ canWrite }: { canWrite: boolean }) {
                 </option>
               ))}
             </select>
-            {canWrite && <Button onClick={() => setAdding(!adding)}>+ Lập thí nghiệm ELN mới</Button>}
+            {canWrite && (
+              <Button
+                onClick={() => {
+                  if (!adding) {
+                    setNewProjId(projectId && projectId !== "STANDALONE" ? projectId : "");
+                  }
+                  setAdding(!adding);
+                }}
+              >
+                + Lập thí nghiệm ELN mới
+              </Button>
+            )}
           </div>
         }
       >
@@ -644,11 +712,27 @@ export function ElnView({ canWrite }: { canWrite: boolean }) {
               createMut.mutate();
             }}
           >
-            <Field label="Thuộc dự án R&D *">
-              <select className={inputClass} value={newProjId || projects.data?.[0]?.id || ""} onChange={(e) => setNewProjId(e.target.value)} required>
-                {projects.data?.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
+            <Field label="Phạm vi / Dự án R&D">
+              <select className={inputClass} value={newProjId} onChange={(e) => setNewProjId(e.target.value)}>
+                <option value="">🧪 Thử nghiệm độc lập / Thăm dò (Không gắn dự án)</option>
+                {(projects.data?.length ?? 0) > 0 && (
+                  <optgroup label="Gắn vào dự án nghiên cứu R&D">
+                    {projects.data?.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
+                  </optgroup>
+                )}
               </select>
             </Field>
+            {!newProjId && (ctx.data?.units?.length ?? 0) > 1 && (
+              <Field label="Đơn vị chủ quản (Thử nghiệm độc lập)">
+                <select className={inputClass} value={newUnitId || ctx.data?.units?.[0]?.id || ""} onChange={(e) => setNewUnitId(e.target.value)}>
+                  {ctx.data?.units?.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.code} — {u.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
             <Field label="Nghiên cứu viên thực hiện (Phòng R&D)">
               <select className={inputClass} value={performerName} onChange={(e) => setPerformerName(e.target.value)}>
                 <option value="">-- Mặc định theo người đăng nhập --</option>
@@ -692,7 +776,7 @@ export function ElnView({ canWrite }: { canWrite: boolean }) {
 
         {filteredExps.length === 0 && <Empty>Chưa có sổ thí nghiệm điện tử (ELN) nào khớp bộ lọc.</Empty>}
         {filteredExps.length > 0 && (
-          <Table head={["Mã ELN", "Rev", "Tiêu đề thí nghiệm & Công việc WBS", "Dự án", "Mục nhật ký", "Vật tư R&D", "Nghiên cứu viên thực hiện", "Người duyệt", "Trạng thái"]}>
+          <Table head={["Mã ELN", "Rev", "Tiêu đề thí nghiệm & Công việc WBS", "Dự án / Phạm vi", "Mục nhật ký", "Vật tư R&D", "Nghiên cứu viên thực hiện", "Người duyệt", "Trạng thái"]}>
             {filteredExps.map((r) => (
               <tr key={r.id} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setSelected(r.id)}>
                 <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">{r.code}</td>
@@ -705,7 +789,15 @@ export function ElnView({ canWrite }: { canWrite: boolean }) {
                     </span>
                   )}
                 </td>
-                <td className="py-2 pr-3 font-mono">{r.project_code}</td>
+                <td className="py-2 pr-3 font-mono">
+                  {r.project_code ? (
+                    r.project_code
+                  ) : (
+                    <span className="px-1.5 py-0.5 rounded bg-violet-50 dark:bg-violet-950/60 text-violet-700 dark:text-violet-300 font-sans text-[11px] font-semibold">
+                      🧪 Độc lập
+                    </span>
+                  )}
+                </td>
                 <td className="py-2 pr-3 font-mono">{r.entry_count}</td>
                 <td className="py-2 pr-3 font-mono">{r.material_count}</td>
                 <td className="py-2 pr-3">

@@ -204,8 +204,8 @@ export function SamplesView({ canManage = true }: { canManage?: boolean } = {}) 
     queryFn: () => apiGet<any[]>("/api/factory/rd/projects"),
   });
   const experiments = useQuery({
-    queryKey: ["factory", "rd", "eln"],
-    queryFn: () => apiGet<any[]>("/api/factory/rd/eln"),
+    queryKey: ["factory", "rd", "experiments", ""],
+    queryFn: () => apiGet<any[]>("/api/factory/rd/experiments"),
   });
 
   const rdUnits = useMemo(() => {

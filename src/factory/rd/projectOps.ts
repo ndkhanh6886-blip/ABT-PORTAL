@@ -617,13 +617,14 @@ export async function createExperimentFromProjectTask(tx: Tx, actor: AuthzActor,
   const exp = (
     await tx.query(
       `INSERT INTO rd.experiment
-         (code, project_id, title, objective, hypothesis, protocol_summary, conclusion,
+         (code, project_id, org_unit_id, title, objective, hypothesis, protocol_summary, conclusion,
           status, revision, started_at, performer_name, wbs_task_code, created_by, updated_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'IN_PROGRESS', 1, now(), $8, $9, $10, $10)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'IN_PROGRESS', 1, now(), $9, $10, $11, $11)
        RETURNING *`,
       [
         expCode,
         p.id,
+        p.owner_org_unit_id,
         expTitle,
         expObjective,
         `Xác minh chỉ tiêu kỹ thuật của hạng mục ${task.code} đạt yêu cầu thiết kế TPP.`,

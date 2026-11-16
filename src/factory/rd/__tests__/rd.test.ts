@@ -28,7 +28,9 @@ import {
   createExperimentRevision,
   experimentMachine,
   getExperimentDetail,
+  listExperiments,
   logExperimentAsset,
+  updateExperimentMeta,
 } from "../eln";
 import { createSample, getSampleDetail, recordSampleEvent } from "../samples";
 import {
@@ -766,5 +768,117 @@ describe("R&D Module (Phase 4d): Idea Funnel, Stage-Gate, ELN, Biobank, Tech Tra
 
     const finalDetail = await withTransaction((tx) => getWorkPlanDetail(tx, rdHead, plan.id));
     expect(finalDetail.tasks).toHaveLength(3);
+  });
+
+  it("7. Standalone ELN Experiments: creates, runs, consumes materials/assets, filters, links/unlinks project, approves & revises without an rd.project", async () => {
+    const site = await makeSite();
+    const { researcher, rdHead } = await setupRdTeam(site);
+
+    const reagent = await makeItem(site, { name: "MasterMix Thăm Dò Sàng Lọc" });
+    await stockedLot(site, reagent.id, 400, "2028-06-30");
+    const pcr = await withTransaction((tx) =>
+      createAsset(tx, rdHead, {
+        name: "Máy Real-time PCR Thử nghiệm Độc lập",
+        asset_type: "PCR",
+        owner_org_unit_id: site.dept,
+        next_calibration_due: "2029-12-31",
+      })
+    );
+
+    // 1. Create standalone ELN experiment (no project_id) & auto-start
+    const exp = await withTransaction((tx) =>
+      createExperiment(tx, researcher, {
+        project_id: null,
+        title: "Thử nghiệm thăm dò đệm ly giải mới (Không thuộc dự án)",
+        objective: "Kiểm tra hiệu quả ly giải mẫu phết họng trong 5 phút ở nhiệt độ phòng",
+        hypothesis: "Đệm Guanidine 4M + Triton X-100 1% giữ nguyên độ nhạy qPCR",
+        protocol_summary: "Ủ 5 phút tại 25°C rồi nạp trực tiếp 5 µL vào MasterMix",
+        start_now: true,
+      })
+    );
+    expect(exp.project_id).toBeNull();
+    expect(exp.org_unit_id).toBe(site.dept);
+    expect(exp.status).toBe("IN_PROGRESS");
+
+    // 2. Log ELN entry, consume material & record lab equipment
+    await withTransaction((tx) =>
+      addExperimentEntry(tx, researcher, exp.id, {
+        entry_type: "RESULT",
+        title: "So sánh Ct tách tay vs ly giải nhanh 5 phút",
+        content: { text: "Ct trung bình chênh lệch < 0.4 chu kỳ; tín hiệu nền sạch" },
+      })
+    );
+    const consumed = await withTransaction((tx) =>
+      consumeExperimentMaterial(tx, researcher, exp.id, {
+        warehouse_id: site.warehouse,
+        item_id: reagent.id,
+        qty: 50,
+        uom: "µL",
+        role_in_exp: "Thử nghiệm đệm ly giải nhanh",
+      })
+    );
+    expect(consumed).toHaveLength(1);
+
+    await withTransaction((tx) =>
+      logExperimentAsset(tx, researcher, exp.id, {
+        asset_id: pcr.id,
+        run_params: { program: "FAST-LYSIS-TEST" },
+      })
+    );
+
+    // 3. Filtering in listExperiments (ALL, STANDALONE, and unrelated project UUID)
+    const proj = await withTransaction((tx) =>
+      createProject(tx, rdHead, {
+        name: "Dự án Kit Khác Không Liên Quan",
+        owner_org_unit_id: site.dept,
+        target_domain: "KIT",
+        leader_id: researcher.userId,
+      })
+    );
+    const allList = await withTransaction((tx) => listExperiments(tx, researcher));
+    expect(allList.some((r: any) => r.id === exp.id && r.project_code === null)).toBe(true);
+
+    const standaloneList = await withTransaction((tx) => listExperiments(tx, researcher, "STANDALONE"));
+    expect(standaloneList.some((r: any) => r.id === exp.id)).toBe(true);
+
+    const projectList = await withTransaction((tx) => listExperiments(tx, researcher, proj.id));
+    expect(projectList.some((r: any) => r.id === exp.id)).toBe(false);
+
+    // 4. Link standalone experiment to a project, verify, then detach back to standalone
+    const linked = await withTransaction((tx) =>
+      updateExperimentMeta(tx, researcher, exp.id, {
+        project_id: proj.id,
+        version: exp.version,
+      })
+    );
+    expect(linked.project_id).toBe(proj.id);
+
+    const unlinked = await withTransaction((tx) =>
+      updateExperimentMeta(tx, researcher, exp.id, {
+        project_id: null,
+        version: linked.version,
+      })
+    );
+    expect(unlinked.project_id).toBeNull();
+    expect(unlinked.org_unit_id).toBe(site.dept);
+
+    // 5. Submit, Head Approve with e-signature, and revise while preserving standalone scope
+    const submitted = await act(experimentMachine, researcher, exp.id, "submit", {
+      payload: { conclusion: "Công thức đệm ly giải nhanh đạt yêu cầu thăm dò ban đầu." },
+    });
+    expect(submitted.status).toBe("SUBMITTED");
+
+    const approved = await act(experimentMachine, rdHead, exp.id, "approve", signed);
+    expect(approved.status).toBe("APPROVED");
+
+    const rev2 = await withTransaction((tx) =>
+      createExperimentRevision(tx, researcher, exp.id, {
+        reason: "Thử nghiệm bổ sung độ ổn định đệm ly giải sau 7 ngày ở 37°C",
+      })
+    );
+    expect(rev2.revision).toBe(2);
+    expect(rev2.project_id).toBeNull();
+    expect(rev2.org_unit_id).toBe(site.dept);
+    expect(rev2.entries).toHaveLength(1);
   });
 });
