@@ -434,14 +434,44 @@ export async function createBom(tx: Tx, actor: AuthzActor, input: unknown) {
   return bom;
 }
 
+/**
+ * Checks whether a BOM may be edited under ISO 13485 change control:
+ * - OBSOLETE BOMs are always immutable.
+ * - DRAFT BOMs are always editable.
+ * - EFFECTIVE BOMs may update packaging/container pairings & non-structural metadata at any time
+ *   (active production orders store point-in-time snapshots), and structural fields may be edited
+ *   before any confirmed/in-progress/completed production order has used this BOM.
+ */
+async function assertBomEditable(
+  tx: Tx,
+  bom: { id: string; status: string },
+  opts: { allowActiveWithOrders?: boolean } = {}
+): Promise<void> {
+  if (bom.status === "OBSOLETE") {
+    throw invalid("Không thể chỉnh sửa định mức BOM đã hết hiệu lực (OBSOLETE).");
+  }
+  if (bom.status === "DRAFT" || opts.allowActiveWithOrders) {
+    return;
+  }
+  const activeOrders = await tx.query(
+    "SELECT 1 FROM kit.production_order WHERE bom_id = $1 AND status NOT IN ('DRAFT', 'CANCELLED') LIMIT 1",
+    [bom.id]
+  );
+  if (activeOrders.rowCount) {
+    throw invalid(
+      "BOM này đã được áp dụng cho Lệnh sản xuất thực tế — để đảm bảo truy xuất nguồn gốc ISO 13485, vui lòng tạo phiên bản BOM mới (Clone) để điều chỉnh định mức.",
+      undefined,
+      "IMMUTABLE_EFFECTIVE_SPEC"
+    );
+  }
+}
+
 export async function updateBomHeader(tx: Tx, actor: AuthzActor, bomId: string, input: Record<string, unknown>) {
   await ensureKitBomRoutingAndIfuSchema(tx);
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as Record<string, unknown> | undefined;
   if (!bom) throw notFound("định mức BOM");
   await authorize(tx, actor, "kit.bom.manage", String(bom.org_unit_id));
-  if (bom.status !== "DRAFT") {
-    throw invalid("Chỉ được chỉnh sửa thông tin định mức BOM ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
-  }
+  await assertBomEditable(tx, { id: String(bom.id), status: String(bom.status) });
 
   const name = input.name !== undefined ? String(input.name).trim() : String(bom.name);
   const testsPerKit = input.tests_per_kit !== undefined ? Math.max(1, Number(input.tests_per_kit) || 50) : Number(bom.tests_per_kit || 50);
@@ -623,7 +653,7 @@ export async function addBomLine(tx: Tx, actor: AuthzActor, input: unknown) {
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [d.bom_id])).rows[0] as KitBomRow | undefined;
   if (!bom) throw notFound("định mức BOM");
   await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
-  if (bom.status !== "DRAFT") throw invalid("Chỉ được chỉnh sửa BOM ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
+  await assertBomEditable(tx, bom);
   if (d.component_item_id === bom.product_item_id) {
     throw invalid("Nguyên vật liệu thành phần không được trùng với sản phẩm đầu ra của BOM.");
   }
@@ -681,7 +711,6 @@ export async function updateBomLine(tx: Tx, actor: AuthzActor, bomId: string, in
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as KitBomRow | undefined;
   if (!bom) throw notFound("định mức BOM");
   await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
-  if (bom.status !== "DRAFT") throw invalid("Chỉ được chỉnh sửa BOM ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
 
   const existing = (await tx.query("SELECT * FROM kit.bom_line WHERE id = $1 AND bom_id = $2", [lineId, bomId])).rows[0];
   if (!existing) throw notFound("dòng nguyên vật liệu BOM");
@@ -694,6 +723,13 @@ export async function updateBomLine(tx: Tx, actor: AuthzActor, bomId: string, in
       ? Number(input.qty_per_base_aliquoted)
       : null;
   const uom = String(input.uom || existing.uom || compItem.base_uom);
+
+  const sameCoreSpec =
+    compId === existing.component_item_id &&
+    qty === Number(existing.qty_per_base) &&
+    Number(qtyAliq ?? 0) === Number(existing.qty_per_base_aliquoted ?? 0) &&
+    uom === existing.uom;
+  await assertBomEditable(tx, bom, { allowActiveWithOrders: sameCoreSpec });
   const scrapPct = Number(input.scrap_pct ?? existing.scrap_pct ?? 0);
   const boxNo = Math.max(1, Number(input.box_no ?? existing.box_no ?? 1));
   const role = String(input.component_role || existing.component_role || "REAGENT");
@@ -763,11 +799,58 @@ export async function updateBomLine(tx: Tx, actor: AuthzActor, bomId: string, in
   return row;
 }
 
+/**
+ * Atomically pairs (or clears/marks NONE) a BOM solution line's primary container (`bundle_parent_code`)
+ * and synchronizes `kit.kit_packaging` in the same transaction. Allowed on DRAFT and EFFECTIVE BOMs.
+ */
+export async function pairBomLineContainer(
+  tx: Tx,
+  actor: AuthzActor,
+  bomId: string,
+  input: Record<string, unknown>
+) {
+  const lineId = String(input.line_id || "").trim();
+  if (!lineId) throw invalid("Thiếu ID dòng BOM cần ghép vật chứa.");
+  const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as KitBomRow | undefined;
+  if (!bom) throw notFound("định mức BOM");
+  await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
+  await assertBomEditable(tx, bom, { allowActiveWithOrders: true });
+
+  const existing = (await tx.query("SELECT * FROM kit.bom_line WHERE id = $1 AND bom_id = $2", [lineId, bomId])).rows[0];
+  if (!existing) throw notFound("dòng nguyên vật liệu BOM");
+
+  const bundleParentCode = input.bundle_parent_code ? String(input.bundle_parent_code).trim() : null;
+  const updatedLine = (
+    await tx.query(
+      `UPDATE kit.bom_line
+          SET bundle_parent_code = $2,
+              updated_by = $3,
+              updated_at = now()
+        WHERE id = $1 AND bom_id = $4
+        RETURNING *`,
+      [lineId, bundleParentCode, actor.userId, bomId]
+    )
+  ).rows[0];
+
+  await writeAudit(tx, actor, {
+    entityType: "kit_bom",
+    entityId: bomId,
+    action: "pair_bom_line_container",
+    changes: {
+      line_no: [existing.line_no, existing.line_no],
+      bundle_parent_code: [existing.bundle_parent_code ?? null, bundleParentCode],
+    },
+  });
+
+  await syncPackagingFromBomLines(tx, actor, bomId);
+  return { line: updatedLine };
+}
+
 export async function deleteBomLine(tx: Tx, actor: AuthzActor, bomId: string, lineId: string) {
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as KitBomRow | undefined;
   if (!bom) throw notFound("định mức BOM");
   await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
-  if (bom.status !== "DRAFT") throw invalid("Chỉ được chỉnh sửa BOM ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
+  await assertBomEditable(tx, bom);
 
   await tx.query("DELETE FROM kit.bom_line WHERE id = $1 AND bom_id = $2", [lineId, bomId]);
   await tx.query(
@@ -926,7 +1009,7 @@ export async function addKitPackaging(tx: Tx, actor: AuthzActor, input: unknown)
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [d.bom_id])).rows[0] as KitBomRow | undefined;
   if (!bom) throw notFound("định mức BOM");
   await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
-  if (bom.status !== "DRAFT") throw invalid("Chỉ được chỉnh sửa cấu trúc đóng gói khi BOM đang ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
+  await assertBomEditable(tx, bom, { allowActiveWithOrders: true });
 
   const row = (
     await tx.query(
@@ -965,7 +1048,7 @@ export async function updateKitPackaging(tx: Tx, actor: AuthzActor, bomId: strin
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as KitBomRow | undefined;
   if (!bom) throw notFound("định mức BOM");
   await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
-  if (bom.status !== "DRAFT") throw invalid("Chỉ được chỉnh sửa cấu trúc đóng gói khi BOM đang ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
+  await assertBomEditable(tx, bom, { allowActiveWithOrders: true });
 
   const existing = (await tx.query("SELECT * FROM kit.kit_packaging WHERE id = $1 AND bom_id = $2", [d.pack_id, bomId])).rows[0];
   if (!existing) throw notFound("quy cách đóng gói");
@@ -1017,7 +1100,7 @@ export async function deleteKitPackaging(tx: Tx, actor: AuthzActor, bomId: strin
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as KitBomRow | undefined;
   if (!bom) throw notFound("định mức BOM");
   await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
-  if (bom.status !== "DRAFT") throw invalid("Chỉ được xóa quy cách đóng gói khi BOM đang ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
+  await assertBomEditable(tx, bom, { allowActiveWithOrders: true });
 
   const existing = (await tx.query("SELECT * FROM kit.kit_packaging WHERE id = $1 AND bom_id = $2", [packId, bomId])).rows[0];
   if (!existing) throw notFound("quy cách đóng gói");
@@ -1157,12 +1240,18 @@ export async function syncPackagingFromBomLines(tx: Tx, actor: AuthzActor, bomId
 
   const targetLines = fillableLines.length > 0 ? fillableLines : lines.filter((l) => !parsePrimaryContainerLineSpec(String(l.component_code || ""), String(l.component_name || "")).isContainer);
 
-  // Count how many fillable lines explicitly reference each container code
+  // Count how many fillable lines explicitly reference each container code (ignore explicit "NONE")
   const explicitRefCount = new Map<string, number>();
   for (const l of targetLines) {
     const parentCode = String(l.bundle_parent_code || "").trim().toUpperCase();
-    if (parentCode) {
+    if (parentCode && parentCode !== "NONE") {
       explicitRefCount.set(parentCode, (explicitRefCount.get(parentCode) ?? 0) + 1);
+    }
+  }
+  const explicitlyReservedCodes = new Set<string>(explicitRefCount.keys());
+  for (const cs of containerSlots) {
+    if (cs.linkedToSolutionCode && cs.linkedToSolutionCode !== "NONE") {
+      explicitlyReservedCodes.add(cs.code.toUpperCase());
     }
   }
 
@@ -1178,13 +1267,16 @@ export async function syncPackagingFromBomLines(tx: Tx, actor: AuthzActor, bomId
     const uomLower = uom.toLowerCase();
     const volMl = uomLower === "µl" || uomLower === "ul" ? totalQty / 1000 : uomLower === "ml" ? totalQty : 0;
 
-    // 1. Check explicit pairing (solution -> container OR container -> solution)
+    // 1. Check explicit pairing (solution -> container OR container -> solution) or explicit NONE
     const explicitCode = String(l.bundle_parent_code || "").trim().toUpperCase();
-    let matchedSlot: ContainerSlot | undefined = containerSlots.find(
-      (cs) =>
-        (explicitCode && cs.code.toUpperCase() === explicitCode) ||
-        (cs.linkedToSolutionCode && cs.linkedToSolutionCode === code.toUpperCase())
-    );
+    const isExplicitNone = explicitCode === "NONE";
+    let matchedSlot: ContainerSlot | undefined = isExplicitNone
+      ? undefined
+      : containerSlots.find(
+          (cs) =>
+            (explicitCode && cs.code.toUpperCase() === explicitCode) ||
+            (cs.linkedToSolutionCode && cs.linkedToSolutionCode === code.toUpperCase())
+        );
 
     let allocatedUnits = 1;
     if (matchedSlot) {
@@ -1196,10 +1288,12 @@ export async function syncPackagingFromBomLines(tx: Tx, actor: AuthzActor, bomId
         allocatedUnits = Math.max(1, Math.floor(matchedSlot.totalUnits / refCnt));
         matchedSlot.remainingUnits = Math.max(0, matchedSlot.remainingUnits - allocatedUnits);
       }
-    } else {
-      // 2. Smart auto-pairing within the same box
+    } else if (!isExplicitNone) {
+      // 2. Smart auto-pairing within the same box (never steal containers reserved by explicit pairings)
       const boxLines = targetLines.filter((x) => Number(x.box_no || 1) === boxNo);
-      const boxContainers = containerSlots.filter((cs) => cs.boxNo === boxNo && cs.remainingUnits > 0);
+      const boxContainers = containerSlots.filter(
+        (cs) => cs.boxNo === boxNo && cs.remainingUnits > 0 && !explicitlyReservedCodes.has(cs.code.toUpperCase())
+      );
 
       if (boxLines.length === 1 && boxContainers.length === 1) {
         // Classic 1-solution + 1-container-type case (e.g., ST044 5 mL + CTN2 5 cái -> 5 tubes x 1 mL)
@@ -2336,9 +2430,7 @@ export async function updateBomLabelIfuSpec(tx: Tx, actor: AuthzActor, bomId: st
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as Record<string, unknown> | undefined;
   if (!bom) throw notFound("định mức BOM");
   await authorize(tx, actor, "kit.bom.manage", String(bom.org_unit_id));
-  if (bom.status !== "DRAFT") {
-    throw invalid("Chỉ được chỉnh sửa thông tin định mức BOM ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
-  }
+  await assertBomEditable(tx, { id: String(bom.id), status: String(bom.status) }, { allowActiveWithOrders: true });
 
   const labelDesignJson =
     input.label_design_json !== undefined

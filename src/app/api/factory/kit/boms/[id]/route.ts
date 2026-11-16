@@ -9,6 +9,7 @@ import {
   deleteKitPackaging,
   fastActivateBom,
   getBomDetail,
+  pairBomLineContainer,
   syncPackagingFromBomLines,
   updateBomHeader,
   updateBomLabelIfuSpec,
@@ -52,6 +53,9 @@ export const POST = factoryRoute(async (tx, { actor, params, body }) => {
   }
   if (b.kind === "delete_packaging") {
     return deleteKitPackaging(tx, actor, params.id, String(b.pack_id || ""));
+  }
+  if (b.kind === "pair_container") {
+    return pairBomLineContainer(tx, actor, params.id, b);
   }
   if (b.kind === "sync_packaging") {
     return syncPackagingFromBomLines(tx, actor, params.id);

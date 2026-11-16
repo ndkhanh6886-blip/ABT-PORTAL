@@ -1613,37 +1613,31 @@ export function BomRoutingView({
   const handleQuickPairContainer = async (solutionLine: any, containerCode: string) => {
     if (!selectedBomId || !solutionLine?.id) return;
     setError(null);
+    const nextCode = containerCode.trim() || null;
+    setBomDetail((prev: any) =>
+      prev
+        ? {
+            ...prev,
+            lines: (prev.lines ?? []).map((item: any) =>
+              item.id === solutionLine.id ? { ...item, bundle_parent_code: nextCode } : item
+            ),
+          }
+        : prev
+    );
     try {
       await api(`/api/factory/kit/boms/${selectedBomId}`, {
         method: "POST",
         json: {
-          kind: "update_line",
+          kind: "pair_container",
           line_id: solutionLine.id,
-          component_item_id: solutionLine.component_item_id,
-          qty_per_base: Number(solutionLine.qty_per_base),
-          qty_per_base_aliquoted:
-            solutionLine.qty_per_base_aliquoted != null ? Number(solutionLine.qty_per_base_aliquoted) : null,
-          uom: solutionLine.uom,
-          scrap_pct: Number(solutionLine.scrap_pct ?? 0),
-          box_no: Number(solutionLine.box_no ?? 1),
-          component_role: solutionLine.component_role,
-          is_critical: solutionLine.is_critical !== false,
-          is_bundled: Boolean(solutionLine.is_bundled),
-          bundle_parent_code: containerCode.trim() || null,
-          allow_substitute: Boolean(solutionLine.allow_substitute),
-          is_mix_component: solutionLine.is_mix_component !== false,
-          is_demo_fixed_component: Boolean(solutionLine.is_demo_fixed_component),
-          include_in_qc_retention: solutionLine.include_in_qc_retention !== false,
+          bundle_parent_code: nextCode,
         },
-      });
-      await api(`/api/factory/kit/boms/${selectedBomId}`, {
-        method: "POST",
-        json: { kind: "sync_packaging" },
       });
       await loadBomDetail(selectedBomId, lineSearch, lineBoxFilter);
       await loadList();
     } catch (err) {
       setError(err);
+      await loadBomDetail(selectedBomId, lineSearch, lineBoxFilter);
     }
   };
 
@@ -3527,6 +3521,12 @@ export function BomRoutingView({
                     </div>
                   )}
 
+                  {error ? (
+                    <div className="mb-3">
+                      <ErrorNote error={error} />
+                    </div>
+                  ) : null}
+
                   {bomDetail.bom.status !== "OBSOLETE" && showAddLine && (
                     <form onSubmit={handleAddBomLine} className="mb-4 p-3 rounded-xl border-2 border-sky-400/60 bg-sky-50/40 dark:bg-sky-950/20 space-y-2.5">
                       <div className="flex items-center justify-between">
@@ -3742,8 +3742,9 @@ export function BomRoutingView({
                         );
                         return bomDetail.lines.map((l: any) => {
                           const lineClass = classifyBomLineForPackaging(l);
+                          const isExplicitNone = String(l.bundle_parent_code || "").trim().toUpperCase() === "NONE";
                           const pairedContainer =
-                            lineClass.kind === "FILLABLE_SOLUTION" && l.bundle_parent_code
+                            lineClass.kind === "FILLABLE_SOLUTION" && l.bundle_parent_code && !isExplicitNone
                               ? containerLines.find(
                                   (c: any) =>
                                     String(c.component_code || "").toUpperCase() ===
@@ -3797,12 +3798,13 @@ export function BomRoutingView({
                                       </span>
                                       <select
                                         className="rounded border border-sky-300 dark:border-sky-700 bg-white dark:bg-slate-900 px-1.5 py-0.5 text-[11px] font-medium text-slate-800 dark:text-slate-100 max-w-[205px]"
-                                        value={l.bundle_parent_code || ""}
+                                        value={pairedContainer ? pairedContainer.component_code : isExplicitNone ? "NONE" : ""}
                                         disabled={bomDetail.bom.status === "OBSOLETE"}
                                         onChange={(e) => handleQuickPairContainer(l, e.target.value)}
                                         title="Chọn ống/chai rỗng trong BOM chứa dung dịch này (Hệ thống sẽ tự động chia thể tích & cập nhật số nhãn cần in)"
                                       >
                                         <option value="">-- Tự ghép theo dung tích --</option>
+                                        <option value="NONE">-- Không ghép vật chứa (1 nhãn đơn) --</option>
                                         {containerLines.map((c: any) => {
                                           const cUnits = Math.max(1, Math.round(Number(c.qty_per_base) || 1));
                                           const fillEach =

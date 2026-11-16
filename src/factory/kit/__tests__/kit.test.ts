@@ -16,7 +16,9 @@ import {
   getBomDetail,
   getRoutingDetail,
   listCustomStepFunctions,
+  pairBomLineContainer,
   routingMachine,
+  updateBomLine,
   upsertCustomStepFunction,
 } from "../bomRouting";
 import {
@@ -1471,5 +1473,152 @@ describe("Phase 4b — Module Phòng Sản xuất Kit (kit schema)", () => {
     await expect(
       withTransaction((tx) => deleteDraftProductionOrder(tx, operator, order2.id))
     ).rejects.toMatchObject({ status: 409, code: "CONFLICT" });
+  });
+
+  it("9. Ghép vật chứa BOM (pairBomLineContainer) hoạt động trên BOM EFFECTIVE và đồng bộ quy cách nhãn", async () => {
+    const site = await makeSite();
+    const { operator, checker } = await setupKitTeam(site);
+    const suffix = Date.now().toString(36).slice(-5).toUpperCase();
+
+    const kitItem = await makeItem(site, {
+      code: `KIT-PAIR-${suffix}`,
+      name: "Bộ Kit Master Mix Đa Mồi",
+      item_type: "FINISHED_KIT",
+      base_uom: "pcs",
+      shelf_life_days: 365,
+    });
+    const mmItem = await makeItem(site, {
+      code: `MM001-${suffix}`,
+      name: "Master Mix Đa Mồi",
+      item_type: "REAGENT",
+      base_uom: "test",
+    });
+    const cttItem = await makeItem(site, {
+      code: `CTT1.5-${suffix}`,
+      name: "Cryotube trắng 1.5ml",
+      item_type: "CONSUMABLE",
+      base_uom: "pcs",
+    });
+    await stockedLot(site, mmItem.id, 1000, "2028-06-01", { uom: "test" });
+    await stockedLot(site, cttItem.id, 100, "2028-06-01", { uom: "pcs" });
+
+    const rt = await withTransaction(async (tx) => {
+      const r = await createRouting(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: kitItem.id,
+        name: `Routing Ghép Vật Chứa ${suffix}`,
+      });
+      await addRoutingStep(tx, operator, {
+        routing_id: r.id,
+        seq: 10,
+        step_code: "STEP-PAIR-10",
+        step_name: "Pha chế Master Mix Đa Mồi",
+        category: "FORMULATION",
+        required_asset_id: "",
+        instructions: "Pha chế và chia ống theo quy cách.",
+      });
+      return r;
+    });
+    await act(routingMachine, operator, rt.id, "submit_review");
+    await act(routingMachine, checker, rt.id, "approve", signed);
+
+    const { bom, mmLine } = await withTransaction(async (tx) => {
+      const b = await createBom(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: kitItem.id,
+        name: `BOM Ghép Vật Chứa ${suffix}`,
+        base_qty: 1,
+        base_uom: "pcs",
+        tests_per_kit: 75,
+        shelf_life_days: 365,
+        routing_id: rt.id,
+      });
+      const line1 = await addBomLine(tx, operator, {
+        bom_id: b.id,
+        line_no: 1,
+        box_no: 1,
+        component_item_id: mmItem.id,
+        component_role: "MASTER_MIX",
+        qty_per_base: 75,
+        uom: "test",
+      });
+      await addBomLine(tx, operator, {
+        bom_id: b.id,
+        line_no: 2,
+        box_no: 1,
+        component_item_id: cttItem.id,
+        component_role: "PACKAGING",
+        qty_per_base: 3,
+        uom: "pcs",
+      });
+      return { bom: b, mmLine: line1 };
+    });
+
+    await act(bomMachine, operator, bom.id, "submit_review");
+    const effBom = await act(bomMachine, checker, bom.id, "approve", signed);
+    expect(effBom.status).toBe("EFFECTIVE");
+
+    // 1. Pair container on EFFECTIVE BOM -> persists bundle_parent_code & syncs packaging (3 tubes x 25 test)
+    await withTransaction((tx) =>
+      pairBomLineContainer(tx, operator, bom.id, {
+        line_id: mmLine.id,
+        bundle_parent_code: cttItem.code,
+      })
+    );
+    const detailAfterPair = await withTransaction((tx) => getBomDetail(tx, operator, bom.id));
+    const pairedLine = detailAfterPair.lines.find((l: any) => l.id === mmLine.id);
+    expect(pairedLine.bundle_parent_code).toBe(cttItem.code);
+    const pairedPack = detailAfterPair.packaging.find((p: any) => String(p.component_name).includes(mmItem.code));
+    expect(pairedPack).toBeDefined();
+    expect(Number(pairedPack.units_per_kit)).toBe(3);
+    expect(Number(pairedPack.fill_qty)).toBe(25);
+
+    // 2. While zero confirmed/active orders use this EFFECTIVE BOM, structural qty edit via updateBomLine succeeds
+    await withTransaction((tx) =>
+      updateBomLine(tx, operator, bom.id, {
+        line_id: mmLine.id,
+        qty_per_base: 90,
+      })
+    );
+    const detailAfterQty = await withTransaction((tx) => getBomDetail(tx, operator, bom.id));
+    expect(Number(detailAfterQty.lines.find((l: any) => l.id === mmLine.id).qty_per_base)).toBe(90);
+
+    // 3. Create & confirm a production order -> qty change on EFFECTIVE BOM is blocked by IMMUTABLE_EFFECTIVE_SPEC, while container pairing still works
+    const activeOrd = await withTransaction((tx) =>
+      createProductionOrder(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: kitItem.id,
+        bom_id: bom.id,
+        warehouse_id: site.warehouse,
+        planned_qty: 2,
+        no_retention: true,
+      })
+    );
+    await act(productionOrderMachine, operator, activeOrd.id, "confirm");
+
+    await expect(
+      withTransaction((tx) =>
+        updateBomLine(tx, operator, bom.id, {
+          line_id: mmLine.id,
+          qty_per_base: 75,
+        })
+      )
+    ).rejects.toMatchObject({ status: 422, code: "IMMUTABLE_EFFECTIVE_SPEC" });
+
+    // Container pairing (set NONE & back to cttItem.code) remains allowed and keeps audit trail
+    await withTransaction((tx) =>
+      pairBomLineContainer(tx, operator, bom.id, {
+        line_id: mmLine.id,
+        bundle_parent_code: "NONE",
+      })
+    );
+    await withTransaction((tx) =>
+      pairBomLineContainer(tx, operator, bom.id, {
+        line_id: mmLine.id,
+        bundle_parent_code: cttItem.code,
+      })
+    );
+    const detailAfterOrder = await withTransaction((tx) => getBomDetail(tx, operator, bom.id));
+    expect(detailAfterOrder.lines.find((l: any) => l.id === mmLine.id).bundle_parent_code).toBe(cttItem.code);
   });
 });
