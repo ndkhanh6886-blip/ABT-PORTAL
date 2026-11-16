@@ -33,6 +33,7 @@ import {
   updateMaterialActuals,
   updateOrderDates,
   verifyLineClearance,
+  verifyStepQcGate,
 } from "../ordersEbr";
 import {
   createRetainSample,
@@ -44,7 +45,10 @@ import {
   stabilityStudyMachine,
   traceKitLotGenealogy,
 } from "../qualityTrace";
+import { lotMachine } from "../../inv/lots";
 import { ncrMachine } from "../../qms/ncr";
+import { createQcTest } from "../../qms/qcTests";
+import { approveSpec, createSpecDraft, specMachine } from "../../qms/specs";
 import "../../modules";
 
 afterAll(closeFactoryPool);
@@ -1367,12 +1371,61 @@ describe("Phase 4b — Module Phòng Sản xuất Kit (kit schema)", () => {
     );
     expect(draftOrder.status).toBe("DRAFT");
 
+    await grant(operator, ["qms.spec.manage", "inv.lot.sample"]);
+    await grant(checker, ["qms.spec.approve"]);
+    const spec = await withTransaction((tx) =>
+      createSpecDraft(tx, operator, {
+        name: `Tiêu chuẩn Kit ${suffix}`,
+        applies_to: "PRODUCT",
+        item_id: kitItem.id,
+        parameters: [{ name: "Cảm quan", value_type: "PASS_FAIL" }],
+      })
+    );
+    const specReq = { id: spec.id, action: "approve", expectedVersion: spec.version, ...signed };
+    await preAuthenticate(specMachine, spec.status, specReq, checker);
+    await withTransaction((tx) => approveSpec(tx, checker, specReq, true));
+
     // 1. User without kit.order.manage must be rejected with FORBIDDEN
     await expect(
       withTransaction((tx) => deleteDraftProductionOrder(tx, viewer, draftOrder.id))
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
 
-    // 2. Delete draft production order -> deletes order, steps, and releases pre-allocated QUARANTINE lot code
+    // 1b. Premature QC gate request & premature QA lot sampling on a DRAFT order are blocked
+    const draftStep = (
+      await getFactoryPool().query("SELECT id FROM kit.production_step WHERE order_id = $1 ORDER BY seq LIMIT 1", [
+        draftOrder.id,
+      ])
+    ).rows[0];
+    await expect(
+      withTransaction((tx) =>
+        verifyStepQcGate(tx, operator, draftOrder.id, {
+          step_id: draftStep.id,
+          decision: "REQUEST_QC",
+        })
+      )
+    ).rejects.toMatchObject({ code: "INVALID" });
+
+    await expect(act(lotMachine, operator, draftOrder.lot_id!, "sample")).rejects.toMatchObject({
+      code: "GUARD_FAILED",
+      details: [{ code: "DRAFT_KIT_ORDER" }],
+    });
+
+    // 1c. Simulate legacy corrupted state on a DRAFT order (unsigned IN_PROGRESS/WAITING_QC step + premature PENDING_QC lot & PLANNED test)
+    const legacyQcTest = await withTransaction(async (tx) => {
+      await tx.query(
+        "UPDATE kit.production_step SET status = 'IN_PROGRESS', qc_gate_status = 'WAITING_QC' WHERE id = $1",
+        [draftStep.id]
+      );
+      await tx.query("UPDATE inv.lot SET status = 'PENDING_QC' WHERE id = $1", [draftOrder.lot_id]);
+      return createQcTest(tx, operator, {
+        entity_type: "LOT",
+        entity_id: draftOrder.lot_id!,
+        spec_id: spec.id,
+        test_kind: "RELEASE",
+      });
+    });
+
+    // 2. Delete draft production order -> deletes order, premature flags/PLANNED test, and releases lot code
     const delRes = await withTransaction((tx) =>
       deleteDraftProductionOrder(tx, operator, draftOrder.id, { reason: "Xóa lệnh nháp tạo nhầm" })
     );
@@ -1383,6 +1436,10 @@ describe("Phase 4b — Module Phòng Sản xuất Kit (kit schema)", () => {
     expect(orderCheck.rowCount).toBe(0);
     const stepCheck = await getFactoryPool().query("SELECT 1 FROM kit.production_step WHERE order_id = $1", [draftOrder.id]);
     expect(stepCheck.rowCount).toBe(0);
+    const lotCheck = await getFactoryPool().query("SELECT 1 FROM inv.lot WHERE id = $1", [draftOrder.lot_id]);
+    expect(lotCheck.rowCount).toBe(0);
+    const qcCheck = await getFactoryPool().query("SELECT 1 FROM qms.qc_test WHERE id = $1", [legacyQcTest.id]);
+    expect(qcCheck.rowCount).toBe(0);
     const auditCheck = await getFactoryPool().query(
       "SELECT action, reason FROM core.audit_log WHERE entity_type = 'kit_production_order' AND entity_id = $1 AND action = 'delete'",
       [draftOrder.id]

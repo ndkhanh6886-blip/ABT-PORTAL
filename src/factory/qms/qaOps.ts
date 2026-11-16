@@ -192,6 +192,12 @@ export async function getQaOpsDashboard(tx: Tx, actor: AuthzActor) {
          FROM inv.lot l
          JOIN master.item i ON i.id = l.item_id
         WHERE l.status IN ('QUARANTINE', 'PENDING_QC')
+          AND NOT EXISTS (
+            SELECT 1 FROM kit.production_order po
+             WHERE po.lot_id = l.id
+               AND l.origin_entity_type = 'KIT_ORDER'
+               AND po.status IN ('DRAFT', 'CANCELLED')
+          )
         ORDER BY CASE WHEN l.status = 'QUARANTINE' THEN 0 ELSE 1 END, l.created_at DESC
         LIMIT 120`
     )

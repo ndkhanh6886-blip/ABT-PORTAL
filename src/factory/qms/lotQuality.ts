@@ -32,6 +32,22 @@ async function latestReviewed(tx: Tx, lotId: string) {
 registerLotQualityGuards({
   sample: [
     {
+      code: "DRAFT_KIT_ORDER",
+      message: "Lô thành phẩm thuộc Lệnh sản xuất Kit đang ở trạng thái Bản nháp hoặc Đã hủy — chưa thể lấy mẫu QC.",
+      check: async ({ tx, row }) => {
+        const draftPo = await tx.query(
+          `SELECT 1 FROM inv.lot l
+             JOIN kit.production_order po ON po.lot_id = l.id
+            WHERE l.id = $1
+              AND l.origin_entity_type = 'KIT_ORDER'
+              AND po.status IN ('DRAFT', 'CANCELLED')
+            LIMIT 1`,
+          [row.id]
+        );
+        return !draftPo.rowCount;
+      },
+    },
+    {
       code: "NO_SPEC",
       message: "Vật tư chưa có tiêu chuẩn QC hiệu lực. QA cần phê duyệt tiêu chuẩn trước khi lấy mẫu.",
       check: async ({ tx, row }) => (await specForLot(tx, row)) !== null,

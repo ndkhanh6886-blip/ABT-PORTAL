@@ -130,7 +130,7 @@ export function OrdersEbrView({
   const [error, setError] = useState<unknown>(null);
   const [showCreateOrder, setShowCreateOrder] = useState(false);
   const [deletingDraftOrder, setDeletingDraftOrder] = useState<any | null>(null);
-  const [deleteDraftReason, setDeleteDraftReason] = useState("Xóa lệnh sản xuất bản nháp");
+  const [deleteDraftReason, setDeleteDraftReason] = useState("");
   const [deletingDraft, setDeletingDraft] = useState(false);
   const [showSplitForm, setShowSplitForm] = useState(false);
   const [showReworkForm, setShowReworkForm] = useState(false);
@@ -1083,8 +1083,9 @@ export function OrdersEbrView({
     }
   };
 
-  const waitingQcCount = dailySteps.filter((s) => isStepActivelyWaitingQc(s, dailySteps)).length;
-  const inProgressCount = dailySteps.filter((s) => s.status === "IN_PROGRESS" || s.status === "AWAITING_CHECK").length;
+  const activeLineSteps = dailySteps.filter((s) => !["DRAFT", "CANCELLED", "COMPLETED"].includes(s.order_status));
+  const waitingQcCount = activeLineSteps.filter((s) => isStepActivelyWaitingQc(s, activeLineSteps)).length;
+  const inProgressCount = activeLineSteps.filter((s) => s.status === "IN_PROGRESS" || s.status === "AWAITING_CHECK").length;
 
   return (
     <div className="space-y-4">
@@ -1652,7 +1653,7 @@ export function OrdersEbrView({
                               onClick={(ev) => {
                                 ev.stopPropagation();
                                 setDeletingDraftOrder(o);
-                                setDeleteDraftReason("Xóa lệnh sản xuất bản nháp");
+                                setDeleteDraftReason("");
                               }}
                             >
                               🗑️ Xóa
@@ -1682,7 +1683,7 @@ export function OrdersEbrView({
                       title="Xóa Lệnh sản xuất đang ở trạng thái Bản nháp"
                       onClick={() => {
                         setDeletingDraftOrder(detail.order);
-                        setDeleteDraftReason("Xóa lệnh sản xuất bản nháp");
+                        setDeleteDraftReason("");
                       }}
                     >
                       🗑️ Xóa lệnh nháp
@@ -3748,7 +3749,7 @@ export function OrdersEbrView({
                 className={inputClass}
                 value={deleteDraftReason}
                 onChange={(ev) => setDeleteDraftReason(ev.target.value)}
-                placeholder="Xóa lệnh sản xuất bản nháp..."
+                placeholder="Nhập lý do xóa (bỏ trống sẽ ghi mặc định: Xóa lệnh sản xuất bản nháp)..."
                 autoFocus
               />
             </Field>

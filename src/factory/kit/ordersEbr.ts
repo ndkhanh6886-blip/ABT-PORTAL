@@ -3262,7 +3262,8 @@ export async function verifyStepQcGate(
   if (!stepId) throw invalid("Chọn bước công đoạn QC cần xác nhận.");
   const step = (
     await tx.query(
-      `SELECT s.*, o.code AS order_code, o.org_unit_id, i.code AS product_code, l.code AS lot_code
+      `SELECT s.*, o.code AS order_code, o.org_unit_id, o.status AS order_status, o.materials_issued,
+              i.code AS product_code, l.code AS lot_code
          FROM kit.production_step s
          JOIN kit.production_order o ON o.id = s.order_id
          JOIN master.item i ON i.id = o.product_item_id
@@ -3272,6 +3273,11 @@ export async function verifyStepQcGate(
     )
   ).rows[0];
   if (!step) throw notFound("bước công đoạn EBR");
+  if (step.order_status === "DRAFT" || step.order_status === "CANCELLED" || !step.materials_issued) {
+    throw invalid(
+      "Lệnh sản xuất đang ở trạng thái Bản nháp hoặc chưa xuất kho nguyên vật liệu — chưa thể gửi hoặc xác nhận cổng QC công đoạn."
+    );
+  }
 
   const decision = input.decision ?? "PASS";
   const note = input.note?.trim() || null;
@@ -4198,12 +4204,26 @@ export async function deleteDraftProductionOrder(
     throw conflict("Không thể xóa lệnh sản xuất đã xuất nguyên vật liệu kho.");
   }
 
-  const startedSteps = await tx.query(
-    "SELECT 1 FROM kit.production_step WHERE order_id = $1 AND status <> 'PENDING' LIMIT 1",
+  const executedSteps = await tx.query(
+    `SELECT 1
+       FROM kit.production_step s
+      WHERE s.order_id = $1
+        AND (
+          s.status IN ('DONE', 'AWAITING_CHECK')
+          OR s.completed_at IS NOT NULL
+          OR s.checked_by IS NOT NULL
+          OR s.qc_verified_at IS NOT NULL
+          OR s.deviation_id IS NOT NULL
+          OR EXISTS (
+            SELECT 1 FROM core.e_signature es
+             WHERE es.entity_id::text = s.id::text
+          )
+        )
+      LIMIT 1`,
     [orderId]
   );
-  if (startedSteps.rowCount) {
-    throw conflict("Không thể xóa lệnh sản xuất đã có công đoạn bắt đầu thực hiện.");
+  if (executedSteps.rowCount) {
+    throw conflict("Không thể xóa lệnh sản xuất đã có công đoạn hoàn tất, đã ký điện tử hoặc đã phát sinh sai lệch.");
   }
 
   const hasStockDocs = await tx.query(
@@ -4214,17 +4234,34 @@ export async function deleteDraftProductionOrder(
     throw conflict("Không thể xóa lệnh sản xuất đã phát sinh chứng từ kho.");
   }
 
-  const [hasQc, hasCoa, hasRework, hasGenealogy, hasRetain] = await Promise.all([
+  const [hasQc, hasLotQcResult, hasLotNcr, hasCoa, hasRework, hasGenealogy, hasRetain] = await Promise.all([
     cur.qc_test_id
       ? Promise.resolve({ rowCount: 1 })
       : tx.query("SELECT 1 FROM qms.qc_test WHERE entity_type = 'PRODUCTION_ORDER' AND entity_id = $1 LIMIT 1", [orderId]),
+    cur.lot_id
+      ? tx.query(
+          "SELECT 1 FROM qms.qc_test WHERE entity_type = 'LOT' AND entity_id = $1 AND status IN ('RESULTS_ENTERED', 'REVIEWED') LIMIT 1",
+          [cur.lot_id]
+        )
+      : Promise.resolve({ rowCount: 0 }),
+    cur.lot_id
+      ? tx.query("SELECT 1 FROM qms.ncr WHERE lot_id = $1 LIMIT 1", [cur.lot_id])
+      : Promise.resolve({ rowCount: 0 }),
     tx.query("SELECT 1 FROM kit.coa_certificate WHERE production_order_id = $1 LIMIT 1", [orderId]),
     tx.query("SELECT 1 FROM kit.rework_order WHERE production_order_id = $1 LIMIT 1", [orderId]),
     tx.query("SELECT 1 FROM kit.lot_genealogy WHERE production_order_id = $1 LIMIT 1", [orderId]),
     tx.query("SELECT 1 FROM kit.retain_sample WHERE production_order_id = $1 LIMIT 1", [orderId]),
   ]);
-  if (hasQc.rowCount || hasCoa.rowCount || hasRework.rowCount || hasGenealogy.rowCount || hasRetain.rowCount) {
-    throw conflict("Không thể xóa lệnh sản xuất đã phát sinh hồ sơ QC, COA hoặc truy xuất lô.");
+  if (
+    hasQc.rowCount ||
+    hasLotQcResult.rowCount ||
+    hasLotNcr.rowCount ||
+    hasCoa.rowCount ||
+    hasRework.rowCount ||
+    hasGenealogy.rowCount ||
+    hasRetain.rowCount
+  ) {
+    throw conflict("Không thể xóa lệnh sản xuất đã phát sinh hồ sơ QC, NCR, COA hoặc truy xuất lô.");
   }
 
   await releaseDemandReservations(tx, actor, "PRODUCTION_ORDER", orderId, auditReason);
@@ -4248,7 +4285,7 @@ export async function deleteDraftProductionOrder(
     lotRow &&
     lotRow.origin_entity_type === "KIT_ORDER" &&
     lotRow.origin_entity_id === orderId &&
-    lotRow.status === "QUARANTINE"
+    (lotRow.status === "QUARANTINE" || lotRow.status === "PENDING_QC")
   ) {
     const lotRefs = await tx.query(
       `SELECT (
@@ -4257,13 +4294,39 @@ export async function deleteDraftProductionOrder(
          EXISTS(SELECT 1 FROM inv.stock_document_line WHERE lot_id = $1) OR
          EXISTS(SELECT 1 FROM inv.reservation WHERE lot_id = $1) OR
          EXISTS(SELECT 1 FROM inv.container WHERE lot_id = $1) OR
-         EXISTS(SELECT 1 FROM qms.qc_test WHERE entity_type = 'LOT' AND entity_id = $1) OR
          EXISTS(SELECT 1 FROM qms.ncr WHERE lot_id = $1) OR
-         EXISTS(SELECT 1 FROM kit.production_order WHERE lot_id = $1)
+         EXISTS(SELECT 1 FROM kit.production_order WHERE lot_id = $1) OR
+         EXISTS(
+           SELECT 1
+             FROM qms.qc_test t
+            WHERE t.entity_type = 'LOT'
+              AND t.entity_id = $1
+              AND (
+                t.status NOT IN ('PLANNED', 'IN_PROGRESS', 'CANCELLED')
+                OR EXISTS(SELECT 1 FROM qms.reference_standard_usage u WHERE u.test_id = t.id)
+                OR EXISTS(SELECT 1 FROM kit.coa_certificate c WHERE c.qc_test_id = t.id)
+                OR EXISTS(SELECT 1 FROM kit.stability_timepoint st WHERE st.qc_test_id = t.id)
+                OR EXISTS(SELECT 1 FROM device.device_unit du WHERE du.fqc_test_id = t.id)
+                OR EXISTS(SELECT 1 FROM core.e_signature es WHERE es.entity_id::text = t.id::text)
+              )
+         )
        ) AS has_refs`,
       [lotRow.id]
     );
     if (!lotRefs.rows[0]?.has_refs) {
+      const deletableTests = (
+        await tx.query(
+          "SELECT id FROM qms.qc_test WHERE entity_type = 'LOT' AND entity_id = $1 AND status IN ('PLANNED', 'IN_PROGRESS', 'CANCELLED')",
+          [lotRow.id]
+        )
+      ).rows.map((r: { id: string }) => r.id);
+      if (deletableTests.length > 0) {
+        await tx.query("UPDATE qms.qc_test SET retest_of_id = NULL WHERE retest_of_id = ANY($1::uuid[])", [
+          deletableTests,
+        ]);
+        await tx.query("DELETE FROM qms.qc_result WHERE test_id = ANY($1::uuid[])", [deletableTests]);
+        await tx.query("DELETE FROM qms.qc_test WHERE id = ANY($1::uuid[])", [deletableTests]);
+      }
       await tx.query("DELETE FROM inv.lot WHERE id = $1", [lotRow.id]);
       lotFreed = true;
     }

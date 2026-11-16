@@ -83,7 +83,22 @@ function daysBetween(a: string, b: string) {
 }
 
 /** Phân loại trạng thái hiển thị của một công đoạn (có xét khóa bởi bước QC xen kẽ phía trước). */
-function stepVisual(step: PlanStep, steps: PlanStep[]) {
+function stepVisual(step: PlanStep, steps: PlanStep[], orderStatus?: string) {
+  if (orderStatus === "DRAFT") {
+    return step.is_qc
+      ? {
+          key: "QC_PENDING",
+          icon: "🛡️",
+          label: "Cổng QC xen kẽ (chưa xác nhận lệnh)",
+          cls: "bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800",
+        }
+      : {
+          key: "PENDING",
+          icon: "",
+          label: "Chưa bắt đầu (Bản nháp)",
+          cls: "bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700",
+        };
+  }
   if (isDoneStatus(step.status)) {
     return { key: "DONE", icon: "✓", label: "Đã hoàn tất", cls: "bg-emerald-500 text-white border-emerald-600" };
   }
@@ -153,7 +168,7 @@ export function ProductionPlanView({
   const [showStageSummary, setShowStageSummary] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deletingOrder, setDeletingOrder] = useState<PlanOrder | null>(null);
-  const [deleteReason, setDeleteReason] = useState("Xóa lệnh sản xuất bản nháp");
+  const [deleteReason, setDeleteReason] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [expandedStepsIds, setExpandedStepsIds] = useState<Record<string, boolean>>({});
   const [hoveredStep, setHoveredStep] = useState<{ orderId: string; stepId: string } | null>(null);
@@ -208,10 +223,11 @@ export function ProductionPlanView({
   const stageSummary = useMemo(() => {
     const map = new Map<string, { seq: number; name: string; is_qc: boolean; total: number; done: number; running: number; waitingQc: number; failed: number; pending: number; orders: string[] }>();
     for (const o of activeOrders) {
+      if (o.status === "DRAFT") continue;
       for (const s of o.steps) {
         const key = s.step_code || s.step_name;
         const cur = map.get(key) ?? { seq: s.seq, name: s.step_name, is_qc: s.is_qc, total: 0, done: 0, running: 0, waitingQc: 0, failed: 0, pending: 0, orders: [] };
-        const v = stepVisual(s, o.steps).key;
+        const v = stepVisual(s, o.steps, o.status).key;
         cur.total += 1;
         if (v === "DONE") cur.done += 1;
         else if (v === "RUNNING") {
@@ -507,7 +523,7 @@ export function ProductionPlanView({
                                 }
                               >
                                 {o.steps.map((s, idx) => {
-                                  const v = stepVisual(s, o.steps);
+                                  const v = stepVisual(s, o.steps, o.status);
                                   const prevDone = idx > 0 && isDoneStatus(o.steps[idx - 1].status);
                                   const isHovered = hoveredStep?.orderId === o.id && hoveredStep.stepId === s.id;
                                   return (
@@ -578,7 +594,7 @@ export function ProductionPlanView({
                               >
                                 🔎 <b>Bước #{hoveredStepObj.seq}:</b> {hoveredStepObj.step_name}{" "}
                                 <span className="text-slate-500 dark:text-slate-400">
-                                  ({stepVisual(hoveredStepObj, o.steps).label})
+                                  ({stepVisual(hoveredStepObj, o.steps, o.status).label})
                                 </span>
                               </div>
                             ) : current ? (
@@ -604,7 +620,7 @@ export function ProductionPlanView({
                             {isStepsExpanded && (
                               <div className="mt-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/50 p-1.5 space-y-1">
                                 {o.steps.map((s) => {
-                                  const v = stepVisual(s, o.steps);
+                                  const v = stepVisual(s, o.steps, o.status);
                                   const assignee = s.is_qc
                                     ? s.qa_assignee_name ?? o.qa_assignee_name
                                     : s.assigned_to_name;
@@ -669,7 +685,7 @@ export function ProductionPlanView({
                             title="Xóa Lệnh sản xuất đang ở trạng thái Bản nháp (giải phóng luôn mã lô dự kiến chưa xuất kho)"
                             onClick={() => {
                               setDeletingOrder(o);
-                              setDeleteReason("Xóa lệnh sản xuất bản nháp");
+                              setDeleteReason("");
                             }}
                           >
                             🗑️ Xóa lệnh nháp
@@ -806,7 +822,7 @@ export function ProductionPlanView({
                 className={inputClass}
                 value={deleteReason}
                 onChange={(ev) => setDeleteReason(ev.target.value)}
-                placeholder="Xóa lệnh sản xuất bản nháp..."
+                placeholder="Nhập lý do xóa (bỏ trống sẽ ghi mặc định: Xóa lệnh sản xuất bản nháp)..."
                 autoFocus
               />
             </label>
