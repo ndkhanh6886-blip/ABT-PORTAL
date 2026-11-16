@@ -47,7 +47,15 @@ function buildRolePermissions(allCodes: string[], prefixes: string[], isHead: bo
     const inPrimary = prefixes.some((pf) => code.startsWith(pf));
     const inCommon = commonPrefixes.some((pf) => code.startsWith(pf));
     if (!inPrimary && !inCommon) return false;
-    if (!isHead && (code.endsWith(".approve") || code.endsWith(".release") || code.endsWith(".close") || code.startsWith("core."))) {
+    if (
+      !isHead &&
+      (code.endsWith(".approve") ||
+        code.endsWith(".release") ||
+        code.endsWith(".close") ||
+        code.endsWith(".edit") ||
+        code.endsWith(".delete") ||
+        code.startsWith("core."))
+    ) {
       return false;
     }
     return true;
@@ -61,7 +69,7 @@ const STANDARD_FACTORY_ROLES: { code: string; name: string; desc: string; prefix
   { code: "KIT_STAFF", name: "Kỹ thuật viên Sản xuất Kit", desc: "Thực hiện các công đoạn pha chế, chia chuẩn, lắp ráp Kit và ghi nhận hồ sơ lô eBR", prefixes: ["kit."], isHead: false },
   { code: "OLIGO_HEAD", name: "Trưởng phòng Tổng hợp Oligo", desc: "Toàn quyền nhận đơn Oligo, lập mẻ tổng hợp CPG, duyệt QC OD/HPLC/PAGE và giao hàng", prefixes: ["oligo.", "qms."], isHead: true },
   { code: "OLIGO_STAFF", name: "Kỹ thuật viên Tổng hợp Oligo", desc: "Vận hành máy tổng hợp CPG, cắt khử bảo vệ, tinh sạch HPLC/PAGE và đo OD", prefixes: ["oligo."], isHead: false },
-  { code: "DEVICE_HEAD", name: "Trưởng phòng Kỹ thuật – Thiết bị", desc: "Toàn quyền quản lý dòng máy, DMR, phát hành lệnh lắp ráp DHR, FQC và bảo hành RMA", prefixes: ["device.", "qms.", "rd.view", "rd.project.", "rd.gate.", "rd.transfer.manage", "rd.software."], isHead: true },
+  { code: "DEVICE_HEAD", name: "Trưởng phòng Kỹ thuật – Thiết bị", desc: "Toàn quyền quản lý dòng máy, DMR, phát hành lệnh lắp ráp DHR, FQC và bảo hành RMA", prefixes: ["device.", "qms.", "rd.view", "rd.project.", "rd.eln.", "rd.gate.", "rd.transfer.manage", "rd.software."], isHead: true },
   { code: "DEVICE_STAFF", name: "Kỹ sư Lắp ráp Thiết bị & FSE", desc: "Thực hiện lắp ráp trạm cơ khí/điện tử/firmware, chạy già hóa Burn-in và xử lý ca bảo hành", prefixes: ["device.", "rd.view", "rd.project.", "rd.transfer.manage"], isHead: false },
   { code: "QA_HEAD", name: "Trưởng phòng QA/QC (ISO 13485)", desc: "Toàn quyền thẩm định QC, giải phóng lô, cấp COA, phê duyệt tài liệu SOP và đóng NCR/CAPA", prefixes: ["qms.", "kit.", "oligo.", "device.", "rd."], isHead: true },
   { code: "QA_STAFF", name: "Chuyên viên Kiểm nghiệm QC/QA", desc: "Lấy mẫu kiểm nghiệm IQC/IPQC/OQC, ghi nhận kết quả QC và lập báo cáo sự cố NCR", prefixes: ["qms."], isHead: false },

@@ -10,6 +10,7 @@ import type { Role } from "./RolesView";
 interface Grant {
   id: string;
   role_id: string;
+  role_code?: string;
   role_name: string;
   scope_org_unit_id: string | null;
   scope_name: string | null;
@@ -63,14 +64,28 @@ function useFactoryAccess(userId: number, username: string) {
   const matchedUser = users.data?.find((u) => Number(u.id) === Number(userId) || u.username?.toLowerCase() === username?.toLowerCase());
   const user: FactoryUser | undefined = matchedUser ?? (users.data ? { id: userId, username, grants: [] } : undefined);
   const roleById = useMemo(() => new Map((roles.data ?? []).map((r) => [r.id, r])), [roles.data]);
-  // permission code → where it is held ("toàn công ty" / department names)
-  const held = useMemo(() => {
-    const m = new Map<string, string[]>();
+  const customRoleCode = `USER_CUSTOM_${userId}`;
+  // permission code → where it is held ("toàn công ty" / department names), inherited vs personal overrides
+  const { held, inheritedMap, customPermSet } = useMemo(() => {
+    const allHeld = new Map<string, string[]>();
+    const inherited = new Map<string, string[]>();
+    const customSet = new Set<string>();
     for (const g of user?.grants ?? []) {
-      for (const p of roleById.get(g.role_id)?.permissions ?? []) m.set(p, [...(m.get(p) ?? []), g.scope_name ?? "toàn công ty"]);
+      const roleObj = roleById.get(g.role_id);
+      const rCode = g.role_code ?? roleObj?.code ?? "";
+      const isCustomRole = rCode === customRoleCode;
+      for (const p of roleObj?.permissions ?? []) {
+        const scopeLabel = g.scope_name ?? "toàn công ty";
+        allHeld.set(p, [...(allHeld.get(p) ?? []), isCustomRole ? `cấp riêng (${scopeLabel})` : `${g.role_name} · ${scopeLabel}`]);
+        if (isCustomRole) {
+          customSet.add(p);
+        } else {
+          inherited.set(p, [...(inherited.get(p) ?? []), g.role_name]);
+        }
+      }
     }
-    return m;
-  }, [user, roleById]);
+    return { held: allHeld, inheritedMap: inherited, customPermSet: customSet };
+  }, [user, roleById, customRoleCode]);
 
   return {
     user,
@@ -79,6 +94,8 @@ function useFactoryAccess(userId: number, username: string) {
     units: (units.data ?? []).filter((u) => u.status === "ACTIVE"),
     catalogue: catalogue.data,
     held,
+    inheritedMap,
+    customPermSet,
     error: users.error ?? roles.error ?? units.error ?? catalogue.error,
     ready: Boolean(users.data && roles.data && catalogue.data),
   };
@@ -96,7 +113,10 @@ export function FactoryAccessSection({ userId, username, isRootAdmin }: { userId
   const [open, setOpen] = useState<string | null>(null);
   const [form, setForm] = useState<{ dept: string; roleId: string; scope: string }>({ dept: "", roleId: "", scope: "" });
 
-  const refresh = () => qc.invalidateQueries({ queryKey: ["factory", "users"] });
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ["factory", "users"] });
+    qc.invalidateQueries({ queryKey: ["factory", "me"] });
+  };
   const grant = useMutation({
     mutationFn: () =>
       api(`/api/factory/users/${userId}/roles`, { method: "POST", idempotent: true, json: { role_id: form.roleId, scope_org_unit_id: form.scope || null } }),
@@ -140,7 +160,9 @@ export function FactoryAccessSection({ userId, username, isRootAdmin }: { userId
             const perms = catalogue.filter((p) => d.modules.includes(p.module));
             const heldCount = isRootAdmin ? perms.length : perms.filter((p) => held.has(p.code)).length;
             const grants = user.grants.filter((g) => roleById.get(g.role_id)?.permissions.some((c) => inDept(d, c)));
-            const roleChoices = roles.filter((r) => r.status === "ACTIVE" && r.permissions.some((c) => inDept(d, c)));
+            const roleChoices = roles.filter(
+              (r) => r.status === "ACTIVE" && !r.code.startsWith("USER_CUSTOM_") && r.permissions.some((c) => inDept(d, c))
+            );
             const deptUnit = units.find((u) => u.module_key === d.unit);
             const expanded = open === d.key;
             const on = heldCount > 0;
@@ -266,7 +288,23 @@ export function FactoryFeatureGroups({
   startIndex: number;
   onSummaryChange?: (summary: { active: number; total: number }) => void;
 }) {
-  const { roles, catalogue, held, error, ready } = useFactoryAccess(userId, username);
+  const qc = useQueryClient();
+  const me = useFactoryMe();
+  const { roles, catalogue, held, inheritedMap, customPermSet, error, ready } = useFactoryAccess(userId, username);
+  const togglePermMut = useMutation({
+    mutationFn: ({ code, enabled }: { code: string; enabled: boolean }) =>
+      api(`/api/factory/users/${userId}/permissions`, {
+        method: "POST",
+        json: { permission_code: code, enabled, reason: "Cấu hình phân quyền chi tiết cá nhân" },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["factory", "users"] });
+      qc.invalidateQueries({ queryKey: ["factory", "roles"] });
+      qc.invalidateQueries({ queryKey: ["factory", "me"] });
+    },
+  });
+  const isSelf = me.data?.profile.user_id === userId;
+  const canEditCustom = !isRootAdmin && (!isSelf || Boolean(me.data?.is_root));
 
   const summary = useMemo(() => {
     if (!ready || !catalogue) return null;
@@ -291,6 +329,7 @@ export function FactoryFeatureGroups({
 
   return (
     <>
+      {togglePermMut.error && <ErrorNote error={togglePermMut.error} />}
       {FACTORY_DEPTS.map((d, i) => {
         const perms = catalogue.filter((p) => d.modules.includes(p.module));
         if (!perms.length) return null;
@@ -314,32 +353,67 @@ export function FactoryFeatureGroups({
                   {activeCount}/{perms.length} quyền kích hoạt
                 </span>
               </div>
-              <span className="text-[11px] text-slate-400">Cấp qua vai trò ở mục “Khối Kỹ thuật – Nhà máy”</span>
+              <span className="text-[11px] text-slate-400">Cấp qua vai trò ở trên hoặc tích chọn trực tiếp cho từng cá nhân</span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
               {perms.map((p) => {
-                const where = isRootAdmin ? ["toàn quyền"] : held.get(p.code);
-                const carriers = roles.filter((r) => r.status === "ACTIVE" && r.permissions.includes(p.code)).map((r) => r.name);
+                const inheritedRoles = inheritedMap.get(p.code) ?? [];
+                const isInherited = inheritedRoles.length > 0;
+                const isCustom = customPermSet.has(p.code);
+                const checked = isRootAdmin || isInherited || isCustom;
+                const interactive = canEditCustom && !isInherited;
+                const carriers = roles
+                  .filter((r) => r.status === "ACTIVE" && !r.code.startsWith("USER_CUSTOM_") && r.permissions.includes(p.code))
+                  .map((r) => r.name);
                 return (
-                  <div
+                  <label
                     key={p.code}
-                    title={carriers.length ? `Có trong vai trò: ${carriers.join(", ")}` : "Chưa vai trò nào chứa quyền này"}
-                    className={`p-3 rounded-xl border flex items-start gap-3 ${
-                      where ? "bg-white dark:bg-slate-800 border-teal-200 dark:border-teal-800/80 shadow-xs" : "bg-white/60 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700/60 opacity-60"
+                    title={
+                      isRootAdmin
+                        ? "Tài khoản Root Admin mặc định có toàn quyền"
+                        : isInherited
+                          ? `Đang có sẵn từ vai trò: ${[...new Set(inheritedRoles)].join(", ")}`
+                          : carriers.length
+                            ? `Tích để cấp/thu hồi riêng cho cá nhân này. (Cũng có trong vai trò: ${carriers.join(", ")})`
+                            : "Tích để cấp/thu hồi riêng quyền này cho cá nhân"
+                    }
+                    className={`p-3 rounded-xl border flex items-start gap-3 transition-colors ${
+                      interactive ? "cursor-pointer hover:border-teal-400" : ""
+                    } ${
+                      checked
+                        ? "bg-white dark:bg-slate-800 border-teal-200 dark:border-teal-800/80 shadow-xs"
+                        : "bg-white/60 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700/60 opacity-75"
                     }`}
                   >
-                    <input type="checkbox" checked={Boolean(where)} disabled readOnly className="mt-0.5 rounded text-teal-600 w-4 h-4 shrink-0" aria-label={p.description} />
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={!interactive || togglePermMut.isPending}
+                      onChange={() => {
+                        if (interactive) togglePermMut.mutate({ code: p.code, enabled: !isCustom });
+                      }}
+                      className="mt-0.5 rounded text-teal-600 w-4 h-4 shrink-0 cursor-pointer disabled:cursor-default"
+                      aria-label={p.description}
+                    />
                     <div className="space-y-0.5 flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-2">
-                        <span className={`text-xs font-bold ${where ? "text-slate-900 dark:text-white" : "text-slate-600 dark:text-slate-400"}`}>{p.description}</span>
+                        <span className={`text-xs font-bold ${checked ? "text-slate-900 dark:text-white" : "text-slate-600 dark:text-slate-400"}`}>{p.description}</span>
                         <span className="text-[9px] font-mono text-slate-400 shrink-0">{p.code}</span>
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
                         {p.is_gxp_critical && <span className="px-1.5 rounded bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-bold">GxP · ký điện tử</span>}
-                        {where ? <span>Đang có · {[...new Set(where)].join(", ")}</span> : <span>Vai trò: {carriers.length ? carriers.join(", ") : "—"}</span>}
+                        {isRootAdmin ? (
+                          <span>Admin gốc · toàn quyền</span>
+                        ) : isInherited ? (
+                          <span className="text-emerald-700 dark:text-emerald-400 font-semibold">Theo vai trò · {[...new Set(inheritedRoles)].join(", ")}</span>
+                        ) : isCustom ? (
+                          <span className="text-sky-700 dark:text-sky-400 font-semibold">✓ Cấp riêng cá nhân</span>
+                        ) : (
+                          <span>Vai trò có sẵn: {carriers.length ? carriers.join(", ") : "—"}</span>
+                        )}
                       </div>
                     </div>
-                  </div>
+                  </label>
                 );
               })}
             </div>

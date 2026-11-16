@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { createOrgUnit, createUser, grant } from "../../__tests__/helpers";
 import { closeFactoryPool, getFactoryPool, withTransaction } from "../../core/db";
 import type { AuthzActor } from "../../core/authz";
+import { setUserCustomPermission, type UserDirectory } from "../../core/roles";
 import { preAuthenticate, runTransition, type MachineDef, type TransitionRequest } from "../../core/stateMachine";
 import { createAsset } from "../../asset/service";
 import { makeItem, makeSite, stockedLot, type Site } from "../../inv/__tests__/fixtures";
@@ -14,18 +15,23 @@ import {
 } from "../ideas";
 import {
   createProject,
+  deleteProject,
   exportRoadmapIcs,
   getProjectDetail,
   projectGateMachine,
+  projectMachine,
   saveMilestone,
   saveSpecEvaluation,
   updateGateDeliverable,
+  updateProject,
 } from "../projects";
 import {
   addExperimentEntry,
   consumeExperimentMaterial,
   createExperiment,
   createExperimentRevision,
+  deleteExperiment,
+  editExperiment,
   experimentMachine,
   getExperimentDetail,
   listExperiments,
@@ -880,5 +886,165 @@ describe("R&D Module (Phase 4d): Idea Funnel, Stage-Gate, ELN, Biobank, Tech Tra
     expect(rev2.project_id).toBeNull();
     expect(rev2.org_unit_id).toBe(site.dept);
     expect(rev2.entries).toHaveLength(1);
+  });
+
+  it("8. Project & ELN Edit/Delete with granular RBAC and custom per-user permissions", async () => {
+    const site = await makeSite();
+    const { researcher, rdHead } = await setupRdTeam(site);
+    const adminActor: AuthzActor = {
+      userId: 1,
+      name: "Quản trị viên hệ thống",
+      isPortalAdmin: true,
+      isRootAdmin: true,
+    };
+    const fakeDirectory: UserDirectory = {
+      search: async () => [],
+      get: async () => null,
+    };
+
+    const proj = await withTransaction((tx) =>
+      createProject(tx, researcher, {
+        name: "Dự án nghiên cứu sản phẩm R&D thử nghiệm",
+        owner_org_unit_id: site.dept,
+        target_domain: "KIT",
+        ivd_class: "CLASS_A",
+        leader_id: researcher.userId,
+      })
+    );
+
+    const linkedExp = await withTransaction((tx) =>
+      createExperiment(tx, researcher, {
+        project_id: proj.id,
+        title: "Thí nghiệm kiểm tra tải tệp",
+        objective: "Xác nhận khả năng chỉnh sửa và xóa ELN",
+        start_now: true,
+      })
+    );
+
+    // Cancel linked ELN and kill project (simulating stopped test records with 1 ELN)
+    const cancelledExp = await act(experimentMachine, researcher, linkedExp.id, "cancel", {
+      reason: "Hủy bản nháp thử nghiệm",
+    });
+    expect(cancelledExp.status).toBe("CANCELLED");
+
+    const killedProj = await act(projectMachine, rdHead, proj.id, "kill", {
+      ...signed,
+      reason: "Tạm dừng dự án thử nghiệm",
+    });
+    expect(killedProj.status).toBe("KILLED");
+
+    // 1. Staff without .edit/.delete must be rejected with FORBIDDEN
+    await expect(
+      withTransaction((tx) => updateProject(tx, researcher, proj.id, { name: "Tên mới trái phép" }))
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    await expect(
+      withTransaction((tx) => deleteProject(tx, researcher, proj.id, { reason: "Thử xóa không có quyền" }))
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    await expect(
+      withTransaction((tx) => editExperiment(tx, researcher, linkedExp.id, { title: "Sửa ELN không có quyền" }))
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    await expect(
+      withTransaction((tx) => deleteExperiment(tx, researcher, linkedExp.id, { reason: "Xóa ELN không có quyền" }))
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    // 2. Grant custom permissions individually to researcher via setUserCustomPermission
+    for (const perm of ["rd.project.edit", "rd.project.delete", "rd.eln.edit", "rd.eln.delete"]) {
+      await withTransaction((tx) =>
+        setUserCustomPermission(tx, adminActor, fakeDirectory, researcher.userId, {
+          permission_code: perm,
+          enabled: true,
+          reason: "Cấp quyền chỉnh sửa/xóa cho chuyên viên R&D",
+        })
+      );
+    }
+
+    // 3. Edit project: update metadata, budget, leader override, and reopen KILLED -> ACTIVE
+    const editedProj = await withTransaction((tx) =>
+      updateProject(tx, researcher, proj.id, {
+        version: killedProj.version,
+        name: "Dự án R&D sau cập nhật tên",
+        budget_amount: 85000000,
+        leader_name_override: "Cán bộ phụ trách mới",
+        status: "ACTIVE",
+        reason: "Cập nhật thông tin và mở lại dự án",
+      })
+    );
+    expect(editedProj.name).toBe("Dự án R&D sau cập nhật tên");
+    expect(editedProj.status).toBe("ACTIVE");
+    expect(editedProj.leader_name).toBe("Cán bộ phụ trách mới");
+
+    // 4. Edit ELN: reopen CANCELLED -> IN_PROGRESS and update fields
+    const editedExp = await withTransaction((tx) =>
+      editExperiment(tx, researcher, linkedExp.id, {
+        version: cancelledExp.version,
+        title: "Thí nghiệm kiểm tra đã mở lại",
+        status: "IN_PROGRESS",
+        reason: "Mở lại sổ thí nghiệm để ghi nhận tiếp",
+      })
+    );
+    expect(editedExp.title).toBe("Thí nghiệm kiểm tra đã mở lại");
+    expect(editedExp.status).toBe("IN_PROGRESS");
+
+    // 5. Deleting a project with a linked ELN preserves the ELN as Standalone (project_id = NULL)
+    const delProjRes = await withTransaction((tx) =>
+      deleteProject(tx, researcher, proj.id, { reason: "Xóa dự án thử nghiệm phần mềm" })
+    );
+    expect(delProjRes.deleted).toBe(true);
+
+    const remainingExp = await withTransaction((tx) => getExperimentDetail(tx, researcher, linkedExp.id));
+    expect(remainingExp.project_id).toBeNull();
+    expect(remainingExp.org_unit_id).toBe(site.dept);
+
+    // 6. Approved ELN cannot be deleted (ALCOA+ / 21 CFR Part 11 guard), while draft/in-progress ELN can be deleted
+    await withTransaction((tx) =>
+      addExperimentEntry(tx, researcher, linkedExp.id, {
+        entry_type: "OBSERVATION",
+        title: "Kết quả thử nghiệm",
+        content: { notes: "Thông số đạt chuẩn" },
+      })
+    );
+    await act(experimentMachine, researcher, linkedExp.id, "submit", {
+      payload: { conclusion: "Hoàn tất thử nghiệm đạt yêu cầu" },
+    });
+    await act(experimentMachine, rdHead, linkedExp.id, "approve", signed);
+
+    await expect(
+      withTransaction((tx) => deleteExperiment(tx, researcher, linkedExp.id, { reason: "Thử xóa ELN đã duyệt" }))
+    ).rejects.toMatchObject({ status: 409 });
+
+    const tempExp = await withTransaction((tx) =>
+      createExperiment(tx, researcher, {
+        org_unit_id: site.dept,
+        title: "Thí nghiệm nháp cần xóa",
+        objective: "Kiểm tra chức năng xóa ELN",
+        start_now: true,
+      })
+    );
+    const delExpRes = await withTransaction((tx) =>
+      deleteExperiment(tx, researcher, tempExp.id, { reason: "Xóa sổ thí nghiệm nháp" })
+    );
+    expect(delExpRes.deleted).toBe(true);
+
+    // 7. Revoke rd.project.delete -> subsequent project delete must be FORBIDDEN again
+    const proj2 = await withTransaction((tx) =>
+      createProject(tx, researcher, {
+        name: "Dự án thứ hai để kiểm tra thu hồi quyền",
+        owner_org_unit_id: site.dept,
+        target_domain: "KIT",
+      })
+    );
+    await withTransaction((tx) =>
+      setUserCustomPermission(tx, adminActor, fakeDirectory, researcher.userId, {
+        permission_code: "rd.project.delete",
+        enabled: false,
+        reason: "Thu hồi quyền xóa dự án",
+      })
+    );
+    await expect(
+      withTransaction((tx) => deleteProject(tx, researcher, proj2.id, { reason: "Xóa sau khi bị thu hồi quyền" }))
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });

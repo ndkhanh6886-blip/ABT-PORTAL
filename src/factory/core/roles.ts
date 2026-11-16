@@ -51,6 +51,12 @@ const grantSchema = z.object({
   valid_to: z.string().datetime({ offset: true }).optional().nullable(),
   reason: z.string().trim().max(500).optional().nullable(),
 });
+const customPermSchema = z.object({
+  permission_code: z.string().trim().min(3, "mã quyền không hợp lệ").max(80),
+  enabled: z.boolean(),
+  scope_org_unit_id: z.string().uuid().optional().nullable(),
+  reason: z.string().trim().max(500).optional().nullable(),
+});
 const delegationSchema = z.object({
   from_user_id: z.number().int().positive(),
   to_user_id: z.number().int().positive(),
@@ -199,6 +205,100 @@ export async function revokeRole(tx: Tx, actor: AuthzActor, userRoleId: string, 
   );
   if (!res.rowCount) throw notFound("vai trò đang hiệu lực");
   await writeAudit(tx, actor, { entityType: "user_role", entityId: userRoleId, action: "revoke", changes: { revoked: [false, true] }, reason: why });
+}
+
+/**
+ * Grants or revokes an individual permission for a user via a dedicated audited personal role
+ * (`USER_CUSTOM_<userId>`), enabling fine-grained overrides without altering shared department roles.
+ */
+export async function setUserCustomPermission(
+  tx: Tx,
+  actor: AuthzActor,
+  directory: UserDirectory,
+  targetUserId: number,
+  input: unknown
+) {
+  await authorize(tx, actor, "core.role.manage");
+  if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
+    throw invalid("Mã tài khoản nhân sự không hợp lệ.");
+  }
+  const data = parseInput(customPermSchema, input);
+  assertGrantable([data.permission_code]);
+
+  if (targetUserId === actor.userId && !actor.isRootAdmin) {
+    throw forbidden("Không tự cấp hoặc chỉnh sửa quyền chi tiết cho chính mình. Nhờ quản trị viên gốc thực hiện.");
+  }
+
+  const dirUser = await directory.get(targetUserId);
+  if (dirUser) {
+    if (!dirUser.is_active) throw invalid(`Tài khoản ${dirUser.username} đang bị khóa trên ABT Portal.`);
+    await ensureProfile(tx, directory, targetUserId);
+  } else {
+    const existingProfile = await tx.query("SELECT status FROM core.user_profile WHERE user_id = $1", [targetUserId]);
+    if (!existingProfile.rowCount) throw notFound("tài khoản người dùng");
+  }
+
+  if (data.scope_org_unit_id && !(await tx.query("SELECT 1 FROM core.org_unit WHERE id = $1", [data.scope_org_unit_id])).rowCount) {
+    throw invalid("Phạm vi phòng ban không tồn tại.");
+  }
+
+  const roleCode = `USER_CUSTOM_${targetUserId}`;
+  const roleRow = (
+    await tx.query(
+      `INSERT INTO core.role (code, name, description, status, created_by)
+       VALUES ($1, $2, $3, 'ACTIVE', $4)
+       ON CONFLICT (code) DO UPDATE SET status = 'ACTIVE'
+       RETURNING *`,
+      [roleCode, `Quyền cá nhân bổ sung (#${targetUserId})`, "Quyền chi tiết cấp riêng cho từng nhân sự", actor.userId]
+    )
+  ).rows[0];
+
+  const oldPerms: string[] = (
+    await tx.query("SELECT permission_code FROM core.role_permission WHERE role_id = $1 ORDER BY 1", [roleRow.id])
+  ).rows.map((r) => r.permission_code);
+
+  const nextPerms = data.enabled
+    ? [...new Set([...oldPerms, data.permission_code])].sort()
+    : oldPerms.filter((c) => c !== data.permission_code);
+
+  await setRolePermissions(tx, roleRow.id, nextPerms);
+  await tx.query("UPDATE core.role SET version = version + 1 WHERE id = $1", [roleRow.id]);
+
+  const scopeId = data.scope_org_unit_id ?? null;
+  if (nextPerms.length > 0) {
+    const existingGrant = await tx.query(
+      `SELECT id FROM core.user_role
+        WHERE user_id = $1 AND role_id = $2 AND scope_org_unit_id IS NOT DISTINCT FROM $3 AND revoked_at IS NULL
+        LIMIT 1`,
+      [targetUserId, roleRow.id, scopeId]
+    );
+    if (!existingGrant.rowCount) {
+      await tx.query(
+        "INSERT INTO core.user_role (user_id, role_id, scope_org_unit_id, granted_by) VALUES ($1, $2, $3, $4)",
+        [targetUserId, roleRow.id, scopeId, actor.userId]
+      );
+    }
+  } else {
+    await tx.query(
+      `UPDATE core.user_role
+          SET revoked_at = now(), revoked_by = $2, revoke_reason = $3
+        WHERE user_id = $1 AND role_id = $4 AND revoked_at IS NULL`,
+      [targetUserId, actor.userId, data.reason || "Thu hồi quyền chi tiết cá nhân", roleRow.id]
+    );
+  }
+
+  await writeAudit(tx, actor, {
+    entityType: "user_custom_permission",
+    entityId: String(targetUserId),
+    action: data.enabled ? "grant_permission" : "revoke_permission",
+    changes: {
+      permission: [data.enabled ? null : data.permission_code, data.enabled ? data.permission_code : null],
+      custom_permissions: [oldPerms, nextPerms],
+    },
+    reason: data.reason ?? "Cập nhật quyền chi tiết cá nhân",
+  });
+
+  return { user_id: targetUserId, role_code: roleCode, permissions: nextPerms };
 }
 
 /** Users with their factory profile and active grants. Directory search first, so people without a factory profile yet are listed too. */

@@ -1,8 +1,10 @@
 import { factoryRoute } from "@/factory/http";
 import { invalid } from "@/factory/core/errors";
-import { getProjectDetail, saveMilestone, saveRiskItem, saveSpecEvaluation } from "@/factory/rd/projects";
+import { deleteProject, getProjectDetail, saveMilestone, saveRiskItem, saveSpecEvaluation, updateProject } from "@/factory/rd/projects";
 
 export const GET = factoryRoute((tx, { actor, params }) => getProjectDetail(tx, actor, params.id));
+
+export const PUT = factoryRoute((tx, { actor, params, body }) => updateProject(tx, actor, params.id, body));
 
 export const POST = factoryRoute(async (tx, { actor, params, body }) => {
   const kind = body?.kind;
@@ -17,3 +19,7 @@ export const POST = factoryRoute(async (tx, { actor, params, body }) => {
   }
   throw invalid("Thao tác dự án không hợp lệ.");
 });
+
+export const DELETE = factoryRoute((tx, { actor, params, body, url }) =>
+  deleteProject(tx, actor, params.id, { reason: body?.reason ?? url.searchParams.get("reason") })
+);

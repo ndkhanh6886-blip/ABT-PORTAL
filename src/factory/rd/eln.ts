@@ -1,8 +1,8 @@
 import { z } from "zod";
 import type { Tx } from "../core/db";
-import { writeAudit } from "../core/audit";
+import { diffChanges, writeAudit } from "../core/audit";
 import { authorize, authorizeAnywhere, hasFactoryPermission, type AuthzActor } from "../core/authz";
-import { invalid, notFound } from "../core/errors";
+import { conflict, invalid, notFound } from "../core/errors";
 import { readAttachment, saveAttachment } from "../core/files";
 import { nextNumber } from "../core/numbering";
 import { insertRecord, parseInput, updateRecord } from "../core/records";
@@ -259,7 +259,9 @@ export async function updateExperimentMeta(tx: Tx, actor: AuthzActor, id: string
   const cur = (await tx.query("SELECT * FROM rd.experiment WHERE id = $1 FOR UPDATE", [id])).rows[0] as ExperimentRow | undefined;
   if (!cur) throw notFound("thí nghiệm ELN");
   const owner = await expOwner(tx, cur);
-  await authorize(tx, actor, "rd.eln.write", owner);
+  if (!actor.isRootAdmin && !actor.isSystem && !(await hasFactoryPermission(tx, actor, "rd.eln.write", owner))) {
+    await authorize(tx, actor, "rd.eln.edit", owner);
+  }
   if (!["PLANNED", "IN_PROGRESS"].includes(cur.status)) {
     throw invalid("Chỉ được sửa mục tiêu / quy trình / kết luận khi thí nghiệm đang ở trạng thái PLANNED hoặc IN_PROGRESS.");
   }
@@ -299,6 +301,213 @@ export async function updateExperimentMeta(tx: Tx, actor: AuthzActor, id: string
   }
 
   return updateRecord<ExperimentRow>(tx, actor, "rd.experiment", "rd_experiment", id, Number(raw.version ?? cur.version), patch);
+}
+
+const editExpSchema = z.object({
+  project_id: optUuid,
+  org_unit_id: optUuid,
+  title: z.string().trim().min(3, "nhập tiêu đề thí nghiệm (tối thiểu 3 ký tự)").max(300).optional(),
+  objective: z.string().trim().min(5, "nhập mục tiêu thí nghiệm (tối thiểu 5 ký tự)").max(3000).optional(),
+  hypothesis: z.string().trim().max(3000).nullable().optional(),
+  protocol_summary: z.string().trim().max(4000).nullable().optional(),
+  conclusion: z.string().trim().max(4000).nullable().optional(),
+  performer_name: z.string().trim().max(150).nullable().optional(),
+  wbs_task_code: z.string().trim().max(60).nullable().optional(),
+  status: z.enum(["PLANNED", "IN_PROGRESS", "CANCELLED"]).optional(),
+  reason: z.string().trim().max(1000).nullable().optional(),
+  version: z.coerce.number().int().nonnegative().optional(),
+});
+
+/**
+ * Full edit of ELN metadata & non-approved lifecycle status under `rd.eln.edit`.
+ * Respects 21 CFR Part 11 ALCOA+: APPROVED / SUPERSEDED records remain locked and must use Revisions.
+ */
+export async function editExperiment(tx: Tx, actor: AuthzActor, id: string, input: unknown) {
+  const d = parseInput(editExpSchema, input);
+  const cur = (await tx.query("SELECT * FROM rd.experiment WHERE id = $1 FOR UPDATE", [id])).rows[0] as ExperimentRow | undefined;
+  if (!cur) throw notFound("thí nghiệm ELN");
+
+  const owner = await expOwner(tx, cur);
+  if (!actor.isRootAdmin && !actor.isSystem) {
+    await authorize(tx, actor, "rd.eln.edit", owner);
+  }
+  if (d.version !== undefined && cur.version !== d.version) {
+    throw conflict("Sổ thí nghiệm vừa được người khác cập nhật. Tải lại trang rồi thử lại.", "STALE_VERSION");
+  }
+  if (cur.status === "APPROVED" || cur.status === "SUPERSEDED") {
+    throw conflict(
+      "Sổ thí nghiệm đã ký phê duyệt điện tử (APPROVED / SUPERSEDED) bị khóa ALCOA+; vui lòng tạo Phiên bản mới (Revision) thay vì sửa trực tiếp."
+    );
+  }
+  if (cur.status === "SUBMITTED" && d.status && d.status !== ("SUBMITTED" as any)) {
+    throw conflict("Sổ thí nghiệm đang chờ ký duyệt (SUBMITTED); hãy dùng nút Thu hồi hoặc Yêu cầu sửa lại.");
+  }
+
+  const nextStatus = d.status ?? cur.status;
+  if (d.status === "CANCELLED" && cur.status !== "CANCELLED") {
+    const hasMats = await tx.query("SELECT 1 FROM rd.experiment_material WHERE experiment_id = $1 LIMIT 1", [id]);
+    if (hasMats.rowCount) {
+      throw conflict("Thí nghiệm đã xuất vật tư kho R&D, không thể chuyển sang trạng thái Đã hủy.");
+    }
+  }
+
+  let nextProjectId = cur.project_id ?? null;
+  let nextOrgUnitId = cur.org_unit_id ?? owner;
+  if (d.project_id !== undefined) {
+    if (d.project_id) {
+      const targetProj = (
+        await tx.query("SELECT id, owner_org_unit_id, status FROM rd.project WHERE id = $1", [d.project_id])
+      ).rows[0];
+      if (!targetProj) throw notFound("dự án R&D");
+      if (nextStatus === "IN_PROGRESS" && targetProj.status !== "ACTIVE") {
+        throw invalid("Chỉ được gắn thí nghiệm đang thực hiện vào dự án R&D đang ACTIVE.");
+      }
+      if (!actor.isRootAdmin && !actor.isSystem) {
+        await authorize(tx, actor, "rd.eln.edit", targetProj.owner_org_unit_id);
+      }
+      nextProjectId = targetProj.id;
+      nextOrgUnitId = targetProj.owner_org_unit_id;
+    } else {
+      nextProjectId = null;
+      if (d.org_unit_id) {
+        const unit = (await tx.query("SELECT id FROM core.org_unit WHERE id = $1 AND status = 'ACTIVE'", [d.org_unit_id])).rows[0];
+        if (!unit) throw notFound("phòng ban R&D");
+        if (!actor.isRootAdmin && !actor.isSystem) {
+          await authorize(tx, actor, "rd.eln.edit", unit.id);
+        }
+        nextOrgUnitId = unit.id;
+      } else {
+        nextOrgUnitId = cur.org_unit_id ?? owner;
+      }
+    }
+  } else if (d.org_unit_id && !nextProjectId) {
+    const unit = (await tx.query("SELECT id FROM core.org_unit WHERE id = $1 AND status = 'ACTIVE'", [d.org_unit_id])).rows[0];
+    if (!unit) throw notFound("phòng ban R&D");
+    if (!actor.isRootAdmin && !actor.isSystem) {
+      await authorize(tx, actor, "rd.eln.edit", unit.id);
+    }
+    nextOrgUnitId = unit.id;
+  }
+
+  const curNormalized: Record<string, unknown> = {
+    project_id: cur.project_id ?? null,
+    org_unit_id: cur.org_unit_id ?? null,
+    title: cur.title,
+    objective: cur.objective,
+    hypothesis: cur.hypothesis ?? null,
+    protocol_summary: cur.protocol_summary ?? null,
+    conclusion: cur.conclusion ?? null,
+    performer_name: cur.performer_name?.trim() || null,
+    wbs_task_code: cur.wbs_task_code?.trim() || null,
+    status: cur.status,
+  };
+
+  const nextNormalized: Record<string, unknown> = {
+    project_id: nextProjectId,
+    org_unit_id: nextOrgUnitId,
+    title: d.title ?? curNormalized.title,
+    objective: d.objective ?? curNormalized.objective,
+    hypothesis: d.hypothesis === undefined ? curNormalized.hypothesis : d.hypothesis?.trim() || null,
+    protocol_summary: d.protocol_summary === undefined ? curNormalized.protocol_summary : d.protocol_summary?.trim() || null,
+    conclusion: d.conclusion === undefined ? curNormalized.conclusion : d.conclusion?.trim() || null,
+    performer_name: d.performer_name === undefined ? curNormalized.performer_name : d.performer_name?.trim() || null,
+    wbs_task_code: d.wbs_task_code === undefined ? curNormalized.wbs_task_code : d.wbs_task_code?.trim() || null,
+    status: nextStatus,
+  };
+
+  const fields = Object.keys(curNormalized);
+  const changes = diffChanges(curNormalized, nextNormalized, fields);
+  const changedFields = Object.keys(changes);
+
+  if (changedFields.length > 0) {
+    const setClauses = changedFields.map((col, idx) => `${col} = $${idx + 2}`);
+    if (nextStatus === "IN_PROGRESS" && !cur.started_at) {
+      setClauses.push("started_at = now()");
+    }
+    await tx.query(
+      `UPDATE rd.experiment
+          SET ${setClauses.join(", ")},
+              version = version + 1,
+              updated_at = now(),
+              updated_by = $${changedFields.length + 2}
+        WHERE id = $1`,
+      [id, ...changedFields.map((col) => nextNormalized[col]), actor.userId]
+    );
+    await writeAudit(tx, actor, {
+      entityType: "rd_experiment",
+      entityId: id,
+      action: "update",
+      changes,
+      reason: d.reason ?? null,
+    });
+  }
+
+  return getExperimentDetail(tx, actor, id);
+}
+
+/**
+ * Deletes an unapproved ELN experiment (that has no child revisions and no issued R&D warehouse stock),
+ * detaching nullable links and recording an audit trail entry.
+ */
+export async function deleteExperiment(tx: Tx, actor: AuthzActor, id: string, input: unknown) {
+  const { reason } = parseInput(
+    z.object({ reason: z.string().trim().min(3, "Vui lòng nhập lý do xóa sổ thí nghiệm (tối thiểu 3 ký tự)").max(1000) }),
+    input
+  );
+  const cur = (await tx.query("SELECT * FROM rd.experiment WHERE id = $1 FOR UPDATE", [id])).rows[0] as ExperimentRow | undefined;
+  if (!cur) throw notFound("thí nghiệm ELN");
+
+  const owner = await expOwner(tx, cur);
+  if (!actor.isRootAdmin && !actor.isSystem) {
+    await authorize(tx, actor, "rd.eln.delete", owner);
+  }
+
+  const hasESig = await tx.query(
+    "SELECT 1 FROM core.e_signature WHERE entity_type = 'rd_experiment' AND entity_id = $1 LIMIT 1",
+    [id]
+  );
+  if (cur.status === "APPROVED" || cur.status === "SUPERSEDED" || hasESig.rowCount) {
+    throw conflict("Không thể xóa sổ thí nghiệm đã ký phê duyệt điện tử 21 CFR Part 11 (APPROVED / SUPERSEDED).");
+  }
+  const hasChildRevision = await tx.query("SELECT 1 FROM rd.experiment WHERE parent_experiment_id = $1 LIMIT 1", [id]);
+  if (hasChildRevision.rowCount) {
+    throw conflict("Không thể xóa sổ thí nghiệm gốc đã có phiên bản sửa đổi (Revision) kế thừa.");
+  }
+  const hasMaterials = await tx.query("SELECT 1 FROM rd.experiment_material WHERE experiment_id = $1 LIMIT 1", [id]);
+  const hasStockDocs = await tx.query(
+    "SELECT 1 FROM inv.stock_document WHERE source_entity_type = 'EXPERIMENT' AND source_entity_id = $1 AND status <> 'CANCELLED' LIMIT 1",
+    [id]
+  );
+  if (hasMaterials.rowCount || hasStockDocs.rowCount) {
+    throw conflict("Không thể xóa sổ thí nghiệm đã xuất vật tư trừ tồn kho R&D (Sổ cái kho bất biến).");
+  }
+
+  // Detach nullable FKs
+  await tx.query("UPDATE rd.sample_event SET experiment_id = NULL WHERE experiment_id = $1", [id]);
+  await tx.query("UPDATE work.work_task SET experiment_id = NULL WHERE experiment_id = $1", [id]);
+  await tx.query("UPDATE rd.spec_evaluation SET verification_experiment_id = NULL WHERE verification_experiment_id = $1", [id]);
+  await tx.query("UPDATE rd.project_task SET linked_experiment_id = NULL WHERE linked_experiment_id = $1", [id]);
+
+  // Delete child rows and experiment
+  await tx.query("DELETE FROM rd.experiment_entry WHERE experiment_id = $1", [id]);
+  await tx.query("DELETE FROM rd.experiment_asset WHERE experiment_id = $1", [id]);
+  await tx.query("DELETE FROM rd.experiment_material WHERE experiment_id = $1", [id]);
+  await tx.query("DELETE FROM rd.experiment WHERE id = $1", [id]);
+
+  await writeAudit(tx, actor, {
+    entityType: "rd_experiment",
+    entityId: id,
+    action: "delete",
+    changes: {
+      deleted: [false, true],
+      code: [cur.code, null],
+      title: [cur.title, null],
+      status: [cur.status, null],
+    },
+    reason,
+  });
+
+  return { deleted: true, id, code: cur.code };
 }
 
 const entrySchema = z.object({

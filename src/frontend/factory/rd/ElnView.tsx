@@ -6,6 +6,7 @@ import { ActionBar, type AllowedAction } from "../actions";
 import { api, fmtDate, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { useRdContext } from "./shared";
+import { RdPermissionPanel } from "./RdPermissionPanel";
 
 const EXP_STATUS: Record<string, [string, string]> = {
   PLANNED: ["QUARANTINE", "Kế hoạch"],
@@ -99,11 +100,19 @@ interface ExperimentDetail {
 function ExperimentPanel({
   id,
   canWrite,
+  canEdit = false,
+  canDelete = false,
+  onRequestEdit,
+  onRequestDelete,
   onClose,
   onSelectRevision,
 }: {
   id: string;
   canWrite: boolean;
+  canEdit?: boolean;
+  canDelete?: boolean;
+  onRequestEdit?: (exp: any) => void;
+  onRequestDelete?: (exp: any) => void;
   onClose: () => void;
   onSelectRevision: (newId: string) => void;
 }) {
@@ -234,9 +243,45 @@ function ExperimentPanel({
   const e = detail.data;
   const selectedItem = ctx.data?.items.find((i) => i.id === (itemId || ctx.data?.items[0]?.id));
   const effectiveLinkProjId = linkProjId !== null ? linkProjId : (e?.project_id ?? "");
+  const isAlcoaLocked = Boolean(e && (e.status === "APPROVED" || e.status === "SUPERSEDED"));
+  const hasMaterials = (e?.materials?.length ?? 0) > 0;
 
   return (
-    <Card title={e ? `Sổ thí nghiệm ELN ${e.code} (Rev ${e.revision}) — ${e.title}` : "Chi tiết thí nghiệm ELN"} actions={<Button variant="ghost" onClick={onClose}>Đóng</Button>}>
+    <Card
+      title={e ? `Sổ thí nghiệm ELN ${e.code} (Rev ${e.revision}) — ${e.title}` : "Chi tiết thí nghiệm ELN"}
+      actions={
+        <div className="flex flex-wrap items-center gap-1.5">
+          {canEdit && e && onRequestEdit && (
+            <Button
+              variant="ghost"
+              disabled={isAlcoaLocked}
+              title={isAlcoaLocked ? "Sổ ELN đã duyệt bị khóa ALCOA+ — hãy tạo Revision mới" : "Chỉnh sửa sổ thí nghiệm ELN"}
+              onClick={() => onRequestEdit(e)}
+            >
+              ✏️ Sửa ELN
+            </Button>
+          )}
+          {canDelete && e && onRequestDelete && (
+            <Button
+              variant="ghost"
+              className="text-rose-600 dark:text-rose-400"
+              disabled={isAlcoaLocked || hasMaterials}
+              title={
+                isAlcoaLocked
+                  ? "Không thể xóa sổ ELN đã ký duyệt 21 CFR Part 11"
+                  : hasMaterials
+                    ? "Không thể xóa sổ ELN đã xuất vật tư trừ kho R&D"
+                    : "Xóa sổ thí nghiệm ELN"
+              }
+              onClick={() => onRequestDelete(e)}
+            >
+              🗑️ Xóa ELN
+            </Button>
+          )}
+          <Button variant="ghost" onClick={onClose}>Đóng</Button>
+        </div>
+      }
+    >
       <ErrorNote error={detail.error ?? saveConclusionMut.error ?? linkProjectMut.error ?? addEntryMut.error ?? uploadFileMut.error ?? consumeMatMut.error ?? logAssetMut.error ?? createRevMut.error} />
       {e && (
         <div className="flex flex-col gap-3 text-xs">
@@ -534,7 +579,17 @@ function ExperimentPanel({
   );
 }
 
-export function ElnView({ canWrite }: { canWrite: boolean }) {
+export function ElnView({
+  canWrite,
+  canEdit = false,
+  canDelete = false,
+  canManagePermissions = false,
+}: {
+  canWrite: boolean;
+  canEdit?: boolean;
+  canDelete?: boolean;
+  canManagePermissions?: boolean;
+}) {
   const qc = useQueryClient();
   const ctx = useRdContext("rd.view");
   const [projectId, setProjectId] = useState("");
@@ -543,6 +598,7 @@ export function ElnView({ canWrite }: { canWrite: boolean }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [showPermissions, setShowPermissions] = useState(false);
 
   const [newProjId, setNewProjId] = useState("");
   const [newUnitId, setNewUnitId] = useState("");
@@ -552,6 +608,41 @@ export function ElnView({ canWrite }: { canWrite: boolean }) {
   const [objective, setObjective] = useState("");
   const [hypothesis, setHypothesis] = useState("");
   const [protocol, setProtocol] = useState("");
+
+  // Edit & Delete ELN modal state
+  const [editingExp, setEditingExp] = useState<any | null>(null);
+  const [editProjId, setEditProjId] = useState("");
+  const [editPerformer, setEditPerformer] = useState("");
+  const [editWbs, setEditWbs] = useState("");
+  const [editTitle, setEditTitle] = useState("");
+  const [editObjective, setEditObjective] = useState("");
+  const [editHypothesis, setEditHypothesis] = useState("");
+  const [editProtocol, setEditProtocol] = useState("");
+  const [editConclusion, setEditConclusion] = useState("");
+  const [editStatus, setEditStatus] = useState("IN_PROGRESS");
+  const [editReason, setEditReason] = useState("");
+
+  const [deletingExp, setDeletingExp] = useState<any | null>(null);
+  const [deleteReason, setDeleteReason] = useState("");
+
+  const openEditExp = (exp: any) => {
+    setEditingExp(exp);
+    setEditProjId(exp.project_id || "");
+    setEditPerformer(exp.performer_name || exp.created_by_name || "");
+    setEditWbs(exp.wbs_task_code || "");
+    setEditTitle(exp.title || "");
+    setEditObjective(exp.objective || "");
+    setEditHypothesis(exp.hypothesis || "");
+    setEditProtocol(exp.protocol_summary || "");
+    setEditConclusion(exp.conclusion || "");
+    setEditStatus(exp.status || "IN_PROGRESS");
+    setEditReason("");
+  };
+
+  const openDeleteExp = (exp: any) => {
+    setDeletingExp(exp);
+    setDeleteReason("");
+  };
 
   const projects = useQuery({ queryKey: ["factory", "rd", "projects", ""], queryFn: () => api<any[]>("/api/factory/rd/projects") });
   const list = useQuery({
@@ -588,6 +679,54 @@ export function ElnView({ canWrite }: { canWrite: boolean }) {
     },
   });
 
+  const editMut = useMutation({
+    mutationFn: () => {
+      const ex = editingExp!;
+      return api(`/api/factory/rd/experiments/${ex.id}`, {
+        method: "PUT",
+        json: {
+          mode: "edit",
+          version: ex.version,
+          project_id: editProjId || null,
+          performer_name: editPerformer.trim() || null,
+          wbs_task_code: editWbs.trim() || null,
+          title: editTitle,
+          objective: editObjective,
+          hypothesis: editHypothesis.trim() || null,
+          protocol_summary: editProtocol.trim() || null,
+          conclusion: editConclusion.trim() || null,
+          ...(ex.status !== "SUBMITTED" && ex.status !== "APPROVED" && ex.status !== "SUPERSEDED"
+            ? { status: editStatus }
+            : {}),
+          reason: editReason.trim() || null,
+        },
+      });
+    },
+    onSuccess: () => {
+      const expId = editingExp?.id;
+      setEditingExp(null);
+      qc.invalidateQueries({ queryKey: ["factory", "rd", "experiments"] });
+      qc.invalidateQueries({ queryKey: ["factory", "rd", "projects"] });
+      if (expId) qc.invalidateQueries({ queryKey: ["factory", "rd", "experiment", expId] });
+    },
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: () =>
+      api(`/api/factory/rd/experiments/${deletingExp!.id}`, {
+        method: "DELETE",
+        json: { reason: deleteReason },
+      }),
+    onSuccess: () => {
+      const deletedId = deletingExp?.id;
+      setDeletingExp(null);
+      setDeleteReason("");
+      if (selected === deletedId) setSelected(null);
+      qc.invalidateQueries({ queryKey: ["factory", "rd", "experiments"] });
+      qc.invalidateQueries({ queryKey: ["factory", "rd", "projects"] });
+    },
+  });
+
   const allExps = list.data ?? [];
   const staffOptions = Array.from(
     new Set([
@@ -610,11 +749,26 @@ export function ElnView({ canWrite }: { canWrite: boolean }) {
 
   return (
     <div className="flex flex-col gap-3">
+      {showPermissions && canManagePermissions && (
+        <RdPermissionPanel
+          title="Cài đặt Phân quyền Chỉnh sửa & Xóa Sổ thí nghiệm (ELN)"
+          editPerm="rd.eln.edit"
+          deletePerm="rd.eln.delete"
+          editLabel="Cho phép Sửa ELN"
+          deleteLabel="Cho phép Xóa ELN"
+          onClose={() => setShowPermissions(false)}
+        />
+      )}
+
       {selected && (
         <ExperimentPanel
           key={selected}
           id={selected}
           canWrite={canWrite}
+          canEdit={canEdit}
+          canDelete={canDelete}
+          onRequestEdit={openEditExp}
+          onRequestDelete={openDeleteExp}
           onClose={() => setSelected(null)}
           onSelectRevision={(newId) => setSelected(newId)}
         />
@@ -690,6 +844,15 @@ export function ElnView({ canWrite }: { canWrite: boolean }) {
                 }}
               >
                 ✕
+              </Button>
+            )}
+            {canManagePermissions && (
+              <Button
+                variant={showPermissions ? "primary" : "ghost"}
+                className="!min-h-8 !py-1 !px-2.5 whitespace-nowrap"
+                onClick={() => setShowPermissions(!showPermissions)}
+              >
+                🛡️ Phân quyền Sửa/Xóa
               </Button>
             )}
             {canWrite && (
@@ -782,44 +945,250 @@ export function ElnView({ canWrite }: { canWrite: boolean }) {
 
         {filteredExps.length === 0 && <Empty>Chưa có sổ thí nghiệm điện tử (ELN) nào khớp bộ lọc.</Empty>}
         {filteredExps.length > 0 && (
-          <Table head={["Mã ELN", "Rev", "Tiêu đề thí nghiệm & Công việc WBS", "Dự án / Phạm vi", "Mục nhật ký", "Vật tư R&D", "Nghiên cứu viên thực hiện", "Người duyệt", "Trạng thái"]}>
-            {filteredExps.map((r) => (
-              <tr key={r.id} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setSelected(r.id)}>
-                <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">{r.code}</td>
-                <td className="py-2 pr-3 font-mono">v{r.revision}</td>
-                <td className="py-2 pr-3">
-                  <div className="font-semibold">{r.title}</div>
-                  {r.wbs_task_code && (
-                    <span className="mt-0.5 px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-mono text-[10px] inline-block">
-                      📌 WBS: {r.wbs_task_code}
+          <Table
+            head={[
+              "Mã ELN",
+              "Rev",
+              "Tiêu đề thí nghiệm & Công việc WBS",
+              "Dự án / Phạm vi",
+              "Mục nhật ký",
+              "Vật tư R&D",
+              "Nghiên cứu viên thực hiện",
+              "Người duyệt",
+              "Trạng thái",
+              ...(canEdit || canDelete ? ["Thao tác"] : []),
+            ]}
+          >
+            {filteredExps.map((r) => {
+              const isLocked = r.status === "APPROVED" || r.status === "SUPERSEDED";
+              const hasMaterials = Number(r.material_count ?? 0) > 0;
+              return (
+                <tr key={r.id} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setSelected(r.id)}>
+                  <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">{r.code}</td>
+                  <td className="py-2 pr-3 font-mono">v{r.revision}</td>
+                  <td className="py-2 pr-3">
+                    <div className="font-semibold">{r.title}</div>
+                    {r.wbs_task_code && (
+                      <span className="mt-0.5 px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-mono text-[10px] inline-block">
+                        📌 WBS: {r.wbs_task_code}
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-2 pr-3 font-mono">
+                    {r.project_code ? (
+                      r.project_code
+                    ) : (
+                      <span className="px-1.5 py-0.5 rounded bg-violet-50 dark:bg-violet-950/60 text-violet-700 dark:text-violet-300 font-sans text-[11px] font-semibold">
+                        🧪 Độc lập
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-2 pr-3 font-mono">{r.entry_count}</td>
+                  <td className="py-2 pr-3 font-mono">{r.material_count}</td>
+                  <td className="py-2 pr-3">
+                    <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 font-medium text-slate-800 dark:text-slate-200 inline-block">
+                      👤 {r.performer_name || r.created_by_name}
                     </span>
+                  </td>
+                  <td className="py-2 pr-3">{r.approved_by_name || "—"}</td>
+                  <td className="py-2 pr-3">
+                    <StatusBadge status={EXP_STATUS[r.status]?.[0] ?? "QUARANTINE"} label={EXP_STATUS[r.status]?.[1] ?? r.status} />
+                  </td>
+                  {(canEdit || canDelete) && (
+                    <td className="py-2 pr-2" onClick={(ev) => ev.stopPropagation()}>
+                      <div className="flex items-center gap-1 whitespace-nowrap">
+                        {canEdit && (
+                          <Button
+                            variant="ghost"
+                            disabled={isLocked}
+                            title={isLocked ? "Sổ ELN đã duyệt bị khóa ALCOA+ — hãy tạo Revision mới" : "Chỉnh sửa sổ thí nghiệm ELN"}
+                            className="!px-2 !py-1 !text-[11px]"
+                            onClick={() => openEditExp(r)}
+                          >
+                            ✏️ Sửa
+                          </Button>
+                        )}
+                        {canDelete && (
+                          <Button
+                            variant="ghost"
+                            disabled={isLocked || hasMaterials}
+                            title={
+                              isLocked
+                                ? "Không thể xóa sổ ELN đã ký duyệt 21 CFR Part 11"
+                                : hasMaterials
+                                  ? "Không thể xóa sổ ELN đã xuất vật tư trừ kho R&D"
+                                  : "Xóa sổ thí nghiệm ELN"
+                            }
+                            className="!px-2 !py-1 !text-[11px] text-rose-600 dark:text-rose-400"
+                            onClick={() => openDeleteExp(r)}
+                          >
+                            🗑️ Xóa
+                          </Button>
+                        )}
+                      </div>
+                    </td>
                   )}
-                </td>
-                <td className="py-2 pr-3 font-mono">
-                  {r.project_code ? (
-                    r.project_code
-                  ) : (
-                    <span className="px-1.5 py-0.5 rounded bg-violet-50 dark:bg-violet-950/60 text-violet-700 dark:text-violet-300 font-sans text-[11px] font-semibold">
-                      🧪 Độc lập
-                    </span>
-                  )}
-                </td>
-                <td className="py-2 pr-3 font-mono">{r.entry_count}</td>
-                <td className="py-2 pr-3 font-mono">{r.material_count}</td>
-                <td className="py-2 pr-3">
-                  <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 font-medium text-slate-800 dark:text-slate-200 inline-block">
-                    👤 {r.performer_name || r.created_by_name}
-                  </span>
-                </td>
-                <td className="py-2 pr-3">{r.approved_by_name || "—"}</td>
-                <td className="py-2 pr-3">
-                  <StatusBadge status={EXP_STATUS[r.status]?.[0] ?? "QUARANTINE"} label={EXP_STATUS[r.status]?.[1] ?? r.status} />
-                </td>
-              </tr>
-            ))}
+                </tr>
+              );
+            })}
           </Table>
         )}
       </Card>
+
+      {/* Edit ELN Modal */}
+      {editingExp && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-[1px] flex items-center justify-center p-4 overflow-y-auto"
+          onClick={() => setEditingExp(null)}
+        >
+          <form
+            className="w-full max-w-2xl rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 shadow-xl space-y-3"
+            onClick={(ev) => ev.stopPropagation()}
+            onSubmit={(ev) => {
+              ev.preventDefault();
+              editMut.mutate();
+            }}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2.5">
+              <div>
+                <div className="text-sm font-bold text-slate-900 dark:text-white">
+                  ✏️ Chỉnh sửa Sổ thí nghiệm ELN <span className="font-mono text-sky-700 dark:text-sky-400">{editingExp.code}</span> (Rev {editingExp.revision})
+                </div>
+                <div className="text-[11px] text-slate-500">Mọi thay đổi được ghi nhật ký kiểm toán ALCOA+</div>
+              </div>
+              <Button type="button" variant="ghost" onClick={() => setEditingExp(null)}>Đóng</Button>
+            </div>
+
+            <ErrorNote error={editMut.error} />
+
+            <div className="grid gap-3 sm:grid-cols-2 text-xs">
+              <div className="sm:col-span-2">
+                <Field label="Tiêu đề thí nghiệm *">
+                  <input className={inputClass} value={editTitle} onChange={(ev) => setEditTitle(ev.target.value)} required minLength={3} />
+                </Field>
+              </div>
+              <Field label="Phạm vi / Dự án R&D">
+                <select className={inputClass} value={editProjId} onChange={(ev) => setEditProjId(ev.target.value)}>
+                  <option value="">🧪 Thử nghiệm độc lập (Không gắn dự án)</option>
+                  {(projects.data ?? []).map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.code} — {p.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Nghiên cứu viên thực hiện">
+                <select className={inputClass} value={editPerformer} onChange={(ev) => setEditPerformer(ev.target.value)}>
+                  <option value="">-- Mặc định --</option>
+                  {Array.from(new Set([...staffOptions, ...(editPerformer ? [editPerformer] : [])])).map((st) => (
+                    <option key={st} value={st}>{st}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Mã công việc WBS liên kết">
+                <input className={inputClass} value={editWbs} onChange={(ev) => setEditWbs(ev.target.value)} placeholder="VD: PRJ26-003-WBS-02" />
+              </Field>
+              <Field label="Trạng thái thí nghiệm">
+                <select
+                  className={inputClass}
+                  value={editStatus}
+                  disabled={editingExp.status === "SUBMITTED"}
+                  onChange={(ev) => setEditStatus(ev.target.value)}
+                >
+                  {editingExp.status === "SUBMITTED" ? (
+                    <option value="SUBMITTED">Đã gửi duyệt (SUBMITTED)</option>
+                  ) : (
+                    <>
+                      <option value="PLANNED">Kế hoạch (PLANNED)</option>
+                      <option value="IN_PROGRESS">Đang làm thí nghiệm (IN_PROGRESS)</option>
+                      <option
+                        value="CANCELLED"
+                        disabled={Number(editingExp.material_count ?? editingExp.materials?.length ?? 0) > 0}
+                      >
+                        Đã hủy (CANCELLED)
+                      </option>
+                    </>
+                  )}
+                </select>
+              </Field>
+              <div className="sm:col-span-2">
+                <Field label="Mục tiêu thí nghiệm *">
+                  <input className={inputClass} value={editObjective} onChange={(ev) => setEditObjective(ev.target.value)} required minLength={5} />
+                </Field>
+              </div>
+              <Field label="Giả thuyết khoa học">
+                <input className={inputClass} value={editHypothesis} onChange={(ev) => setEditHypothesis(ev.target.value)} />
+              </Field>
+              <Field label="Kết luận thí nghiệm">
+                <input className={inputClass} value={editConclusion} onChange={(ev) => setEditConclusion(ev.target.value)} />
+              </Field>
+              <div className="sm:col-span-2">
+                <Field label="Tóm tắt công thức / Protocol">
+                  <textarea className={inputClass} rows={2} value={editProtocol} onChange={(ev) => setEditProtocol(ev.target.value)} />
+                </Field>
+              </div>
+              <div className="sm:col-span-2">
+                <Field label="Lý do chỉnh sửa (Tùy chọn, lưu vào Nhật ký kiểm toán)">
+                  <input className={inputClass} value={editReason} onChange={(ev) => setEditReason(ev.target.value)} placeholder="VD: Mở lại thí nghiệm / chỉnh sửa thông tin tiêu đề..." />
+                </Field>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <Button type="button" variant="ghost" onClick={() => setEditingExp(null)}>Hủy</Button>
+              <Button type="submit" disabled={editMut.isPending}>
+                {editMut.isPending ? "Đang lưu..." : "Lưu thay đổi ELN"}
+              </Button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Delete ELN Confirmation Modal */}
+      {deletingExp && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-[1px] flex items-center justify-center p-4"
+          onClick={() => setDeletingExp(null)}
+        >
+          <form
+            className="w-full max-w-lg rounded-2xl border border-rose-200 dark:border-rose-900 bg-white dark:bg-slate-900 p-5 shadow-xl space-y-3"
+            onClick={(ev) => ev.stopPropagation()}
+            onSubmit={(ev) => {
+              ev.preventDefault();
+              deleteMut.mutate();
+            }}
+          >
+            <div className="text-sm font-bold text-rose-700 dark:text-rose-400">
+              🗑️ Xác nhận xóa Sổ thí nghiệm ELN {deletingExp.code}
+            </div>
+            <div className="text-xs text-slate-700 dark:text-slate-200">
+              Bạn đang yêu cầu xóa sổ thí nghiệm <b>{deletingExp.code} — {deletingExp.title}</b>. Hành động này chỉ khả dụng với sổ chưa ký duyệt điện tử và chưa xuất vật tư kho, đồng thời được ghi vào Nhật ký kiểm toán.
+            </div>
+            <ErrorNote error={deleteMut.error} />
+            <Field label="Lý do xóa sổ thí nghiệm (Bắt buộc — tối thiểu 3 ký tự) *">
+              <input
+                className={inputClass}
+                value={deleteReason}
+                onChange={(ev) => setDeleteReason(ev.target.value)}
+                placeholder="VD: Sổ thí nghiệm tạo nháp để test tải file..."
+                required
+                minLength={3}
+                autoFocus
+              />
+            </Field>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="ghost" onClick={() => setDeletingExp(null)}>Hủy</Button>
+              <Button
+                type="submit"
+                variant="danger"
+                disabled={deleteMut.isPending || deleteReason.trim().length < 3}
+              >
+                {deleteMut.isPending ? "Đang xóa..." : "Xác nhận Xóa ELN"}
+              </Button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

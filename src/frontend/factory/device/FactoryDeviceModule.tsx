@@ -126,7 +126,15 @@ export function FactoryDeviceModule() {
         // software projects run by KTCN (gates per IEC 62304) and their releases, signed by the KTCN head or the board
         <div className="flex flex-col gap-3">
           <SoftwareLifecycleView />
-          <ProjectsView domainLock="SOFTWARE" ownerModule="DEVICE" canManage={perms.has("rd.project.manage")} canReviewGate={perms.has("rd.gate.review")} />
+          <ProjectsView
+            domainLock="SOFTWARE"
+            ownerModule="DEVICE"
+            canManage={perms.has("rd.project.manage")}
+            canReviewGate={perms.has("rd.gate.review")}
+            canEdit={Boolean(me.data?.is_root || perms.has("rd.project.edit"))}
+            canDelete={Boolean(me.data?.is_root || perms.has("rd.project.delete"))}
+            canManagePermissions={Boolean(me.data?.is_root || perms.has("core.role.manage"))}
+          />
           <TransferView section="software" canManage={perms.has("rd.transfer.manage")} canAccept={false} />
         </div>
       )}

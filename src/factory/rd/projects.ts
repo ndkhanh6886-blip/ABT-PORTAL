@@ -1,9 +1,9 @@
 import { z } from "zod";
 import type { Tx } from "../core/db";
-import { writeAudit } from "../core/audit";
+import { diffChanges, writeAudit } from "../core/audit";
 import { authorize, authorizeAnywhere, hasFactoryPermission, type AuthzActor } from "../core/authz";
 import { vnToday } from "../core/dates";
-import { invalid, notFound } from "../core/errors";
+import { conflict, invalid, notFound } from "../core/errors";
 import { readAttachment, saveAttachment } from "../core/files";
 import { nextNumber } from "../core/numbering";
 import { insertRecord, parseInput } from "../core/records";
@@ -958,4 +958,222 @@ export async function getProjectDetail(tx: Tx, actor: AuthzActor, id: string) {
   ).rows;
   const actions = await listAllowedActions(tx, projectMachine, actor, project);
   return { ...project, gates, specs, risks, milestones, members, actions };
+}
+
+const optDate = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? null : v),
+  z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "định dạng ngày YYYY-MM-DD").nullable().optional()
+);
+
+const updateProjectSchema = z.object({
+  name: z.string().trim().min(3, "nhập tên dự án (tối thiểu 3 ký tự)").max(300).optional(),
+  project_type: z.enum(["NEW_PRODUCT", "IMPROVEMENT", "PROCESS", "RESEARCH"]).optional(),
+  target_domain: z.enum(["KIT", "OLIGO", "DEVICE", "SOFTWARE", "OTHER"]).optional(),
+  ivd_class: z.enum(["CLASS_A", "CLASS_B", "CLASS_C", "CLASS_D", "RUO", "NA"]).nullable().optional(),
+  leader_id: z.coerce.number().int().positive().optional(),
+  leader_name_override: z.string().trim().max(150).nullable().optional(),
+  budget_amount: z.coerce.number().min(0, "ngân sách phải >= 0").nullable().optional(),
+  planned_start: optDate,
+  planned_end: optDate,
+  description: z.string().trim().max(4000).nullable().optional(),
+  status: z.enum(["ACTIVE", "ON_HOLD", "KILLED"]).optional(),
+  reason: z.string().trim().max(1000).optional().nullable(),
+  version: z.coerce.number().int().nonnegative().optional(),
+});
+
+function fmtIsoDate(val: unknown): string | null {
+  if (!val) return null;
+  if (val instanceof Date) return val.toISOString().slice(0, 10);
+  return String(val).slice(0, 10);
+}
+
+/**
+ * Edits R&D project metadata (and optionally status among ACTIVE / ON_HOLD / KILLED) under `rd.project.edit`.
+ */
+export async function updateProject(tx: Tx, actor: AuthzActor, id: string, input: unknown) {
+  const d = parseInput(updateProjectSchema, input);
+  const cur = (await tx.query("SELECT * FROM rd.project WHERE id = $1 FOR UPDATE", [id])).rows[0] as
+    | (ProjectRow & { leader_name_override?: string | null; budget_amount?: string | number | null })
+    | undefined;
+  if (!cur) throw notFound("dự án R&D");
+
+  if (!actor.isRootAdmin && !actor.isSystem) {
+    await authorize(tx, actor, "rd.project.edit", cur.owner_org_unit_id);
+  }
+  if (d.version !== undefined && cur.version !== d.version) {
+    throw conflict("Dự án vừa được người khác thay đổi. Tải lại trang rồi thử lại.", "STALE_VERSION");
+  }
+  if (cur.status === "TRANSFERRED" && d.status !== undefined && d.status !== ("TRANSFERRED" as any)) {
+    throw conflict("Dự án đã chuyển giao công nghệ (TRANSFERRED) không thể hạ trạng thái.");
+  }
+
+  const nextStart = d.planned_start === undefined ? fmtIsoDate(cur.planned_start) : d.planned_start;
+  const nextEnd = d.planned_end === undefined ? fmtIsoDate(cur.planned_end) : d.planned_end;
+  if (nextStart && nextEnd && nextEnd < nextStart) {
+    throw invalid("Ngày kết thúc dự kiến không được nhỏ hơn ngày bắt đầu.");
+  }
+
+  if (d.leader_id !== undefined) {
+    const prof = await tx.query("SELECT 1 FROM core.user_profile WHERE user_id = $1", [d.leader_id]);
+    if (!prof.rowCount) throw notFound("nhân sự chủ nhiệm đề tài");
+  }
+
+  const curNormalized: Record<string, unknown> = {
+    name: cur.name,
+    project_type: cur.project_type,
+    target_domain: cur.target_domain,
+    ivd_class: cur.ivd_class ?? null,
+    leader_id: cur.leader_id,
+    leader_name_override: cur.leader_name_override?.trim() || null,
+    budget_amount: cur.budget_amount != null ? Number(cur.budget_amount) : 50000000,
+    planned_start: fmtIsoDate(cur.planned_start),
+    planned_end: fmtIsoDate(cur.planned_end),
+    description: cur.description ?? null,
+    status: cur.status,
+  };
+
+  const nextNormalized: Record<string, unknown> = {
+    name: d.name ?? curNormalized.name,
+    project_type: d.project_type ?? curNormalized.project_type,
+    target_domain: d.target_domain ?? curNormalized.target_domain,
+    ivd_class: d.ivd_class === undefined ? curNormalized.ivd_class : d.ivd_class,
+    leader_id: d.leader_id ?? curNormalized.leader_id,
+    leader_name_override:
+      d.leader_name_override === undefined ? curNormalized.leader_name_override : d.leader_name_override?.trim() || null,
+    budget_amount:
+      d.budget_amount === undefined ? curNormalized.budget_amount : d.budget_amount === null ? 0 : d.budget_amount,
+    planned_start: nextStart,
+    planned_end: nextEnd,
+    description: d.description === undefined ? curNormalized.description : d.description?.trim() || null,
+    status: d.status ?? curNormalized.status,
+  };
+
+  const fields = Object.keys(curNormalized);
+  const changes = diffChanges(curNormalized, nextNormalized, fields);
+  const changedFields = Object.keys(changes);
+
+  if (changedFields.length > 0) {
+    const sets = changedFields.map((col, idx) => `${col} = $${idx + 2}`);
+    await tx.query(
+      `UPDATE rd.project
+          SET ${sets.join(", ")},
+              version = version + 1,
+              updated_at = now(),
+              updated_by = $${changedFields.length + 2}
+        WHERE id = $1`,
+      [id, ...changedFields.map((col) => nextNormalized[col]), actor.userId]
+    );
+    await writeAudit(tx, actor, {
+      entityType: "rd_project",
+      entityId: id,
+      action: "update",
+      changes,
+      reason: d.reason ?? null,
+    });
+  }
+
+  return getProjectDetail(tx, actor, id);
+}
+
+/**
+ * Deletes an R&D project safely with strict GxP/ISO 13485 immutability guards and audit logging.
+ * Any linked ELN experiments are detached into Standalone ELN (`project_id = NULL`, retaining `org_unit_id`)
+ * so ALCOA+ notebooks and stock ledger history are never lost.
+ */
+export async function deleteProject(tx: Tx, actor: AuthzActor, id: string, input: unknown) {
+  const { reason } = parseInput(
+    z.object({ reason: z.string().trim().min(3, "Vui lòng nhập lý do xóa dự án (tối thiểu 3 ký tự)").max(1000) }),
+    input
+  );
+  const cur = (await tx.query("SELECT * FROM rd.project WHERE id = $1 FOR UPDATE", [id])).rows[0] as ProjectRow | undefined;
+  if (!cur) throw notFound("dự án R&D");
+
+  if (!actor.isRootAdmin && !actor.isSystem) {
+    await authorize(tx, actor, "rd.project.delete", cur.owner_org_unit_id);
+  }
+
+  if (cur.status === "TRANSFERRED") {
+    throw conflict("Không thể xóa dự án đã hoàn tất chuyển giao sản xuất (TRANSFERRED).");
+  }
+  const hasNonDraftTransfer = await tx.query(
+    "SELECT 1 FROM rd.tech_transfer_package WHERE project_id = $1 AND status <> 'DRAFT' LIMIT 1",
+    [id]
+  );
+  if (hasNonDraftTransfer.rowCount) {
+    throw conflict("Không thể xóa dự án đã gửi hoặc nghiệm thu Hồ sơ Chuyển giao Công nghệ.");
+  }
+  const hasNonDraftSwRelease = await tx.query(
+    "SELECT 1 FROM rd.software_release WHERE project_id = $1 AND status <> 'DRAFT' LIMIT 1",
+    [id]
+  );
+  if (hasNonDraftSwRelease.rowCount) {
+    throw conflict("Không thể xóa dự án đã phát hành phiên bản phần mềm (Software Release).");
+  }
+  const hasCommercialDevice = await tx.query(
+    "SELECT 1 FROM device.device_model WHERE rd_project_id = $1 AND status = 'COMMERCIAL' LIMIT 1",
+    [id]
+  );
+  if (hasCommercialDevice.rowCount) {
+    throw conflict("Không thể xóa dự án đang gắn với Dòng thiết bị thương mại (COMMERCIAL).");
+  }
+  const hasImmutableSwRun = await tx.query(
+    `SELECT 1 FROM rd.sw_test_run tr
+       JOIN rd.sw_test_case tc ON tc.id = tr.test_case_id
+      WHERE tc.project_id = $1 LIMIT 1`,
+    [id]
+  );
+  if (hasImmutableSwRun.rowCount) {
+    throw conflict("Không thể xóa dự án đã có bản ghi chạy kiểm thử phần mềm bất biến (IEC 62304 Test Run).");
+  }
+
+  // Detach nullable links (preserving ALCOA+ ELNs, Biobank samples, and weekly work plans)
+  await tx.query(
+    "UPDATE rd.experiment SET project_id = NULL, org_unit_id = COALESCE(org_unit_id, $2) WHERE project_id = $1",
+    [id, cur.owner_org_unit_id]
+  );
+  await tx.query("UPDATE rd.sample SET project_id = NULL WHERE project_id = $1", [id]);
+  await tx.query("UPDATE work.work_task SET project_id = NULL WHERE project_id = $1", [id]);
+  await tx.query("UPDATE device.device_model SET rd_project_id = NULL WHERE rd_project_id = $1", [id]);
+
+  // Delete owned children in strict FK order
+  await tx.query("DELETE FROM rd.project_task WHERE project_id = $1", [id]);
+  await tx.query("DELETE FROM rd.project_material_ledger WHERE project_id = $1", [id]);
+  await tx.query("DELETE FROM rd.project_prototype_bom WHERE project_id = $1", [id]);
+  await tx.query(
+    "DELETE FROM rd.gate_deliverable USING rd.project_gate pg WHERE pg.id = rd.gate_deliverable.project_gate_id AND pg.project_id = $1",
+    [id]
+  );
+  await tx.query("DELETE FROM rd.project_gate WHERE project_id = $1", [id]);
+  await tx.query("DELETE FROM rd.project_member WHERE project_id = $1", [id]);
+  await tx.query("DELETE FROM rd.spec_evaluation WHERE project_id = $1", [id]);
+  await tx.query("DELETE FROM rd.sw_test_case WHERE project_id = $1", [id]);
+  await tx.query("DELETE FROM rd.sw_requirement WHERE project_id = $1", [id]);
+  await tx.query("DELETE FROM rd.sw_problem WHERE project_id = $1", [id]);
+  await tx.query("DELETE FROM rd.risk_item WHERE project_id = $1", [id]);
+  await tx.query("DELETE FROM rd.roadmap_milestone WHERE project_id = $1", [id]);
+  await tx.query("DELETE FROM rd.tech_transfer_package WHERE project_id = $1", [id]);
+  await tx.query("DELETE FROM rd.software_release WHERE project_id = $1", [id]);
+  await tx.query("DELETE FROM rd.project WHERE id = $1", [id]);
+
+  if (cur.idea_id) {
+    const otherProj = await tx.query("SELECT 1 FROM rd.project WHERE idea_id = $1 LIMIT 1", [cur.idea_id]);
+    if (!otherProj.rowCount) {
+      await tx.query("UPDATE rd.idea SET status = 'APPROVED', version = version + 1 WHERE id = $1 AND status = 'CONVERTED'", [cur.idea_id]);
+    }
+  }
+
+  await writeAudit(tx, actor, {
+    entityType: "rd_project",
+    entityId: id,
+    action: "delete",
+    changes: {
+      deleted: [false, true],
+      code: [cur.code, null],
+      name: [cur.name, null],
+      status: [cur.status, null],
+    },
+    reason,
+  });
+
+  return { deleted: true, id, code: cur.code };
 }

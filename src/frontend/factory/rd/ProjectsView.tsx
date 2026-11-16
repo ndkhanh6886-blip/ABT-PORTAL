@@ -6,6 +6,7 @@ import { ActionBar, type AllowedAction } from "../actions";
 import { api, fmtDate, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { DOMAIN_LABEL, IVD_CLASS_LABEL, staffOfUnit, useRdContext } from "./shared";
+import { RdPermissionPanel } from "./RdPermissionPanel";
 
 const PROJ_STATUS: Record<string, [string, string]> = {
   ACTIVE: ["PENDING_QC", "Đang triển khai"],
@@ -102,6 +103,8 @@ interface ProjectDetail {
   target_domain: string;
   ivd_class: string | null;
   leader_name: string;
+  leader_name_override?: string | null;
+  budget_amount?: string | number | null;
   template_name: string;
   idea_code: string | null;
   current_stage: string;
@@ -363,11 +366,19 @@ function ProjectPanel({
   id,
   canManage,
   canReviewGate,
+  canEdit = false,
+  canDelete = false,
+  onRequestEdit,
+  onRequestDelete,
   onClose,
 }: {
   id: string;
   canManage: boolean;
   canReviewGate: boolean;
+  canEdit?: boolean;
+  canDelete?: boolean;
+  onRequestEdit?: (proj: any) => void;
+  onRequestDelete?: (proj: any) => void;
   onClose: () => void;
 }) {
   const qc = useQueryClient();
@@ -745,7 +756,33 @@ function ProjectPanel({
   const allItems = itemsQuery.data?.rows ?? [];
 
   return (
-    <Card title={p ? `Dự án ${p.code} — ${p.name}` : "Chi tiết dự án Stage-Gate"} actions={<Button variant="ghost" onClick={onClose}>Đóng</Button>}>
+    <Card
+      title={p ? `Dự án ${p.code} — ${p.name}` : "Chi tiết dự án Stage-Gate"}
+      actions={
+        <div className="flex flex-wrap items-center gap-1.5">
+          {canEdit && p && onRequestEdit && (
+            <Button
+              variant="ghost"
+              onClick={() => onRequestEdit({ ...p, budget_amount: o?.budget_amount ?? p.budget_amount ?? 50000000 })}
+            >
+              ✏️ Sửa dự án
+            </Button>
+          )}
+          {canDelete && p && onRequestDelete && (
+            <Button
+              variant="ghost"
+              className="text-rose-600 dark:text-rose-400"
+              disabled={p.status === "TRANSFERRED"}
+              title={p.status === "TRANSFERRED" ? "Không thể xóa dự án đã chuyển giao SX" : "Xóa dự án R&D"}
+              onClick={() => onRequestDelete(p)}
+            >
+              🗑️ Xóa dự án
+            </Button>
+          )}
+          <Button variant="ghost" onClick={onClose}>Đóng</Button>
+        </div>
+      }
+    >
       <ErrorNote
         error={
           detail.error ??
@@ -2150,11 +2187,17 @@ function matchStageKey(stage: string, status: string, passedGates: number): stri
 export function ProjectsView({
   canManage,
   canReviewGate,
+  canEdit = false,
+  canDelete = false,
+  canManagePermissions = false,
   domainLock,
   ownerModule = "RD",
 }: {
   canManage: boolean;
   canReviewGate: boolean;
+  canEdit?: boolean;
+  canDelete?: boolean;
+  canManagePermissions?: boolean;
   domainLock?: string;
   ownerModule?: "RD" | "DEVICE";
 }) {
@@ -2166,6 +2209,7 @@ export function ProjectsView({
   const [searchQuery, setSearchQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [addingMode, setAddingMode] = useState<"NEW_PRODUCT" | "IMPROVEMENT" | null>(null);
+  const [showPermissions, setShowPermissions] = useState(false);
 
   const [name, setName] = useState("");
   const [targetDomain, setTargetDomain] = useState("KIT");
@@ -2174,6 +2218,43 @@ export function ProjectsView({
   const [budgetAmount, setBudgetAmount] = useState("60000000");
   const [plannedEnd, setPlannedEnd] = useState("");
   const [description, setDescription] = useState("");
+
+  // Edit & Delete project modal state
+  const [editingProj, setEditingProj] = useState<any | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editType, setEditType] = useState("NEW_PRODUCT");
+  const [editDomain, setEditDomain] = useState("KIT");
+  const [editIvd, setEditIvd] = useState("CLASS_B");
+  const [editLeader, setEditLeader] = useState("");
+  const [editBudget, setEditBudget] = useState("50000000");
+  const [editStart, setEditStart] = useState("");
+  const [editEnd, setEditEnd] = useState("");
+  const [editStatus, setEditStatus] = useState("ACTIVE");
+  const [editDesc, setEditDesc] = useState("");
+  const [editReason, setEditReason] = useState("");
+
+  const [deletingProj, setDeletingProj] = useState<any | null>(null);
+  const [deleteReason, setDeleteReason] = useState("");
+
+  const openEditProj = (proj: any) => {
+    setEditingProj(proj);
+    setEditName(proj.name || "");
+    setEditType(proj.project_type || "NEW_PRODUCT");
+    setEditDomain(proj.target_domain || "KIT");
+    setEditIvd(proj.ivd_class || "NA");
+    setEditLeader(proj.leader_name_override || proj.leader_name || "");
+    setEditBudget(String(Math.round(Number(proj.budget_amount ?? 50000000))));
+    setEditStart(proj.planned_start ? String(proj.planned_start).slice(0, 10) : "");
+    setEditEnd(proj.planned_end ? String(proj.planned_end).slice(0, 10) : "");
+    setEditStatus(proj.status || "ACTIVE");
+    setEditDesc(proj.description || "");
+    setEditReason("");
+  };
+
+  const openDeleteProj = (proj: any) => {
+    setDeletingProj(proj);
+    setDeleteReason("");
+  };
 
   const list = useQuery({
     queryKey: ["factory", "rd", "projects", domain],
@@ -2203,6 +2284,58 @@ export function ProjectsView({
       setDescription("");
       qc.invalidateQueries({ queryKey: ["factory", "rd", "projects"] });
       if (res?.id) setSelected(res.id);
+    },
+  });
+
+  const editMut = useMutation({
+    mutationFn: () => {
+      const p = editingProj!;
+      const origLeader = p.leader_name_override ?? p.leader_name ?? "";
+      const leaderPatch =
+        editLeader !== origLeader ? (editLeader.trim() || null) : undefined;
+      return api(`/api/factory/rd/projects/${p.id}`, {
+        method: "PUT",
+        json: {
+          version: p.version,
+          name: editName,
+          project_type: editType,
+          target_domain: domainLock ?? editDomain,
+          ivd_class: editIvd || null,
+          ...(leaderPatch !== undefined ? { leader_name_override: leaderPatch } : {}),
+          budget_amount: editBudget !== "" ? Number(editBudget) : null,
+          planned_start: editStart || null,
+          planned_end: editEnd || null,
+          description: editDesc || null,
+          ...(p.status !== "TRANSFERRED" ? { status: editStatus } : {}),
+          reason: editReason.trim() || null,
+        },
+      });
+    },
+    onSuccess: () => {
+      const projId = editingProj?.id;
+      setEditingProj(null);
+      qc.invalidateQueries({ queryKey: ["factory", "rd", "projects"] });
+      if (projId) {
+        qc.invalidateQueries({ queryKey: ["factory", "rd", "project", projId] });
+        qc.invalidateQueries({ queryKey: ["factory", "rd", "project-ops", projId] });
+      }
+    },
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: () =>
+      api(`/api/factory/rd/projects/${deletingProj!.id}`, {
+        method: "DELETE",
+        json: { reason: deleteReason },
+      }),
+    onSuccess: () => {
+      const deletedId = deletingProj?.id;
+      setDeletingProj(null);
+      setDeleteReason("");
+      if (selected === deletedId) setSelected(null);
+      qc.invalidateQueries({ queryKey: ["factory", "rd", "projects"] });
+      qc.invalidateQueries({ queryKey: ["factory", "rd", "experiments"] });
+      qc.invalidateQueries({ queryKey: ["factory", "rd", "ideas"] });
     },
   });
 
@@ -2271,8 +2404,29 @@ export function ProjectsView({
         })}
       </div>
 
+      {showPermissions && canManagePermissions && (
+        <RdPermissionPanel
+          title="Cài đặt Phân quyền Chỉnh sửa & Xóa Dự án R&D"
+          editPerm="rd.project.edit"
+          deletePerm="rd.project.delete"
+          editLabel="Cho phép Sửa dự án"
+          deleteLabel="Cho phép Xóa dự án"
+          onClose={() => setShowPermissions(false)}
+        />
+      )}
+
       {selected && (
-        <ProjectPanel key={selected} id={selected} canManage={canManage} canReviewGate={canReviewGate} onClose={() => setSelected(null)} />
+        <ProjectPanel
+          key={selected}
+          id={selected}
+          canManage={canManage}
+          canReviewGate={canReviewGate}
+          canEdit={canEdit}
+          canDelete={canDelete}
+          onRequestEdit={openEditProj}
+          onRequestDelete={openDeleteProj}
+          onClose={() => setSelected(null)}
+        />
       )}
 
       <Card
@@ -2302,6 +2456,14 @@ export function ProjectsView({
             <a href="/api/factory/rd/roadmap/ics" className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold">
               Xuất lịch Roadmap (.ics)
             </a>
+            {canManagePermissions && (
+              <Button
+                variant={showPermissions ? "primary" : "ghost"}
+                onClick={() => setShowPermissions(!showPermissions)}
+              >
+                🛡️ Phân quyền Sửa/Xóa
+              </Button>
+            )}
             {canManage && (
               <>
                 <Button
@@ -2430,7 +2592,20 @@ export function ProjectsView({
 
         {filteredProjects.length === 0 && <Empty>Chưa có dự án R&D nào khớp điều kiện lọc.</Empty>}
         {filteredProjects.length > 0 && (
-          <Table head={["Mã dự án", "Tên dự án", "Loại đề tài", "Lĩnh vực", "Giai đoạn (Stage)", "Tiến độ Gate", "Số ELN", "Chủ nhiệm & Nhóm NCV phụ trách", "Trạng thái"]}>
+          <Table
+            head={[
+              "Mã dự án",
+              "Tên dự án",
+              "Loại đề tài",
+              "Lĩnh vực",
+              "Giai đoạn (Stage)",
+              "Tiến độ Gate",
+              "Số ELN",
+              "Chủ nhiệm & Nhóm NCV phụ trách",
+              "Trạng thái",
+              ...(canEdit || canDelete ? ["Thao tác"] : []),
+            ]}
+          >
             {filteredProjects.map((r) => {
               const assignees: string[] = Array.isArray(r.assignees) ? r.assignees : [];
               return (
@@ -2457,12 +2632,199 @@ export function ProjectsView({
                   <td className="py-2 pr-3">
                     <StatusBadge status={PROJ_STATUS[r.status]?.[0] ?? "QUARANTINE"} label={PROJ_STATUS[r.status]?.[1] ?? r.status} />
                   </td>
+                  {(canEdit || canDelete) && (
+                    <td className="py-2 pr-2" onClick={(ev) => ev.stopPropagation()}>
+                      <div className="flex items-center gap-1 whitespace-nowrap">
+                        {canEdit && (
+                          <Button
+                            variant="ghost"
+                            className="!px-2 !py-1 !text-[11px]"
+                            onClick={() => openEditProj(r)}
+                          >
+                            ✏️ Sửa
+                          </Button>
+                        )}
+                        {canDelete && (
+                          <Button
+                            variant="ghost"
+                            disabled={r.status === "TRANSFERRED"}
+                            title={r.status === "TRANSFERRED" ? "Không thể xóa dự án đã chuyển giao SX" : "Xóa dự án R&D"}
+                            className="!px-2 !py-1 !text-[11px] text-rose-600 dark:text-rose-400"
+                            onClick={() => openDeleteProj(r)}
+                          >
+                            🗑️ Xóa
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  )}
                 </tr>
               );
             })}
           </Table>
         )}
       </Card>
+
+      {/* Edit Project Modal */}
+      {editingProj && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-[1px] flex items-center justify-center p-4 overflow-y-auto"
+          onClick={() => setEditingProj(null)}
+        >
+          <form
+            className="w-full max-w-2xl rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 shadow-xl space-y-3"
+            onClick={(ev) => ev.stopPropagation()}
+            onSubmit={(ev) => {
+              ev.preventDefault();
+              editMut.mutate();
+            }}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2.5">
+              <div>
+                <div className="text-sm font-bold text-slate-900 dark:text-white">
+                  ✏️ Chỉnh sửa Dự án <span className="font-mono text-sky-700 dark:text-sky-400">{editingProj.code}</span>
+                </div>
+                <div className="text-[11px] text-slate-500">Mọi thay đổi được lưu nhật ký kiểm toán 21 CFR Part 11</div>
+              </div>
+              <Button type="button" variant="ghost" onClick={() => setEditingProj(null)}>Đóng</Button>
+            </div>
+
+            <ErrorNote error={editMut.error} />
+
+            <div className="grid gap-3 sm:grid-cols-2 text-xs">
+              <div className="sm:col-span-2">
+                <Field label="Tên dự án R&D *">
+                  <input className={inputClass} value={editName} onChange={(ev) => setEditName(ev.target.value)} required minLength={3} />
+                </Field>
+              </div>
+              <Field label="Loại đề tài">
+                <select className={inputClass} value={editType} onChange={(ev) => setEditType(ev.target.value)}>
+                  {Object.entries(PROJ_TYPE_LABEL).map(([k, v]) => (
+                    <option key={k} value={k}>{v}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Lĩnh vực sản phẩm đích">
+                <select className={inputClass} value={editDomain} disabled={Boolean(domainLock)} onChange={(ev) => setEditDomain(ev.target.value)}>
+                  {Object.entries(DOMAIN_LABEL).map(([k, v]) => (
+                    <option key={k} value={k}>{v}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Phân loại IVD / RUO">
+                <select className={inputClass} value={editIvd} onChange={(ev) => setEditIvd(ev.target.value)}>
+                  {Object.entries(IVD_CLASS_LABEL).map(([k, v]) => (
+                    <option key={k} value={k}>{v}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Chủ nhiệm đề tài / Phụ trách chính">
+                <select className={inputClass} value={editLeader} onChange={(ev) => setEditLeader(ev.target.value)}>
+                  <option value="">-- Mặc định theo người tạo --</option>
+                  {Array.from(new Set([...staffOptions, ...(editLeader ? [editLeader] : [])])).map((st) => (
+                    <option key={st} value={st}>{st}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Ngân sách Vật tư dự kiến (VNĐ)">
+                <input type="number" min="0" step="100000" className={inputClass} value={editBudget} onChange={(ev) => setEditBudget(ev.target.value)} />
+              </Field>
+              <Field label="Trạng thái dự án">
+                <select
+                  className={inputClass}
+                  value={editStatus}
+                  disabled={editingProj.status === "TRANSFERRED"}
+                  onChange={(ev) => setEditStatus(ev.target.value)}
+                >
+                  {editingProj.status === "TRANSFERRED" ? (
+                    <option value="TRANSFERRED">Đã chuyển giao SX (Khóa)</option>
+                  ) : (
+                    <>
+                      <option value="ACTIVE">Đang triển khai (ACTIVE)</option>
+                      <option value="ON_HOLD">Tạm dừng (ON_HOLD)</option>
+                      <option value="KILLED">Đã dừng dự án (KILLED)</option>
+                    </>
+                  )}
+                </select>
+              </Field>
+              <Field label="Ngày bắt đầu dự kiến">
+                <input type="date" className={inputClass} value={editStart} onChange={(ev) => setEditStart(ev.target.value)} />
+              </Field>
+              <Field label="Dự kiến hoàn tất chuyển giao">
+                <input type="date" className={inputClass} value={editEnd} onChange={(ev) => setEditEnd(ev.target.value)} />
+              </Field>
+              <div className="sm:col-span-2">
+                <Field label="Mục tiêu kỹ thuật & Phạm vi nghiên cứu">
+                  <textarea className={inputClass} rows={2} value={editDesc} onChange={(ev) => setEditDesc(ev.target.value)} />
+                </Field>
+              </div>
+              <div className="sm:col-span-2">
+                <Field label="Lý do chỉnh sửa (Tùy chọn, lưu vào Nhật ký kiểm toán)">
+                  <input className={inputClass} value={editReason} onChange={(ev) => setEditReason(ev.target.value)} placeholder="VD: Cập nhật lại tên đề tài / mở lại dự án triển khai..." />
+                </Field>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <Button type="button" variant="ghost" onClick={() => setEditingProj(null)}>Hủy</Button>
+              <Button type="submit" disabled={editMut.isPending}>
+                {editMut.isPending ? "Đang lưu..." : "Lưu thay đổi dự án"}
+              </Button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Delete Project Confirmation Modal */}
+      {deletingProj && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-[1px] flex items-center justify-center p-4"
+          onClick={() => setDeletingProj(null)}
+        >
+          <form
+            className="w-full max-w-lg rounded-2xl border border-rose-200 dark:border-rose-900 bg-white dark:bg-slate-900 p-5 shadow-xl space-y-3"
+            onClick={(ev) => ev.stopPropagation()}
+            onSubmit={(ev) => {
+              ev.preventDefault();
+              deleteMut.mutate();
+            }}
+          >
+            <div className="text-sm font-bold text-rose-700 dark:text-rose-400">
+              🗑️ Xác nhận xóa Dự án R&D {deletingProj.code}
+            </div>
+            <div className="text-xs text-slate-700 dark:text-slate-200">
+              Bạn đang yêu cầu xóa dự án <b>{deletingProj.code} — {deletingProj.name}</b>. Toàn bộ hồ sơ Stage-Gate, công việc WBS và cột mốc chưa chuyển giao của dự án này sẽ bị xóa khỏi danh sách và ghi vào Nhật ký kiểm toán.
+            </div>
+            {Number(deletingProj.experiment_count ?? 0) > 0 && (
+              <div className="rounded-xl border border-violet-200 dark:border-violet-800 bg-violet-50/70 dark:bg-violet-950/30 p-2.5 text-xs text-violet-800 dark:text-violet-200">
+                🧪 Dự án đang có <b>{deletingProj.experiment_count}</b> sổ thí nghiệm ELN liên kết. Các sổ ELN này sẽ tự động được giữ lại dưới dạng <b>Thử nghiệm độc lập</b> để bảo toàn dữ liệu ALCOA+ &amp; lịch sử vật tư kho.
+              </div>
+            )}
+            <ErrorNote error={deleteMut.error} />
+            <Field label="Lý do xóa dự án (Bắt buộc — tối thiểu 3 ký tự) *">
+              <input
+                className={inputClass}
+                value={deleteReason}
+                onChange={(ev) => setDeleteReason(ev.target.value)}
+                placeholder="VD: Dự án tạo nháp để kiểm thử phần mềm..."
+                required
+                minLength={3}
+                autoFocus
+              />
+            </Field>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="ghost" onClick={() => setDeletingProj(null)}>Hủy</Button>
+              <Button
+                type="submit"
+                variant="danger"
+                disabled={deleteMut.isPending || deleteReason.trim().length < 3}
+              >
+                {deleteMut.isPending ? "Đang xóa..." : "Xác nhận Xóa dự án"}
+              </Button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

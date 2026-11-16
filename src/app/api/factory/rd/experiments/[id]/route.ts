@@ -1,10 +1,21 @@
 import { factoryRoute } from "@/factory/http";
 import { invalid } from "@/factory/core/errors";
-import { addExperimentEntry, consumeExperimentMaterial, createExperimentRevision, getExperimentDetail, logExperimentAsset, updateExperimentMeta } from "@/factory/rd/eln";
+import {
+  addExperimentEntry,
+  consumeExperimentMaterial,
+  createExperimentRevision,
+  deleteExperiment,
+  editExperiment,
+  getExperimentDetail,
+  logExperimentAsset,
+  updateExperimentMeta,
+} from "@/factory/rd/eln";
 
 export const GET = factoryRoute((tx, { actor, params }) => getExperimentDetail(tx, actor, params.id));
 
-export const PUT = factoryRoute((tx, { actor, params, body }) => updateExperimentMeta(tx, actor, params.id, body));
+export const PUT = factoryRoute((tx, { actor, params, body }) =>
+  body?.mode === "edit" ? editExperiment(tx, actor, params.id, body) : updateExperimentMeta(tx, actor, params.id, body)
+);
 
 export const POST = factoryRoute(async (tx, { actor, params, body }) => {
   const kind = body?.kind;
@@ -14,3 +25,7 @@ export const POST = factoryRoute(async (tx, { actor, params, body }) => {
   if (kind === "revision") return createExperimentRevision(tx, actor, params.id, body);
   throw invalid("Thao tác thí nghiệm không hợp lệ.");
 });
+
+export const DELETE = factoryRoute((tx, { actor, params, body, url }) =>
+  deleteExperiment(tx, actor, params.id, { reason: body?.reason ?? url.searchParams.get("reason") })
+);

@@ -22,7 +22,22 @@ interface Permission {
   is_gxp_critical: boolean;
 }
 
-const MODULE_LABEL: Record<string, string> = { core: "Quản trị", master: "Danh mục chủ", inv: "Kho" };
+const MODULE_LABEL: Record<string, string> = {
+  core: "Quản trị & Phân quyền",
+  master: "Danh mục chủ (Vật tư & Kho)",
+  inv: "Kho vận & Tồn kho lô",
+  purchase: "Mua hàng & Cung ứng",
+  intake: "Đơn nội bộ & Điều phối",
+  qms: "QA / QC (ISO 13485)",
+  oligo: "Tổng hợp Oligo",
+  kit: "Sản xuất Kit IVD",
+  device: "Kỹ thuật – Thiết bị & Bảo hành",
+  rd: "Nghiên cứu & Phát triển (R&D / ELN)",
+  prep: "Pha chế Hóa chất / Dung dịch",
+  asset: "Thiết bị Phòng Lab & Hiệu chuẩn",
+  plan: "Kế hoạch Sản xuất (MPS)",
+  work: "Kế hoạch Công việc Tuần",
+};
 
 function PermissionPicker({ catalogue, value, onChange }: { catalogue: Permission[]; value: string[]; onChange: (v: string[]) => void }) {
   const groups = useMemo(() => {
@@ -100,15 +115,20 @@ export function RolesView() {
   const [editing, setEditing] = useState<Role | "new" | null>(null);
   const describe = new Map(catalogue.data?.map((p) => [p.code, p.description]) ?? []);
 
+  const visibleRoles = useMemo(
+    () => (roles.data ?? []).filter((r) => !r.code.startsWith("USER_CUSTOM_")),
+    [roles.data]
+  );
+
   return (
     <Card title="Vai trò" actions={editing === null && <Button onClick={() => setEditing("new")}>+ Vai trò mới</Button>}>
       {editing !== null && catalogue.data && (
         <RoleEditor key={editing === "new" ? "new" : editing.id} role={editing === "new" ? null : editing} catalogue={catalogue.data} onClose={() => setEditing(null)} />
       )}
       <ErrorNote error={roles.error ?? catalogue.error} />
-      {roles.data?.length === 0 && <Empty>Chưa có vai trò. Chạy npm run factory:migrate để tạo các vai trò mặc định.</Empty>}
+      {visibleRoles.length === 0 && <Empty>Chưa có vai trò. Chạy npm run factory:migrate để tạo các vai trò mặc định.</Empty>}
       <div className="grid gap-3 md:grid-cols-2">
-        {roles.data?.map((r) => (
+        {visibleRoles.map((r) => (
           <div key={r.id} className="rounded-xl border border-slate-200 dark:border-slate-800 p-3">
             <div className="flex items-start justify-between gap-2">
               <div>
