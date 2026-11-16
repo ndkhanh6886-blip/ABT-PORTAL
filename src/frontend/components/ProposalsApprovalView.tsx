@@ -284,6 +284,35 @@ export const DEFAULT_PROPOSAL_TEMPLATES: ProposalTemplate[] = [
       { stepOrder: 3, stepName: "Ban Giám Đốc duyệt quyết toán", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Ban Giám Đốc", slaHours: 8 }
     ]
   },
+  {
+    id: "tmpl_invoice_request",
+    codePrefix: "DNXHD",
+    category: "FINANCE",
+    name: "Đề nghị Xuất hóa đơn (Invoice Request)",
+    icon: "🧾",
+    description: "Đề nghị xuất hóa đơn cho khách hàng",
+    hasAmount: true,
+    hasLineItems: true,
+    lineItemColumns: {
+      col1: "Nội dung xuất hóa đơn/ Số hợp đồng/ Mã SO hoặc PXK",
+      col2: "Đơn vị / Quy cách",
+      col3: "Số lượng",
+      col4: "Đơn giá (VNĐ)"
+    },
+    autoDirectorThreshold: 5000000,
+    slaTotalHours: 24,
+    fields: [
+      { key: "paymentMethod", label: "Hình thức thanh toán", type: "select", options: ["Chuyển khoản ngân hàng", "Tiền mặt tại quỹ", "Thanh toán L/C - Quốc tế", "Cấn trừ công nợ"], required: false },
+      { key: "beneficiaryName", label: "Đơn vị / Người thụ hưởng", type: "text", placeholder: "VD: Công ty TNHH Thiết bị Y tế..." },
+      { key: "bankAccount", label: "Số tài khoản ngân hàng", type: "text", placeholder: "Nhập số TK nhận tiền..." },
+      { key: "bankName", label: "Ngân hàng & Chi nhánh", type: "text", placeholder: "VD: Vietcombank - CN TP.HCM" },
+      { key: "invoiceRef", label: "Số hợp đồng/ Mã SO hoặc PXK", type: "text", placeholder: "VD: HĐ 0001245 / SO-2026-089" }
+    ],
+    defaultSteps: [
+      { stepOrder: 1, stepName: "Trưởng bộ phận xác nhận", roleType: "DEPT_HEAD", defaultDept: "Theo phòng người tạo", defaultApprover: "Trưởng bộ phận", slaHours: 4 },
+      { stepOrder: 2, stepName: "Kế toán kiểm tra & xuất hóa đơn", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Võ Thị Ngọc Giàu", slaHours: 8 }
+    ]
+  },
 
   // 2. NHÂN SỰ & HÀNH CHÍNH
   {
@@ -747,33 +776,64 @@ export function ProposalsApprovalView({
     setIsTemplateBuilderOpen(true);
   };
 
-  // Load custom templates from storage
+  // Load custom templates from storage & merge local unsynced custom templates to server
   useEffect(() => {
-    const loadTemplates = async () => {
-      try {
-        const res = await fetch("/api/storage?key=workspace_proposal_templates");
-        const data = await res.json();
-        if (Array.isArray(data?.data) && data.data.length > 0) {
-          const customIds = new Set(data.data.map((t: any) => t.id));
-          const merged = [
-            ...data.data,
-            ...DEFAULT_PROPOSAL_TEMPLATES.filter((d) => !customIds.has(d.id))
-          ];
-          setTemplates(merged);
-          return;
+    const mergeTemplateLists = (...lists: ProposalTemplate[][]): ProposalTemplate[] => {
+      const seenIds = new Set<string>();
+      const seenPrefixes = new Set<string>();
+      const out: ProposalTemplate[] = [];
+      for (const list of lists) {
+        if (!Array.isArray(list)) continue;
+        for (const item of list) {
+          if (!item || !item.id || !item.name) continue;
+          const idKey = String(item.id).trim();
+          const prefKey = String(item.codePrefix || "").trim().toUpperCase();
+          if (seenIds.has(idKey) || (prefKey && seenPrefixes.has(prefKey))) continue;
+          seenIds.add(idKey);
+          if (prefKey) seenPrefixes.add(prefKey);
+          out.push(item);
         }
-      } catch {}
+      }
+      return out;
+    };
+
+    const loadTemplates = async () => {
+      let serverList: ProposalTemplate[] = [];
+      let localList: ProposalTemplate[] = [];
+
       if (typeof window !== "undefined") {
         const local = localStorage.getItem("workspace_proposal_templates");
         if (local) {
           try {
             const parsed = JSON.parse(local);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              const customIds = new Set(parsed.map((t: any) => t.id));
-              setTemplates([...parsed, ...DEFAULT_PROPOSAL_TEMPLATES.filter((d) => !customIds.has(d.id))]);
-            }
+            if (Array.isArray(parsed)) localList = parsed;
           } catch {}
         }
+      }
+
+      try {
+        const res = await fetch("/api/storage?key=workspace_proposal_templates", { headers: { "x-no-cache": "1" } });
+        const data = await res.json();
+        if (Array.isArray(data?.data)) {
+          serverList = data.data;
+        }
+      } catch {}
+
+      const merged = mergeTemplateLists(serverList, localList, DEFAULT_PROPOSAL_TEMPLATES);
+      setTemplates(merged);
+
+      // Nếu máy người dùng có mẫu tự tạo trong localStorage mà chưa có trên server thì tự động đẩy đồng bộ lên server
+      if (merged.length > serverList.length) {
+        try {
+          if (typeof window !== "undefined") {
+            localStorage.setItem("workspace_proposal_templates", JSON.stringify(merged));
+          }
+          await fetch("/api/storage?key=workspace_proposal_templates", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(merged)
+          });
+        } catch {}
       }
     };
     loadTemplates();
@@ -785,11 +845,14 @@ export function ProposalsApprovalView({
       if (typeof window !== "undefined") {
         localStorage.setItem("workspace_proposal_templates", JSON.stringify(nextTemplates));
       }
-      await fetch("/api/storage?key=workspace_proposal_templates", {
+      const res = await fetch("/api/storage?key=workspace_proposal_templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(nextTemplates)
       });
+      if (!res.ok) {
+        showToast("Cảnh báo: Không thể đồng bộ biểu mẫu lên máy chủ, vui lòng kiểm tra quyền hoặc kết nối mạng!", "warning");
+      }
     } catch {}
   };
 

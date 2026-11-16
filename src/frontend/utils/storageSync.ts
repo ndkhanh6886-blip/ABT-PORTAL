@@ -40,6 +40,8 @@ export const SERVER_BACKED_LOCAL_KEYS = [
   "sales_13b_processed_orders",
   "tbr_rfid_tags_list",
   "workspace_proposals",
+  "workspace_proposal_templates",
+  "workspace_custom_workflow_templates",
 ];
 const SERVER_BACKED_SET = new Set(SERVER_BACKED_LOCAL_KEYS);
 
