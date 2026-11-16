@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
-import { authorize, hasFactoryPermission, type AuthzActor } from "../core/authz";
+import { authorizeAnywhere, hasFactoryPermission, type AuthzActor } from "../core/authz";
 import { forbidden, invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { parseInput } from "../core/records";
@@ -93,7 +93,7 @@ const orderSchema = z.object({
  * Request lines are locked in id order, so two buyers cannot order the same remaining quantity twice.
  */
 export async function createOrder(tx: Tx, actor: AuthzActor, input: unknown): Promise<PurchaseOrder> {
-  await authorize(tx, actor, "purchase.po.manage");
+  await authorizeAnywhere(tx, actor, "purchase.po.manage");
   const data = parseInput(orderSchema, input);
   const supplier = (await tx.query("SELECT is_supplier, status, code FROM master.partner WHERE id = $1", [data.supplier_id])).rows[0];
   if (!supplier || !supplier.is_supplier || supplier.status !== "ACTIVE") throw invalid("Đối tác không phải nhà cung cấp đang hoạt động.");

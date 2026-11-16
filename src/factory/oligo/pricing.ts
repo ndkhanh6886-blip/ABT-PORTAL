@@ -1104,7 +1104,7 @@ export async function loadPriceConfig(tx: Tx): Promise<PriceConfig> {
 
 export async function getPricingConfigResponse(tx: Tx, actor: AuthzActor) {
   await ensureOligoPricingSchema(tx);
-  await authorize(tx, actor, "oligo.view");
+  await authorizeAnywhere(tx, actor, "oligo.view");
   const row = (await tx.query("SELECT config, version, updated_at FROM oligo.price_config WHERE id = 1")).rows[0];
   const saved = (row?.config ?? {}) as Partial<PriceConfig>;
   const config: PriceConfig = {

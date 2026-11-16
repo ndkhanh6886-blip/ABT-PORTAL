@@ -138,7 +138,7 @@ export async function saveWorkflow(tx: Tx, actor: AuthzActor, id: string | null,
 
 export async function listSop(tx: Tx, actor: AuthzActor) {
   await ensureLegacyOligoDataSeeded(tx);
-  await authorize(tx, actor, "oligo.view");
+  await authorizeAnywhere(tx, actor, "oligo.view");
   const methods = (await tx.query("SELECT *, target_hours::float AS target_hours FROM oligo.ps_method ORDER BY category, name")).rows;
   const itemIds = Array.from(
     new Set(

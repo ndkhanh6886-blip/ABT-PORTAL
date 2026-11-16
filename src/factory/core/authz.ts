@@ -75,24 +75,65 @@ export const SYSTEM_ACTOR: AuthzActor = { userId: 0, name: "Hệ thống", isSys
 
 /**
  * True when the user holds the permission through an active role (own or delegated to them), whose
- * scope is the whole company or `orgUnitId` / one of its parent units.
+ * scope is the whole company or `orgUnitId` / one of its parent units, and it is not excluded for
+ * that specific user (`core.user_permission_exclusion`).
  */
-const QA_CROSS_DEPT_PERMS = new Set([
+export const QA_CROSS_DEPT_PERMS = new Set([
+  "master.data.view",
+  "inv.stock.view",
+  "inv.lot.sample",
   "inv.lot.release",
   "inv.lot.hold",
   "inv.lot.reject",
+  "kit.view",
+  "kit.bom.approve",
+  "kit.ebr.check",
   "kit.order.release",
+  "kit.quality.manage",
+  "oligo.view",
+  "device.view",
+  "device.eco.approve",
   "device.unit.release",
   "device.qa.release",
+  "rd.view",
+  "rd.gate.review",
 ]);
+
+export const WH_CROSS_DEPT_PERMS = new Set([
+  "master.data.view",
+  "master.item.manage",
+  "master.partner.manage",
+  "purchase.po.view",
+  "purchase.po.manage",
+  "purchase.pr.view",
+  "purchase.receipt.post",
+  "inv.stock.view",
+  "intake.order.view",
+  "intake.shipment.post",
+]);
+
+export function isQaCrossDeptPermission(permission: string): boolean {
+  return permission.startsWith("qms.") || QA_CROSS_DEPT_PERMS.has(permission);
+}
+
+export function isWhCrossDeptPermission(permission: string): boolean {
+  return WH_CROSS_DEPT_PERMS.has(permission);
+}
 
 export async function hasFactoryPermission(tx: Tx, actor: AuthzActor, permission: string, orgUnitId?: string | null): Promise<boolean> {
   const def = registry.get(permission);
   if (!def) throw new Error(`Quyền chưa được khai báo: ${permission}`);
   if (def.systemOnly || actor.isSystem) return Boolean(def.systemOnly && actor.isSystem);
   if (actor.isRootAdmin) return true;
-  if (def.bootstrapAdmin && actor.isPortalAdmin) return true;
-  const isQaCrossDept = permission.startsWith("qms.") || QA_CROSS_DEPT_PERMS.has(permission);
+  if (def.bootstrapAdmin && actor.isPortalAdmin) {
+    const excl = await tx.query(
+      "SELECT 1 FROM core.user_permission_exclusion WHERE user_id = $1 AND permission_code = $2 LIMIT 1",
+      [actor.userId, permission]
+    );
+    return (excl.rowCount ?? 0) === 0;
+  }
+  const isQaCrossDept = isQaCrossDeptPermission(permission);
+  const isWhCrossDept = isWhCrossDeptPermission(permission);
   const res = await tx.query(
     `WITH RECURSIVE ancestors AS (
        SELECT id, parent_id FROM core.org_unit WHERE id = $3::uuid
@@ -113,11 +154,18 @@ export async function hasFactoryPermission(tx: Tx, actor: AuthzActor, permission
        JOIN core.role_permission rp ON rp.role_id = g.role_id AND rp.permission_code = $2
        JOIN core.user_profile up ON up.user_id = $1 AND up.status = 'ACTIVE'
        LEFT JOIN core.org_unit g_ou ON g_ou.id = g.scope_org_unit_id
-      WHERE g.scope_org_unit_id IS NULL
-         OR g.scope_org_unit_id IN (SELECT id FROM ancestors)
-         OR ($4::boolean AND g_ou.module_key = 'QA')
+      WHERE (
+        g.scope_org_unit_id IS NULL
+        OR g.scope_org_unit_id IN (SELECT id FROM ancestors)
+        OR ($4::boolean AND g_ou.module_key = 'QA')
+        OR ($5::boolean AND g_ou.module_key IN ('WH', 'PURCHASE'))
+      )
+        AND NOT EXISTS (
+          SELECT 1 FROM core.user_permission_exclusion upe
+           WHERE upe.user_id = $1 AND upe.permission_code = $2
+        )
       LIMIT 1`,
-    [actor.userId, permission, orgUnitId ?? null, isQaCrossDept]
+    [actor.userId, permission, orgUnitId ?? null, isQaCrossDept, isWhCrossDept]
   );
   return (res.rowCount ?? 0) > 0;
 }

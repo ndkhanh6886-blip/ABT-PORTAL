@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Tx } from "../core/db";
-import { authorize, authorizeAnywhere, registerPermissions, type AuthzActor } from "../core/authz";
+import { authorizeAnywhere, registerPermissions, type AuthzActor } from "../core/authz";
 import { conflict, invalid, notFound } from "../core/errors";
 import { parseInput, updateRecord } from "../core/records";
 import { analyze, SequenceError, type Analysis, type CatalogEntry } from "./analyzer";
@@ -28,7 +28,7 @@ export async function loadCatalog(tx: Tx): Promise<CatalogEntry[]> {
 
 export async function listCatalog(tx: Tx, actor: AuthzActor) {
   await ensureLegacyOligoDataSeeded(tx);
-  await authorize(tx, actor, "oligo.view");
+  await authorizeAnywhere(tx, actor, "oligo.view");
   return (await tx.query(`SELECT ${COLUMNS} FROM oligo.modification ORDER BY array_position(ARRAY['BASE','LNA','OME','F2','METHYL','DYE','QUENCHER','MODIFIER','SPACER'], kind), code`)).rows;
 }
 
@@ -75,7 +75,7 @@ export interface AnalysisRow {
 
 /** One sequence per line, optionally "name<TAB or ;>sequence". Each line succeeds or reports its own error. */
 export async function analyzeBatch(tx: Tx, actor: AuthzActor, input: unknown): Promise<AnalysisRow[]> {
-  await authorize(tx, actor, "oligo.view");
+  await authorizeAnywhere(tx, actor, "oligo.view");
   const { text } = parseInput(z.object({ text: z.string().max(200_000) }), input);
   const catalog = await loadCatalog(tx);
   const lines = text.split(/\r?\n/).map((l, i) => ({ l: l.trim(), i: i + 1 })).filter((x) => x.l);

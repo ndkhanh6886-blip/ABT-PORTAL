@@ -1,6 +1,6 @@
 import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
-import { authorize, type AuthzActor } from "../core/authz";
+import { authorize, authorizeAnywhere, type AuthzActor } from "../core/authz";
 import { conflict, invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { insertRecord, parseInput, updateRecord } from "../core/records";
@@ -107,7 +107,7 @@ async function assertUom(tx: Tx, code: string): Promise<string> {
 }
 
 export async function createItem(tx: Tx, actor: AuthzActor, input: unknown): Promise<Item> {
-  await authorize(tx, actor, "master.item.manage");
+  await authorizeAnywhere(tx, actor, "master.item.manage");
   const data = parseInput(createItemSchema, input);
   const canonicalUom = await assertUom(tx, data.base_uom);
   if (data.tracking === "SERIAL" && canonicalUom.toLowerCase() !== "pcs")
@@ -215,7 +215,7 @@ async function rescaleItemStockForNewBaseUom(
 }
 
 export async function updateItem(tx: Tx, actor: AuthzActor, id: string, input: unknown): Promise<Item> {
-  await authorize(tx, actor, "master.item.manage");
+  await authorizeAnywhere(tx, actor, "master.item.manage");
   const { version, reason, uom_change_mode, ...patch } = parseInput(updateItemSchema, input);
   const current = (await tx.query("SELECT id, code, base_uom, tracking FROM master.item WHERE id = $1", [id])).rows[0] as
     | { id: string; code: string; base_uom: string; tracking: string }
@@ -299,7 +299,7 @@ function foldViText(s: string): string {
 const foldSql = (expr: string) => `lower(translate(${expr}, '${VI_FROM}', '${VI_TO}'))`;
 
 export async function listItems(tx: Tx, actor: AuthzActor, query: unknown) {
-  await authorize(tx, actor, "master.data.view");
+  await authorizeAnywhere(tx, actor, "master.data.view");
   const q = parseInput(listQuerySchema, query);
   const params: unknown[] = [];
   const where: string[] = [];
@@ -392,13 +392,13 @@ export async function getItem(tx: Tx, id: string): Promise<Item> {
 }
 
 export async function createCategory(tx: Tx, actor: AuthzActor, input: unknown) {
-  await authorize(tx, actor, "master.item.manage");
+  await authorizeAnywhere(tx, actor, "master.item.manage");
   const data = parseInput(createCategorySchema, input);
   return insertRecord(tx, actor, "master.item_category", "item_category", data);
 }
 
 export async function setConversion(tx: Tx, actor: AuthzActor, input: unknown) {
-  await authorize(tx, actor, "master.item.manage");
+  await authorizeAnywhere(tx, actor, "master.item.manage");
   const data = parseInput(conversionSchema, input);
   const fromUom = await assertUom(tx, data.from_uom);
   const toUom = await assertUom(tx, data.to_uom);
@@ -439,7 +439,7 @@ export async function setConversion(tx: Tx, actor: AuthzActor, input: unknown) {
 }
 
 export async function listConversions(tx: Tx, actor: AuthzActor, query?: { item_id?: string; q?: string }) {
-  await authorize(tx, actor, "master.data.view");
+  await authorizeAnywhere(tx, actor, "master.data.view");
   const params: unknown[] = [];
   const where: string[] = [];
   if (query?.item_id) {
@@ -469,7 +469,7 @@ export async function listConversions(tx: Tx, actor: AuthzActor, query?: { item_
 }
 
 export async function deleteConversion(tx: Tx, actor: AuthzActor, id: string) {
-  await authorize(tx, actor, "master.item.manage");
+  await authorizeAnywhere(tx, actor, "master.item.manage");
   if (!id || !/^[0-9a-f-]{36}$/i.test(id)) throw invalid("Thiếu ID quy tắc quy đổi.");
   const row = (await tx.query("SELECT id, from_uom, to_uom, factor, item_id FROM master.uom_conversion WHERE id = $1", [id])).rows[0];
   if (!row) throw notFound("quy tắc quy đổi");
@@ -570,7 +570,7 @@ export async function toBaseQty(tx: Tx, item: Pick<Item, "id" | "base_uom" | "co
 }
 
 export async function createPartner(tx: Tx, actor: AuthzActor, input: unknown) {
-  await authorize(tx, actor, "master.partner.manage");
+  await authorizeAnywhere(tx, actor, "master.partner.manage");
   const data = parseInput(createPartnerSchema, input);
   if (data.tax_code) {
     const dup = await tx.query("SELECT code FROM master.partner WHERE tax_code = $1", [data.tax_code]);
@@ -599,7 +599,7 @@ export async function createLocation(tx: Tx, actor: AuthzActor, input: unknown) 
 }
 
 export async function listPartners(tx: Tx, actor: AuthzActor, query: { q?: string; role?: string }) {
-  await authorize(tx, actor, "master.data.view").catch(async () => authorize(tx, actor, "master.partner.manage"));
+  await authorizeAnywhere(tx, actor, "master.data.view").catch(async () => authorizeAnywhere(tx, actor, "master.partner.manage"));
   const role = ["supplier", "customer", "subcontractor"].includes(query.role ?? "") ? `is_${query.role}` : null;
   return (
     await tx.query(

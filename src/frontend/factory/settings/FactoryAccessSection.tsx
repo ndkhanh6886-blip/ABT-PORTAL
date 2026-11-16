@@ -14,17 +14,22 @@ interface Grant {
   role_name: string;
   scope_org_unit_id: string | null;
   scope_name: string | null;
+  scope_module_key?: string | null;
+  scope_unit_type?: string | null;
 }
 interface FactoryUser {
   id: number;
   username: string;
   role?: string;
   grants: Grant[];
+  excluded_permissions?: string[];
 }
 interface OrgUnit {
   id: string;
   code: string;
   name: string;
+  unit_type?: string;
+  parent_id?: string | null;
   module_key: string | null;
   status: string;
 }
@@ -33,6 +38,65 @@ interface Permission {
   module: string;
   description: string;
   is_gxp_critical: boolean;
+}
+
+const QA_CROSS_DEPT_SET = new Set([
+  "master.data.view",
+  "inv.stock.view",
+  "inv.lot.sample",
+  "inv.lot.release",
+  "inv.lot.hold",
+  "inv.lot.reject",
+  "kit.view",
+  "kit.bom.approve",
+  "kit.ebr.check",
+  "kit.order.release",
+  "kit.quality.manage",
+  "oligo.view",
+  "device.view",
+  "device.eco.approve",
+  "device.unit.release",
+  "device.qa.release",
+  "rd.view",
+  "rd.gate.review",
+]);
+
+const WH_CROSS_DEPT_SET = new Set([
+  "master.data.view",
+  "master.item.manage",
+  "master.partner.manage",
+  "purchase.po.view",
+  "purchase.po.manage",
+  "purchase.pr.view",
+  "purchase.receipt.post",
+  "inv.stock.view",
+  "intake.order.view",
+  "intake.shipment.post",
+]);
+
+function grantAppliesToDept(grant: Grant, permCode: string, deptUnitKey: string | null, allUnits: OrgUnit[]): boolean {
+  if (!grant.scope_org_unit_id || grant.scope_unit_type === "COMPANY") return true;
+  if (grant.scope_module_key === "QA" && (permCode.startsWith("qms.") || QA_CROSS_DEPT_SET.has(permCode))) {
+    return true;
+  }
+  if ((grant.scope_module_key === "WH" || grant.scope_module_key === "PURCHASE") && WH_CROSS_DEPT_SET.has(permCode)) {
+    return true;
+  }
+  if (!deptUnitKey) {
+    if (permCode.startsWith("core.")) return false;
+    if (permCode.startsWith("purchase.po.") || permCode === "purchase.receipt.post") return false;
+    return true;
+  }
+  const target = allUnits.find((u) => u.module_key === deptUnitKey);
+  if (!target) return grant.scope_module_key === deptUnitKey;
+  let cur: OrgUnit | undefined = target;
+  const visited = new Set<string>();
+  while (cur && !visited.has(cur.id)) {
+    if (cur.id === grant.scope_org_unit_id) return true;
+    visited.add(cur.id);
+    cur = cur.parent_id ? allUnits.find((u) => u.id === cur!.parent_id) : undefined;
+  }
+  return false;
 }
 
 /** Khối Kỹ thuật – Nhà máy: each department / function and the permission modules that open its tab. */
@@ -62,40 +126,59 @@ function useFactoryAccess(userId: number, username: string) {
   const catalogue = useQuery({ queryKey: ["factory", "permissions"], queryFn: () => api<Permission[]>("/api/factory/permissions"), retry: false });
 
   const matchedUser = users.data?.find((u) => Number(u.id) === Number(userId) || u.username?.toLowerCase() === username?.toLowerCase());
-  const user: FactoryUser | undefined = matchedUser ?? (users.data ? { id: userId, username, grants: [] } : undefined);
+  const user: FactoryUser | undefined = matchedUser ?? (users.data ? { id: userId, username, grants: [], excluded_permissions: [] } : undefined);
   const roleById = useMemo(() => new Map((roles.data ?? []).map((r) => [r.id, r])), [roles.data]);
+  const allUnits = useMemo(() => units.data ?? [], [units.data]);
   const customRoleCode = `USER_CUSTOM_${userId}`;
-  // permission code → where it is held ("toàn công ty" / department names), inherited vs personal overrides
-  const { held, inheritedMap, customPermSet } = useMemo(() => {
-    const allHeld = new Map<string, string[]>();
-    const inherited = new Map<string, string[]>();
+  const excludedSet = useMemo(() => new Set(user?.excluded_permissions ?? []), [user?.excluded_permissions]);
+
+  // Helper computing effective inherited roles for (deptUnitKey, permissionCode) plus personal overrides
+  const { customPermSet, inheritedRolesFor } = useMemo(() => {
     const customSet = new Set<string>();
+    const nonCustomGrants: { grant: Grant; perms: Set<string> }[] = [];
     for (const g of user?.grants ?? []) {
       const roleObj = roleById.get(g.role_id);
       const rCode = g.role_code ?? roleObj?.code ?? "";
-      const isCustomRole = rCode === customRoleCode;
-      for (const p of roleObj?.permissions ?? []) {
-        const scopeLabel = g.scope_name ?? "toàn công ty";
-        allHeld.set(p, [...(allHeld.get(p) ?? []), isCustomRole ? `cấp riêng (${scopeLabel})` : `${g.role_name} · ${scopeLabel}`]);
-        if (isCustomRole) {
-          customSet.add(p);
-        } else {
-          inherited.set(p, [...(inherited.get(p) ?? []), g.role_name]);
-        }
+      if (rCode === customRoleCode) {
+        for (const p of roleObj?.permissions ?? []) customSet.add(p);
+      } else {
+        nonCustomGrants.push({ grant: g, perms: new Set(roleObj?.permissions ?? []) });
       }
     }
-    return { held: allHeld, inheritedMap: inherited, customPermSet: customSet };
-  }, [user, roleById, customRoleCode]);
+    const getInherited = (permCode: string, deptUnitKey: string | null): string[] => {
+      const names: string[] = [];
+      for (const item of nonCustomGrants) {
+        if (!item.perms.has(permCode)) continue;
+        if (grantAppliesToDept(item.grant, permCode, deptUnitKey, allUnits)) {
+          names.push(item.grant.role_name);
+        }
+      }
+      return [...new Set(names)];
+    };
+    return { customPermSet: customSet, inheritedRolesFor: getInherited };
+  }, [user, roleById, customRoleCode, allUnits]);
+
+  const isPermActiveInDept = useMemo(
+    () => (permCode: string, deptUnitKey: string | null, isRoot: boolean) => {
+      if (isRoot) return true;
+      if (excludedSet.has(permCode)) return false;
+      if (customPermSet.has(permCode)) return true;
+      return inheritedRolesFor(permCode, deptUnitKey).length > 0;
+    },
+    [excludedSet, customPermSet, inheritedRolesFor]
+  );
 
   return {
     user,
     roles: roles.data,
     roleById,
-    units: (units.data ?? []).filter((u) => u.status === "ACTIVE"),
+    allUnits,
+    units: allUnits.filter((u) => u.status === "ACTIVE"),
     catalogue: catalogue.data,
-    held,
-    inheritedMap,
+    excludedSet,
     customPermSet,
+    inheritedRolesFor,
+    isPermActiveInDept,
     error: users.error ?? roles.error ?? units.error ?? catalogue.error,
     ready: Boolean(users.data && roles.data && catalogue.data),
   };
@@ -109,7 +192,7 @@ function useFactoryAccess(userId: number, username: string) {
 export function FactoryAccessSection({ userId, username, isRootAdmin }: { userId: number; username: string; isRootAdmin: boolean }) {
   const qc = useQueryClient();
   const me = useFactoryMe();
-  const { user, roles, roleById, units, catalogue, held, error, ready } = useFactoryAccess(userId, username);
+  const { user, roles, roleById, allUnits, units, catalogue, isPermActiveInDept, error, ready } = useFactoryAccess(userId, username);
   const [open, setOpen] = useState<string | null>(null);
   const [form, setForm] = useState<{ dept: string; roleId: string; scope: string }>({ dept: "", roleId: "", scope: "" });
 
@@ -145,7 +228,7 @@ export function FactoryAccessSection({ userId, username, isRootAdmin }: { userId
             </span>
           </h4>
           <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-            Bấm vào phòng để cấp / thu hồi vai trò (có hiệu lực ngay, ghi nhật ký kiểm toán). Lưu ý: <strong>Kho Nhà máy &amp; Cung ứng Kỹ thuật (P-KHO)</strong> quản lý NVL, enzyme, bán thành phẩm, lô sản xuất &amp; cấp phát FEFO theo GMP/ISO 13485 — tách biệt hoàn toàn với <strong>Kho Kinh Doanh &amp; Cung Ứng Kinh Doanh</strong> ở trên. Tính năng chi tiết của từng phòng xem ở phần bên dưới.
+            Bấm vào phòng để cấp / thu hồi vai trò (có hiệu lực ngay, ghi nhật ký kiểm toán). Lưu ý: <strong>Kho Nhà máy &amp; Cung ứng Kỹ thuật (P-KHO)</strong> quản lý NVL, enzyme, bán thành phẩm, lô sản xuất &amp; cấp phát FEFO theo GMP/ISO 13485 — tách biệt hoàn toàn với <strong>Kho Kinh Doanh &amp; Cung Ứng Kinh Doanh</strong> ở trên. Tích chọn / bỏ chọn chi tiết từng quyền cho cá nhân ở phần bên dưới.
           </p>
         </div>
       </div>
@@ -158,8 +241,12 @@ export function FactoryAccessSection({ userId, username, isRootAdmin }: { userId
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {FACTORY_DEPTS.map((d) => {
             const perms = catalogue.filter((p) => d.modules.includes(p.module));
-            const heldCount = isRootAdmin ? perms.length : perms.filter((p) => held.has(p.code)).length;
-            const grants = user.grants.filter((g) => roleById.get(g.role_id)?.permissions.some((c) => inDept(d, c)));
+            const heldCount = perms.filter((p) => isPermActiveInDept(p.code, d.unit, isRootAdmin)).length;
+            const grants = user.grants.filter(
+              (g) =>
+                !g.role_code?.startsWith("USER_CUSTOM_") &&
+                (roleById.get(g.role_id)?.permissions ?? []).some((c) => inDept(d, c) && grantAppliesToDept(g, c, d.unit, allUnits))
+            );
             const roleChoices = roles.filter(
               (r) => r.status === "ACTIVE" && !r.code.startsWith("USER_CUSTOM_") && r.permissions.some((c) => inDept(d, c))
             );
@@ -271,9 +358,9 @@ export function FactoryAccessSection({ userId, username, isRootAdmin }: { userId
 }
 
 /**
- * Feature list of the Khối Kỹ thuật – Nhà máy in "Phân Quyền Tính Năng Chi Tiết Trong Từng Phân Hệ", numbered after
- * the portal groups. Read-only ticks: a factory feature is held through a role, and each feature names the roles
- * that carry it so the administrator knows which one to grant above.
+ * Interactive feature list of Khối Kỹ thuật – Nhà máy in "Phân Quyền Tính Năng Chi Tiết Trong Từng Phân Hệ".
+ * Respects role scope isolation and allows admins to grant, revoke (even for role-inherited permissions),
+ * bulk-toggle a department, or reset overrides per user — applied immediately and audited.
  */
 export function FactoryFeatureGroups({
   userId,
@@ -290,12 +377,18 @@ export function FactoryFeatureGroups({
 }) {
   const qc = useQueryClient();
   const me = useFactoryMe();
-  const { roles, catalogue, held, inheritedMap, customPermSet, error, ready } = useFactoryAccess(userId, username);
+  const { roles, catalogue, excludedSet, customPermSet, inheritedRolesFor, isPermActiveInDept, error, ready } =
+    useFactoryAccess(userId, username);
+
   const togglePermMut = useMutation({
-    mutationFn: ({ code, enabled }: { code: string; enabled: boolean }) =>
+    mutationFn: (arg: { code?: string; codes?: string[]; enabled?: boolean; resetOverrides?: boolean; reason?: string }) =>
       api(`/api/factory/users/${userId}/permissions`, {
         method: "POST",
-        json: { permission_code: code, enabled, reason: "Cấu hình phân quyền chi tiết cá nhân" },
+        json: arg.resetOverrides
+          ? { reset_overrides: true, reason: arg.reason ?? "Khôi phục phân quyền chi tiết theo vai trò gốc" }
+          : arg.codes
+            ? { permission_codes: arg.codes, enabled: Boolean(arg.enabled), reason: arg.reason ?? "Cập nhật nhanh nhóm quyền cá nhân" }
+            : { permission_code: arg.code, enabled: Boolean(arg.enabled), reason: arg.reason ?? "Cấu hình phân quyền chi tiết cá nhân" },
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["factory", "users"] });
@@ -305,6 +398,7 @@ export function FactoryFeatureGroups({
   });
   const isSelf = me.data?.profile.user_id === userId;
   const canEditCustom = !isRootAdmin && (!isSelf || Boolean(me.data?.is_root));
+  const hasPersonalOverrides = customPermSet.size > 0 || excludedSet.size > 0;
 
   const summary = useMemo(() => {
     if (!ready || !catalogue) return null;
@@ -313,10 +407,10 @@ export function FactoryFeatureGroups({
     for (const d of FACTORY_DEPTS) {
       const perms = catalogue.filter((p) => d.modules.includes(p.module));
       total += perms.length;
-      active += isRootAdmin ? perms.length : perms.filter((p) => held.has(p.code)).length;
+      active += perms.filter((p) => isPermActiveInDept(p.code, d.unit, isRootAdmin)).length;
     }
     return { active, total };
-  }, [ready, catalogue, held, isRootAdmin]);
+  }, [ready, catalogue, isPermActiveInDept, isRootAdmin]);
 
   useEffect(() => {
     if (ready && summary) {
@@ -330,10 +424,26 @@ export function FactoryFeatureGroups({
   return (
     <>
       {togglePermMut.error && <ErrorNote error={togglePermMut.error} />}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-teal-200/80 dark:border-teal-900/60 bg-teal-50/50 dark:bg-teal-950/20 px-3.5 py-2 text-[11px]">
+        <span className="text-teal-900 dark:text-teal-200 font-medium">
+          ⚡ Thay đổi ở <strong>Khối Kỹ thuật – Nhà máy</strong> có hiệu lực ngay và tự động lưu <strong>Audit Trail 21 CFR Part 11</strong> (có thể tích/bỏ tích lẻ cả quyền kế thừa từ vai trò).
+        </span>
+        {canEditCustom && hasPersonalOverrides && (
+          <button
+            type="button"
+            disabled={togglePermMut.isPending}
+            onClick={() => togglePermMut.mutate({ resetOverrides: true })}
+            className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-teal-300 dark:border-teal-700 text-teal-800 dark:text-teal-200 font-bold hover:bg-teal-100/60 cursor-pointer shrink-0 disabled:opacity-50"
+          >
+            ↺ Khôi phục theo vai trò gốc
+          </button>
+        )}
+      </div>
+
       {FACTORY_DEPTS.map((d, i) => {
         const perms = catalogue.filter((p) => d.modules.includes(p.module));
         if (!perms.length) return null;
-        const activeCount = isRootAdmin ? perms.length : perms.filter((p) => held.has(p.code)).length;
+        const activeCount = perms.filter((p) => isPermActiveInDept(p.code, d.unit, isRootAdmin)).length;
         return (
           <div key={d.key} className="bg-teal-50/30 dark:bg-slate-800/30 rounded-2xl border border-teal-200/70 dark:border-teal-900/60 p-4 space-y-3">
             <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-200 dark:border-slate-700/60 flex-wrap">
@@ -353,15 +463,40 @@ export function FactoryFeatureGroups({
                   {activeCount}/{perms.length} quyền kích hoạt
                 </span>
               </div>
-              <span className="text-[11px] text-slate-400">Cấp qua vai trò ở trên hoặc tích chọn trực tiếp cho từng cá nhân</span>
+              {canEditCustom ? (
+                <div className="flex items-center gap-2 text-xs">
+                  <button
+                    type="button"
+                    disabled={togglePermMut.isPending}
+                    onClick={() => togglePermMut.mutate({ codes: perms.map((p) => p.code), enabled: true })}
+                    className="text-[11px] text-teal-700 dark:text-teal-300 font-bold hover:underline cursor-pointer disabled:opacity-50"
+                  >
+                    Chọn nhóm này
+                  </button>
+                  <span className="text-slate-300 dark:text-slate-600">|</span>
+                  <button
+                    type="button"
+                    disabled={togglePermMut.isPending}
+                    onClick={() => togglePermMut.mutate({ codes: perms.map((p) => p.code), enabled: false })}
+                    className="text-[11px] text-slate-500 font-bold hover:underline cursor-pointer disabled:opacity-50"
+                  >
+                    Bỏ chọn nhóm
+                  </button>
+                </div>
+              ) : (
+                <span className="text-[11px] text-slate-400">
+                  {isRootAdmin ? "Tài khoản Root Admin mặc định có toàn quyền" : "Nhờ quản trị viên khác để chỉnh sửa quyền của chính bạn"}
+                </span>
+              )}
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
               {perms.map((p) => {
-                const inheritedRoles = inheritedMap.get(p.code) ?? [];
-                const isInherited = inheritedRoles.length > 0;
-                const isCustom = customPermSet.has(p.code);
-                const checked = isRootAdmin || isInherited || isCustom;
-                const interactive = canEditCustom && !isInherited;
+                const inheritedRoles = inheritedRolesFor(p.code, d.unit);
+                const isExcluded = excludedSet.has(p.code);
+                const isInheritedActive = inheritedRoles.length > 0 && !isExcluded;
+                const isCustomActive = customPermSet.has(p.code) && !isExcluded;
+                const checked = isPermActiveInDept(p.code, d.unit, isRootAdmin);
+                const interactive = canEditCustom;
                 const carriers = roles
                   .filter((r) => r.status === "ACTIVE" && !r.code.startsWith("USER_CUSTOM_") && r.permissions.includes(p.code))
                   .map((r) => r.name);
@@ -371,30 +506,47 @@ export function FactoryFeatureGroups({
                     title={
                       isRootAdmin
                         ? "Tài khoản Root Admin mặc định có toàn quyền"
-                        : isInherited
-                          ? `Đang có sẵn từ vai trò: ${[...new Set(inheritedRoles)].join(", ")}`
-                          : carriers.length
-                            ? `Tích để cấp/thu hồi riêng cho cá nhân này. (Cũng có trong vai trò: ${carriers.join(", ")})`
-                            : "Tích để cấp/thu hồi riêng quyền này cho cá nhân"
+                        : !interactive
+                          ? "Không thể tự chỉnh sửa quyền cho chính mình"
+                          : isInheritedActive
+                            ? `Đang bật theo vai trò (${inheritedRoles.join(", ")}). Bấm để tắt riêng cho cá nhân này.`
+                            : isExcluded && inheritedRoles.length > 0
+                              ? `Đã tắt riêng cá nhân (mặc dù vai trò ${inheritedRoles.join(", ")} có). Bấm để bật lại.`
+                              : isCustomActive
+                                ? "Đang bật cấp riêng cho cá nhân này. Bấm để thu hồi."
+                                : "Chưa cấp quyền. Bấm để cấp riêng quyền này cho cá nhân."
                     }
-                    className={`p-3 rounded-xl border flex items-start gap-3 transition-colors ${
-                      interactive ? "cursor-pointer hover:border-teal-400" : ""
+                    className={`p-3 rounded-xl border-2 flex items-start gap-3 transition-colors ${
+                      interactive ? "cursor-pointer" : ""
                     } ${
                       checked
-                        ? "bg-white dark:bg-slate-800 border-teal-200 dark:border-teal-800/80 shadow-xs"
-                        : "bg-white/60 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700/60 opacity-75"
+                        ? "bg-emerald-50/50 dark:bg-emerald-950/25 border-emerald-400 dark:border-emerald-700 shadow-xs"
+                        : isExcluded && inheritedRoles.length > 0
+                          ? "bg-rose-50/40 dark:bg-rose-950/15 border-rose-200 dark:border-rose-900/70"
+                          : "bg-white/70 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700/60 hover:border-teal-300"
                     }`}
                   >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      disabled={!interactive || togglePermMut.isPending}
-                      onChange={() => {
-                        if (interactive) togglePermMut.mutate({ code: p.code, enabled: !isCustom });
-                      }}
-                      className="mt-0.5 rounded text-teal-600 w-4 h-4 shrink-0 cursor-pointer disabled:cursor-default"
-                      aria-label={p.description}
-                    />
+                    {interactive ? (
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={togglePermMut.isPending}
+                        onChange={() => togglePermMut.mutate({ code: p.code, enabled: !checked })}
+                        className="mt-0.5 rounded accent-emerald-600 w-4 h-4 shrink-0 cursor-pointer"
+                        aria-label={p.description}
+                      />
+                    ) : (
+                      <span
+                        aria-label={checked ? "Đang được cấp quyền" : "Chưa cấp quyền"}
+                        className={`mt-0.5 w-4 h-4 rounded flex items-center justify-center text-[10px] font-extrabold shrink-0 ${
+                          checked
+                            ? "bg-emerald-600 text-white"
+                            : "bg-slate-200 dark:bg-slate-700 text-slate-400"
+                        }`}
+                      >
+                        {checked ? "✓" : ""}
+                      </span>
+                    )}
                     <div className="space-y-0.5 flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-2">
                         <span className={`text-xs font-bold ${checked ? "text-slate-900 dark:text-white" : "text-slate-600 dark:text-slate-400"}`}>{p.description}</span>
@@ -403,13 +555,15 @@ export function FactoryFeatureGroups({
                       <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
                         {p.is_gxp_critical && <span className="px-1.5 rounded bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-bold">GxP · ký điện tử</span>}
                         {isRootAdmin ? (
-                          <span>Admin gốc · toàn quyền</span>
-                        ) : isInherited ? (
-                          <span className="text-emerald-700 dark:text-emerald-400 font-semibold">Theo vai trò · {[...new Set(inheritedRoles)].join(", ")}</span>
-                        ) : isCustom ? (
-                          <span className="text-sky-700 dark:text-sky-400 font-semibold">✓ Cấp riêng cá nhân</span>
+                          <span className="text-emerald-700 dark:text-emerald-400 font-semibold">✓ Đang cấp · Admin gốc (toàn quyền)</span>
+                        ) : isInheritedActive ? (
+                          <span className="text-emerald-700 dark:text-emerald-400 font-semibold">✓ Đang cấp · Theo vai trò ({inheritedRoles.join(", ")})</span>
+                        ) : isCustomActive ? (
+                          <span className="text-teal-700 dark:text-teal-300 font-semibold">✓ Đang cấp · Cấp riêng cá nhân</span>
+                        ) : isExcluded && inheritedRoles.length > 0 ? (
+                          <span className="text-rose-700 dark:text-rose-400 font-semibold">✕ Đã tắt riêng cá nhân (vai trò gốc: {inheritedRoles.join(", ")})</span>
                         ) : (
-                          <span>Vai trò có sẵn: {carriers.length ? carriers.join(", ") : "—"}</span>
+                          <span>Chưa cấp quyền · Vai trò chuẩn: {carriers.length ? carriers.join(", ") : "—"}</span>
                         )}
                       </div>
                     </div>

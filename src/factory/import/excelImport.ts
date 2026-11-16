@@ -1,6 +1,6 @@
 import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
-import { authorize, registerPermissions, type AuthzActor } from "../core/authz";
+import { authorizeAnywhere, registerPermissions, type AuthzActor } from "../core/authz";
 import { nextNumber } from "../core/numbering";
 import { runTransition } from "../core/stateMachine";
 import { createStockDocument, stockDocumentMachine } from "../inv/documents";
@@ -496,12 +496,12 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
   const errors: { row_no: number; code?: string; message: string }[] = [];
 
   if (templateKey === "INVENTORY_STOCK") {
-    await authorize(tx, actor, "master.item.manage");
+    await authorizeAnywhere(tx, actor, "master.item.manage");
     const hasStockRows = rawRows.some((r) => extractStockQty(r) > 0);
     if (hasStockRows) {
-      await authorize(tx, actor, "inv.receipt.manage").catch(async (err) => {
+      await authorizeAnywhere(tx, actor, "inv.receipt.manage").catch(async (err) => {
         if (err?.code === "FORBIDDEN") {
-          await authorize(tx, actor, "inv.document.post");
+          await authorizeAnywhere(tx, actor, "inv.document.post");
           return;
         }
         throw err;
@@ -748,7 +748,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       }
     }
   } else if (templateKey === "LAB_EQUIPMENT") {
-    await authorize(tx, actor, "asset.manage");
+    await authorizeAnywhere(tx, actor, "asset.manage");
     const seenInBatch = new Map<string, number>();
     for (let i = 0; i < rawRows.length; i++) {
       const r = rawRows[i];
@@ -937,7 +937,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       }
     }
   } else if (templateKey === "KIT_BOM_FORMULA") {
-    await authorize(tx, actor, "kit.bom.manage");
+    await authorizeAnywhere(tx, actor, "kit.bom.manage");
     const STAFF_CODE_MAP: Record<string, string> = {
       SX01: "Nguyễn Thị Thùy Trâm (NV-ABT-037)",
       SX02: "Võ Thanh Ngân (NV-ABT-038)",
@@ -1251,7 +1251,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       }
     }
   } else if (templateKey === "PREP_OLIGO_FORMULA") {
-    await authorize(tx, actor, "prep.formula.manage");
+    await authorizeAnywhere(tx, actor, "prep.formula.manage");
     const formulaDeptScope = normalizePrepDeptScope(targetDeptCode) ?? "OLIGO";
     let lastFCode = "";
     let lastFName = "";
@@ -1418,7 +1418,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       }
     }
   } else if (templateKey === "DEVICE_MODEL_BOM") {
-    await authorize(tx, actor, "device.model.manage");
+    await authorizeAnywhere(tx, actor, "device.model.manage");
     const grouped = new Map<string, Record<string, unknown>[]>();
     for (const r of rawRows) {
       const mCode = normCode(r.model_code || r["Mã Model Thiết bị"]);
@@ -1548,7 +1548,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       }
     }
   } else if (templateKey === "ROUTING_SOP") {
-    await authorize(tx, actor, "kit.bom.manage");
+    await authorizeAnywhere(tx, actor, "kit.bom.manage");
     const grouped = new Map<string, Record<string, unknown>[]>();
     for (const r of rawRows) {
       const rtCode = normCode(r.routing_code || r["Mã quy trình"]);
@@ -1650,7 +1650,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       }
     }
   } else if (templateKey === "QC_METHOD_SPEC") {
-    await authorize(tx, actor, "qms.spec.manage");
+    await authorizeAnywhere(tx, actor, "qms.spec.manage");
     for (let i = 0; i < rawRows.length; i++) {
       const r = rawRows[i];
       const sp = `sp_qc_${i}`;
@@ -1705,7 +1705,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       }
     }
   } else if (templateKey === "RD_PROJECT_WBS") {
-    await authorize(tx, actor, "rd.project.manage");
+    await authorizeAnywhere(tx, actor, "rd.project.manage");
     for (let i = 0; i < rawRows.length; i++) {
       const r = rawRows[i];
       const sp = `sp_rd_${i}`;
@@ -1814,7 +1814,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       }
     }
   } else if (templateKey === "OLIGO_POST_METHOD") {
-    await authorize(tx, actor, "oligo.sop.manage");
+    await authorizeAnywhere(tx, actor, "oligo.sop.manage");
     let lastCategory = "";
     let lastMethodName = "";
     const grouped = new Map<string, Record<string, unknown>[]>();
@@ -1945,7 +1945,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       }
     }
   } else if (templateKey === "OLIGO_POST_WORKFLOW") {
-    await authorize(tx, actor, "oligo.sop.manage");
+    await authorizeAnywhere(tx, actor, "oligo.sop.manage");
     let lastWfName = "";
     const grouped = new Map<string, Record<string, unknown>[]>();
     for (const r of rawRows) {

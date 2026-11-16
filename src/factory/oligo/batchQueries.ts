@@ -9,7 +9,7 @@ import { batchMachine } from "./batches";
 import { visibleOligoUnits } from "./orders";
 
 export async function listReagentRules(tx: Tx, actor: AuthzActor) {
-  await authorize(tx, actor, "oligo.view");
+  await authorizeAnywhere(tx, actor, "oligo.view");
   return (
     await tx.query(
       `SELECT r.role, r.name, r.display_name, r.is_visible, r.basis, r.qty::float AS qty, r.uom, r.item_id, r.status, r.version, i.code AS item_code, i.name AS item_name, i.base_uom

@@ -13,6 +13,8 @@ interface FactoryUserGrant {
   role_name: string;
   scope_org_unit_id: string | null;
   scope_name: string | null;
+  scope_module_key?: string | null;
+  scope_unit_type?: string | null;
 }
 
 interface FactoryUserRow {
@@ -23,6 +25,7 @@ interface FactoryUserRow {
   is_active: boolean;
   role?: string;
   grants: FactoryUserGrant[];
+  excluded_permissions?: string[];
 }
 
 const RELEVANT_ROLE_CODES = new Set([
@@ -257,9 +260,14 @@ export function RdPermissionPanel({
               const findInheritedRole = (perm: string): string | null => {
                 for (const g of u.grants) {
                   if (g.role_code === customRoleCode) continue;
-                  if (roleById.get(g.role_id)?.permissions.includes(perm)) {
-                    return g.role_name;
-                  }
+                  const rolePerms = roleById.get(g.role_id)?.permissions;
+                  if (!rolePerms?.includes(perm)) continue;
+                  const inScope =
+                    !g.scope_org_unit_id ||
+                    g.scope_unit_type === "COMPANY" ||
+                    g.scope_module_key === "RD" ||
+                    g.scope_module_key === "DEVICE";
+                  if (inScope) return g.role_name;
                 }
                 return null;
               };
@@ -269,6 +277,7 @@ export function RdPermissionPanel({
                   (g) => g.role_code === customRoleCode && roleById.get(g.role_id)?.permissions.includes(perm)
                 );
 
+              const excludedSet = new Set(u.excluded_permissions ?? []);
               const inhEdit = findInheritedRole(editPerm);
               const custEdit = hasCustomPerm(editPerm);
               const inhDel = findInheritedRole(deletePerm);
@@ -278,35 +287,43 @@ export function RdPermissionPanel({
               const renderToggle = (perm: string, inheritedRole: string | null, isCustom: boolean) => {
                 if (isRoot) {
                   return (
-                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
-                      <input type="checkbox" checked disabled className="w-4 h-4 rounded" />
+                    <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                      <span className="w-4 h-4 rounded bg-emerald-600 text-white text-[10px] font-extrabold flex items-center justify-center">✓</span>
                       👑 Admin (Mặc định)
                     </span>
                   );
                 }
-                if (inheritedRole) {
-                  return (
-                    <span
-                      className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400"
-                      title={`Quyền đang được kế thừa từ vai trò "${inheritedRole}". Bỏ tích ở bảng Vai trò phía trên nếu muốn tắt cho cả nhóm.`}
-                    >
-                      <input type="checkbox" checked disabled className="w-4 h-4 rounded" />
-                      Theo vai trò ({inheritedRole})
-                    </span>
-                  );
-                }
+                const isExcluded = excludedSet.has(perm);
+                const isGranted = !isExcluded && (Boolean(inheritedRole) || isCustom);
                 return (
-                  <label className={`inline-flex items-center gap-2 ${blockSelf ? "opacity-60" : "cursor-pointer"}`}>
+                  <label
+                    className={`inline-flex items-center gap-2 ${blockSelf ? "opacity-60" : "cursor-pointer"}`}
+                    title={
+                      inheritedRole
+                        ? isGranted
+                          ? `Đang bật theo vai trò (${inheritedRole}). Bấm để tắt riêng cho cá nhân này.`
+                          : `Đã tắt riêng cá nhân (vai trò gốc: ${inheritedRole}). Bấm để bật lại.`
+                        : "Bấm để bật / tắt quyền riêng cho cá nhân này"
+                    }
+                  >
                     <input
                       type="checkbox"
-                      checked={isCustom}
+                      checked={isGranted}
                       disabled={blockSelf || toggleUserPermMut.isPending}
-                      onChange={() => toggleUserPermMut.mutate({ userId: u.id, perm, enabled: !isCustom })}
-                      className="w-4 h-4 rounded text-sky-600 cursor-pointer disabled:cursor-not-allowed"
+                      onChange={() => toggleUserPermMut.mutate({ userId: u.id, perm, enabled: !isGranted })}
+                      className="w-4 h-4 rounded accent-emerald-600 cursor-pointer disabled:cursor-not-allowed"
                     />
-                    <span className={isCustom ? "text-sky-700 dark:text-sky-400 font-semibold" : "text-slate-500"}>
-                      {isCustom ? "✓ Cấp riêng" : "Chưa cấp"}
-                    </span>
+                    {isGranted ? (
+                      inheritedRole ? (
+                        <span className="text-emerald-700 dark:text-emerald-400 font-semibold">Theo vai trò ({inheritedRole})</span>
+                      ) : (
+                        <span className="text-teal-700 dark:text-teal-300 font-semibold">✓ Cấp riêng</span>
+                      )
+                    ) : isExcluded && inheritedRole ? (
+                      <span className="text-rose-600 dark:text-rose-400 font-semibold">✕ Đã tắt ({inheritedRole})</span>
+                    ) : (
+                      <span className="text-slate-500">Chưa cấp</span>
+                    )}
                   </label>
                 );
               };

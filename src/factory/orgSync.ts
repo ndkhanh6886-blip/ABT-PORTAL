@@ -1,7 +1,7 @@
 import { query, ensurePersonnelTable } from "@/backend/db/db";
 import { hashPassword, generateTemporaryPassword } from "@/backend/services/passwords";
 import { canonicalDepartment, COMPANY_DEPARTMENTS, inferSystemRoleFromPosition, isDepartmentLeaderPosition } from "@/backend/services/permissions";
-import { grantablePermissions, syncPermissions } from "./core/authz";
+import { QA_CROSS_DEPT_PERMS, grantablePermissions, syncPermissions } from "./core/authz";
 import { getFactoryPool, type Tx } from "./core/db";
 import "./modules";
 
@@ -41,38 +41,57 @@ export function inferFactoryRoleCode(moduleKey: string | null, portalRole?: stri
   return `${moduleKey}_${isHead ? "HEAD" : "STAFF"}`;
 }
 
+const SAFE_DEPT_SUPPORT = [
+  "inv.stock.view",
+  "master.data.view",
+  "purchase.pr.view",
+  "purchase.pr.create",
+  "purchase.pr.approve",
+  "asset.",
+  "prep.",
+  "plan.",
+  "qms.qc.view",
+  "qms.deviation.report",
+  "qms.ncr.propose",
+];
+
+function matchPermRule(code: string, rules: string[]): boolean {
+  return rules.some((pf) => (pf.endsWith(".") ? code.startsWith(pf) : code === pf));
+}
+
 function buildRolePermissions(allCodes: string[], prefixes: string[], isHead: boolean): string[] {
-  const commonPrefixes = ["inv.", "master.", "purchase.", "intake.", "asset.", "prep.", "plan."];
+  const isStaffBlocked = (code: string) =>
+    code.endsWith(".approve") ||
+    code.endsWith(".release") ||
+    code.endsWith(".close") ||
+    code.endsWith(".edit") ||
+    code.endsWith(".delete") ||
+    code === "asset.manage" ||
+    code === "plan.manage" ||
+    code === "qms.ncr.propose" ||
+    code === "intake.order.accept" ||
+    code.startsWith("core.");
+
   return allCodes.filter((code) => {
-    const inPrimary = prefixes.some((pf) => code.startsWith(pf));
-    const inCommon = commonPrefixes.some((pf) => code.startsWith(pf));
+    const inPrimary = matchPermRule(code, prefixes);
+    const inCommon = matchPermRule(code, SAFE_DEPT_SUPPORT);
     if (!inPrimary && !inCommon) return false;
-    if (
-      !isHead &&
-      (code.endsWith(".approve") ||
-        code.endsWith(".release") ||
-        code.endsWith(".close") ||
-        code.endsWith(".edit") ||
-        code.endsWith(".delete") ||
-        code.startsWith("core."))
-    ) {
-      return false;
-    }
+    if (!isHead && isStaffBlocked(code)) return false;
     return true;
   });
 }
 
 const STANDARD_FACTORY_ROLES: { code: string; name: string; desc: string; prefixes: string[]; isHead: boolean }[] = [
-  { code: "RD_HEAD", name: "Trưởng phòng Nghiên cứu R&D", desc: "Toàn quyền quản lý đề tài R&D, DHF, mẫu thử, chuyển giao công nghệ và ký duyệt", prefixes: ["rd.", "qms.", "kit.", "oligo."], isHead: true },
-  { code: "RD_STAFF", name: "Chuyên viên Nghiên cứu R&D", desc: "Thực hiện thí nghiệm, ghi nhật ký ELN, pha chế mẫu thử và lập đề nghị lĩnh/mua NVL", prefixes: ["rd."], isHead: false },
-  { code: "KIT_HEAD", name: "Trưởng phòng / Quản đốc Sản xuất Kit", desc: "Toàn quyền định mức BOM, phát hành lệnh sản xuất Kit, duyệt hồ sơ lô eBR và xuất thành phẩm", prefixes: ["kit.", "qms."], isHead: true },
-  { code: "KIT_STAFF", name: "Kỹ thuật viên Sản xuất Kit", desc: "Thực hiện các công đoạn pha chế, chia chuẩn, lắp ráp Kit và ghi nhận hồ sơ lô eBR", prefixes: ["kit."], isHead: false },
-  { code: "OLIGO_HEAD", name: "Trưởng phòng Tổng hợp Oligo", desc: "Toàn quyền nhận đơn Oligo, lập mẻ tổng hợp CPG, duyệt QC OD/HPLC/PAGE và giao hàng", prefixes: ["oligo.", "qms."], isHead: true },
-  { code: "OLIGO_STAFF", name: "Kỹ thuật viên Tổng hợp Oligo", desc: "Vận hành máy tổng hợp CPG, cắt khử bảo vệ, tinh sạch HPLC/PAGE và đo OD", prefixes: ["oligo."], isHead: false },
-  { code: "DEVICE_HEAD", name: "Trưởng phòng Kỹ thuật – Thiết bị", desc: "Toàn quyền quản lý dòng máy, DMR, phát hành lệnh lắp ráp DHR, FQC và bảo hành RMA", prefixes: ["device.", "qms.", "rd.view", "rd.project.", "rd.eln.", "rd.gate.", "rd.transfer.manage", "rd.software."], isHead: true },
-  { code: "DEVICE_STAFF", name: "Kỹ sư Lắp ráp Thiết bị & FSE", desc: "Thực hiện lắp ráp trạm cơ khí/điện tử/firmware, chạy già hóa Burn-in và xử lý ca bảo hành", prefixes: ["device.", "rd.view", "rd.project.", "rd.transfer.manage"], isHead: false },
-  { code: "QA_HEAD", name: "Trưởng phòng QA/QC (ISO 13485)", desc: "Toàn quyền thẩm định QC, giải phóng lô, cấp COA, phê duyệt tài liệu SOP và đóng NCR/CAPA", prefixes: ["qms.", "kit.", "oligo.", "device.", "rd."], isHead: true },
-  { code: "QA_STAFF", name: "Chuyên viên Kiểm nghiệm QC/QA", desc: "Lấy mẫu kiểm nghiệm IQC/IPQC/OQC, ghi nhận kết quả QC và lập báo cáo sự cố NCR", prefixes: ["qms."], isHead: false },
+  { code: "RD_HEAD", name: "Trưởng phòng Nghiên cứu R&D", desc: "Toàn quyền quản lý đề tài R&D, DHF, mẫu thử, chuyển giao công nghệ và ký duyệt", prefixes: ["rd.", "work.", "intake.order.view"], isHead: true },
+  { code: "RD_STAFF", name: "Chuyên viên Nghiên cứu R&D", desc: "Thực hiện thí nghiệm, ghi nhật ký ELN, pha chế mẫu thử và lập đề nghị lĩnh/mua NVL", prefixes: ["rd.", "work.plan.submit"], isHead: false },
+  { code: "KIT_HEAD", name: "Trưởng phòng / Quản đốc Sản xuất Kit", desc: "Toàn quyền định mức BOM, phát hành lệnh sản xuất Kit, duyệt hồ sơ lô eBR và xuất thành phẩm", prefixes: ["kit.", "intake."], isHead: true },
+  { code: "KIT_STAFF", name: "Kỹ thuật viên Sản xuất Kit", desc: "Thực hiện các công đoạn pha chế, chia chuẩn, lắp ráp Kit và ghi nhận hồ sơ lô eBR", prefixes: ["kit.", "intake.order.view", "intake.shipment.post"], isHead: false },
+  { code: "OLIGO_HEAD", name: "Trưởng phòng Tổng hợp Oligo", desc: "Toàn quyền nhận đơn Oligo, lập mẻ tổng hợp CPG, duyệt QC OD/HPLC/PAGE và giao hàng", prefixes: ["oligo.", "intake."], isHead: true },
+  { code: "OLIGO_STAFF", name: "Kỹ thuật viên Tổng hợp Oligo", desc: "Vận hành máy tổng hợp CPG, cắt khử bảo vệ, tinh sạch HPLC/PAGE và đo OD", prefixes: ["oligo.", "intake.order.view", "intake.shipment.post"], isHead: false },
+  { code: "DEVICE_HEAD", name: "Trưởng phòng Kỹ thuật – Thiết bị", desc: "Toàn quyền quản lý dòng máy, DMR, phát hành lệnh lắp ráp DHR, FQC và bảo hành RMA", prefixes: ["device.", "rd.view", "rd.project.", "rd.eln.", "rd.gate.", "rd.transfer.manage", "rd.software.", "intake."], isHead: true },
+  { code: "DEVICE_STAFF", name: "Kỹ sư Lắp ráp Thiết bị & FSE", desc: "Thực hiện lắp ráp trạm cơ khí/điện tử/firmware, chạy già hóa Burn-in và xử lý ca bảo hành", prefixes: ["device.", "rd.view", "rd.project.", "rd.transfer.manage", "intake.order.view", "intake.shipment.post"], isHead: false },
+  { code: "QA_HEAD", name: "Trưởng phòng QA/QC (ISO 13485)", desc: "Toàn quyền thẩm định QC, giải phóng lô, cấp COA, phê duyệt tài liệu SOP và đóng NCR/CAPA", prefixes: ["qms.", ...QA_CROSS_DEPT_PERMS], isHead: true },
+  { code: "QA_STAFF", name: "Chuyên viên Kiểm nghiệm QC/QA", desc: "Lấy mẫu kiểm nghiệm IQC/IPQC/OQC, ghi nhận kết quả QC và lập báo cáo sự cố NCR", prefixes: ["qms.", "kit.view", "kit.ebr.check", "kit.quality.manage", "oligo.view", "device.view", "rd.view", "inv.lot.sample"], isHead: false },
   { code: "WH_HEAD", name: "Trưởng bộ phận Kho & Cung ứng Nhà máy", desc: "Toàn quyền điều phối kho nhà máy, duyệt cấp phát FEFO, kiểm kê và duyệt PR/PO nội bộ", prefixes: ["inv.", "master.", "purchase.", "intake."], isHead: true },
   { code: "WH_STAFF", name: "Thủ kho / Chuyên viên Cung ứng Nhà máy", desc: "Thực hiện nhập kho, xuất cấp phát NVL theo lô FEFO và lập đơn mua hàng", prefixes: ["inv.", "master.", "purchase.", "intake."], isHead: false },
 ];

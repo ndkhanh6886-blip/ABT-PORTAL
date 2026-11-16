@@ -3,7 +3,8 @@ import { createOrgUnit, createUser, grant } from "../../__tests__/helpers";
 import { closeFactoryPool, getFactoryPool, withTransaction } from "../db";
 import { hasFactoryPermission, type AuthzActor } from "../authz";
 import { ensureDefaultRoles } from "../defaultRoles";
-import { createDelegation, createRole, grantRole, listUsersWithGrants, revokeRole, setOwnPin, updateRole, type UserDirectory } from "../roles";
+import { heldPermissions } from "../org";
+import { createDelegation, createRole, grantRole, listUsersWithGrants, revokeRole, setOwnPin, setUserCustomPermission, updateRole, type UserDirectory } from "../roles";
 import { authenticateSigner } from "../signature";
 import "../../permissions";
 
@@ -152,5 +153,109 @@ describe("root administrator", () => {
     const req = { id: draft.id, action: "approve", expectedVersion: draft.version, credential: { method: "PIN" as const, secret: "583920" } };
     await preAuthenticate(specMachine, "DRAFT", req, root);
     await expect(withTransaction((tx) => runTransition(tx, specMachine, root, req, { signerAuthenticated: true }))).rejects.toThrow(/khác người soạn/);
+  });
+
+  it("enforces scope honesty, cross-dept QA rights, per-user exclusions on inherited permissions, bulk toggles & reset", async () => {
+    const a = await admin();
+    const qaDept = (
+      await getFactoryPool().query(
+        "INSERT INTO core.org_unit (code, name, unit_type, module_key) VALUES ($1, 'Phòng QA Test', 'DEPARTMENT', 'QA') RETURNING id",
+        [`QA-${Math.random().toString(36).slice(2, 8).toUpperCase()}`]
+      )
+    ).rows[0].id as string;
+    const kitDept = (
+      await getFactoryPool().query(
+        "INSERT INTO core.org_unit (code, name, unit_type, module_key) VALUES ($1, 'Phòng Kit Test', 'DEPARTMENT', 'KIT') RETURNING id",
+        [`KIT-${Math.random().toString(36).slice(2, 8).toUpperCase()}`]
+      )
+    ).rows[0].id as string;
+
+    // A role containing both cross-dept QA permissions AND a Kit-only manufacturing permission, granted scoped to P-QA
+    const qaRole = await withTransaction((tx) =>
+      createRole(tx, a, {
+        code: code(),
+        name: "QA Scope Test",
+        permissions: ["qms.qc.view", "kit.view", "kit.bom.approve", "kit.order.release", "kit.order.manage"],
+      })
+    );
+    const qaUser1 = await createUser("QA Lead 1");
+    const qaUser2 = await createUser("QA Lead 2");
+    await withTransaction((tx) => grantRole(tx, a, directory, { user_id: qaUser1.userId, role_id: qaRole.id, scope_org_unit_id: qaDept }));
+    await withTransaction((tx) => grantRole(tx, a, directory, { user_id: qaUser2.userId, role_id: qaRole.id, scope_org_unit_id: qaDept }));
+
+    // 1. Cross-dept QA perms work on P-KIT, while unreachable kit.order.manage is false & hidden from heldPermissions
+    await withTransaction(async (tx) => {
+      expect(await hasFactoryPermission(tx, qaUser1, "kit.view", kitDept)).toBe(true);
+      expect(await hasFactoryPermission(tx, qaUser1, "kit.bom.approve", kitDept)).toBe(true);
+      expect(await hasFactoryPermission(tx, qaUser1, "kit.order.release", kitDept)).toBe(true);
+      expect(await hasFactoryPermission(tx, qaUser1, "kit.order.manage", kitDept)).toBe(false);
+      const held1 = await heldPermissions(tx, qaUser1);
+      expect(held1).toContain("kit.view");
+      expect(held1).toContain("kit.order.release");
+      expect(held1).not.toContain("kit.order.manage");
+    });
+
+    // 2. Uncheck inherited permission `kit.order.release` for qaUser1 ONLY -> qaUser1 loses it, qaUser2 still keeps it
+    await withTransaction((tx) =>
+      setUserCustomPermission(tx, a, directory, qaUser1.userId, {
+        permission_code: "kit.order.release",
+        enabled: false,
+        reason: "Tắt lẻ quyền giải phóng lô trên tài khoản QA 1",
+      })
+    );
+    await withTransaction(async (tx) => {
+      expect(await hasFactoryPermission(tx, qaUser1, "kit.order.release", kitDept)).toBe(false);
+      expect(await hasFactoryPermission(tx, qaUser2, "kit.order.release", kitDept)).toBe(true);
+      const held1 = await heldPermissions(tx, qaUser1);
+      expect(held1).not.toContain("kit.order.release");
+      const users = await listUsersWithGrants(tx, a, directory, `u${qaUser1.userId}`);
+      expect(users.find((u) => u.id === qaUser1.userId)?.excluded_permissions).toContain("kit.order.release");
+    });
+
+    // 3. Check `kit.order.manage` individually for qaUser1 -> now actually grants cross-dept access on P-KIT!
+    await withTransaction((tx) =>
+      setUserCustomPermission(tx, a, directory, qaUser1.userId, {
+        permission_code: "kit.order.manage",
+        enabled: true,
+        reason: "Cấp bổ sung quyền lập lệnh SX Kit cho QA 1",
+      })
+    );
+    await withTransaction(async (tx) => {
+      expect(await hasFactoryPermission(tx, qaUser1, "kit.order.manage", kitDept)).toBe(true);
+      expect(await hasFactoryPermission(tx, qaUser2, "kit.order.manage", kitDept)).toBe(false);
+    });
+
+    // 4. Bulk group disable then reset_overrides restores base role cleanly with audit trail
+    await withTransaction((tx) =>
+      setUserCustomPermission(tx, a, directory, qaUser1.userId, {
+        permission_codes: ["kit.view", "kit.bom.approve"],
+        enabled: false,
+        reason: "Bỏ chọn nhóm quyền Kit",
+      })
+    );
+    await withTransaction(async (tx) => {
+      expect(await hasFactoryPermission(tx, qaUser1, "kit.view", kitDept)).toBe(false);
+      expect(await hasFactoryPermission(tx, qaUser1, "kit.bom.approve", kitDept)).toBe(false);
+    });
+
+    await withTransaction((tx) =>
+      setUserCustomPermission(tx, a, directory, qaUser1.userId, {
+        reset_overrides: true,
+        reason: "Khôi phục vai trò gốc",
+      })
+    );
+    await withTransaction(async (tx) => {
+      expect(await hasFactoryPermission(tx, qaUser1, "kit.view", kitDept)).toBe(true);
+      expect(await hasFactoryPermission(tx, qaUser1, "kit.order.release", kitDept)).toBe(true);
+      expect(await hasFactoryPermission(tx, qaUser1, "kit.order.manage", kitDept)).toBe(false);
+    });
+
+    const auditActions = (
+      await getFactoryPool().query(
+        "SELECT action FROM core.audit_log WHERE entity_type = 'user_custom_permission' AND entity_id = $1 ORDER BY id",
+        [String(qaUser1.userId)]
+      )
+    ).rows.map((r) => r.action);
+    expect(auditActions).toEqual(["revoke_permission", "grant_permission", "revoke_permission", "reset_overrides"]);
   });
 });

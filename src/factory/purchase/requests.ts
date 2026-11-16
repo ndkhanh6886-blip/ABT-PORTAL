@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
-import { authorize, hasFactoryPermission, type AuthzActor } from "../core/authz";
+import { authorize, authorizeAnywhere, hasFactoryPermission, type AuthzActor } from "../core/authz";
 import { conflict, invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { insertRecord, parseInput } from "../core/records";
@@ -358,7 +358,7 @@ export async function getRequest(tx: Tx, actor: AuthzActor, id: string) {
 
 /** Approved request lines not yet fully on a purchase order: the Cung ứng NVL inbox. */
 export async function openRequestLines(tx: Tx, actor: AuthzActor) {
-  await authorize(tx, actor, "purchase.po.manage");
+  await authorizeAnywhere(tx, actor, "purchase.po.manage");
   return (
     await tx.query(
       `SELECT l.id AS pr_line_id, pr.id AS pr_id, pr.code AS pr_code, pr.needed_by, o.name AS org_unit_name, w.code AS warehouse_code,
