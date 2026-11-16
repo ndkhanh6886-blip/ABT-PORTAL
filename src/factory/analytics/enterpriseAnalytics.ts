@@ -264,12 +264,32 @@ export async function getEnterpriseAnalyticsOverview(tx: Tx, actor: AuthzActor) 
     await tx.query(`
       SELECT
         count(*)::int AS total_orders,
-        count(*) FILTER (WHERE status = 'COMPLETED')::int AS completed_orders,
-        count(*) FILTER (WHERE status IN ('IN_PROGRESS', 'CONFIRMED', 'PENDING_QC', 'PENDING_RELEASE'))::int AS active_orders,
-        COALESCE(avg(CASE WHEN planned_qty > 0 AND good_qty IS NOT NULL THEN (good_qty / planned_qty) * 100 ELSE NULL END)::numeric(6,2), 0)::float AS avg_fpy_pct,
-        avg(CASE WHEN finished_at IS NOT NULL AND started_at IS NOT NULL THEN EXTRACT(EPOCH FROM (finished_at - started_at)) / 86400.0 ELSE NULL END)::numeric(6,1)::float AS avg_cycle_days,
-        count(*) FILTER (WHERE line_clearance_passed = true)::int AS clearance_passed_count
-      FROM kit.production_order
+        count(*) FILTER (WHERE po.status = 'COMPLETED')::int AS completed_orders,
+        count(*) FILTER (WHERE po.status IN ('IN_PROGRESS', 'CONFIRMED', 'PENDING_QC', 'PENDING_RELEASE'))::int AS active_orders,
+        COALESCE(avg(CASE WHEN po.planned_qty > 0 AND po.good_qty IS NOT NULL THEN (po.good_qty / po.planned_qty) * 100 ELSE NULL END)::numeric(6,2), 0)::float AS avg_fpy_pct,
+        avg(
+          CASE
+            WHEN COALESCE(po.released_at, CASE WHEN po.status = 'COMPLETED' THEN st.last_completed_at ELSE NULL END) IS NOT NULL
+             AND COALESCE(st.first_started_at, po.confirmed_at, po.created_at) IS NOT NULL
+            THEN GREATEST(
+              0,
+              EXTRACT(
+                EPOCH FROM (
+                  COALESCE(po.released_at, st.last_completed_at)
+                  - COALESCE(st.first_started_at, po.confirmed_at, po.created_at)
+                )
+              ) / 86400.0
+            )
+            ELSE NULL
+          END
+        )::numeric(6,1)::float AS avg_cycle_days,
+        count(*) FILTER (WHERE po.line_clearance_passed = true)::int AS clearance_passed_count
+      FROM kit.production_order po
+      LEFT JOIN LATERAL (
+        SELECT min(s.started_at) AS first_started_at, max(s.completed_at) AS last_completed_at
+          FROM kit.production_step s
+         WHERE s.order_id = po.id
+      ) st ON true
     `)
   ).rows[0];
 
