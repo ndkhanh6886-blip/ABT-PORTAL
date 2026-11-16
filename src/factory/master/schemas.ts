@@ -90,8 +90,9 @@ export const conversionSchema = z.object({
 
 export const listQuerySchema = z.object({
   q: z.string().trim().max(100).optional(),
+  item_type: z.string().trim().max(200).optional(),
   page: z.coerce.number().int().min(1).default(1),
-  page_size: z.coerce.number().int().min(1).max(2000).default(50),
+  page_size: z.coerce.number().int().min(1).max(5000).default(50),
   status: z.enum(["ACTIVE", "INACTIVE", "ALL"]).default("ACTIVE"),
   missing_uom: z.enum(["0", "1", "true", "false"]).optional(),
 });

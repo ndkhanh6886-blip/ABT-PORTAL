@@ -71,4 +71,75 @@ describe("master data", () => {
     const searchRes = await withTransaction((tx) => listItems(tx, site.admin, { q: tag, page_size: 50 }));
     expect(searchRes.rows.map((r: { code: string }) => r.code)).toEqual([tag, `${tag}-ALT`, `AAA-${tag}`]);
   });
+
+  it("supports page_size up to 5000, item_type filtering, multi-token/symbol/accent-insensitive and formula/BOM alias search", async () => {
+    const site = await makeSite();
+    const tag = `QCS${Math.floor(1000 + Math.random() * 8999)}`;
+
+    const kitItem = await makeItem(site, {
+      code: `${tag}-AEP-01`,
+      name: `TopSAFE ® AGAROSE ELECTROPHORESIS KIT ${tag}`,
+      item_type: "FINISHED_KIT",
+      base_uom: "kit",
+    });
+    const silicaItem = await makeItem(site, {
+      code: `${tag}-CSD10`,
+      name: `Cột silica DNA 10 ${tag}`,
+      item_type: "CONSUMABLE",
+      base_uom: "pcs",
+    });
+    const rawItem = await makeItem(site, {
+      code: `${tag}-RAW`,
+      name: `Hóa chất đầu vào ${tag}`,
+      item_type: "RAW_MATERIAL",
+      base_uom: "mL",
+    });
+    const prepOut = await makeItem(site, {
+      code: `PREP-${tag}-OUT`,
+      name: `Dung dịch thành phẩm ${tag}`,
+      item_type: "SEMI_FINISHED",
+      base_uom: "mL",
+    });
+
+    await getFactoryPool().query(
+      `INSERT INTO prep.formula (code, name, dept_scope, output_item_id, basis_qty, basis_uom, status)
+       VALUES ($1, $2, 'KIT', $3, 1000, 'mL', 'ACTIVE')`,
+      [`${tag}-WB1-FORMULA`, `Công thức Đệm rửa WB1 ${tag}`, prepOut.id]
+    );
+
+    const maxPage = await withTransaction((tx) => listItems(tx, site.admin, { page_size: 5000 }));
+    expect(maxPage.page_size).toBe(5000);
+
+    const filteredTypes = await withTransaction((tx) =>
+      listItems(tx, site.admin, { q: tag, item_type: "FINISHED_KIT,DEVICE", page_size: 5000 })
+    );
+    expect(filteredTypes.rows.map((r: { id: string }) => r.id)).toEqual([kitItem.id]);
+
+    const symbolSplitSearch = await withTransaction((tx) =>
+      listItems(tx, site.admin, { q: `TopSAFE Agarose ${tag}` })
+    );
+    expect(symbolSplitSearch.rows.map((r: { id: string }) => r.id)).toEqual([kitItem.id]);
+
+    const accentInsensitiveSearch = await withTransaction((tx) =>
+      listItems(tx, site.admin, { q: `cot silica ${tag}` })
+    );
+    expect(accentInsensitiveSearch.rows.map((r: { id: string }) => r.id)).toEqual([silicaItem.id]);
+
+    const strippedHyphenSearch = await withTransaction((tx) =>
+      listItems(tx, site.admin, { q: `${tag}AEP01` })
+    );
+    expect(strippedHyphenSearch.rows.map((r: { id: string }) => r.id)).toEqual([kitItem.id]);
+
+    const formulaCodeSearch = await withTransaction((tx) =>
+      listItems(tx, site.admin, { q: `${tag}-WB1-FORMULA` })
+    );
+    expect(formulaCodeSearch.rows.map((r: { id: string }) => r.id)).toEqual([prepOut.id]);
+
+    const formulaNameSearch = await withTransaction((tx) =>
+      listItems(tx, site.admin, { q: `dem rua wb1 ${tag}` })
+    );
+    expect(formulaNameSearch.rows.map((r: { id: string }) => r.id)).toEqual([prepOut.id]);
+
+    expect(rawItem.id).toBeTruthy();
+  });
 });

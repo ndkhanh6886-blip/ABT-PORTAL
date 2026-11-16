@@ -5,6 +5,7 @@ import { conflict, invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { insertRecord, parseInput, updateRecord } from "../core/records";
 import {
+  ITEM_TYPES,
   conversionSchema,
   createCategorySchema,
   createItemSchema,
@@ -279,6 +280,24 @@ export async function updateItem(tx: Tx, actor: AuthzActor, id: string, input: u
   return updateRecord<Item>(tx, actor, "master.item", "item", id, version, patch, reason);
 }
 
+const VI_FROM =
+  "àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ" +
+  "ÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ";
+const VI_TO =
+  "aaaaaaaaaaaaaaaaaeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyyd" +
+  "aaaaaaaaaaaaaaaaaeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyyd";
+
+function foldViText(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase();
+}
+
+const foldSql = (expr: string) => `lower(translate(${expr}, '${VI_FROM}', '${VI_TO}'))`;
+
 export async function listItems(tx: Tx, actor: AuthzActor, query: unknown) {
   await authorize(tx, actor, "master.data.view");
   const q = parseInput(listQuerySchema, query);
@@ -288,9 +307,42 @@ export async function listItems(tx: Tx, actor: AuthzActor, query: unknown) {
     params.push(q.status);
     where.push(`i.status = $${params.length}`);
   }
-  if (q.q) {
-    params.push(`%${q.q}%`);
-    where.push(`(i.code ILIKE $${params.length} OR i.name ILIKE $${params.length} OR coalesce(i.kd_item_code, '') ILIKE $${params.length})`);
+  if (q.item_type) {
+    const allowed = new Set<string>(ITEM_TYPES);
+    const types = q.item_type
+      .split(",")
+      .map((s) => s.trim().toUpperCase())
+      .filter((s) => allowed.has(s));
+    if (types.length > 0) {
+      params.push(types);
+      where.push(`i.item_type = ANY($${params.length}::text[])`);
+    }
+  }
+  const rawSearch = q.q ? q.q.normalize("NFC").trim() : "";
+  if (rawSearch) {
+    const tokens = foldViText(rawSearch)
+      .split(/[\s,;]+/)
+      .filter(Boolean)
+      .slice(0, 6);
+    for (const tok of tokens) {
+      params.push(`%${tok}%`);
+      const tokIdx = params.length;
+      const alnumTok = tok.replace(/[^a-z0-9]/g, "");
+      let alnumOr = "";
+      if (alnumTok) {
+        params.push(`%${alnumTok}%`);
+        const alnumIdx = params.length;
+        alnumOr = ` OR regexp_replace(lower(i.code), '[^a-z0-9]', '', 'g') LIKE $${alnumIdx}`;
+      }
+      where.push(
+        `(${foldSql("i.code")} LIKE $${tokIdx}` +
+          ` OR ${foldSql("i.name")} LIKE $${tokIdx}` +
+          ` OR ${foldSql("coalesce(i.kd_item_code, '')")} LIKE $${tokIdx}` +
+          alnumOr +
+          ` OR EXISTS (SELECT 1 FROM kit.bom b WHERE b.product_item_id = i.id AND (${foldSql("b.code")} LIKE $${tokIdx} OR ${foldSql("b.name")} LIKE $${tokIdx} OR ${foldSql("coalesce(b.parent_item_code, '')")} LIKE $${tokIdx} OR ${foldSql("coalesce(b.tccs_code, '')")} LIKE $${tokIdx}))` +
+          ` OR EXISTS (SELECT 1 FROM prep.formula pf WHERE pf.output_item_id = i.id AND (${foldSql("pf.code")} LIKE $${tokIdx} OR ${foldSql("pf.name")} LIKE $${tokIdx})))`
+      );
+    }
   }
   if (q.missing_uom === "1" || q.missing_uom === "true") {
     where.push(`(trim(i.base_uom) ~ '^[-\u2013\u2014]+$' OR upper(trim(i.base_uom)) IN ('N/A', 'NA', 'NONE', 'NULL', '?'))`);
@@ -307,10 +359,17 @@ export async function listItems(tx: Tx, actor: AuthzActor, query: unknown) {
     ).rows[0]?.cnt ?? 0
   );
   let orderBySql = "ORDER BY i.code";
-  if (q.q) {
-    params.push(q.q);
+  if (rawSearch) {
+    params.push(rawSearch);
     const rawIdx = params.length;
-    orderBySql = `ORDER BY CASE WHEN lower(i.code) = lower($${rawIdx}) THEN 0 WHEN lower(i.code) LIKE lower($${rawIdx}) || '%' THEN 1 ELSE 2 END, i.code`;
+    const alnumExact = rawSearch.replace(/[^a-z0-9]/gi, "").toLowerCase();
+    let alnumCase = "";
+    if (alnumExact) {
+      params.push(alnumExact);
+      const alnumExactIdx = params.length;
+      alnumCase = ` WHEN regexp_replace(lower(i.code), '[^a-z0-9]', '', 'g') = $${alnumExactIdx} THEN 1`;
+    }
+    orderBySql = `ORDER BY CASE WHEN lower(i.code) = lower($${rawIdx}) THEN 0 WHEN lower(i.code) LIKE lower($${rawIdx}) || '%' THEN 1${alnumCase} ELSE 2 END, i.code`;
   }
   params.push(q.page_size, (q.page - 1) * q.page_size);
   const rows = (

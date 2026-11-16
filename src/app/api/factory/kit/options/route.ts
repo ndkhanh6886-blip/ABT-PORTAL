@@ -4,6 +4,7 @@ import { ensureKitBomRoutingAndIfuSchema, listCustomStepFunctions } from "@/fact
 import { listDepartmentStaffForKitAndQa } from "@/factory/kit/ordersEbr";
 import { ensureDepartmentEquipmentSeed, syncOverdueCalibrationAssets } from "@/factory/asset/service";
 import { ensureInternalOrderLineKitSpecColumns } from "@/factory/intake/kdEvents";
+import { syncPortalCatalogToFactoryItems } from "@/factory/portalCatalogSync";
 import "@/factory/kit/permissions";
 
 export const GET = factoryRoute(async (tx, { actor }) => {
@@ -12,6 +13,7 @@ export const GET = factoryRoute(async (tx, { actor }) => {
   await ensureInternalOrderLineKitSpecColumns(tx);
   await ensureDepartmentEquipmentSeed(tx);
   await syncOverdueCalibrationAssets(tx);
+  await syncPortalCatalogToFactoryItems(tx);
 
   const allUnits = (
     await tx.query(
@@ -29,7 +31,7 @@ export const GET = factoryRoute(async (tx, { actor }) => {
   ).rows;
   const items = (
     await tx.query(
-      "SELECT id, code, name, item_type, base_uom, tracking, shelf_life_days FROM master.item WHERE status = 'ACTIVE' ORDER BY code LIMIT 2000"
+      "SELECT id, code, name, item_type, base_uom, tracking, shelf_life_days FROM master.item WHERE status = 'ACTIVE' ORDER BY code LIMIT 5000"
     )
   ).rows;
   const assets = (

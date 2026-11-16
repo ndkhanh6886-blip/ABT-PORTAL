@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActionBar, type AllowedAction } from "../actions";
-import { api, useFactoryMe } from "../api";
+import { api, useDebouncedValue, useFactoryMe } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 
 interface AssignedItem {
@@ -11,7 +11,28 @@ interface AssignedItem {
   code: string;
   name: string;
   item_type?: string;
+  base_uom?: string;
 }
+
+const ITEM_TYPE_SHORT: Record<string, string> = {
+  FINISHED_KIT: "Kit TP",
+  DEVICE: "Thiết bị",
+  SEMI_FINISHED: "Bán TP",
+  REAGENT: "Hóa chất",
+  RAW_MATERIAL: "Nguyên liệu",
+  CONSUMABLE: "Tiêu hao",
+  COMPONENT: "Linh kiện",
+  SPARE_PART: "Phụ tùng",
+  OLIGO_SERVICE: "Oligo",
+};
+
+const PICKER_TYPE_FILTERS: { value: string; label: string }[] = [
+  { value: "", label: "Tất cả" },
+  { value: "FINISHED_KIT,DEVICE", label: "Thành phẩm (Kit / Thiết bị)" },
+  { value: "SEMI_FINISHED", label: "Bán thành phẩm / Công thức pha" },
+  { value: "RAW_MATERIAL,REAGENT", label: "Nguyên liệu & Hóa chất" },
+  { value: "CONSUMABLE,COMPONENT,SPARE_PART", label: "Tiêu hao & Bao bì" },
+];
 
 interface SpecRow {
   id: string;
@@ -80,16 +101,26 @@ function MultiItemPicker({
   onChange: (ids: string[], selectedObjects: AssignedItem[]) => void;
 }) {
   const [q, setQ] = useState("");
+  const debouncedQ = useDebouncedValue(q, 200);
+  const [typeFilter, setTypeFilter] = useState("");
+  const [visibleLimit, setVisibleLimit] = useState(250);
   const [knownItems, setKnownItems] = useState<Record<string, AssignedItem>>(() => {
     const map: Record<string, AssignedItem> = {};
     for (const it of initialItems) map[it.id] = it;
     return map;
   });
 
+  useEffect(() => {
+    setVisibleLimit(250);
+  }, [debouncedQ, typeFilter]);
+
   const items = useQuery({
-    queryKey: ["factory", "items", "multi-picker", q],
+    queryKey: ["factory", "items", "multi-picker", debouncedQ, typeFilter],
     queryFn: async () => {
-      const res = await api<{ rows: AssignedItem[] }>(`/api/factory/master/items?page_size=120&q=${encodeURIComponent(q)}`);
+      const typeParam = typeFilter ? `&item_type=${encodeURIComponent(typeFilter)}` : "";
+      const res = await api<{ rows: AssignedItem[]; total?: number }>(
+        `/api/factory/master/items?page_size=5000&q=${encodeURIComponent(debouncedQ)}${typeParam}`
+      );
       setKnownItems((prev) => {
         const next = { ...prev };
         for (const r of res.rows) next[r.id] = r;
@@ -100,6 +131,8 @@ function MultiItemPicker({
   });
 
   const rows = items.data?.rows ?? [];
+  const totalCount = items.data?.total ?? rows.length;
+  const visibleRows = rows.slice(0, visibleLimit);
 
   const toggleId = (row: AssignedItem) => {
     const exists = selectedIds.includes(row.id);
@@ -136,7 +169,7 @@ function MultiItemPicker({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <input
           className={`${inputClass} flex-1 min-w-[200px]`}
-          placeholder="🔍 Gõ mã hoặc tên sản phẩm / bán thành phẩm / nguyên liệu để lọc..."
+          placeholder="🔍 Tìm mã/tên SP, nguyên liệu, mã công thức, TCCS (hỗ trợ gõ không dấu, bỏ qua ký tự ®/-)..."
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
@@ -161,6 +194,31 @@ function MultiItemPicker({
             </button>
           )}
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+        <div className="flex flex-wrap items-center gap-1">
+          {PICKER_TYPE_FILTERS.map((f) => {
+            const active = typeFilter === f.value;
+            return (
+              <button
+                key={f.value || "ALL"}
+                type="button"
+                onClick={() => setTypeFilter(f.value)}
+                className={`px-2 py-0.5 rounded-full font-semibold border cursor-pointer transition-colors ${
+                  active
+                    ? "bg-sky-600 text-white border-sky-600"
+                    : "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700"
+                }`}
+              >
+                {f.label}
+              </button>
+            );
+          })}
+        </div>
+        <span className="text-slate-500 dark:text-slate-400 font-mono">
+          Đang lọc: <b>{rows.length}</b> / {totalCount} mã
+        </span>
       </div>
 
       {selectedIds.length > 0 && (
@@ -193,9 +251,18 @@ function MultiItemPicker({
         </div>
       )}
 
-      <div className="max-h-48 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 rounded-lg border border-slate-200 dark:border-slate-800">
-        {rows.map((r) => {
+      <div
+        className="max-h-64 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 rounded-lg border border-slate-200 dark:border-slate-800"
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          if (el.scrollTop + el.clientHeight >= el.scrollHeight - 80 && visibleLimit < rows.length) {
+            setVisibleLimit((v) => Math.min(rows.length, v + 250));
+          }
+        }}
+      >
+        {visibleRows.map((r) => {
           const checked = selectedIds.includes(r.id);
+          const typeLabel = r.item_type ? ITEM_TYPE_SHORT[r.item_type] ?? r.item_type : null;
           return (
             <label
               key={r.id}
@@ -209,13 +276,34 @@ function MultiItemPicker({
                 onChange={() => toggleId(r)}
                 className="h-3.5 w-3.5 accent-sky-600"
               />
-              <span className="font-mono font-semibold text-sky-700 dark:text-sky-300">{r.code}</span>
-              <span className="text-slate-700 dark:text-slate-200 flex-1">{r.name}</span>
+              <span className="font-mono font-semibold text-sky-700 dark:text-sky-300 shrink-0">{r.code}</span>
+              <span className="text-slate-700 dark:text-slate-200 flex-1 min-w-0 truncate">{r.name}</span>
+              {typeLabel && (
+                <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-medium text-slate-600 dark:text-slate-300 shrink-0">
+                  {typeLabel}
+                </span>
+              )}
+              {r.base_uom && (
+                <span className="text-[10px] font-mono text-slate-400 shrink-0">{r.base_uom}</span>
+              )}
             </label>
           );
         })}
+        {visibleLimit < rows.length && (
+          <button
+            type="button"
+            onClick={() => setVisibleLimit((v) => Math.min(rows.length, v + 500))}
+            className="w-full py-2 text-center text-xs font-semibold text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-950/30 cursor-pointer"
+          >
+            Đang hiển thị {visibleRows.length} / {rows.length} mã — Cuộn xuống hoặc bấm để xem thêm
+          </button>
+        )}
         {rows.length === 0 && (
-          <div className="p-3 text-center text-xs text-slate-400">Không tìm thấy sản phẩm / vật tư phù hợp.</div>
+          <div className="p-3 text-center text-xs text-slate-400">
+            {items.isLoading
+              ? "Đang tải danh mục vật tư & sản phẩm..."
+              : "Không tìm thấy sản phẩm / vật tư phù hợp."}
+          </div>
         )}
       </div>
     </div>
