@@ -136,11 +136,17 @@ const ROLE_LABELS: Record<string, { label: string; color: string; desc: string }
   staff: { label: "Nhân Viên (quyền cơ bản)", color: "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700", desc: "Chat nội bộ và công việc được giao; không truy cập phân hệ nghiệp vụ" }
 };
 
-/** Phân hệ Portal gom theo khối trong "Phân Quyền Chi Tiết Cá Nhân" (Khối Kỹ thuật – Nhà máy tách thành mục riêng). */
-const PORTAL_BLOCKS: { title: string; keys: string[] }[] = [
-  { title: "🏢 Khối Kinh Doanh — Bán Hàng, Kho Kinh Doanh, Cung Ứng Thương Mại & APP", keys: ["sales.view", "warehouse.view", "procurement.view", "application.view"] },
+/**
+ * Phân hệ Portal gom theo khối trong "Phân Quyền Chi Tiết Cá Nhân" (Khối Kỹ thuật – Nhà máy tách thành mục riêng).
+ * `withFactoryDepts`: khối có thêm phòng cấp quyền theo vai trò nhà máy (Phòng IT thuộc Khối Kinh doanh).
+ */
+const PORTAL_BLOCKS: { title: string; keys: string[]; withFactoryDepts?: "business" }[] = [
+  { title: "🏢 Khối Kinh Doanh — Bán Hàng, Kho Kinh Doanh, Cung Ứng Thương Mại, APP & IT", keys: ["sales.view", "warehouse.view", "procurement.view", "application.view"], withFactoryDepts: "business" },
   { title: "🏛️ Khối Văn Phòng & Điều Hành — Pháp Chế, Zalo OA & Quản Trị Hệ Thống", keys: ["legal.view", "zalo.view", "settings.view"] },
 ];
+
+/** Nhóm quyền chi tiết của Khối Kinh doanh: nhóm Phòng IT (quyền theo vai trò) được chèn ngay sau nhóm cuối của khối này. */
+const LAST_BUSINESS_PERMISSION_GROUP = "application";
 
 export const getBestPositionMatch = (personPosition: string, allPositions: { title: string }[]): string | null => {
   if (!personPosition || !allPositions || allPositions.length === 0) return null;
@@ -644,6 +650,8 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
   const [currentEditingPermissions, setCurrentEditingPermissions] = useState<Record<string, boolean>>({});
   const [isSavingPermissions, setIsSavingPermissions] = useState(false);
   const [factoryPermSummary, setFactoryPermSummary] = useState<{ active: number; total: number } | null>(null);
+  // Phòng IT (quyền theo vai trò nhà máy) tính vào Khối Kinh doanh – Văn phòng
+  const [itPermSummary, setItPermSummary] = useState<{ active: number; total: number } | null>(null);
   const [permSearchQuery, setPermSearchQuery] = useState("");
   const [permOnlyEditDelete, setPermOnlyEditDelete] = useState(false);
   const isFilteringPerms = permOnlyEditDelete || Boolean(permSearchQuery.trim());
@@ -4439,6 +4447,16 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                       </div>
                     );
                   })}
+                  {/* Phòng IT: cấp theo vai trò nhà máy (P-IT) nhưng thuộc Khối Kinh doanh — thẻ nằm chung lưới */}
+                  {block.withFactoryDepts && (
+                    <FactoryAccessSection
+                      key={`${block.withFactoryDepts}-${permissionsModalUser.id}`}
+                      block={block.withFactoryDepts}
+                      userId={Number(permissionsModalUser.id)}
+                      username={permissionsModalUser.username}
+                      isRootAdmin={String(permissionsModalUser.role || "").toLowerCase() === "admin" || String(permissionsModalUser.username || "").toLowerCase() === "admin"}
+                    />
+                  )}
                 </div>
                 </div>
                 ))}
@@ -4463,7 +4481,25 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                 <div className="flex-1 border-t border-slate-200 dark:border-slate-800" />
               </div>
 
-              {PERMISSION_GROUPS.map((group) => {
+              {PERMISSION_GROUPS.map((group, groupIdx) => {
+                // Số thứ tự hiển thị: nhóm Phòng IT chen sau nhóm cuối của Khối Kinh doanh nên các nhóm sau lùi 1
+                const businessEndIdx = PERMISSION_GROUPS.findIndex((g) => g.module === LAST_BUSINESS_PERMISSION_GROUP);
+                const displayNo = groupIdx + 1 + (businessEndIdx >= 0 && groupIdx > businessEndIdx ? 1 : 0);
+                const displayTitle = `${displayNo}. ${group.title.replace(/^\d+\.\s*/, "")}`;
+                const itGroupAfter =
+                  group.module === LAST_BUSINESS_PERMISSION_GROUP ? (
+                    <FactoryFeatureGroups
+                      key={`features-business-${permissionsModalUser.id}`}
+                      block="business"
+                      userId={Number(permissionsModalUser.id)}
+                      username={permissionsModalUser.username}
+                      isRootAdmin={String(permissionsModalUser.role || "").toLowerCase() === "admin" || String(permissionsModalUser.username || "").toLowerCase() === "admin"}
+                      startIndex={displayNo + 1}
+                      searchQuery={permSearchQuery}
+                      onlyEditDelete={permOnlyEditDelete}
+                      onSummaryChange={setItPermSummary}
+                    />
+                  ) : null;
                 const groupKeys = group.permissions.map(p => p.key);
                 const activeCount = groupKeys.filter(k => currentEditingPermissions[k]).length;
                 const q = permSearchQuery.trim().toLowerCase();
@@ -4476,16 +4512,17 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                   }
                   return true;
                 });
-                if (isFilteringPerms && visiblePermissions.length === 0) return null;
+                if (isFilteringPerms && visiblePermissions.length === 0) return <React.Fragment key={group.module}>{itGroupAfter}</React.Fragment>;
                 const targetToggleKeys = (isFilteringPerms ? visiblePermissions : group.permissions).map((p) => p.key);
 
                 return (
-                  <div key={group.module} className="bg-slate-50/50 dark:bg-slate-800/30 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 space-y-3">
+                  <React.Fragment key={group.module}>
+                  <div className="bg-slate-50/50 dark:bg-slate-800/30 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 space-y-3">
                     {/* Group Header */}
                     <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-700/60">
                       <div className="flex items-center gap-2">
                         <span className="font-extrabold text-sm text-slate-900 dark:text-white">
-                          {group.title}
+                          {displayTitle}
                         </span>
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
                           activeCount === groupKeys.length
@@ -4578,16 +4615,19 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                       })}
                     </div>
                   </div>
+                  {itGroupAfter}
+                  </React.Fragment>
                 );
               })}
 
               {/* Khối Kỹ thuật – Nhà máy: feature list per department (held through roles) */}
               <FactoryFeatureGroups
                 key={`features-${permissionsModalUser.id}`}
+                block="technical"
                 userId={Number(permissionsModalUser.id)}
                 username={permissionsModalUser.username}
                 isRootAdmin={String(permissionsModalUser.role || "").toLowerCase() === "admin" || String(permissionsModalUser.username || "").toLowerCase() === "admin"}
-                startIndex={PERMISSION_GROUPS.length + 1}
+                startIndex={PERMISSION_GROUPS.length + 2}
                 searchQuery={permSearchQuery}
                 onlyEditDelete={permOnlyEditDelete}
                 onSummaryChange={setFactoryPermSummary}
@@ -4599,9 +4639,9 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
               <div className="text-xs text-slate-500">
                 <span>Số quyền đang cấp: </span>
                 <strong className="text-indigo-600 dark:text-indigo-400 font-bold">
-                  {PERMISSION_GROUPS.reduce((acc, g) => acc + g.permissions.filter((p) => Boolean(currentEditingPermissions[p.key])).length, 0)}
+                  {PERMISSION_GROUPS.reduce((acc, g) => acc + g.permissions.filter((p) => Boolean(currentEditingPermissions[p.key])).length, 0) + (itPermSummary?.active ?? 0)}
                 </strong>
-                <span> / {PERMISSION_GROUPS.reduce((acc, g) => acc + g.permissions.length, 0)} tính năng Kinh doanh – Văn phòng</span>
+                <span> / {PERMISSION_GROUPS.reduce((acc, g) => acc + g.permissions.length, 0) + (itPermSummary?.total ?? 0)} tính năng Kinh doanh – Văn phòng</span>
                 {factoryPermSummary && (
                   <>
                     <span> • </span>
