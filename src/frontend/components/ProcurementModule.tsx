@@ -280,6 +280,22 @@ const calcPOTotals = (items: any[]) => {
 const PO_CUSTOMS_STATUSES = ["AT_CUSTOMS", "CUSTOMS_CLEARING"];
 const PO_CLOSED_STATUSES = ["COMPLETED", "CANCELLED"];
 
+/** Tính số ngày trễ hạn giao/nhận hàng của PO (> 0 là trễ hạn). Chỉ tính cho PO đang mở (chưa COMPLETED / CANCELLED). */
+const getPOOverdueDays = (po: any): number => {
+  const status = String(po?.status || "").toUpperCase();
+  if (PO_CLOSED_STATUSES.includes(status)) return 0;
+  const expStr = dbDateVN(po?.expected_delivery_date);
+  if (!expStr) return 0;
+  const todayStr = todayVN();
+  if (expStr >= todayStr) return 0;
+  const expMs = new Date(`${expStr}T00:00:00`).getTime();
+  const todayMs = new Date(`${todayStr}T00:00:00`).getTime();
+  if (isNaN(expMs) || isNaN(todayMs)) return 0;
+  return Math.max(1, Math.round((todayMs - expMs) / 86400000));
+};
+
+const isPOOverdue = (po: any): boolean => getPOOverdueDays(po) > 0;
+
 export const ProcurementModule: React.FC = () => {
   const { notifyActivity } = useNotification();
   const companyConfig = useCompanyConfig();
@@ -3693,7 +3709,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
   const filteredOrders = useMemo(() => {
     const q = normSearch(orderSearch);
-    return orders.filter(po => {
+    const list = orders.filter(po => {
       let matchSearch = true;
       if (q) {
         const supp = suppliers.find((s: any) => s.id === po.supplier_id || s.name === po.supplier_name);
@@ -3726,6 +3742,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       let matchStatus = true;
       if (orderStatusFilter === "all") {
         matchStatus = true;
+      } else if (orderStatusFilter === "overdue") {
+        matchStatus = isPOOverdue(po);
       } else if (orderStatusFilter === "CUSTOMS") {
         matchStatus = PO_CUSTOMS_STATUSES.includes(po.status);
       } else if (orderStatusFilter === "open") {
@@ -3736,6 +3754,10 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
       return matchSearch && matchStatus;
     });
+    if (orderStatusFilter === "overdue") {
+      return [...list].sort((a, b) => getPOOverdueDays(b) - getPOOverdueDays(a));
+    }
+    return list;
   }, [orders, suppliers, mergedCatalogProducts, orderSearch, orderStatusFilter, orderFrom, orderTo, orderInvoiceSearch, orderProductSearch]);
 
   // PR status filter counts: one bucket per PR, the buckets add up to "Tất cả"
@@ -3764,11 +3786,12 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
   // PO counts per status filter, computed from the same list that is displayed
   const poCounts = useMemo(() => {
-    const c: Record<string, number> = { all: orders.length, open: 0 };
+    const c: Record<string, number> = { all: orders.length, open: 0, overdue: 0 };
     orders.forEach(po => {
       const key = PO_CUSTOMS_STATUSES.includes(po.status) ? "CUSTOMS" : String(po.status || "PENDING");
       c[key] = (c[key] || 0) + 1;
       if (!PO_CLOSED_STATUSES.includes(po.status)) c.open++;
+      if (isPOOverdue(po)) c.overdue++;
     });
     return c;
   }, [orders]);
@@ -4024,7 +4047,24 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             <div className="mt-1 text-base font-black font-mono text-orange-700 dark:text-orange-400">
               {liveStats.active_orders_count} / {orders.length} Đơn PO
             </div>
-            <div className="text-[10px] text-orange-600/70 mt-0.5">Chưa nhập kho đủ, chưa huỷ ↗</div>
+            <div className="flex items-center justify-between gap-1 mt-0.5">
+              <span className="text-[10px] text-orange-600/70">Chưa nhập kho đủ ↗</span>
+              {(poCounts.overdue || 0) > 0 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSubTab("orders");
+                    setOrderStatusFilter("overdue");
+                    scrollToMainSection();
+                  }}
+                  title="Bấm để lọc ngay các PO trễ hạn giao/nhận hàng"
+                  className="px-1.5 py-0.5 rounded-md bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-700 cursor-pointer whitespace-nowrap shadow-2xs"
+                >
+                  ⏰ {poCounts.overdue} trễ hạn
+                </button>
+              )}
+            </div>
           </div>
 
           <div
@@ -4244,11 +4284,12 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               </div>
             </div>
 
-            {/* Filter Buttons including Customs and All Lifecycle Statuses (in logical XNK order) */}
+            {/* Filter Buttons including Overdue, Customs and All Lifecycle Statuses (in logical XNK order) */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
               {[
                 { id: "all", label: "Tất cả" },
                 { id: "open", label: "Đang mở" },
+                { id: "overdue", label: "⏰ Trễ hạn nhận hàng" },
                 { id: "PENDING", label: "Chờ xác nhận" },
                 { id: "CONFIRMED", label: "Đã xác nhận" },
                 { id: "ORDERED", label: "Đã đặt hàng" },
@@ -4258,19 +4299,29 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 { id: "PARTIALLY_RECEIVED", label: "Nhập kho 1 phần" },
                 { id: "COMPLETED", label: "Đã nhập kho" },
                 { id: "CANCELLED", label: "Đã hủy đơn" }
-              ].filter(f => f.id === "all" || f.id === "open" || (poCounts[f.id] || 0) > 0 || orderStatusFilter === f.id).map(f => (
-                <button
-                  key={f.id}
-                  onClick={() => setOrderStatusFilter(f.id)}
-                  className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
-                    orderStatusFilter === f.id
-                      ? "bg-orange-600 text-white shadow-xs"
-                      : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
-                  }`}
-                >
-                  {f.label} ({poCounts[f.id] || 0})
-                </button>
-              ))}
+              ].filter(f => f.id === "all" || f.id === "open" || f.id === "overdue" || (poCounts[f.id] || 0) > 0 || orderStatusFilter === f.id).map(f => {
+                const isOverdueBtn = f.id === "overdue";
+                const count = poCounts[f.id] || 0;
+                const isActive = orderStatusFilter === f.id;
+                return (
+                  <button
+                    key={f.id}
+                    onClick={() => setOrderStatusFilter(f.id)}
+                    title={isOverdueBtn ? "Lọc các PO đang mở có Ngày hẹn giao/nhận hàng đã quá hạn so với hôm nay" : undefined}
+                    className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                      isActive
+                        ? isOverdueBtn
+                          ? "bg-rose-600 text-white shadow-xs ring-2 ring-rose-300 dark:ring-rose-800"
+                          : "bg-orange-600 text-white shadow-xs"
+                        : isOverdueBtn && count > 0
+                          ? "bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 hover:bg-rose-100 dark:hover:bg-rose-900/60"
+                          : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
+                    }`}
+                  >
+                    {f.label} ({count})
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -4423,9 +4474,17 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                   ) : (
                                     <span className="inline-flex items-center gap-1">
                                       <span className="text-slate-500 dark:text-slate-400">Hẹn giao:</span>
-                                      <strong className="font-mono text-orange-600 dark:text-orange-400">
+                                      <strong className={cn("font-mono", isPOOverdue(po) ? "text-rose-600 dark:text-rose-400 font-black" : "text-orange-600 dark:text-orange-400")}>
                                         {formatDate(po.expected_delivery_date)}
                                       </strong>
+                                      {isPOOverdue(po) && (
+                                        <span
+                                          className="px-1.5 py-0.5 rounded bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800 text-[10px] font-bold whitespace-nowrap"
+                                          title={`PO đã quá ngày hẹn giao/nhận hàng ${getPOOverdueDays(po)} ngày (chưa nhập kho hoàn tất)`}
+                                        >
+                                          ⏰ Trễ {getPOOverdueDays(po)} ngày
+                                        </span>
+                                      )}
                                       <button
                                         onClick={() => {
                                           setEditingDeliveryDateId(po.id);
