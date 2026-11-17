@@ -1006,10 +1006,14 @@ export async function createTransferFromProjectBom(tx: Tx, actor: AuthzActor, in
   const pkgCode = await nextNumber(tx, "RD_TRANSFER");
   const bomSpecJson = bomLines.map((l) => ({
     line_no: l.line_no,
+    component_item_id: l.component_item_id,
     item_id: l.component_item_id,
+    component_code: l.item_code,
     item_code: l.item_code,
+    component_name: l.item_name,
     item_name: l.item_name,
     role: l.component_role,
+    qty_per_kit: Number(l.qty_per_base),
     qty_per_base: Number(l.qty_per_base),
     uom: l.uom,
     scrap_pct: Number(l.scrap_pct),
@@ -1017,10 +1021,28 @@ export async function createTransferFromProjectBom(tx: Tx, actor: AuthzActor, in
   }));
 
   const routingJson = [
-    { seq: 1, step_code: "STEP-PREP", step_name: "Chuẩn bị & Kiểm tra bán thành phẩm theo hồ sơ R&D", instructions: "Kiểm tra điều kiện nhiệt độ và rã đông hóa chất trên block lạnh." },
-    { seq: 2, step_code: "STEP-MIX-FILL", step_name: "Pha chế theo định mức Prototype BOM & Chiết rót", instructions: "Pha trộn theo tỷ lệ BOM đã chốt và lấy mẫu QC bán thành phẩm." },
-    { seq: 3, step_code: "STEP-QC-RELEASE", step_name: "Kiểm định FQC theo bảng chỉ tiêu TPP & Đóng gói", instructions: "Đối chiếu kết quả QC với ma trận TPP của dự án." },
+    { seq: 1, step_code: "STEP-PREP", step_name: "Chuẩn bị & Kiểm tra bán thành phẩm theo hồ sơ R&D", params: "Kiểm tra điều kiện nhiệt độ và rã đông hóa chất trên block lạnh.", instructions: "Kiểm tra điều kiện nhiệt độ và rã đông hóa chất trên block lạnh.", qc_check: "Ngoại quan & Nhiệt độ 2–8°C" },
+    { seq: 2, step_code: "STEP-MIX-FILL", step_name: "Pha chế theo định mức Prototype BOM & Chiết rót", params: "Pha trộn theo tỷ lệ BOM đã chốt và lấy mẫu QC bán thành phẩm.", instructions: "Pha trộn theo tỷ lệ BOM đã chốt và lấy mẫu QC bán thành phẩm.", qc_check: "Đo pH, độ đồng đều thể tích & IPQC Ct" },
+    { seq: 3, step_code: "STEP-QC-RELEASE", step_name: "Kiểm định FQC theo bảng chỉ tiêu TPP & Đóng gói", params: "Đối chiếu kết quả QC với ma trận TPP của dự án.", instructions: "Đối chiếu kết quả QC với ma trận TPP của dự án.", qc_check: "FQC Chứng dương / Chứng nội / NTC & Nhãn UDI" },
   ];
+
+  const qcReleaseJson = specs.map((s, idx) => ({
+    seq: idx + 1,
+    stage: "FQC",
+    parameter: s.parameter,
+    method: s.method_ref || s.category || "TCCS",
+    unit: s.unit || null,
+    target: s.actual_value || s.target_value || "Đạt",
+  }));
+
+  const defaultTpl = (
+    await tx.query(
+      `SELECT id FROM rd.transfer_template
+        WHERE status = 'ACTIVE' AND domain = $1
+        ORDER BY is_default DESC, created_at ASC LIMIT 1`,
+      [targetDomain === "SOFTWARE" ? "DEVICE" : targetDomain]
+    )
+  ).rows[0];
 
   const autoValSummary =
     d.validation_summary ||
@@ -1032,20 +1054,22 @@ export async function createTransferFromProjectBom(tx: Tx, actor: AuthzActor, in
   const pkg = (
     await tx.query(
       `INSERT INTO rd.tech_transfer_package
-         (code, project_id, target_domain, target_org_unit_id, title, product_item_id,
-          bom_specification, routing_steps, stability_summary, validation_summary,
+         (code, project_id, template_id, target_domain, target_org_unit_id, title, product_item_id,
+          bom_specification, routing_steps, qc_release_criteria, stability_summary, validation_summary,
           pilot_lot_ref, status, created_by, updated_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, 'DRAFT', $12, $12)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11, $12, $13, 'DRAFT', $14, $14)
        RETURNING *`,
       [
         pkgCode,
         p.id,
+        defaultTpl?.id ?? null,
         targetDomain,
         targetDept.id,
         d.title || `Gói chuyển giao công nghệ dự án [${p.code}] ${p.name}`,
         p.target_product_item_id ?? null,
         JSON.stringify(bomSpecJson),
         JSON.stringify(routingJson),
+        JSON.stringify(qcReleaseJson),
         d.stability_summary || "Đạt độ ổn định cấp tốc và thời gian thực theo đề cương R&D.",
         autoValSummary,
         d.pilot_lot_ref || `PILOT-${p.code}-01`,
@@ -1053,6 +1077,18 @@ export async function createTransferFromProjectBom(tx: Tx, actor: AuthzActor, in
       ]
     )
   ).rows[0];
+
+  if (defaultTpl?.id) {
+    await tx.query(
+      `INSERT INTO rd.tech_transfer_item
+         (package_id, template_item_id, seq, section_code, section_name, doc_code, item_name, guidance, is_required, status, updated_by)
+       SELECT $1, id, seq, section_code, section_name, doc_code, item_name, guidance, is_required, 'MISSING', $3
+         FROM rd.transfer_template_item
+        WHERE template_id = $2
+        ORDER BY seq ASC`,
+      [pkg.id, defaultTpl.id, actor.userId]
+    );
+  }
 
   // If targetDomain === 'KIT' and target_product_item_id is set, also auto-create a DRAFT kit.bom if none exists in DRAFT
   let createdKitBomCode: string | null = null;

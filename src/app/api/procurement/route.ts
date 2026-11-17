@@ -1838,8 +1838,14 @@ export async function POST(req: NextRequest) {
           if (!expiry && !ln.no_expiry) throw new HttpError(400, `Mã hàng ${pCode} (lô ${lot}): chưa nhập Hạn dùng (EXP) (*) (hoặc đánh dấu "Không có HSD" với thiết bị / vật tư).`);
           if (expiry && !/^\d{4}-\d{2}-\d{2}$/.test(expiry)) throw new HttpError(400, `Mã hàng ${pCode}: hạn dùng không hợp lệ.`);
           const resolvedUnitPrice = Number(ln.unit_price ?? fallbackIt.unit_price) || 0;
-          if (!(resolvedUnitPrice > 0)) {
-            throw new HttpError(400, `Mã hàng ${pCode} (lô ${lot}): chưa nhập Đơn Giá Nhập (> 0 VNĐ) (*).`);
+          const isFreeGiftLine = Boolean(
+            ln.is_free_gift ||
+            fallbackIt.is_free_gift ||
+            (poIt && Number(poIt.unit_price) === 0) ||
+            /tặng|demo|foc|khuyến mãi|miễn phí|0\s*đ|0\s*đồng/i.test(`${ln.notes || ""} ${fallbackIt.notes || ""}`)
+          );
+          if (resolvedUnitPrice < 0 || (!isFreeGiftLine && !(resolvedUnitPrice >= 0))) {
+            throw new HttpError(400, `Mã hàng ${pCode} (lô ${lot}): Đơn Giá Nhập không hợp lệ.`);
           }
           const resolvedStorageCond = String(ln.storage_condition || fallbackIt.storage_condition || pMasterTemp[pCode] || "").trim();
           if (!resolvedStorageCond) {

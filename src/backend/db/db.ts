@@ -180,12 +180,16 @@ async function runIntegrityMigrations() {
         DECLARE col record;
         BEGIN
           FOR col IN
-            SELECT column_name FROM information_schema.columns
-             WHERE table_schema = 'public' AND table_name = 'workflow_requests'
-               AND column_name IN ('title', 'product_info', 'customer_name')
+            SELECT table_name, column_name FROM information_schema.columns
+             WHERE table_schema = 'public'
+               AND (
+                 (table_name = 'workflow_requests' AND column_name IN ('workflow_code', 'workflow_type', 'title', 'requester_name', 'requester_dept', 'assignee_name', 'target_dept', 'customer_name', 'product_info'))
+                 OR (table_name = 'company_tasks' AND column_name IN ('task_code', 'title', 'department', 'task_category', 'assignee_name', 'customer_name', 'related_workflow_code', 'created_by', 'created_by_name', 'related_type', 'related_ref'))
+                 OR (table_name = 'workflow_templates' AND column_name IN ('code', 'name', 'source_dept', 'target_dept', 'created_by'))
+               )
                AND data_type = 'character varying'
           LOOP
-            EXECUTE format('ALTER TABLE workflow_requests ALTER COLUMN %I TYPE TEXT', col.column_name);
+            EXECUTE format('ALTER TABLE %I ALTER COLUMN %I TYPE TEXT', col.table_name, col.column_name);
           END LOOP;
         END $$;
       `)

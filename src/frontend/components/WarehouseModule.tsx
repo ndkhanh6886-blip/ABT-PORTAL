@@ -2519,9 +2519,17 @@ export const WarehouseModule: React.FC = () => {
         alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) Số Lượng Nhập (*) phải lớn hơn 0`);
         return;
       }
-      if (!it.unit_price || Number(it.unit_price) <= 0) {
-        alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) bắt buộc phải điền Đơn Giá Nhập (> 0 VNĐ) (*)`);
-        return;
+      const isLineFreeGift = Boolean(
+        it.is_free_gift ||
+        /tặng|demo|foc|khuyến mãi|miễn phí|0\s*đ|0\s*đồng/i.test(String(it.item_notes || it.notes || ""))
+      );
+      if ((!it.unit_price || Number(it.unit_price) <= 0) && !isLineFreeGift) {
+        const okGift = window.confirm(
+          `Dòng hàng thứ ${i + 1} (${it.product_name}) đang có Đơn Giá Nhập = 0 VNĐ.\n\n🎁 Xác nhận đây là Hàng tặng / Hàng Demo (0 đồng) từ hãng để tiếp tục lưu phiếu nhập kho?`
+        );
+        if (!okGift) return;
+        it.is_free_gift = true;
+        it.unit_price = 0;
       }
       if (!it.storage_condition?.trim()) {
         alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) bắt buộc phải chọn Điều Kiện Nhiệt Độ Bảo Quản (*)`);
@@ -2565,8 +2573,9 @@ export const WarehouseModule: React.FC = () => {
             specification: it.specification || matchedCatalogProd?.specification || "",
             unit: it.unit || matchedCatalogProd?.unit || "Hộp",
             quantity: Number(it.quantity) || 1,
-            unit_price: Number(it.unit_price) || 0,
-            cost_price: Number(it.unit_price) || 0,
+            unit_price: it.is_free_gift ? 0 : (Number(it.unit_price) || 0),
+            cost_price: it.is_free_gift ? 0 : (Number(it.unit_price) || 0),
+            is_free_gift: Boolean(it.is_free_gift || (Number(it.unit_price) || 0) === 0),
             standard_price: Number(it.standard_price) || Number(matchedCatalogProd?.standard_price) || 0,
             lot_number: it.lot_number || "",
             expiry_date: it.expiry_date || "",
@@ -2606,6 +2615,7 @@ export const WarehouseModule: React.FC = () => {
               unit: it.unit,
               quantity: it.quantity,
               unit_price: it.unit_price,
+              is_free_gift: it.is_free_gift,
               lot_number: it.lot_number,
               expiry_date: it.expiry_date,
               no_expiry: !it.expiry_date,
@@ -8292,7 +8302,8 @@ export const WarehouseModule: React.FC = () => {
                                     specification: l.specification || cat?.specification || "",
                                     unit: l.unit || cat?.unit || "Hộp",
                                     quantity: l.remaining,
-                                    unit_price: Math.round((Number(l.unit_price) || Number(cat?.cost_price) || 0) * 1000) / 1000,
+                                    unit_price: l.is_free_gift ? 0 : Math.round((Number(l.unit_price) || Number(cat?.cost_price) || 0) * 1000) / 1000,
+                                    is_free_gift: Boolean(l.is_free_gift || (l.unit_price !== undefined && Number(l.unit_price) === 0)),
                                     lot_number: "",
                                     manufacture_date: "",
                                     expiry_date: "",
@@ -8748,23 +8759,48 @@ export const WarehouseModule: React.FC = () => {
                         </div>
 
                         <div>
-                          <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                            Đơn Giá Nhập (VNĐ) <span className="text-rose-500">*</span>
-                          </label>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400">
+                              Đơn Giá Nhập <span className="text-rose-500">*</span>
+                            </label>
+                            <label className="inline-flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold cursor-pointer" title="Tích chọn nếu là Hàng tặng / Hàng Demo 0 đồng từ hãng">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(item.is_free_gift)}
+                                onChange={(e) => {
+                                  const checked = e.target.checked;
+                                  handleInboundItemChange(idx, "is_free_gift", checked);
+                                  if (checked) handleInboundItemChange(idx, "unit_price", 0);
+                                }}
+                                className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                              />
+                              <span>🎁 0đ</span>
+                            </label>
+                          </div>
                           <input
                             type="number"
-                            min="0.001"
+                            min="0"
                             step="0.001"
-                            value={item.unit_price ?? ""}
-                            placeholder="Nhập đơn giá..."
+                            value={item.is_free_gift ? 0 : (item.unit_price ?? "")}
+                            placeholder={item.is_free_gift ? "0 (Tặng/Demo)" : "Nhập đơn giá..."}
                             onChange={(e) => {
                               const raw = e.target.value;
+                              if (raw === "0") {
+                                handleInboundItemChange(idx, "is_free_gift", true);
+                                handleInboundItemChange(idx, "unit_price", 0);
+                                return;
+                              }
+                              if (Number(raw) > 0 && item.is_free_gift) {
+                                handleInboundItemChange(idx, "is_free_gift", false);
+                              }
                               handleInboundItemChange(idx, "unit_price", raw === "" ? "" : (/^\d*\.\d{0,3}$/.test(raw) ? raw : Math.max(0, Math.round((parseFloat(raw) || 0) * 1000) / 1000)));
                             }}
                             onBlur={() => handleInboundItemChange(idx, "unit_price", Math.max(0, Math.round((Number(item.unit_price) || 0) * 1000) / 1000))}
                             className={`w-full p-2 rounded-lg border bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono text-xs font-semibold ${
-                              !(Number(item.unit_price) > 0)
+                              !(Number(item.unit_price) > 0) && !item.is_free_gift
                                 ? "border-rose-300 dark:border-rose-800/80"
+                                : item.is_free_gift
+                                ? "border-emerald-400 dark:border-emerald-600 text-emerald-700 dark:text-emerald-300"
                                 : "border-slate-200 dark:border-slate-700"
                             }`}
                           />

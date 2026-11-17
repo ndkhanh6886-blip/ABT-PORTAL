@@ -1559,13 +1559,28 @@ export const ProcurementModule: React.FC = () => {
       ["Phòng Tổng hợp Oligo", "Phòng Sản xuất Kit", "Phòng Kỹ thuật - Thiết bị"].includes(String(poForm.supplier_name || "").trim())
     );
     if (!["DRAFT", "PENDING", "CANCELLED"].includes(targetStatusUpper) && !isInternalPOSupplier) {
-      const zeroPriceItems = (poForm.items || []).filter((it: any) => !(roundPrice3(it?.unit_price) > 0));
+      const zeroPriceItems = (poForm.items || []).filter(
+        (it: any) =>
+          !(roundPrice3(it?.unit_price) > 0) &&
+          !it?.is_free_gift &&
+          !/tặng|demo|foc|khuyến mãi|miễn phí|0\s*đ|0\s*đồng/i.test(String(it?.notes || ""))
+      );
       if (zeroPriceItems.length > 0) {
         const missingList = zeroPriceItems.map((it: any) => it?.product_code || it?.product_name || "SP").join(", ");
-        alert(
-          `Không thể xác nhận / duyệt Đơn Đặt Hàng (PO) khi chưa có đủ đơn giá!\n\nCác mặt hàng chưa nhập Đơn giá PO (> 0 VNĐ): ${missingList}\n\n👉 Vui lòng nhập đầy đủ đơn giá, hoặc chuyển trạng thái về "1. Chờ xác nhận" để lưu tạm PO trước khi có giá.`
+        const confirmFreeGift = window.confirm(
+          `Đơn hàng PO có mặt hàng đơn giá 0 VNĐ: ${missingList}\n\n` +
+          `🎁 Đây có phải là Hàng tặng / Hàng Demo (0 đồng) từ hãng không?\n\n` +
+          `• Bấm OK để xác nhận là Hàng tặng / Demo (0đ) và lưu PO.\n` +
+          `• Bấm Cancel để quay lại nhập đơn giá.`
         );
-        return;
+        if (!confirmFreeGift) {
+          return;
+        }
+        poForm.items = (poForm.items || []).map((it: any) =>
+          !(roundPrice3(it?.unit_price) > 0)
+            ? { ...it, unit_price: 0, is_free_gift: true, notes: it.notes || "Hàng tặng / Demo (0đ)" }
+            : it
+        );
       }
     }
     try {
@@ -2121,7 +2136,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
           product_name: cleanItemName(it.product_name),
           specification: it.specification || matchedProd?.specification || "",
           unit: it.unit || matchedProd?.unit || "Hộp",
-          unit_price: roundPrice3(Number(it.unit_price) || Number(matchedProd?.cost_price) || 0),
+          unit_price: it.is_free_gift ? 0 : roundPrice3(Number(it.unit_price) ?? Number(matchedProd?.cost_price) ?? 0),
+          is_free_gift: Boolean(it.is_free_gift || (it.unit_price !== undefined && Number(it.unit_price) === 0)),
           ordered,
           received,
           quantity: remaining,
@@ -2198,7 +2214,18 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       if (!String(l.product_code || "").trim()) { alert("Vui lòng chọn hoặc nhập Mã hàng (*) cho dòng phát sinh."); return; }
       if (!String(l.lot_number || "").trim()) { alert(`${l.product_code}: bắt buộc phải nhập Số lô (LOT) / Serial (*).`); return; }
       if (!l.no_expiry && !String(l.expiry_date || "").trim()) { alert(`${l.product_code} (lô ${l.lot_number}): bắt buộc phải nhập Hạn dùng (EXP) (*), hoặc đánh dấu "Không có HSD".`); return; }
-      if (!(roundPrice3(l.unit_price) > 0)) { alert(`${l.product_code} (lô ${l.lot_number}): bắt buộc phải nhập Đơn giá nhập (> 0 VNĐ) (*).`); return; }
+      const isLineFreeGift = Boolean(
+        l.is_free_gift ||
+        /tặng|demo|foc|khuyến mãi|miễn phí|0\s*đ|0\s*đồng/i.test(String(l.notes || ""))
+      );
+      if (!(roundPrice3(l.unit_price) > 0) && !isLineFreeGift) {
+        const okGift = window.confirm(
+          `${l.product_code} (lô ${l.lot_number}) đang có Đơn giá nhập = 0 VNĐ.\n\n🎁 Xác nhận đây là Hàng tặng / Hàng Demo (0 đồng) từ hãng để tiếp tục nhập kho?`
+        );
+        if (!okGift) return;
+        l.is_free_gift = true;
+        l.unit_price = 0;
+      }
       if (!String(l.storage_condition || "").trim()) { alert(`${l.product_code} (lô ${l.lot_number}): bắt buộc phải chọn Điều kiện bảo quản (*).`); return; }
     }
     const perLine: Record<number, number> = {};
@@ -2247,7 +2274,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             quantity: Number(l.quantity) || 0,
             specification: l.specification || "",
             unit: l.unit || "Hộp",
-            unit_price: roundPrice3(l.unit_price),
+            unit_price: l.is_free_gift ? 0 : roundPrice3(l.unit_price),
+            is_free_gift: Boolean(l.is_free_gift || roundPrice3(l.unit_price) === 0),
             lot_number: String(l.lot_number).trim(),
             manufacture_date: l.manufacture_date || "",
             expiry_date: l.no_expiry ? "" : l.expiry_date,
@@ -6769,21 +6797,41 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             <input
                               type="text"
                               inputMode="numeric"
-                              value={item.unit_price === 0 || item.unit_price === "" || item.unit_price === undefined || item.unit_price === null ? "" : roundPrice3(item.unit_price)}
+                              value={item.is_free_gift ? "0" : (item.unit_price === 0 || item.unit_price === "" || item.unit_price === undefined || item.unit_price === null ? "" : roundPrice3(item.unit_price))}
                               onChange={(e) => {
                                 const cleaned = sanitizeDecimal3Input(e.target.value);
                                 updatePOLine(idx, {
-                                  unit_price: cleaned === "" ? 0 : roundPrice3(cleaned)
+                                  unit_price: cleaned === "" ? 0 : roundPrice3(cleaned),
+                                  is_free_gift: cleaned === "0" ? true : (Number(cleaned) > 0 ? false : item.is_free_gift)
                                 });
                               }}
                               onBlur={() => updatePOLine(idx, { unit_price: Math.max(0, roundPrice3(item.unit_price)) })}
-                              placeholder="Nhập đơn giá (> 0) *"
+                              placeholder={item.is_free_gift ? "0 (Hàng tặng/Demo)" : "Nhập đơn giá (> 0) *"}
                               className={`w-full p-1.5 rounded-lg border bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-right text-xs ${
-                                !(roundPrice3(item.unit_price) > 0)
+                                !(roundPrice3(item.unit_price) > 0) && !item.is_free_gift
                                   ? "border-rose-400 dark:border-rose-600 ring-1 ring-rose-200 dark:ring-rose-900/50"
+                                  : item.is_free_gift
+                                  ? "border-emerald-400 dark:border-emerald-600 text-emerald-700 dark:text-emerald-300"
                                   : "border-slate-200 dark:border-slate-700"
                               }`}
                             />
+                            <label className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 cursor-pointer select-none" title="Tích chọn nếu mặt hàng này là Hàng tặng / Hàng Demo giá 0 đồng từ hãng">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(item.is_free_gift)}
+                                onChange={(e) => {
+                                  const checked = e.target.checked;
+                                  updatePOLine(idx, {
+                                    is_free_gift: checked,
+                                    unit_price: checked ? 0 : item.unit_price,
+                                    vat_rate: checked ? 0 : item.vat_rate,
+                                    notes: checked && !item.notes ? "Hàng tặng / Demo (0đ)" : item.notes
+                                  });
+                                }}
+                                className="w-3.5 h-3.5 accent-emerald-600 rounded cursor-pointer"
+                              />
+                              <span>🎁 Hàng tặng / Demo (0đ)</span>
+                            </label>
                             {(() => {
                               const codeKey = String(item.product_code || "").trim().toUpperCase();
                               const inbEntry = poForm?.inbound_price_map?.[codeKey];
@@ -7637,19 +7685,40 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               type="text"
                               inputMode="numeric"
                               disabled={!isSelected}
-                              value={l.unit_price === 0 || l.unit_price === "" || l.unit_price === undefined || l.unit_price === null ? "" : roundPrice3(l.unit_price)}
-                              placeholder="Nhập đơn giá *"
+                              value={l.is_free_gift ? "0" : (l.unit_price === 0 || l.unit_price === "" || l.unit_price === undefined || l.unit_price === null ? "" : roundPrice3(l.unit_price))}
+                              placeholder={l.is_free_gift ? "0 (Tặng/Demo)" : "Nhập đơn giá *"}
                               onChange={(e) => {
                                 const cleaned = sanitizeDecimal3Input(e.target.value);
-                                setL({ unit_price: cleaned === "" ? 0 : roundPrice3(cleaned) });
+                                setL({
+                                  unit_price: cleaned === "" ? 0 : roundPrice3(cleaned),
+                                  is_free_gift: cleaned === "0" ? true : (Number(cleaned) > 0 ? false : l.is_free_gift)
+                                });
                               }}
                               onBlur={() => setL({ unit_price: Math.max(0, roundPrice3(l.unit_price)) })}
                               className={`w-full p-1.5 rounded-lg border bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-right text-[11px] ${
-                                isSelected && !(roundPrice3(l.unit_price) > 0)
+                                isSelected && !(roundPrice3(l.unit_price) > 0) && !l.is_free_gift
                                   ? "border-rose-300 dark:border-rose-800/80"
+                                  : l.is_free_gift
+                                  ? "border-emerald-400 dark:border-emerald-600 text-emerald-700 dark:text-emerald-300"
                                   : "border-slate-200 dark:border-slate-700"
                               }`}
                             />
+                            <label className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                disabled={!isSelected}
+                                checked={Boolean(l.is_free_gift)}
+                                onChange={(e) => {
+                                  const checked = e.target.checked;
+                                  setL({
+                                    is_free_gift: checked,
+                                    unit_price: checked ? 0 : l.unit_price
+                                  });
+                                }}
+                                className="w-3 h-3 accent-emerald-600 rounded cursor-pointer"
+                              />
+                              <span>🎁 0đ (Tặng/Demo)</span>
+                            </label>
                           </td>
                           <td className="p-2 text-right font-mono font-bold text-[11px] pt-3 text-emerald-700 dark:text-emerald-400 whitespace-nowrap">
                             {isSelected && (Number(l.quantity) || 0) > 0 && (Number(l.unit_price) || 0) > 0

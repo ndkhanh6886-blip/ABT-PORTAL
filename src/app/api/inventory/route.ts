@@ -702,6 +702,7 @@ export async function GET(req: NextRequest) {
                 received,
                 remaining: Math.max(0, ordered - received),
                 unit_price: Number(it?.unit_price) || 0,
+                is_free_gift: Boolean(it?.is_free_gift || (it?.unit_price !== undefined && Number(it?.unit_price) === 0)),
               };
             });
             return {
