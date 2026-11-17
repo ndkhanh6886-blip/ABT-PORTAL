@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { needsLeaveDates } from "@/frontend/utils/recoveredProposals";
+import { isSameWorkspaceDept, defaultConcreteDeptForScope } from "@/frontend/utils/workspaceScope";
 import {
   isDatesMode, parseLeaveDays, normalizeLeaveDays, serializeLeaveDays, expandWeekdays, sumLeaveDays, isOnLeaveOn,
   formatLeaveDays, weekdayOf, SESSION_LABEL, WEEKDAY_LABELS, type LeaveDay, type LeaveSession
@@ -1000,7 +1001,7 @@ export function ProposalsApprovalView({
     const tmpl = templates.find((t) => t.id === tmplId) || templates[0];
     setEditingProposalId(null);
     setSelectedTemplateId(tmpl.id);
-    const reqDept = selectedDept !== "all" ? selectedDept : userDept || "Kinh Doanh";
+    const reqDept = defaultConcreteDeptForScope(selectedDept, userDept);
     const initialSteps = buildStepsFromTemplate(tmpl, reqDept, 0);
     const defaultDateValues: Record<string, string> = {};
     (tmpl.fields || []).forEach((f) => {
@@ -1041,7 +1042,7 @@ export function ProposalsApprovalView({
     if (!tmpl) return;
     setSelectedTemplateId(tmpl.id);
     if (!editingProposalId) {
-      const reqDept = selectedDept !== "all" ? selectedDept : userDept || "Kinh Doanh";
+      const reqDept = defaultConcreteDeptForScope(selectedDept, userDept);
       const nextSteps = buildStepsFromTemplate(tmpl, reqDept, formState.totalAmount);
       const defaultDateValues: Record<string, string> = {};
       (tmpl.fields || []).forEach((f) => {
@@ -1335,7 +1336,7 @@ export function ProposalsApprovalView({
 
     const nowStr = nowVNDateTime();
     const existing = editingProposalId ? proposals.find((p) => p.id === editingProposalId) : null;
-    const reqDept = existing?.requesterDept || (selectedDept !== "all" ? selectedDept : userDept || "Kinh Doanh");
+    const reqDept = existing?.requesterDept || defaultConcreteDeptForScope(selectedDept, userDept);
     const reqName = existing?.requesterName || currentStaffName;
 
     // Chuẩn hóa luồng bước duyệt
@@ -2064,15 +2065,15 @@ export function ProposalsApprovalView({
         base = base.filter(
           (p) =>
             isLeaveOrMyRelated(p) ||
-            p.requesterDept.toLowerCase() === selectedDept.toLowerCase() ||
-            (p.steps || []).some((s) => s.dept.toLowerCase() === selectedDept.toLowerCase())
+            isSameWorkspaceDept(p.requesterDept, selectedDept) ||
+            (p.steps || []).some((s) => isSameWorkspaceDept(s.dept, selectedDept))
         );
       } else if (selectedDept !== "all") {
         base = base.filter(
           (p) =>
             isLeaveOrMyRelated(p) ||
-            p.requesterDept.toLowerCase() === selectedDept.toLowerCase() ||
-            (p.steps || []).some((s) => s.dept.toLowerCase() === selectedDept.toLowerCase())
+            isSameWorkspaceDept(p.requesterDept, selectedDept) ||
+            (p.steps || []).some((s) => isSameWorkspaceDept(s.dept, selectedDept))
         );
       }
     }
@@ -3625,7 +3626,7 @@ export function ProposalsApprovalView({
                   value={formState.totalAmount || ""}
                   onChange={(e) => {
                     const amt = Number(e.target.value) || 0;
-                    const reqDept = selectedDept !== "all" ? selectedDept : userDept || "Kinh Doanh";
+                    const reqDept = defaultConcreteDeptForScope(selectedDept, userDept);
                     setFormState((prev) => ({
                       ...prev,
                       totalAmount: amt,

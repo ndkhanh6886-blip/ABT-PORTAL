@@ -3,6 +3,22 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { sanitizeProposalList } from "@/frontend/utils/recoveredProposals";
 import {
+  WORKSPACE_BLOCKS,
+  isWorkspaceBlockKey,
+  normalizeWorkspaceDept,
+  isSameWorkspaceDept,
+  formatWorkspaceScopeLabel,
+  defaultConcreteDeptForScope,
+} from "@/frontend/utils/workspaceScope";
+export {
+  WORKSPACE_BLOCKS,
+  isWorkspaceBlockKey,
+  normalizeWorkspaceDept,
+  isSameWorkspaceDept,
+  formatWorkspaceScopeLabel,
+  defaultConcreteDeptForScope,
+};
+import {
   Bell,
   LayoutDashboard,
   CheckCircle2,
@@ -153,70 +169,6 @@ export function cleanWorkspaceAssignee(name: any): string {
   if (!s) return "";
   if (FICTIONAL_WORKSPACE_ASSIGNEES.has(s.toLowerCase())) return "";
   return s;
-}
-
-export function normalizeWorkspaceDept(raw: any): string {
-  const s = String(raw || "").trim();
-  if (!s) return "";
-  if (s === "all") return "all";
-  const l = s.toLowerCase();
-  // 1. Phân biệt rõ Kho Nhà Máy và Cung Ứng Kỹ Thuật (xét trước Kho & Cung ứng chung)
-  if (
-    l.includes("kho nhà máy") ||
-    l.includes("kho kỹ thuật") ||
-    l.includes("kho tổng nhà máy") ||
-    l.includes("kho vật tư") ||
-    l.includes("kho hóa chất") ||
-    l === "p-wh" ||
-    l === "factory_warehouse"
-  ) {
-    return "Kho Nhà Máy";
-  }
-  if (
-    l.includes("cung ứng kỹ thuật") ||
-    l.includes("cung ứng nhà máy") ||
-    l.includes("cung ứng nvl") ||
-    l.includes("mua hàng nhà máy") ||
-    l.includes("mua hàng kỹ thuật") ||
-    l.includes("mua sắm nvl") ||
-    l === "p-pur" ||
-    l === "factory_procurement"
-  ) {
-    return "Cung Ứng Kỹ Thuật";
-  }
-  // 2. Các phòng ban thuộc Khối Kỹ Thuật – Nhà Máy
-  if (l.includes("đơn nội bộ") || l.includes("điều phối sản xuất") || l.includes("điều phối đơn")) return "Đơn Nội Bộ";
-  if (l.includes("r&d") || l.includes("nghiên cứu") || l === "p-rd") return "Nghiên Cứu R&D";
-  if (l.includes("sản xuất kit") || l.includes("sx kit") || l === "p-kit") return "Sản Xuất Kit";
-  if (l.includes("oligo") || l === "p-oligo") return "Tổng Hợp Oligo";
-  if (l.includes("thiết bị") || l.includes("cơ điện") || l === "p-tb") return "Kỹ Thuật – Thiết Bị";
-  if (l.includes("qa") || l.includes("qc") || l.includes("chất lượng") || l === "p-qaqc") return "QA/QC";
-  // 3. Các phòng ban thuộc Khối Kinh Doanh & Văn Phòng
-  if (l.includes("sales admin")) return "Sales Admin";
-  if (l === "pm" || l.includes("product manager") || l.includes("quản lý sản phẩm")) return "PM";
-  if (l.includes("marketing") || l.includes("tiếp thị")) return "Marketing";
-  if (l.includes("nhân sự") || l.includes("hành chính") || l === "hr") return "Hành Chính Nhân Sự";
-  if (l.includes("ứng dụng") || l.includes("application") || l === "app") return "Application";
-  if (l.includes("kho") || l.includes("vận hành") || l.includes("warehouse") || l.includes("giao nhận")) return "Kho & Vận Hành";
-  if (l.includes("cung ứng") || l.includes("mua hàng") || l.includes("procurement")) return "Cung Ứng";
-  if (l.includes("kinh doanh") || l.includes("sales")) return "Kinh Doanh";
-  if (l.includes("pháp chế") || l.includes("legal") || l.includes("tuân thủ")) return "Pháp Chế";
-  if (l.includes("kế toán") || l.includes("tài chính") || l.includes("accounting")) return "Kế Toán";
-  if (l.includes("giám đốc") || l.includes("bod")) return "Ban Giám Đốc";
-  return s;
-}
-
-export function isSameWorkspaceDept(a: any, b: any): boolean {
-  const splitDepts = (raw: any): string[] =>
-    String(raw || "")
-      .split(/[,;\n]+/)
-      .map((d) => normalizeWorkspaceDept(d.trim()))
-      .filter(Boolean);
-  const listA = splitDepts(a);
-  const listB = splitDepts(b);
-  if (listA.length === 0 || listB.length === 0) return false;
-  if (listA.includes("all") || listB.includes("all")) return true;
-  return listA.some((da) => listB.some((db) => da.toLowerCase() === db.toLowerCase()));
 }
 
 export const DEPARTMENT_CATEGORIES: Record<string, string[]> = {
@@ -1113,20 +1065,25 @@ const SearchablePersonnelSelect: React.FC<SearchablePersonnelSelectProps> = ({
     if (filterDepartment && filterDepartment !== "all") {
       list = list.filter(p => isSameWorkspaceDept(p.department, filterDepartment));
       const normDept = normalizeWorkspaceDept(filterDepartment);
-      if (normDept && DEPARTMENT_STAFF[normDept]) {
-        DEPARTMENT_STAFF[normDept].forEach(rawName => {
+      const targetDepts = isWorkspaceBlockKey(normDept)
+        ? Array.from(WORKSPACE_BLOCKS[normDept].depts)
+        : normDept
+        ? [normDept]
+        : [];
+      targetDepts.forEach((dKey) => {
+        (DEPARTMENT_STAFF[dKey] || []).forEach(rawName => {
           const cleanName = rawName.replace(/\s*\(.*?\)/, "").trim();
           const posMatch = rawName.match(/\((.*?)\)/);
           if (!list.some(p => sameStaffName(p.full_name, cleanName))) {
             list.push({
               full_name: cleanName,
               employee_code: "",
-              position: posMatch ? posMatch[1] : `Nhân sự ${normDept}`,
-              department: normDept
+              position: posMatch ? posMatch[1] : `Nhân sự ${dKey}`,
+              department: dKey
             });
           }
         });
-      }
+      });
     }
     if (!search.trim()) return list;
     const q = search.toLowerCase();
@@ -2353,7 +2310,9 @@ export const UnifiedWorkspace: React.FC = () => {
     const actorRealDept = resolveStaffDept(defaultActor);
     const fallbackDept = rolePerspective === "manager"
       ? managerDept
-      : (selectedDept !== "all" ? selectedDept : (actorRealDept || userDept || "Kinh Doanh"));
+      : (selectedDept !== "all" && !isWorkspaceBlockKey(selectedDept)
+          ? selectedDept
+          : defaultConcreteDeptForScope(selectedDept, actorRealDept || userDept));
     const defaultCategory = SCHEDULE_VALID_CATEGORIES.includes(fallbackDept)
       ? fallbackDept
       : (SCHEDULE_VALID_CATEGORIES.includes(actorRealDept) ? actorRealDept : "Kinh Doanh");
@@ -3020,20 +2979,25 @@ export const UnifiedWorkspace: React.FC = () => {
       });
     }
 
-    if (normDept && normDept !== "all" && DEPARTMENT_STAFF[normDept]) {
-      DEPARTMENT_STAFF[normDept].forEach(rawName => {
+    const targetStaffDepts = isWorkspaceBlockKey(normDept)
+      ? Array.from(WORKSPACE_BLOCKS[normDept].depts)
+      : normDept && normDept !== "all"
+      ? [normDept]
+      : [];
+    targetStaffDepts.forEach((dKey) => {
+      (DEPARTMENT_STAFF[dKey] || []).forEach(rawName => {
         const cleanName = rawName.replace(/\s*\(.*?\)/, "").trim();
         const posMatch = rawName.match(/\((.*?)\)/);
         if (!list.some((p: any) => sameStaffName(p.full_name || p, cleanName))) {
           list.push({
             full_name: cleanName,
             employee_code: "",
-            position: posMatch ? posMatch[1] : `Nhân sự ${normDept}`,
-            department: normDept
+            position: posMatch ? posMatch[1] : `Nhân sự ${dKey}`,
+            department: dKey
           });
         }
       });
-    }
+    });
 
     return list;
   }, [personnelList, effectiveSelectedDept]);
@@ -4601,17 +4565,22 @@ export const UnifiedWorkspace: React.FC = () => {
       "Đơn Nội Bộ"
     ];
     const isCoreDept = (deptName: string) => coreDepts.some(c => isSameWorkspaceDept(deptName, c));
-    const activeCoreDepts = coreDepts.filter(c =>
-      ["Kinh Doanh", "Application", "Kho & Vận Hành", "Cung Ứng", "Nghiên Cứu R&D", "Sản Xuất Kit", "QA/QC", "Kho Nhà Máy", "Cung Ứng Kỹ Thuật"].includes(c) ||
-      scopeTasks.some(t => isSameWorkspaceDept(t.department, c)) ||
-      scopeWorkflows.some(w => isSameWorkspaceDept(w.target_dept, c) || isSameWorkspaceDept(w.requester_dept, c)) ||
-      scopePersonnel.some(p => isSameWorkspaceDept(p.department, c))
+    const scopedCoreDepts = isWorkspaceBlockKey(effectiveSelectedDept)
+      ? coreDepts.filter((c) => isSameWorkspaceDept(c, effectiveSelectedDept))
+      : coreDepts;
+    const activeCoreDepts = scopedCoreDepts.filter(c =>
+      (isWorkspaceBlockKey(effectiveSelectedDept) ||
+        ["Kinh Doanh", "Application", "Kho & Vận Hành", "Cung Ứng", "Nghiên Cứu R&D", "Sản Xuất Kit", "QA/QC", "Kho Nhà Máy", "Cung Ứng Kỹ Thuật"].includes(c) ||
+        scopeTasks.some(t => isSameWorkspaceDept(t.department, c)) ||
+        scopeWorkflows.some(w => isSameWorkspaceDept(w.target_dept, c) || isSameWorkspaceDept(w.requester_dept, c)) ||
+        scopePersonnel.some(p => isSameWorkspaceDept(p.department, c)))
     );
     const otherTasksCheck = scopeTasks.filter(t => !isCoreDept(t.department));
     const otherStaffCheck = scopePersonnel.filter(p => !isCoreDept(p.department));
-    const departments = (otherTasksCheck.length > 0 || otherStaffCheck.length > 0)
-      ? [...activeCoreDepts, "Khối Hành Chính & Văn Phòng"]
-      : activeCoreDepts;
+    const departments =
+      effectiveSelectedDept !== "BLOCK_TECHNICAL" && (otherTasksCheck.length > 0 || otherStaffCheck.length > 0)
+        ? [...activeCoreDepts, "Khối Hành Chính & Văn Phòng"]
+        : activeCoreDepts;
 
     const deptScorecards = departments.map(dName => {
       const isOtherGroup = dName === "Khối Hành Chính & Văn Phòng";
@@ -4717,7 +4686,7 @@ export const UnifiedWorkspace: React.FC = () => {
         : "Toàn thời gian";
 
     return {
-      scopeTitle: isDeptScoped ? `Phòng ${currentScopeDept}` : "Toàn Công Ty",
+      scopeTitle: isDeptScoped ? formatWorkspaceScopeLabel(currentScopeDept, true) : "Toàn Công Ty",
       periodLabel,
       scopeThematicPlans,
       totalTasks,
@@ -6893,10 +6862,13 @@ export const UnifiedWorkspace: React.FC = () => {
   // Open Create Thematic / Cross-Department Project Modal
   const openCreateThematicModal = (deptOverride?: string) => {
     setEditingThematicId(null);
-    const targetDept = deptOverride || (selectedDept === "all" ? "Liên Phòng Ban" : selectedDept);
+    const rawTarget = deptOverride || selectedDept;
+    const targetDept = !rawTarget || rawTarget === "all" || isWorkspaceBlockKey(rawTarget) ? "Liên Phòng Ban" : rawTarget;
     const existingCount = labProjects.length + 1;
     const newId = `DA-${existingCount < 10 ? "0" + existingCount : existingCount}`;
-    const defaultPartDepts = targetDept === "Liên Phòng Ban"
+    const defaultPartDepts = isWorkspaceBlockKey(rawTarget)
+      ? Array.from(WORKSPACE_BLOCKS[rawTarget].depts).slice(0, 4)
+      : targetDept === "Liên Phòng Ban"
       ? (DEPARTMENTS.filter((d) => d.id !== "all").slice(0, 4).map((d) => d.id))
       : [targetDept];
     const defaultLead = selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__"
@@ -8464,9 +8436,9 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             sub: "Sales, Kho KD, Cung ứng, KT",
             count: commOpen,
             unit: "việc mở",
-            active: isSameWorkspaceDept(selectedDept, "Kinh Doanh") && taskSourceFilter === "all",
+            active: selectedDept === "BLOCK_COMMERCIAL" && taskSourceFilter === "all",
             cls: "border-orange-200 dark:border-orange-900/70 bg-orange-50/60 dark:bg-orange-950/20 text-orange-900 dark:text-orange-200",
-            onClick: () => { setSelectedDept("Kinh Doanh"); setTaskSourceFilter("all"); setActiveSubTab("tasks"); }
+            onClick: () => { setSelectedDept("BLOCK_COMMERCIAL"); setTaskSourceFilter("all"); setActiveSubTab("tasks"); }
           },
           {
             id: "app_legal",
@@ -8581,43 +8553,83 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               <span>Phòng ban: {effectiveSelectedDept}</span>
             </div>
           ) : (
-            <div className="relative shrink-0">
-              <select
-                value={selectedDept}
-                onChange={(e) => setSelectedDept(e.target.value)}
-                className="appearance-none pl-8 pr-8 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white border border-transparent hover:border-slate-300 dark:hover:border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer transition-all"
-              >
-                <option value="all" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white py-1">
-                  🏢 Toàn công ty (Tất cả các Khối)
-                </option>
-                <optgroup label="🏢 Khối Kinh Doanh & Văn Phòng" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
-                  <option value="Kinh Doanh">💼 Kinh Doanh (Sales)</option>
-                  <option value="Sales Admin">📋 Sales Admin</option>
-                  <option value="Application">🔬 Application (Kỹ Thuật & Ứng Dụng KD)</option>
-                  <option value="Kho & Vận Hành">📦 Kho Kinh Doanh & Vận Hành (Thương Mại)</option>
-                  <option value="Cung Ứng">🛒 Cung Ứng Kinh Doanh (Mua Hàng TM & XNK)</option>
-                  <option value="PM">🎯 Quản Lý Sản Phẩm (PM)</option>
-                  <option value="Marketing">📢 Marketing & Tiếp Thị</option>
-                  <option value="Kế Toán">💰 Kế Toán - Tài Chính</option>
-                  <option value="Pháp Chế">⚖️ Pháp Chế & Tuân Thủ</option>
-                  <option value="Hành Chính Nhân Sự">👥 Hành Chính – Nhân Sự (HR)</option>
-                </optgroup>
-                <optgroup label="🏭 Khối Kỹ Thuật – Nhà Máy" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
-                  <option value="Đơn Nội Bộ">📑 Điều Phối Đơn Nội Bộ (KD ↔ Nhà Máy)</option>
-                  <option value="Nghiên Cứu R&D">🧬 Nghiên Cứu & Phát Triển (R&D)</option>
-                  <option value="Sản Xuất Kit">🧪 Sản Xuất Kit Sinh Học Phân Tử</option>
-                  <option value="Tổng Hợp Oligo">🧬 Tổng Hợp & Tinh Sạch Oligo</option>
-                  <option value="Kỹ Thuật – Thiết Bị">⚙️ Kỹ Thuật – Công Nghệ Thiết Bị</option>
-                  <option value="QA/QC">🛡️ Đảm Bảo & Kiểm Soát Chất Lượng (QA/QC)</option>
-                  <option value="Kho Nhà Máy">🏭 Kho Nhà Máy (Vật Tư, Hóa Chất & Thành Phẩm SX)</option>
-                  <option value="Cung Ứng Kỹ Thuật">🧪 Cung Ứng Kỹ Thuật (Mua Sắm NVL/Hóa Chất Nhà Máy)</option>
-                </optgroup>
-                <optgroup label="🏛️ Ban Lãnh Đạo" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
-                  <option value="Ban Giám Đốc">🏛️ Ban Giám Đốc (BOD)</option>
-                </optgroup>
-              </select>
-              <Filter className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500" />
-              <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" />
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {/* Quick 1-Click Block (Khối) Selector */}
+              <div className="inline-flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-xl border border-slate-200/70 dark:border-slate-700/70">
+                {[
+                  { id: "all", label: "🏢 Toàn công ty" },
+                  { id: "BLOCK_COMMERCIAL", label: "💼 Khối KD & VP" },
+                  { id: "BLOCK_TECHNICAL", label: "🏭 Khối Kỹ Thuật" },
+                ].map((blk) => {
+                  const isActive = selectedDept === blk.id;
+                  return (
+                    <button
+                      key={blk.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedDept(blk.id);
+                        setTaskSourceFilter("all");
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                        isActive
+                          ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs"
+                          : "text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
+                      }`}
+                    >
+                      {blk.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="relative shrink-0">
+                <select
+                  value={selectedDept}
+                  onChange={(e) => {
+                    setSelectedDept(e.target.value);
+                    if (isWorkspaceBlockKey(e.target.value) || e.target.value === "all") {
+                      setTaskSourceFilter("all");
+                    }
+                  }}
+                  className="appearance-none pl-8 pr-8 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white border border-transparent hover:border-slate-300 dark:hover:border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer transition-all"
+                >
+                  <option value="all" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white py-1">
+                    🏢 Toàn công ty (Tất cả các Khối)
+                  </option>
+                  <optgroup label="⚡ Hiển Thị Công Việc Theo Khối (Toàn Khối)" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                    <option value="BLOCK_COMMERCIAL">🏢 Toàn Khối Kinh Doanh &amp; Văn Phòng (10 phòng ban)</option>
+                    <option value="BLOCK_TECHNICAL">🏭 Toàn Khối Kỹ Thuật – Nhà Máy (8 phòng ban)</option>
+                    <option value="BLOCK_EXECUTIVE">🏛️ Khối Ban Lãnh Đạo (BOD)</option>
+                  </optgroup>
+                  <optgroup label="🏢 Từng Phòng Ban — Khối Kinh Doanh & Văn Phòng" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                    <option value="Kinh Doanh">💼 Kinh Doanh (Sales)</option>
+                    <option value="Sales Admin">📋 Sales Admin</option>
+                    <option value="Application">🔬 Application (Kỹ Thuật & Ứng Dụng KD)</option>
+                    <option value="Kho & Vận Hành">📦 Kho Kinh Doanh & Vận Hành (Thương Mại)</option>
+                    <option value="Cung Ứng">🛒 Cung Ứng Kinh Doanh (Mua Hàng TM & XNK)</option>
+                    <option value="PM">🎯 Quản Lý Sản Phẩm (PM)</option>
+                    <option value="Marketing">📢 Marketing & Tiếp Thị</option>
+                    <option value="Kế Toán">💰 Kế Toán - Tài Chính</option>
+                    <option value="Pháp Chế">⚖️ Pháp Chế & Tuân Thủ</option>
+                    <option value="Hành Chính Nhân Sự">👥 Hành Chính – Nhân Sự (HR)</option>
+                  </optgroup>
+                  <optgroup label="🏭 Từng Phòng Ban — Khối Kỹ Thuật – Nhà Máy" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                    <option value="Đơn Nội Bộ">📑 Điều Phối Đơn Nội Bộ (KD ↔ Nhà Máy)</option>
+                    <option value="Nghiên Cứu R&D">🧬 Nghiên Cứu & Phát Triển (R&D)</option>
+                    <option value="Sản Xuất Kit">🧪 Sản Xuất Kit Sinh Học Phân Tử</option>
+                    <option value="Tổng Hợp Oligo">🧬 Tổng Hợp & Tinh Sạch Oligo</option>
+                    <option value="Kỹ Thuật – Thiết Bị">⚙️ Kỹ Thuật – Công Nghệ Thiết Bị</option>
+                    <option value="QA/QC">🛡️ Đảm Bảo & Kiểm Soát Chất Lượng (QA/QC)</option>
+                    <option value="Kho Nhà Máy">🏭 Kho Nhà Máy (Vật Tư, Hóa Chất & Thành Phẩm SX)</option>
+                    <option value="Cung Ứng Kỹ Thuật">🧪 Cung Ứng Kỹ Thuật (Mua Sắm NVL/Hóa Chất Nhà Máy)</option>
+                  </optgroup>
+                  <optgroup label="🏛️ Ban Lãnh Đạo" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                    <option value="Ban Giám Đốc">🏛️ Ban Giám Đốc (BOD)</option>
+                  </optgroup>
+                </select>
+                <Filter className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500" />
+                <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" />
+              </div>
             </div>
           )}
 
@@ -8760,7 +8772,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
               <button
                 onClick={() => {
-                  const defaultDept = rolePerspective === "manager" ? managerDept : (selectedDept === "all" ? userDept || "Kinh Doanh" : selectedDept);
+                  const defaultDept = rolePerspective === "manager" ? managerDept : defaultConcreteDeptForScope(selectedDept, userDept);
                   setTaskForm({
                     id: null,
                     title: "",
@@ -10712,7 +10724,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2 flex-wrap">
                     <span>🚀 Dự Án &amp; Nhóm Công Việc Liên Phòng Ban</span>
                     <span className="px-2.5 py-0.5 text-[11px] font-bold rounded-full bg-purple-100 dark:bg-purple-950/80 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
-                      {filteredLabProjects.length} Dự Án ({selectedDept === "all" ? "Toàn Công Ty" : selectedDept})
+                      {filteredLabProjects.length} Dự Án ({formatWorkspaceScopeLabel(selectedDept)})
                     </span>
                   </h3>
                   <p className="text-xs text-slate-500">
@@ -10729,7 +10741,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 hover:bg-purple-100 cursor-pointer transition-all"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    <span>Dự án phòng {selectedDept}</span>
+                    <span>Dự án {formatWorkspaceScopeLabel(selectedDept, true)}</span>
                   </button>
                 )}
               </div>
@@ -10743,6 +10755,14 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     ...(DEPARTMENT_THEMATIC_TYPES["Liên Phòng Ban"] || []),
                     ...Object.entries(DEPARTMENT_THEMATIC_TYPES)
                       .filter(([k]) => k !== "Liên Phòng Ban")
+                      .map(([, v]) => v)
+                      .flat()
+                  ]
+                : isWorkspaceBlockKey(currentDept)
+                ? [
+                    ...(DEPARTMENT_THEMATIC_TYPES["Liên Phòng Ban"] || []),
+                    ...Object.entries(DEPARTMENT_THEMATIC_TYPES)
+                      .filter(([k]) => k !== "Liên Phòng Ban" && isSameWorkspaceDept(k, currentDept))
                       .map(([, v]) => v)
                       .flat()
                   ]
@@ -11606,7 +11626,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 {rolePerspective === "director" || rolePerspective === "manager" ? (
                   <div className="flex items-center gap-2 min-w-[290px]">
                     <span className="text-xs text-slate-500 font-semibold shrink-0">
-                      Nhân sự ({effectiveSelectedDept !== "all" ? effectiveSelectedDept : "Toàn công ty"}):
+                      Nhân sự ({formatWorkspaceScopeLabel(effectiveSelectedDept)}):
                     </span>
                     <SearchablePersonnelSelect
                       value={activeDailyStaff}
@@ -11615,7 +11635,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       filterDepartment={effectiveSelectedDept}
                       placeholder={
                         effectiveSelectedDept !== "all"
-                          ? `Chọn nhân sự thuộc ${effectiveSelectedDept} (${departmentStaffList.length} người)...`
+                          ? `Chọn nhân sự thuộc ${formatWorkspaceScopeLabel(effectiveSelectedDept)} (${departmentStaffList.length} người)...`
                           : "Chọn nhân sự để theo dõi..."
                       }
                     />
@@ -11635,7 +11655,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 <span className="text-[11px] font-bold text-slate-500 shrink-0 mr-1 flex items-center gap-1">
                   <Users className="w-3.5 h-3.5 text-indigo-500" />
                   <span>
-                    Nhân sự {effectiveSelectedDept !== "all" ? `phòng ${effectiveSelectedDept}` : "toàn công ty"} ({departmentStaffList.length}):
+                    Nhân sự {effectiveSelectedDept !== "all" ? formatWorkspaceScopeLabel(effectiveSelectedDept, true) : "toàn công ty"} ({departmentStaffList.length}):
                   </span>
                 </span>
                 {departmentStaffList.map((p: any) => {
@@ -12110,7 +12130,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               : "text-slate-500 hover:text-slate-700"
                           }`}
                         >
-                          🏢 {effectiveSelectedDept !== "all" ? effectiveSelectedDept : "Cả công ty"}
+                          🏢 {effectiveSelectedDept !== "all" ? formatWorkspaceScopeLabel(effectiveSelectedDept) : "Cả công ty"}
                         </button>
                         <button
                           type="button"
