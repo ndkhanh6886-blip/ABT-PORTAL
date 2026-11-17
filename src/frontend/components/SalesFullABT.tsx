@@ -7568,7 +7568,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     // Quyền xem toàn bộ hồ sơ khách hàng (bao gồm thông tin cá nhân riêng tư, sửa, xóa):
     // Chỉ Ban Giám Đốc (QL-03) và Phó trưởng phòng (KD-03) được xem toàn bộ.
     // Quản lý Admin (KD-01, KD-06), Sale Admin (KD-04, KD-05) và Kho Vận chỉ xem thông tin phục vụ giao nhận hàng (Địa chỉ, Mã KH, MST, Tên & SĐT người nhận hàng).
-    const canViewAllCustomerFullDetails = isSalesLeader;
+    // Người được cấp quyền "sales.edit_customer" (Cài đặt → Phân quyền) cũng xem đầy đủ & sửa được mọi hồ sơ khách hàng.
+    const canViewAllCustomerFullDetails = isSalesLeader || Boolean(can && can("sales.edit_customer"));
+    // Xóa khách hàng: BGĐ / Phó trưởng phòng hoặc người có quyền "sales.delete" (máy chủ kiểm tra lại)
+    const canDeleteCustomerPerm = isSalesLeader || Boolean(can && can("sales.delete"));
 
     // Quyền xem và điều phối toàn bộ Đơn hàng yêu cầu (Tab 6): Cả BGĐ, Trưởng phòng, Admin Manager, Sale Admin, người được phân quyền duyệt đơn/giá 0đ và Kho Vận đều được thao tác!
     const canManageAllOrders = isManagerOrAdmin || canApproveSalesOrdersPerm || isWarehouseStaff || isCrossDepartmentViewer;
@@ -20516,7 +20519,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 <Edit3 className="w-3.5 h-3.5" />
                                                                 Sửa thông tin
                                                             </button>
-                                                            {canViewAllCustomerFullDetails && (
+                                                            {canDeleteCustomerPerm && (
                                                                 <button
                                                                     onClick={() => handleDeleteCustomer(selectedCustomer.id)}
                                                                     className="flex items-center gap-1 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/80 hover:border-rose-700 text-rose-350 hover:text-rose-200 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
