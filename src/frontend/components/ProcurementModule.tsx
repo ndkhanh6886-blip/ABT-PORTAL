@@ -1140,15 +1140,21 @@ export const ProcurementModule: React.FC = () => {
   const handleQuickChangeStatus = async (po: any, newStatus: string) => {
     setActiveStatusDropdownId(null);
     const targetUpper = String(newStatus || "").toUpperCase();
+    let markFreeGift = false;
     if (!["DRAFT", "PENDING", "CANCELLED"].includes(targetUpper)) {
       const poItems: any[] = Array.isArray(po.items) ? po.items : [];
-      const zeroPriceItems = poItems.filter((it: any) => !(roundPrice3(it?.unit_price) > 0));
+      const zeroPriceItems = poItems.filter((it: any) =>
+        !(roundPrice3(it?.unit_price) > 0) &&
+        !it?.is_free_gift &&
+        !/tặng|demo|foc|khuyến mãi|miễn phí|0\s*đ|0\s*đồng/i.test(String(it?.notes || ""))
+      );
       if (zeroPriceItems.length > 0) {
         const missingList = zeroPriceItems.map((it: any) => `• ${it?.product_code || "SP"} - ${cleanItemName(it?.product_name || "")}`).join("\n");
-        alert(
-          `Không thể xác nhận / chuyển trạng thái PO ${po.po_code} khi chưa nhập đủ đơn giá!\n\nCác mặt hàng đang chưa có giá (0 VNĐ):\n${missingList}\n\n👉 Vui lòng bấm Sửa PO để nhập đầy đủ đơn giá trước khi xác nhận.`
+        const ok = window.confirm(
+          `PO ${po.po_code} có mặt hàng đơn giá 0 VNĐ:\n${missingList}\n\n🎁 Đây có phải Hàng tặng / Demo (0đ) từ hãng không?\n\n• OK: xác nhận là hàng tặng / demo và chuyển trạng thái.\n• Cancel: quay lại, bấm Sửa PO để nhập đơn giá.`
         );
-        return;
+        if (!ok) return;
+        markFreeGift = true;
       }
     }
     if (newStatus === "COMPLETED") {
@@ -1162,11 +1168,13 @@ export const ProcurementModule: React.FC = () => {
         body: JSON.stringify({
           id: po.id,
           po_code: po.po_code,
-          status: newStatus
+          status: newStatus,
+          mark_free_gift: markFreeGift
         })
       });
       const data = await res.json();
       if (data.success) {
+        if (markFreeGift) { fetchData(); }
         setOrders(prev => prev.map(o => o.id === po.id ? { ...o, status: newStatus } : o));
       } else {
         alert(data.error || "Lỗi cập nhật trạng thái");

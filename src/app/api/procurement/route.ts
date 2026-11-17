@@ -1099,7 +1099,7 @@ export async function POST(req: NextRequest) {
       const targetStatusUpper = String(status || "PENDING").toUpperCase();
       const isInternalDeptSupplier = Boolean(inferFactoryUnitFromSupplierName(supplier_name));
       if (items && items.length > 0 && !["DRAFT", "PENDING", "CANCELLED"].includes(targetStatusUpper) && !isInternalDeptSupplier) {
-        const zeroPriceItems = items.filter((it: any) => !(Number(it?.unit_price) > 0));
+        const zeroPriceItems = items.filter((it: any) => !(Number(it?.unit_price) > 0) && !it?.is_free_gift && !/tặng|demo|foc|khuyến mãi|miễn phí|0\s*đ|0\s*đồng/i.test(String(it?.notes || "")));
         if (zeroPriceItems.length > 0) {
           const missingCodes = zeroPriceItems.map((it: any) => it.product_code || it.product_name || "SP").join(", ");
           return NextResponse.json(
@@ -1476,7 +1476,15 @@ export async function POST(req: NextRequest) {
             : typeof existing.items === "string"
               ? (() => { try { return JSON.parse(existing.items) || []; } catch { return []; } })()
               : [];
-          const zeroPriceItems = poItems.filter((it: any) => !(Number(it?.unit_price) > 0));
+          const isGift = (it: any) => !!it?.is_free_gift || /tặng|demo|foc|khuyến mãi|miễn phí|0\s*đ|0\s*đồng/i.test(String(it?.notes || ""));
+          let zeroPriceItems = poItems.filter((it: any) => !(Number(it?.unit_price) > 0) && !isGift(it));
+          if (zeroPriceItems.length > 0 && body.mark_free_gift) {
+            const marked = poItems.map((it: any) => !(Number(it?.unit_price) > 0) && !isGift(it)
+              ? { ...it, unit_price: 0, is_free_gift: true, notes: it.notes || "Hàng tặng / Demo (0đ)" }
+              : it);
+            await c.query("UPDATE procurement_orders SET items = $1 WHERE id = $2", [JSON.stringify(marked), id]);
+            zeroPriceItems = [];
+          }
           if (zeroPriceItems.length > 0) {
             const missingCodes = zeroPriceItems.map((it: any) => it.product_code || it.product_name || "SP").join(", ");
             throw new HttpError(
