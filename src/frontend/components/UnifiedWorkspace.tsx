@@ -71,6 +71,25 @@ import { AttachmentPicker, AttachmentList, uploadSingleFileSmart } from "@/front
 import { DateInputVN, formatDayVN, toISODate } from "@/frontend/components/DateInputVN";
 import { ProposalsApprovalView, ProposalItem, isProposalWaitingForUser } from "@/frontend/components/ProposalsApprovalView";
 import { Pager, usePaged } from "@/frontend/components/Pager";
+import type { HubProject, HubWeeklyPlanEvent, HubWorkItem } from "@/factory/workhub/service";
+
+export const SCHEDULE_VALID_CATEGORIES = [
+  "Application",
+  "Kinh Doanh",
+  "Kho & Vận Hành",
+  "Cung Ứng",
+  "Kế Toán",
+  "Pháp Chế",
+  "Nghiên Cứu R&D",
+  "Sản Xuất Kit",
+  "Tổng Hợp Oligo",
+  "Kỹ Thuật – Thiết Bị",
+  "QA/QC",
+  "Kho Nhà Máy",
+  "Cung Ứng Kỹ Thuật",
+  "Đơn Nội Bộ",
+  "Họp & Giao Ban"
+];
 
 // Configuration for Departments across the entire company (Khối Kinh Doanh & Văn Phòng + Khối Kỹ Thuật – Nhà Máy)
 export const DEPARTMENTS = [
@@ -1897,17 +1916,27 @@ export const UnifiedWorkspace: React.FC = () => {
   const { showToast, notifyActivity, filteredNotifications, markAsRead } = useNotification();
   const { user, can, updateUser } = useAuth();
   const [serverMyPermissions, setServerMyPermissions] = useState<Record<string, boolean>>({});
+  // Dữ liệu liên thông toàn công ty từ Khối Kỹ Thuật – Nhà Máy & Application / Pháp Chế
+  const [hubUserDept, setHubUserDept] = useState<string>("");
+  const [hubWorkItems, setHubWorkItems] = useState<HubWorkItem[]>([]);
+  const [hubProjects, setHubProjects] = useState<HubProject[]>([]);
+  const [hubWeeklyPlans, setHubWeeklyPlans] = useState<HubWeeklyPlanEvent[]>([]);
+  const [workspaceUsersList, setWorkspaceUsersList] = useState<any[]>([]);
+  const [taskSourceFilter, setTaskSourceFilter] = useState<"all" | "portal" | "RD" | "KIT_OLIGO" | "DEVICE" | "QA_WH_PUR" | "APP_LEGAL">("all");
+  const [scheduleScopeMode, setScheduleScopeMode] = useState<"person" | "dept">("person");
+  const [scheduleWorkSearch, setScheduleWorkSearch] = useState<string>("");
+  const [showTechWeeklyPlans, setShowTechWeeklyPlans] = useState<boolean>(true);
   const warnNoTemplatePermission = () =>
     showToast("Bạn chưa có quyền tạo / sửa quy trình mẫu. Nhờ Quản trị viên cấp quyền \"Quản lý quy trình phối hợp mẫu\" (Cấu hình → Phân quyền) hoặc gửi nội dung quy trình để Quản trị viên tạo.", "warning");
 
   // Role-Based Access Control strictly according to the logged-in user:
-  // - Ban Giám Đốc (admin / director): Full company-wide access (4 departments)
+  // - Ban Giám Đốc (admin / director): Full company-wide access (all blocks)
   // - Trưởng Phòng (head / manager): Department-wide access
   // - Nhân Viên (staff / specialist): Strictly personal view & creation
   const userRole = (user?.role || "").toLowerCase();
-  const rawUserDept = (user as any)?.department || "Kinh Doanh";
+  const rawUserDept = (user as any)?.department || hubUserDept || (userRole === "admin" || userRole.includes("director") || userRole.includes("giám đốc") ? "Ban Giám Đốc" : "Kinh Doanh");
   const userDept = normalizeWorkspaceDept(rawUserDept) || "Kinh Doanh";
-  const currentStaffName = user?.name || (user as any)?.full_name || "Cán bộ TBR";
+  const currentStaffName = user?.name || (user as any)?.full_name || "Cán bộ ABT";
 
   const isDirector = useMemo(() => {
     return userRole === "admin" || userRole.includes("director") || userRole.includes("giám đốc") || rawUserDept.toLowerCase().includes("giám đốc");
@@ -1915,7 +1944,15 @@ export const UnifiedWorkspace: React.FC = () => {
 
   const isManager = useMemo(() => {
     if (isDirector) return false;
-    return userRole.includes("head") || userRole.includes("lead") || userRole.includes("manager") || userRole.includes("trưởng phòng") || userRole.includes("phó phòng");
+    return (
+      userRole.includes("head") ||
+      userRole.includes("lead") ||
+      userRole.includes("manager") ||
+      userRole.includes("trưởng phòng") ||
+      userRole.includes("phó phòng") ||
+      userRole.includes("quản đốc") ||
+      userRole.includes("chủ nhiệm")
+    );
   }, [isDirector, userRole]);
 
   // Tạo / sửa / xóa quy trình mẫu: Ban Giám Đốc, Trưởng/Phó phòng hoặc người được cấp quyền "Quản lý quy trình phối hợp mẫu"
@@ -2286,14 +2323,45 @@ export const UnifiedWorkspace: React.FC = () => {
     }
     return result;
   }, []);
+  const resolveStaffDept = useCallback((staffName: string): string => {
+    if (!staffName) return "";
+    const pMatch = (personnelList || []).find((p: any) => sameStaffName(p.full_name || p, staffName));
+    if (pMatch?.department) return normalizeWorkspaceDept(pMatch.department);
+    const uMatch = (workspaceUsersList || []).find((u: any) => sameStaffName(u.full_name || u.username, staffName));
+    if (uMatch?.department) return normalizeWorkspaceDept(uMatch.department);
+    return "";
+  }, [personnelList, workspaceUsersList]);
+
+  const resolveUserIdForStaffName = useCallback((staffName: string): number | null => {
+    if (!staffName) return null;
+    if (sameStaffName(staffName, currentStaffName) && Number((user as any)?.id) > 0) {
+      return Number((user as any).id);
+    }
+    const uMatch = (workspaceUsersList || []).find((u: any) => sameStaffName(u.full_name || u.username, staffName));
+    return uMatch?.id ? Number(uMatch.id) : null;
+  }, [workspaceUsersList, currentStaffName, user]);
+
+  const navigateToTargetTab = useCallback((tab: string) => {
+    if (typeof window === "undefined" || !tab || tab === "workspace") return;
+    window.dispatchEvent(new CustomEvent("tbr-navigate", { detail: { tab } }));
+  }, []);
+
   const openScheduleForm = (date?: string, item?: any, defaultEventType: "WORK" | "MEETING" = "WORK") => {
     const defaultActor = selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__"
       ? selectedAssignee
       : (currentStaffName || departmentStaffList[0]?.full_name || "");
-    const defaultCategory = rolePerspective === "manager" ? managerDept : (selectedDept === "all" ? "Kinh Doanh" : selectedDept);
+    const actorRealDept = resolveStaffDept(defaultActor);
+    const fallbackDept = rolePerspective === "manager"
+      ? managerDept
+      : (selectedDept !== "all" ? selectedDept : (actorRealDept || userDept || "Kinh Doanh"));
+    const defaultCategory = SCHEDULE_VALID_CATEGORIES.includes(fallbackDept)
+      ? fallbackDept
+      : (SCHEDULE_VALID_CATEGORIES.includes(actorRealDept) ? actorRealDept : "Kinh Doanh");
     const today = todayVN();
     const pick = date || (viewedWeek.days.some(d => d.date === today) ? today : viewedWeek.days[0].date);
     setAttendeeSearchQuery("");
+    setScheduleScopeMode("person");
+    setScheduleWorkSearch("");
     if (item) {
       const itemDate = item.date ? String(item.date).slice(0, 10) : (viewedWeek.days.find(d => d.name === item.day)?.date || pick);
       const itemEndDate = item.endDate ? String(item.endDate).slice(0, 10) : itemDate;
@@ -2365,6 +2433,41 @@ export const UnifiedWorkspace: React.FC = () => {
     }
     setIsScheduleModalOpen(true);
   };
+
+  const openScheduleForHubItem = useCallback((item: {
+    code?: string;
+    task_code?: string;
+    title?: string;
+    department?: string;
+    dept?: string;
+    assignee_name?: string;
+    assignees?: string[];
+    customer_name?: string;
+    location?: string;
+  }) => {
+    const code = String(item.task_code || item.code || "").trim();
+    const titleRaw = String(item.title || "").trim();
+    const combinedTitle = code && !titleRaw.toUpperCase().includes(code.toUpperCase())
+      ? `[${code}] ${titleRaw}`
+      : titleRaw;
+    const rawAssignees = Array.isArray(item.assignees) && item.assignees.length > 0
+      ? item.assignees
+      : String(item.assignee_name || "").split(/[,;\n]+/).map((s) => cleanWorkspaceAssignee(s)).filter(Boolean);
+    const preferredActor = (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__"
+      ? selectedAssignee
+      : rawAssignees[0]) || currentStaffName || "";
+    const itemDept = normalizeWorkspaceDept(item.department || item.dept || "") || resolveStaffDept(preferredActor);
+    const validCat = SCHEDULE_VALID_CATEGORIES.includes(itemDept) ? itemDept : "Nghiên Cứu R&D";
+    openScheduleForm(todayVN(), undefined, "WORK");
+    setScheduleForm((prev) => ({
+      ...prev,
+      actor: preferredActor || prev.actor,
+      category: validCat,
+      title: combinedTitle || prev.title,
+      location: String(item.location || item.customer_name || "").trim() || prev.location,
+      linkedTaskCodes: code ? [code] : []
+    }));
+  }, [selectedAssignee, currentStaffName, resolveStaffDept]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [isLabProjectModalOpen, setIsLabProjectModalOpen] = useState(false);
   const [editingThematicId, setEditingThematicId] = useState<string | null>(null);
@@ -2607,10 +2710,11 @@ export const UnifiedWorkspace: React.FC = () => {
   const [dailyPlanItems, setDailyPlanItems] = useState<Array<{
     id: string | number;
     title: string;
-    source: "schedule" | "task" | "workflow" | "extra";
-    origin_tab?: "planner_schedule" | "planner_thematic" | "workflows" | "tasks" | "extra";
+    source: "schedule" | "task" | "workflow" | "extra" | "hub";
+    origin_tab?: "planner_schedule" | "planner_thematic" | "workflows" | "tasks" | "extra" | "hub_technical";
     origin_badge?: string;
     origin_detail?: string;
+    hub_target_tab?: string;
     task_id?: number;
     task_code?: string;
     workflow_id?: number;
@@ -2652,19 +2756,28 @@ export const UnifiedWorkspace: React.FC = () => {
         "unified_announcements",
         "workspace_proposals"
       ];
-      const [res, batchStorageRes] = await Promise.all([
+      const [res, batchStorageRes, workhubRes] = await Promise.all([
         fetch("/api/workflows?action=overview"),
-        fetch(`/api/storage?keys=${wsStorageKeys.join(",")}`).catch(() => null)
+        fetch(`/api/storage?keys=${wsStorageKeys.join(",")}`).catch(() => null),
+        fetch("/api/factory/workhub").catch(() => null)
       ]);
       const data = await res.json();
       const batchStorageJson = batchStorageRes && batchStorageRes.ok ? await batchStorageRes.json().catch(() => null) : null;
       const batchStorageData: Record<string, any> = batchStorageJson?.data || {};
+      const workhubJson = workhubRes && workhubRes.ok ? await workhubRes.json().catch(() => null) : null;
+      if (workhubJson && workhubJson.ok) {
+        if (Array.isArray(workhubJson.workItems)) setHubWorkItems(workhubJson.workItems);
+        if (Array.isArray(workhubJson.projects)) setHubProjects(workhubJson.projects);
+        if (Array.isArray(workhubJson.weeklyPlans)) setHubWeeklyPlans(workhubJson.weeklyPlans);
+        if (workhubJson.currentUserDept) setHubUserDept(String(workhubJson.currentUserDept));
+      }
       if (data) {
         const fetchedTasks: any[] = data.tasks || [];
         setTasks(fetchedTasks);
         setWorkflows(data.workflows || []);
         setDailyLogs(data.daily || []);
         if (data.personnel) setPersonnelList(data.personnel);
+        if (Array.isArray(data.users)) setWorkspaceUsersList(data.users);
         if (Array.isArray(data.customers)) setCustomerList(data.customers);
         if (Array.isArray(data.products)) setProductList(data.products);
         setWorkflowTemplates(mergeWithDefaultWorkflowTemplates(data.templates));
@@ -3067,19 +3180,62 @@ export const UnifiedWorkspace: React.FC = () => {
     return false;
   }, [userDept, wfInvolvesMe, effectiveSelectedDept, departmentStaffList, taskHasAssignee]);
 
+  // Hợp nhất Công việc điều hành chung (company_tasks) + Công việc thực tế từ toàn Khối Kỹ Thuật – Nhà Máy & Application / Pháp Chế
+  const mergedWorkspaceTasks = useMemo(() => {
+    const existingCodes = new Set(
+      (tasks || []).map((t: any) => String(t?.task_code || "").trim().toUpperCase()).filter(Boolean)
+    );
+    const hubRows = (hubWorkItems || [])
+      .filter((h) => h.includeInTaskBoard !== false && !existingCodes.has(String(h.code || "").trim().toUpperCase()))
+      .map((h) => ({
+        id: h.uid,
+        task_code: h.code,
+        title: h.title,
+        department: h.dept,
+        involvedDepts: h.involvedDepts,
+        task_category: h.typeLabel,
+        assignee_name: h.assignees.join(", "),
+        assigneeUserIds: h.assigneeUserIds,
+        customer_name: h.location,
+        priority: h.priority,
+        status: h.kanbanStatus,
+        deadline: h.dueDate || "",
+        description: h.metaSummary,
+        result: "",
+        isHubItem: true,
+        hubDomainGroup: h.domainGroup,
+        hubSourceType: h.sourceType,
+        hubStatusLabel: h.statusLabel,
+        hubTargetTab: h.targetTab,
+        isOpenForSchedule: h.isOpenForSchedule,
+        updated_at: h.updatedAt || null,
+      }));
+    return [...(tasks || []), ...hubRows];
+  }, [tasks, hubWorkItems]);
+
+  // Hợp nhất Dự án liên phòng ban (Portal) + Dự án Stage-Gate R&D / KTCN (Factory)
+  const allCompanyProjects = useMemo(() => {
+    return [...(labProjects || []), ...(hubProjects || [])];
+  }, [labProjects, hubProjects]);
+
   // Kiểm tra một Công việc (bao gồm công việc nội bộ phòng ban và công việc liên phòng ban) có thuộc / liên quan tới phòng ban targetDept hay không
   const taskInvolvesDept = useCallback((t: any, targetDept: string): boolean => {
     if (!t) return false;
     if (!targetDept || targetDept === "all") return true;
 
-    // 1. Công việc thuộc trực tiếp phòng ban targetDept
+    // 1. Công việc thuộc trực tiếp phòng ban targetDept hoặc nằm trong mảng involvedDepts (liên phòng / Factory bridge)
+    if (Array.isArray(t.involvedDepts) && t.involvedDepts.some((d: string) => isSameWorkspaceDept(d, targetDept))) {
+      return true;
+    }
     if (t.department && t.department !== "Liên Phòng Ban" && isSameWorkspaceDept(t.department, targetDept)) {
       return true;
     }
 
     // 2. Công việc giao cho hoặc khởi tạo bởi chính người dùng đang đăng nhập (khi lọc đúng phòng ban của mình)
+    const myNumericId = Number((user as any)?.id) || 0;
     if (isSameWorkspaceDept(targetDept, userDept)) {
       if (
+        (myNumericId > 0 && Array.isArray(t.assigneeUserIds) && t.assigneeUserIds.includes(myNumericId)) ||
         taskHasAssignee(t.assignee_name, currentStaffName) ||
         isTaskCreatedByStaff(t, currentStaffName, (user as any)?.username)
       ) {
@@ -3091,7 +3247,12 @@ export const UnifiedWorkspace: React.FC = () => {
     if (isSameWorkspaceDept(targetDept, effectiveSelectedDept)) {
       const hasDeptMember = departmentStaffList.some((p: any) => {
         const pName = p.full_name || p;
-        return taskHasAssignee(t.assignee_name, pName) || isTaskCreatedByStaff(t, pName);
+        const pUid = resolveUserIdForStaffName(pName);
+        return (
+          (pUid && Array.isArray(t.assigneeUserIds) && t.assigneeUserIds.includes(pUid)) ||
+          taskHasAssignee(t.assignee_name, pName) ||
+          isTaskCreatedByStaff(t, pName)
+        );
       });
       if (hasDeptMember) return true;
     }
@@ -3127,7 +3288,7 @@ export const UnifiedWorkspace: React.FC = () => {
     // 6. Công việc sinh từ Dự án liên phòng ban (TSK-PRJ-...)
     const prjCode = String(t.task_code || "");
     if (prjCode.startsWith("TSK-PRJ-") || t.department === "Liên Phòng Ban") {
-      const matchedPrj = labProjects.find((p: any) => {
+      const matchedPrj = allCompanyProjects.find((p: any) => {
         const pid = String(p?.id || "");
         return pid && (prjCode.includes(pid) || combinedText.includes(`[${pid}]`) || combinedText.includes(`(${pid})`));
       });
@@ -3147,20 +3308,32 @@ export const UnifiedWorkspace: React.FC = () => {
     }
 
     return false;
-  }, [userDept, currentStaffName, user, effectiveSelectedDept, departmentStaffList, taskHasAssignee, isTaskCreatedByStaff, workflows, workflowInvolvesDept, labProjects]);
+  }, [userDept, currentStaffName, user, effectiveSelectedDept, departmentStaffList, taskHasAssignee, isTaskCreatedByStaff, workflows, workflowInvolvesDept, allCompanyProjects, resolveUserIdForStaffName]);
 
-  // RBAC Filtered Tasks:
-  // - Staff: Views their assigned tasks + tasks they created/requested + unassigned tasks in their department
-  // - Manager: Strictly views ONLY tasks belonging to their department + cross-department tasks involving their department
-  // - Director: Views company-wide ("all") or selected department
+  // Kiểm tra 1 Công việc (Portal hoặc Kỹ thuật) có giao cho nhân sự staffName hay không
+  const taskBelongsToStaff = useCallback((t: any, staffName: string): boolean => {
+    if (!t || !staffName) return false;
+    if (taskHasAssignee(t.assignee_name, staffName) || isTaskCreatedByStaff(t, staffName)) return true;
+    const uid = resolveUserIdForStaffName(staffName);
+    if (uid && Array.isArray(t.assigneeUserIds) && t.assigneeUserIds.includes(uid)) return true;
+    return false;
+  }, [taskHasAssignee, isTaskCreatedByStaff, resolveUserIdForStaffName]);
+
+  // RBAC Filtered Tasks (Bao gồm toàn bộ việc Điều hành + việc Khối Kỹ Thuật – Nhà Máy & Application / Pháp Chế):
   const filteredTasks = useMemo(() => {
-    return tasks.filter((t) => {
+    const myUid = Number((user as any)?.id) || 0;
+    return mergedWorkspaceTasks.filter((t: any) => {
       const cleanAssignee = cleanWorkspaceAssignee(t.assignee_name);
-      const isAssignedToMe = taskHasAssignee(t.assignee_name, currentStaffName);
+      const isAssignedToMe =
+        (myUid > 0 && Array.isArray(t.assigneeUserIds) && t.assigneeUserIds.includes(myUid)) ||
+        taskHasAssignee(t.assignee_name, currentStaffName);
       const isCreatedByMe = isTaskCreatedByStaff(t, currentStaffName, (user as any)?.username);
 
       if (rolePerspective === "staff") {
-        const isUnassignedInMyDept = !cleanAssignee && isSameWorkspaceDept(t.department, userDept);
+        const isUnassignedInMyDept = !cleanAssignee && (
+          isSameWorkspaceDept(t.department, userDept) ||
+          (Array.isArray(t.involvedDepts) && t.involvedDepts.some((d: string) => isSameWorkspaceDept(d, userDept)))
+        );
         if (!isAssignedToMe && !isCreatedByMe && !isUnassignedInMyDept) {
           return false;
         }
@@ -3171,11 +3344,20 @@ export const UnifiedWorkspace: React.FC = () => {
         }
       }
 
+      // Filter by source block / domain
+      if (taskSourceFilter !== "all") {
+        if (taskSourceFilter === "portal") {
+          if (t.isHubItem) return false;
+        } else {
+          if (!t.isHubItem || t.hubDomainGroup !== taskSourceFilter) return false;
+        }
+      }
+
       // Filter by selected individual staff member (or "__UNASSIGNED__" for waiting assignment)
       if (selectedAssignee === "__UNASSIGNED__") {
         if (cleanAssignee) return false;
       } else if (selectedAssignee !== "all") {
-        if (!taskHasAssignee(t.assignee_name, selectedAssignee) && !isTaskCreatedByStaff(t, selectedAssignee)) {
+        if (!taskBelongsToStaff(t, selectedAssignee)) {
           return false;
         }
       }
@@ -3189,10 +3371,33 @@ export const UnifiedWorkspace: React.FC = () => {
         (cleanAssignee && cleanAssignee.toLowerCase().includes(q)) ||
         (t.created_by_name && String(t.created_by_name).toLowerCase().includes(q)) ||
         (t.description && String(t.description).toLowerCase().includes(q)) ||
-        (t.customer_name && t.customer_name.toLowerCase().includes(q));
+        (t.customer_name && t.customer_name.toLowerCase().includes(q)) ||
+        (t.department && String(t.department).toLowerCase().includes(q));
       return matchStatus && matchSearch;
     });
-  }, [tasks, rolePerspective, userDept, effectiveSelectedDept, selectedAssignee, currentStaffName, statusFilter, searchQuery, user, taskHasAssignee, isTaskCreatedByStaff, taskInvolvesDept]);
+  }, [mergedWorkspaceTasks, rolePerspective, userDept, effectiveSelectedDept, selectedAssignee, taskSourceFilter, currentStaffName, statusFilter, searchQuery, user, taskHasAssignee, isTaskCreatedByStaff, taskInvolvesDept, taskBelongsToStaff]);
+
+  // RBAC Filtered Technical Weekly Plans (Lịch phân công & Kế hoạch tuần các phòng Kỹ thuật)
+  const filteredHubWeeklyPlans = useMemo(() => {
+    const myUid = Number((user as any)?.id) || 0;
+    return (hubWeeklyPlans || []).filter((s) => {
+      if (rolePerspective === "staff") {
+        if (myUid > 0 && s.actorUserId === myUid) return true;
+        return Boolean(s.actor) && sameStaffName(s.actor, currentStaffName);
+      }
+      if (effectiveSelectedDept !== "all") {
+        const matchDept = isSameWorkspaceDept(s.category, effectiveSelectedDept);
+        const matchDeptStaff = Boolean(s.actor) && departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, s.actor));
+        if (!matchDept && !matchDeptStaff) return false;
+      }
+      if (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__") {
+        const uid = resolveUserIdForStaffName(selectedAssignee);
+        if (uid && s.actorUserId === uid) return true;
+        return Boolean(s.actor) && sameStaffName(s.actor, selectedAssignee);
+      }
+      return true;
+    });
+  }, [hubWeeklyPlans, rolePerspective, user, effectiveSelectedDept, departmentStaffList, selectedAssignee, currentStaffName, resolveUserIdForStaffName]);
 
   // RBAC Filtered Weekly Schedules:
   // - Staff: ONLY sees their own schedule items
@@ -3217,12 +3422,10 @@ export const UnifiedWorkspace: React.FC = () => {
     });
   }, [weeklySchedule, rolePerspective, effectiveSelectedDept, departmentStaffList, selectedAssignee, currentStaffName]);
 
-  // RBAC Filtered Thematic Projects:
-  // - Staff: Sees projects they lead, collaborate on, or in their department
-  // - Manager: Sees thematic projects belonging to or involving their department (can filter by staff)
-  // - Director: Sees whole company or selected department (can filter by staff)
+  // RBAC Filtered Projects (Dự án liên phòng ban + Dự án Stage-Gate R&D / KTCN):
   const filteredLabProjects = useMemo(() => {
-    return labProjects.filter((p) => {
+    const myUid = Number((user as any)?.id) || 0;
+    return allCompanyProjects.filter((p: any) => {
       const partDepts: string[] = Array.isArray(p.participatingDepts) ? p.participatingDepts : [];
       const stageDepts: string[] = Array.isArray(p.stages) ? p.stages.map((s: any) => s.dept).filter(Boolean) : [];
       const matchesDeptFilter = (targetDept: string) => {
@@ -3249,18 +3452,20 @@ export const UnifiedWorkspace: React.FC = () => {
 
       // Filter by staff
       if (rolePerspective === "staff") {
+        const isUidMember = myUid > 0 && (p.leadUserId === myUid || (Array.isArray(p.memberUserIds) && p.memberUserIds.includes(myUid)));
         const isLead = sameStaffName(p.lead, currentStaffName);
         const isCollab = Array.isArray(p.collaborators) && p.collaborators.some((c: string) => sameStaffName(c, currentStaffName));
         const isStageAssignee = Array.isArray(p.stages) && p.stages.some((s: any) => s.assignee && sameStaffName(s.assignee, currentStaffName));
         const inMyDeptProject = userDept && matchesDeptFilter(userDept);
-        if (!isLead && !isCollab && !isStageAssignee && !inMyDeptProject) return false;
+        if (!isUidMember && !isLead && !isCollab && !isStageAssignee && !inMyDeptProject) return false;
       } else if (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__") {
-        const lead = (p.lead || "").toLowerCase().trim();
-        const target = selectedAssignee.toLowerCase().trim();
-        const matchesLead = lead.includes(target) || target.includes(lead);
-        const matchesCollab = Array.isArray(p.collaborators) && p.collaborators.some((c: string) => c.toLowerCase().includes(target));
-        const matchesStageAssignee = Array.isArray(p.stages) && p.stages.some((s: any) => String(s.assignee || "").toLowerCase().includes(target));
-        if (!matchesLead && !matchesCollab && !matchesStageAssignee) return false;
+        const selUid = resolveUserIdForStaffName(selectedAssignee);
+        const isUidMatch = selUid && (p.leadUserId === selUid || (Array.isArray(p.memberUserIds) && p.memberUserIds.includes(selUid)));
+        const matchesLead = sameStaffName(p.lead, selectedAssignee);
+        const matchesCollab = Array.isArray(p.collaborators) && p.collaborators.some((c: string) => sameStaffName(c, selectedAssignee));
+        const matchesStageAssignee = Array.isArray(p.stages) && p.stages.some((s: any) => s.assignee && sameStaffName(s.assignee, selectedAssignee));
+        const matchesStageTask = Array.isArray(p.stages) && p.stages.some((s: any) => Array.isArray(s.tasks) && s.tasks.some((t: any) => t.assignee && sameStaffName(t.assignee, selectedAssignee)));
+        if (!isUidMatch && !matchesLead && !matchesCollab && !matchesStageAssignee && !matchesStageTask) return false;
       }
 
       // Filter by thematic type if selected
@@ -3268,9 +3473,15 @@ export const UnifiedWorkspace: React.FC = () => {
         return false;
       }
 
+      const q = searchQuery.trim().toLowerCase();
+      if (q) {
+        const hay = `${p.id || ""} ${p.name || ""} ${p.lead || ""} ${p.dept || ""} ${p.description || ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+
       return true;
     });
-  }, [labProjects, rolePerspective, userDept, effectiveSelectedDept, departmentStaffList, selectedAssignee, currentStaffName, thematicFilterType]);
+  }, [allCompanyProjects, user, rolePerspective, userDept, effectiveSelectedDept, departmentStaffList, selectedAssignee, currentStaffName, thematicFilterType, searchQuery, resolveUserIdForStaffName]);
 
   // RBAC Filtered Sales Targets:
   // - Staff: ONLY sees their assigned pipeline targets
@@ -4217,10 +4428,10 @@ export const UnifiedWorkspace: React.FC = () => {
       return fields.some(f => f && String(f).toLowerCase().includes(q));
     };
 
-    const scopeTasks = tasks.filter(t => {
+    const scopeTasks = mergedWorkspaceTasks.filter((t: any) => {
       if (effectiveSelectedDept !== "all" && !taskInvolvesDept(t, effectiveSelectedDept)) return false;
       if (selectedAssignee === "__UNASSIGNED__" && cleanWorkspaceAssignee(t.assignee_name)) return false;
-      if (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__" && !taskHasAssignee(t.assignee_name, selectedAssignee) && !isTaskCreatedByStaff(t, selectedAssignee)) return false;
+      if (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__" && !taskBelongsToStaff(t, selectedAssignee)) return false;
       if (!matchesSearch(t.title, t.task_code, t.assignee_name, t.customer_name, t.department)) return false;
       return true;
     });
@@ -4241,7 +4452,7 @@ export const UnifiedWorkspace: React.FC = () => {
       return true;
     });
 
-    const scopeThematicPlans = labProjects.filter(p => {
+    const scopeThematicPlans = allCompanyProjects.filter((p: any) => {
       if (effectiveSelectedDept !== "all") {
         const partDepts: string[] = Array.isArray(p.participatingDepts) ? p.participatingDepts : [];
         const stageDepts: string[] = Array.isArray(p.stages) ? p.stages.map((s: any) => s.dept).filter(Boolean) : [];
@@ -4422,7 +4633,10 @@ export const UnifiedWorkspace: React.FC = () => {
       const dWfSlaPercent = dWfs.length > 0 ? Math.max(0, Math.round(((dWfs.length - dOverdueWfs.length) / dWfs.length) * 100)) : 100;
 
       const dPlans = scopeThematicPlans.filter(p => matchDeptFn(p.dept));
-      const dSchedules = weeklySchedule.filter(s => matchDeptFn(s.dept));
+      const dSchedules = [
+        ...weeklySchedule.filter(s => matchDeptFn(s.category || s.dept)),
+        ...(hubWeeklyPlans || []).filter(h => matchDeptFn(h.category))
+      ];
       let dStagesTotal = 0;
       let dStagesDone = 0;
       dPlans.forEach(p => {
@@ -4535,7 +4749,7 @@ export const UnifiedWorkspace: React.FC = () => {
       scoreColor,
       deptScorecards
     };
-  }, [tasks, workflows, dailyLogs, labProjects, personnelList, effectiveSelectedDept, selectedAssignee, searchQuery, analyticsPeriod, viewedWeek, taskInvolvesDept, workflowInvolvesDept, taskHasAssignee, isTaskCreatedByStaff]);
+  }, [mergedWorkspaceTasks, workflows, dailyLogs, allCompanyProjects, weeklySchedule, hubWeeklyPlans, personnelList, effectiveSelectedDept, selectedAssignee, searchQuery, analyticsPeriod, viewedWeek, taskInvolvesDept, workflowInvolvesDept, taskBelongsToStaff]);
 
   // Handle Save Task
   const handleSaveTask = async (e: React.FormEvent) => {
@@ -5781,6 +5995,16 @@ export const UnifiedWorkspace: React.FC = () => {
     const thematicMatch = rawCode.match(/^TSK-(.+)-S(\d+)$/i) || rawTitle.match(/\[([A-Z]+-[A-Z]+-\d+)\s*•\s*GĐ/i);
     const taskMatch = rawCode || (rawTitle.match(/\[(TSK-[A-Z0-9-]+)\]/i)?.[1] ?? "");
 
+    if (item?.origin_tab === "hub_technical" || item?.source === "hub") {
+      return {
+        originTab: "hub_technical" as const,
+        badgeLabel: item?.origin_badge || `🏭 Nguồn: Phân hệ ${item?.category || "Kỹ Thuật"}`,
+        subDetail: item?.origin_detail || [rawCode ? `Mã: ${rawCode}` : "", item?.location ? `📍 ${item.location}` : ""].filter(Boolean).join(" • "),
+        actionLabel: item?.hub_target_tab ? `↗ Mở phân hệ (${rawCode || item?.category || "Chi tiết"})` : "",
+        badgeClass: "bg-sky-100 dark:bg-sky-950/80 text-sky-800 dark:text-sky-300 border border-sky-300 dark:border-sky-800"
+      };
+    }
+
     if (item?.origin_tab === "workflows" || item?.source === "workflow" || wfMatch) {
       const wfCode = item?.workflow_code || (wfMatch ? wfMatch[1].toUpperCase() : "");
       return {
@@ -5864,6 +6088,13 @@ export const UnifiedWorkspace: React.FC = () => {
       return;
     }
 
+    if (meta.originTab === "hub_technical") {
+      if (item?.hub_target_tab) {
+        navigateToTargetTab(String(item.hub_target_tab));
+      }
+      return;
+    }
+
     if (meta.originTab === "tasks") {
       const matchedTask = tasks.find(
         (t: any) =>
@@ -5876,7 +6107,7 @@ export const UnifiedWorkspace: React.FC = () => {
       }
       setActiveSubTab("tasks");
     }
-  }, [getDailyItemOriginMeta, workflows, tasks]);
+  }, [getDailyItemOriginMeta, workflows, tasks, navigateToTargetTab]);
 
   // Sync daily items when day or staff changes (Kết nối Lịch Công Tác Tuần + Bảng Công Việc + Quy Trình Phối Hợp + Chuyên đề)
   useEffect(() => {
@@ -6051,8 +6282,46 @@ export const UnifiedWorkspace: React.FC = () => {
       };
     });
 
-    setDailyPlanItems([...itemsFromSchedule, ...itemsFromTasks, ...itemsFromWorkflows]);
-  }, [selectedDailyDay, activeDailyStaff, weeklySchedule, tasks, workflows, labProjects, viewedWeek, rolePerspective, managerDept, selectedDept]);
+    // Kéo thêm các đầu việc đang mở từ các phân hệ Khối Kỹ Thuật – Nhà Máy & Application / Pháp Chế (ELN, WBS, Kit, Oligo, KTCN, QA/QC, Kho/Cung ứng...)
+    const representedCodes = new Set<string>([
+      ...itemsFromSchedule.map(it => String(it.task_code || "").toUpperCase()).filter(Boolean),
+      ...itemsFromTasks.map(it => String(it.task_code || "").toUpperCase()).filter(Boolean),
+    ]);
+    const targetStaffUid = targetStaff ? resolveUserIdForStaffName(targetStaff) : null;
+    const matchingHubItems = (hubWorkItems || []).filter((h) => {
+      if (!h.isOpenForSchedule || !h.includeInTaskBoard) return false;
+      const hCode = String(h.code || "").toUpperCase();
+      if (hCode && representedCodes.has(hCode)) return false;
+      if (targetStaff) {
+        if (targetStaffUid && h.assigneeUserIds.includes(targetStaffUid)) return true;
+        return h.assignees.some((a) => sameStaffName(a, targetStaff));
+      }
+      if (targetDept) {
+        return isSameWorkspaceDept(h.dept, targetDept) || h.involvedDepts.some((d) => isSameWorkspaceDept(d, targetDept));
+      }
+      return false;
+    });
+
+    const itemsFromHub = matchingHubItems.slice(0, 20).map((h) => ({
+      id: `hub-${h.uid}`,
+      task_code: h.code,
+      title: `[${h.code}] ${h.title}`,
+      source: "hub" as const,
+      origin_tab: "hub_technical" as const,
+      origin_badge: `${h.typeLabel} · Phân hệ ${h.dept}`,
+      origin_detail: [h.statusLabel, h.metaSummary].filter(Boolean).join(" • "),
+      hub_target_tab: h.targetTab,
+      category: h.dept,
+      location: h.location || "",
+      status: "partial" as const,
+      result: "",
+      issues: "",
+      work_hours: 2,
+      proportionality: "balanced" as const
+    }));
+
+    setDailyPlanItems([...itemsFromSchedule, ...itemsFromTasks, ...itemsFromWorkflows, ...itemsFromHub]);
+  }, [selectedDailyDay, activeDailyStaff, weeklySchedule, tasks, workflows, labProjects, hubWorkItems, viewedWeek, rolePerspective, managerDept, selectedDept, resolveUserIdForStaffName]);
 
   // Auto-calculate daily total hours from plan items
   useEffect(() => {
@@ -7918,10 +8187,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             </div>
             <div>
               <h1 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
-                ĐIỀU HÀNH CÔNG VIỆC &amp; PHỐI HỢP LIÊN PHÒNG BAN
+                ĐIỀU HÀNH TOÀN CÔNG TY &amp; PHỐI HỢP LIÊN PHÒNG BAN
               </h1>
               <p className="text-xs text-slate-500">
-                Không gian làm việc tập trung toàn công ty • Phân ban, phối hợp liên phòng, lịch &amp; nhật ký Daily
+                Trung tâm Điều hành Toàn Công Ty (Khối Kinh Doanh – Vận Hành &amp; Khối Kỹ Thuật – Nhà Máy) • Công việc, Dự án, Phối hợp, Lịch tuần &amp; KPI
               </p>
             </div>
           </div>
@@ -8174,6 +8443,125 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
         )}
       </div>
 
+      {/* ==================== EXECUTIVE MULTI-BLOCK PULSE BAR (TOÀN CÔNG TY) ==================== */}
+      {rolePerspective === "director" && (() => {
+        const commDepts = new Set(["Kinh Doanh", "Sales Admin", "Kho & Vận Hành", "Cung Ứng", "PM", "Marketing", "Kế Toán", "Hành Chính Nhân Sự"]);
+        const commOpen = mergedWorkspaceTasks.filter((t: any) => t.status !== "DONE" && !t.isHubItem && commDepts.has(normalizeWorkspaceDept(t.department))).length;
+        const appLegalOpen = mergedWorkspaceTasks.filter((t: any) =>
+          t.status !== "DONE" && (t.hubDomainGroup === "APP_LEGAL" || (!t.isHubItem && ["Application", "Pháp Chế"].includes(normalizeWorkspaceDept(t.department))))
+        ).length;
+        const rdOpen = mergedWorkspaceTasks.filter((t: any) => t.status !== "DONE" && (t.hubDomainGroup === "RD" || (!t.isHubItem && isSameWorkspaceDept(t.department, "Nghiên Cứu R&D")))).length;
+        const rdProjActive = allCompanyProjects.filter((p: any) => p.status !== "Completed" && isSameWorkspaceDept(p.dept, "Nghiên Cứu R&D")).length;
+        const kitOligoOpen = mergedWorkspaceTasks.filter((t: any) => t.status !== "DONE" && (t.hubDomainGroup === "KIT_OLIGO" || (!t.isHubItem && ["Sản Xuất Kit", "Tổng Hợp Oligo"].includes(normalizeWorkspaceDept(t.department))))).length;
+        const deviceOpen = mergedWorkspaceTasks.filter((t: any) => t.status !== "DONE" && (t.hubDomainGroup === "DEVICE" || (!t.isHubItem && isSameWorkspaceDept(t.department, "Kỹ Thuật – Thiết Bị")))).length;
+        const deviceProjActive = allCompanyProjects.filter((p: any) => p.status !== "Completed" && isSameWorkspaceDept(p.dept, "Kỹ Thuật – Thiết Bị")).length;
+        const qaWhPurOpen = mergedWorkspaceTasks.filter((t: any) => t.status !== "DONE" && (t.hubDomainGroup === "QA_WH_PUR" || (!t.isHubItem && ["QA/QC", "Kho Nhà Máy", "Cung Ứng Kỹ Thuật", "Đơn Nội Bộ"].includes(normalizeWorkspaceDept(t.department))))).length;
+
+        const pulseCards = [
+          {
+            id: "comm",
+            title: "Kinh Doanh & Văn Phòng",
+            sub: "Sales, Kho KD, Cung ứng, KT",
+            count: commOpen,
+            unit: "việc mở",
+            active: isSameWorkspaceDept(selectedDept, "Kinh Doanh") && taskSourceFilter === "all",
+            cls: "border-orange-200 dark:border-orange-900/70 bg-orange-50/60 dark:bg-orange-950/20 text-orange-900 dark:text-orange-200",
+            onClick: () => { setSelectedDept("Kinh Doanh"); setTaskSourceFilter("all"); setActiveSubTab("tasks"); }
+          },
+          {
+            id: "app_legal",
+            title: "Application & Pháp Chế",
+            sub: "Demo viện, CSKT, Thầu & HĐ",
+            count: appLegalOpen,
+            unit: "việc mở",
+            active: taskSourceFilter === "APP_LEGAL",
+            cls: "border-purple-200 dark:border-purple-900/70 bg-purple-50/60 dark:bg-purple-950/20 text-purple-900 dark:text-purple-200",
+            onClick: () => { setSelectedDept("all"); setTaskSourceFilter("APP_LEGAL"); setActiveSubTab("tasks"); }
+          },
+          {
+            id: "rd",
+            title: "Nghiên Cứu R&D",
+            sub: `${rdProjActive} dự án · ELN & WBS`,
+            count: rdOpen,
+            unit: "việc / ELN",
+            active: isSameWorkspaceDept(selectedDept, "Nghiên Cứu R&D") || taskSourceFilter === "RD",
+            cls: "border-violet-200 dark:border-violet-900/70 bg-violet-50/60 dark:bg-violet-950/20 text-violet-900 dark:text-violet-200",
+            onClick: () => { setSelectedDept("Nghiên Cứu R&D"); setTaskSourceFilter("all"); setActiveSubTab("tasks"); }
+          },
+          {
+            id: "kit_oligo",
+            title: "SX Kit & Tổng Hợp Oligo",
+            sub: "Lệnh SX Kit, eBR, Đơn Oligo",
+            count: kitOligoOpen,
+            unit: "lệnh / đơn",
+            active: taskSourceFilter === "KIT_OLIGO",
+            cls: "border-teal-200 dark:border-teal-900/70 bg-teal-50/60 dark:bg-teal-950/20 text-teal-900 dark:text-teal-200",
+            onClick: () => { setSelectedDept("all"); setTaskSourceFilter("KIT_OLIGO"); setActiveSubTab("tasks"); }
+          },
+          {
+            id: "device",
+            title: "Kỹ Thuật – Thiết Bị (KTCN)",
+            sub: `${deviceProjActive} DA · Máy, Bảo hành, ECO`,
+            count: deviceOpen,
+            unit: "lệnh / phiếu",
+            active: isSameWorkspaceDept(selectedDept, "Kỹ Thuật – Thiết Bị") || taskSourceFilter === "DEVICE",
+            cls: "border-sky-200 dark:border-sky-900/70 bg-sky-50/60 dark:bg-sky-950/20 text-sky-900 dark:text-sky-200",
+            onClick: () => { setSelectedDept("Kỹ Thuật – Thiết Bị"); setTaskSourceFilter("all"); setActiveSubTab("tasks"); }
+          },
+          {
+            id: "qa_wh_pur",
+            title: "QA/QC • Kho • Cung Ứng KT",
+            sub: "IQC/FQC, CAPA, PR/PO, Đơn NB",
+            count: qaWhPurOpen,
+            unit: "phiếu mở",
+            active: taskSourceFilter === "QA_WH_PUR",
+            cls: "border-emerald-200 dark:border-emerald-900/70 bg-emerald-50/60 dark:bg-emerald-950/20 text-emerald-900 dark:text-emerald-200",
+            onClick: () => { setSelectedDept("all"); setTaskSourceFilter("QA_WH_PUR"); setActiveSubTab("tasks"); }
+          }
+        ];
+
+        return (
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between px-1">
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                🏢 Toàn cảnh Vận hành Các Khối (Bấm vào từng khối để lọc nhanh)
+              </span>
+              {(selectedDept !== "all" || taskSourceFilter !== "all") && (
+                <button
+                  type="button"
+                  onClick={() => { setSelectedDept("all"); setTaskSourceFilter("all"); }}
+                  className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                >
+                  ↺ Xem lại Toàn Công Ty
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5">
+              {pulseCards.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={c.onClick}
+                  className={`text-left p-3 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${c.cls} ${
+                    c.active ? "ring-2 ring-indigo-500 shadow-sm" : "opacity-95 hover:opacity-100"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-[11px] font-extrabold truncate">{c.title}</span>
+                    <span className="px-1.5 py-0.5 rounded-md bg-white/80 dark:bg-slate-900/80 font-mono text-[11px] font-black shrink-0">
+                      {c.count}
+                    </span>
+                  </div>
+                  <div className="text-[10px] opacity-80 truncate mt-1">
+                    {c.sub} • {c.unit}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ==================== LEVEL 2: UNIFIED FILTER & ACTION BAR ==================== */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
         {/* Left: Department Dropdown + Search + Status */}
@@ -8248,7 +8636,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 </option>
                 {activeSubTab === "tasks" && (
                   <option value="__UNASSIGNED__">
-                    ⏳ Chờ phân công ({tasks.filter(t => (effectiveSelectedDept === "all" || taskInvolvesDept(t, effectiveSelectedDept)) && !cleanWorkspaceAssignee(t.assignee_name)).length})
+                    ⏳ Chờ phân công ({mergedWorkspaceTasks.filter((t: any) => (effectiveSelectedDept === "all" || taskInvolvesDept(t, effectiveSelectedDept)) && !cleanWorkspaceAssignee(t.assignee_name)).length})
                   </option>
                 )}
                 {departmentStaffList.map((p: any) => {
@@ -8260,10 +8648,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         const actor = (s.actor || "").toLowerCase().trim();
                         const target = name.toLowerCase().trim();
                         return matchesDept && (actor.includes(target) || target.includes(actor));
-                      }).length
-                    : tasks.filter(t => {
+                      }).length + filteredHubWeeklyPlans.filter(h => sameStaffName(h.actor, name)).length
+                    : mergedWorkspaceTasks.filter((t: any) => {
                         const matchesDept = effectiveSelectedDept === "all" || taskInvolvesDept(t, effectiveSelectedDept);
-                        return matchesDept && (taskHasAssignee(t.assignee_name, name) || isTaskCreatedByStaff(t, name));
+                        return matchesDept && taskBelongsToStaff(t, name);
                       }).length;
                   return (
                     <option key={p.id || p.employee_code || name} value={name}>
@@ -8534,9 +8922,52 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
         />
       )}
 
-      {/* TAB 1: BẢNG CÔNG VIỆC (TASKS & KANBAN) */}
+      {/* TAB 1: BẢNG CÔNG VIỆC (TASKS & KANBAN TOÀN CÔNG TY) */}
       {activeSubTab === "tasks" && (
         <div className="space-y-3.5">
+          {/* Source Domain Filter Strip (Liên thông Điều hành chung + Khối Kỹ Thuật – Nhà Máy + Application / Pháp Chế) */}
+          {(() => {
+            const deptScopedAll = mergedWorkspaceTasks.filter((t: any) =>
+              rolePerspective === "staff"
+                ? taskBelongsToStaff(t, currentStaffName) || (!cleanWorkspaceAssignee(t.assignee_name) && isSameWorkspaceDept(t.department, userDept))
+                : (effectiveSelectedDept === "all" || taskInvolvesDept(t, effectiveSelectedDept))
+            );
+            const srcOptions = [
+              { id: "all" as const, label: "🏢 Tất cả nguồn", count: deptScopedAll.length },
+              { id: "portal" as const, label: "📋 Việc điều hành chung", count: deptScopedAll.filter((t: any) => !t.isHubItem).length },
+              { id: "RD" as const, label: "🧬 R&D (ELN / WBS / Chuyển giao)", count: deptScopedAll.filter((t: any) => t.hubDomainGroup === "RD").length },
+              { id: "KIT_OLIGO" as const, label: "🧪 SX Kit & Oligo", count: deptScopedAll.filter((t: any) => t.hubDomainGroup === "KIT_OLIGO").length },
+              { id: "DEVICE" as const, label: "⚙️ KTCN – Thiết bị", count: deptScopedAll.filter((t: any) => t.hubDomainGroup === "DEVICE").length },
+              { id: "QA_WH_PUR" as const, label: "🛡️ QA/QC · Kho · Cung ứng KT", count: deptScopedAll.filter((t: any) => t.hubDomainGroup === "QA_WH_PUR").length },
+              { id: "APP_LEGAL" as const, label: "🔬 Application & Pháp Chế", count: deptScopedAll.filter((t: any) => t.hubDomainGroup === "APP_LEGAL").length },
+            ].filter((o) => o.id === "all" || o.count > 0 || taskSourceFilter === o.id);
+            if (srcOptions.length <= 2) return null;
+            return (
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar text-xs">
+                <span className="text-[11px] font-bold text-slate-400 shrink-0 mr-1">Nguồn nghiệp vụ:</span>
+                {srcOptions.map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setTaskSourceFilter(opt.id)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold shrink-0 cursor-pointer border transition-all ${
+                      taskSourceFilter === opt.id
+                        ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900 dark:border-white shadow-2xs"
+                        : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50"
+                    }`}
+                  >
+                    <span>{opt.label}</span>
+                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                      taskSourceFilter === opt.id ? "bg-white/20 text-white dark:bg-slate-900/20 dark:text-slate-900" : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
+                    }`}>
+                      {opt.count}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
+
           {/* Quick Staff Member Filter Chips */}
           {(rolePerspective === "manager" || rolePerspective === "director") && departmentStaffList.length > 0 && (
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 pt-0.5 no-scrollbar text-xs">
@@ -8556,7 +8987,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 Tất cả ({departmentStaffList.length})
               </button>
               {(() => {
-                const unassignedCount = tasks.filter(t => {
+                const unassignedCount = mergedWorkspaceTasks.filter((t: any) => {
                   const matchesDept = effectiveSelectedDept === "all" || taskInvolvesDept(t, effectiveSelectedDept);
                   return matchesDept && !cleanWorkspaceAssignee(t.assignee_name);
                 }).length;
@@ -8583,9 +9014,9 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               })()}
               {departmentStaffList.map((p: any) => {
                 const name = p.full_name || p;
-                const count = tasks.filter(t => {
+                const count = mergedWorkspaceTasks.filter((t: any) => {
                   const matchesDept = effectiveSelectedDept === "all" || taskInvolvesDept(t, effectiveSelectedDept);
-                  return matchesDept && (taskHasAssignee(t.assignee_name, name) || isTaskCreatedByStaff(t, name));
+                  return matchesDept && taskBelongsToStaff(t, name);
                 }).length;
                 const isSelected = selectedAssignee === name;
                 return (
@@ -8635,6 +9066,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         task={task}
                         onStatusChange={handleQuickStatusChange}
                         onEdit={openEditTask}
+                        onScheduleHubItem={openScheduleForHubItem}
+                        onNavigateTab={navigateToTargetTab}
                       />
                     ))}
                   {filteredTasks.filter((t) => t.status === "TODO").length === 0 && (
@@ -8666,6 +9099,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         task={task}
                         onStatusChange={handleQuickStatusChange}
                         onEdit={openEditTask}
+                        onScheduleHubItem={openScheduleForHubItem}
+                        onNavigateTab={navigateToTargetTab}
                       />
                     ))}
                   {filteredTasks.filter((t) => t.status === "IN_PROGRESS").length === 0 && (
@@ -8697,6 +9132,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         task={task}
                         onStatusChange={handleQuickStatusChange}
                         onEdit={openEditTask}
+                        onScheduleHubItem={openScheduleForHubItem}
+                        onNavigateTab={navigateToTargetTab}
                       />
                     ))}
                   {filteredTasks.filter((t) => t.status === "DONE").length === 0 && (
@@ -8714,7 +9151,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     <th className="py-2.5 px-3">Mã &amp; Tiêu đề công việc</th>
                     <th className="py-2.5 px-3">Phòng ban / Phân loại</th>
                     <th className="py-2.5 px-3">Người phụ trách</th>
-                    <th className="py-2.5 px-3">Khách hàng</th>
+                    <th className="py-2.5 px-3">Địa điểm / Lab / KH</th>
                     <th className="py-2.5 px-3">Ưu tiên</th>
                     <th className="py-2.5 px-3">Hạn chót</th>
                     <th className="py-2.5 px-3">Trạng thái</th>
@@ -8775,12 +9212,33 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         </span>
                       </td>
                       <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                        <button
-                          onClick={() => openEditTask(t)}
-                          className="text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 font-bold"
-                        >
-                          {cleanWorkspaceAssignee(t.assignee_name) ? "Sửa" : "Phân công / Sửa"}
-                        </button>
+                        {t.isHubItem ? (
+                          <div className="inline-flex items-center gap-1.5">
+                            {t.isOpenForSchedule !== false && (
+                              <button
+                                type="button"
+                                onClick={() => openScheduleForHubItem(t)}
+                                className="px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-bold text-[11px] hover:bg-indigo-100 cursor-pointer"
+                              >
+                                📅 Lên lịch
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => navigateToTargetTab(t.hubTargetTab)}
+                              className="px-2 py-0.5 rounded bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 font-bold text-[11px] hover:bg-sky-100 cursor-pointer"
+                            >
+                              ↗ Phân hệ
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => openEditTask(t)}
+                            className="text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 font-bold"
+                          >
+                            {cleanWorkspaceAssignee(t.assignee_name) ? "Sửa" : "Phân công / Sửa"}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -9752,7 +10210,13 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         <div className="w-full max-w-lg rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-2xl p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-start justify-between gap-3">
                             <div>
-                              <div className="text-[10px] font-extrabold uppercase text-rose-600">{isMeeting ? "🎥 Cuộc họp" : "📅 Lịch công tác"}</div>
+                              <div className="text-[10px] font-extrabold uppercase text-rose-600">
+                                {ev.isHubWeeklyPlan
+                                  ? `🏭 Kế hoạch Kỹ thuật · ${ev.sourceLabel || ev.category}`
+                                  : isMeeting
+                                  ? "🎥 Cuộc họp"
+                                  : "📅 Lịch công tác"}
+                              </div>
                               <div className="text-base font-black text-slate-900 dark:text-white">{ev.title}</div>
                             </div>
                             <button type="button" onClick={() => setViewingScheduleEvent(null)} className="p-1 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer"><X className="w-5 h-5" /></button>
@@ -9764,10 +10228,24 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             {row("Nội dung", ev.meetingAgenda || ev.description || ev.notes)}
                             {ev.meetingLink && row("Link họp", <a href={String(ev.meetingLink).startsWith("http") ? ev.meetingLink : `https://${ev.meetingLink}`} target="_blank" rel="noreferrer" className="text-indigo-600 underline break-all">{ev.meetingLink}</a>)}
                             {row("Phòng ban", ev.category)}
+                            {ev.sourceLabel && row("Nguồn đồng bộ", ev.sourceLabel)}
                             {attendees.length > 0 && row(`Thành viên (${attendees.length})`, attendees.join(", "))}
                           </div>
-                          <div className="flex justify-end gap-2 pt-1">
-                            {isMeeting && (
+                          <div className="flex justify-end gap-2 pt-1 flex-wrap">
+                            {ev.isHubWeeklyPlan && ev.targetTab && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const target = ev.targetTab;
+                                  setViewingScheduleEvent(null);
+                                  navigateToTargetTab(target);
+                                }}
+                                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer"
+                              >
+                                ↗ Mở tại Phân hệ Kỹ thuật
+                              </button>
+                            )}
+                            {!ev.isHubWeeklyPlan && isMeeting && (
                               <button type="button" onClick={() => handleRemindMeetingNow(ev)} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-500 text-white cursor-pointer">🔔 Nhắc họp</button>
                             )}
                             <button type="button" onClick={() => setViewingScheduleEvent(null)} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 cursor-pointer">Đóng</button>
@@ -9797,8 +10275,23 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     </span>
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Lịch họp nội bộ / liên phòng ban, lịch trực Lab, lịch demo tại bệnh viện và các đợt giao nhận hàng hóa lớn
+                    Lịch họp nội bộ / liên phòng ban, kế hoạch tuần tự động từ R&amp;D – SX Kit – Oligo – KTCN – QA/QC, lịch Application &amp; giao nhận kho
                   </p>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setShowTechWeeklyPlans((v) => !v)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                      showTechWeeklyPlans
+                        ? "bg-teal-50 dark:bg-teal-950/60 text-teal-800 dark:text-teal-200 border-teal-300 dark:border-teal-700 shadow-2xs"
+                        : "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700"
+                    }`}
+                    title="Bật/tắt lớp kế hoạch tự động từ các phòng ban Khối Kỹ thuật"
+                  >
+                    <span>{showTechWeeklyPlans ? "✓" : "○"}</span>
+                    <span>🏭 Lịch tự động Khối Kỹ thuật ({filteredHubWeeklyPlans.length})</span>
+                  </button>
                 </div>
               </div>
 
@@ -9956,12 +10449,17 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   </button>
                   {departmentStaffList.map((p: any) => {
                     const name = p.full_name || p;
-                    const schedCount = weeklySchedule.filter(s => {
-                      const matchesDept = selectedDept === "all" || s.category === selectedDept || (rolePerspective === "manager" && s.category === managerDept);
+                    const staffUid = resolveUserIdForStaffName(name);
+                    const baseSchedCount = weeklySchedule.filter(s => {
+                      const matchesDept = effectiveSelectedDept === "all" || isSameWorkspaceDept(s.category, effectiveSelectedDept) || (rolePerspective === "manager" && isSameWorkspaceDept(s.category, managerDept));
                       const actor = (s.actor || "").toLowerCase().trim();
                       const target = name.toLowerCase().trim();
                       return matchesDept && (actor.includes(target) || target.includes(actor));
                     }).length;
+                    const techSchedCount = showTechWeeklyPlans
+                      ? filteredHubWeeklyPlans.filter((h) => (staffUid && h.actorUserId === staffUid) || sameStaffName(h.actor, name)).length
+                      : 0;
+                    const schedCount = baseSchedCount + techSchedCount;
                     const isSelected = selectedAssignee === name;
                     return (
                       <button
@@ -9989,7 +10487,15 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
                 {viewedWeek.days.map((wd) => {
                   const day = wd.name;
-                  const dayEvents = filteredSchedules.filter((s) => scheduleOnDay(s, wd)).sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+                  const baseEvents = filteredSchedules.filter((s) => scheduleOnDay(s, wd));
+                  const techEvents = showTechWeeklyPlans
+                    ? filteredHubWeeklyPlans.filter((h) => {
+                        if (h.date !== wd.date) return false;
+                        const hTitle = String(h.title || "").trim().toLowerCase();
+                        return !baseEvents.some((b) => String(b.title || "").trim().toLowerCase() === hTitle);
+                      })
+                    : [];
+                  const dayEvents: any[] = [...baseEvents, ...techEvents].sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
                   const isToday = wd.date === todayVN();
                   return (
                     <div
@@ -10003,11 +10509,21 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         </div>
 
                         <div className="space-y-1.5">
-                          {dayEvents.map((ev) => {
-                            const isMeeting = ev.eventType === "MEETING" || String(ev.title || "").toLowerCase().includes("họp");
+                          {dayEvents.map((ev: any) => {
+                            const isHubPlan = Boolean(ev.isHubWeeklyPlan);
+                            const isMeeting = !isHubPlan && (ev.eventType === "MEETING" || String(ev.title || "").toLowerCase().includes("họp"));
                             const isApp = ev.category === "Application";
                             const isSales = ev.category === "Kinh Doanh";
-                            const isWh = ev.category === "Kho & Vận Hành";
+                            const isWh = ev.category === "Kho & Vận Hành" || isSameWorkspaceDept(ev.category, "Kho Nhà Máy");
+                            const isRd = isSameWorkspaceDept(ev.category, "Nghiên Cứu R&D");
+                            const isKitOligo = isSameWorkspaceDept(ev.category, "Sản Xuất Kit") || isSameWorkspaceDept(ev.category, "Tổng Hợp Oligo");
+                            const isDevice = isSameWorkspaceDept(ev.category, "Kỹ Thuật – Thiết Bị");
+                            const isQa = isSameWorkspaceDept(ev.category, "QA/QC");
+                            const isLegalPur =
+                              isSameWorkspaceDept(ev.category, "Pháp Chế") ||
+                              isSameWorkspaceDept(ev.category, "Cung Ứng Kỹ Thuật") ||
+                              isSameWorkspaceDept(ev.category, "Mua Hàng") ||
+                              isSameWorkspaceDept(ev.category, "Đơn Nội Bộ");
                             const rawActors = String(ev.actor || "").split(/[,;\n]+/).map((s: string) => s.trim()).filter(Boolean);
                             const coList = Array.isArray(ev.coActors) ? ev.coActors : [];
                             const allAttendees = Array.from(new Set([...rawActors, ...coList]));
@@ -10019,10 +10535,22 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                   if ((e.target as HTMLElement).closest("button, a")) return;
                                   setViewingScheduleEvent(ev);
                                 }}
-                                title="Bấm để xem chi tiết"
+                                title={isHubPlan ? `Kế hoạch tự động (${ev.sourceLabel || ev.category}) — Bấm để xem chi tiết` : "Bấm để xem chi tiết"}
                                 className={`group relative rounded-lg p-2 text-[11px] font-medium border transition-all cursor-pointer hover:ring-2 hover:ring-indigo-300 ${
+                                  isHubPlan ? "border-dashed " : ""
+                                }${
                                   isMeeting
                                     ? "bg-rose-100/90 dark:bg-rose-950/60 border-rose-300 dark:border-rose-800 text-rose-950 dark:text-rose-100 shadow-2xs"
+                                    : isRd
+                                    ? "bg-cyan-50/90 dark:bg-cyan-950/60 border-cyan-300 dark:border-cyan-800 text-cyan-950 dark:text-cyan-100"
+                                    : isKitOligo
+                                    ? "bg-teal-50/90 dark:bg-teal-950/60 border-teal-300 dark:border-teal-800 text-teal-950 dark:text-teal-100"
+                                    : isDevice
+                                    ? "bg-amber-50/90 dark:bg-amber-950/60 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-100"
+                                    : isQa
+                                    ? "bg-fuchsia-50/90 dark:bg-fuchsia-950/60 border-fuchsia-300 dark:border-fuchsia-800 text-fuchsia-950 dark:text-fuchsia-100"
+                                    : isLegalPur
+                                    ? "bg-indigo-50/90 dark:bg-indigo-950/60 border-indigo-300 dark:border-indigo-800 text-indigo-950 dark:text-indigo-100"
                                     : isApp
                                     ? "bg-purple-100/80 dark:bg-purple-950/60 border-purple-300 dark:border-purple-800 text-purple-950 dark:text-purple-200"
                                     : isSales
@@ -10039,36 +10567,59 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                         🎥 HỌP
                                       </span>
                                     )}
+                                    {isHubPlan && (
+                                      <span className="px-1.5 py-0.2 rounded bg-white/80 dark:bg-slate-900/70 text-[9px] font-extrabold border border-current/25">
+                                        🏭 {ev.category}
+                                      </span>
+                                    )}
                                     <span className="font-bold font-mono text-[10px]">⏰ {ev.time}</span>
                                   </div>
-                                  <span className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleRemindMeetingNow(ev)}
-                                      title="Nhắn tin & Gửi thông báo nhắc lịch ngay"
-                                      className="hover:text-amber-600 p-0.5 cursor-pointer"
-                                    >
-                                      <Bell className="w-3 h-3" />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => openScheduleForm(undefined, ev)}
-                                      title="Sửa lịch trình"
-                                      className="hover:text-indigo-600 p-0.5 cursor-pointer"
-                                    >
-                                      <Pencil className="w-3 h-3" />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => { if (confirm("Xóa lịch trình này?")) handleDeleteSchedule(ev.id); }}
-                                      title="Xóa lịch trình"
-                                      className="hover:text-rose-600 p-0.5 cursor-pointer"
-                                    >
-                                      <X className="w-3 h-3" />
-                                    </button>
-                                  </span>
+                                  {isHubPlan ? (
+                                    ev.targetTab ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => navigateToTargetTab(ev.targetTab)}
+                                        title={`Mở tại phân hệ (${ev.sourceLabel || ev.category})`}
+                                        className="opacity-70 group-hover:opacity-100 hover:underline px-1 text-[10px] font-bold cursor-pointer"
+                                      >
+                                        ↗
+                                      </button>
+                                    ) : null
+                                  ) : (
+                                    <span className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemindMeetingNow(ev)}
+                                        title="Nhắn tin & Gửi thông báo nhắc lịch ngay"
+                                        className="hover:text-amber-600 p-0.5 cursor-pointer"
+                                      >
+                                        <Bell className="w-3 h-3" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => openScheduleForm(undefined, ev)}
+                                        title="Sửa lịch trình"
+                                        className="hover:text-indigo-600 p-0.5 cursor-pointer"
+                                      >
+                                        <Pencil className="w-3 h-3" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => { if (confirm("Xóa lịch trình này?")) handleDeleteSchedule(ev.id); }}
+                                        title="Xóa lịch trình"
+                                        className="hover:text-rose-600 p-0.5 cursor-pointer"
+                                      >
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="font-semibold leading-tight">{ev.title}</div>
+                                {isHubPlan && ev.sourceLabel && (
+                                  <div className="text-[9px] opacity-75 mt-0.5 font-semibold">
+                                    🔗 Nguồn: {ev.sourceLabel}
+                                  </div>
+                                )}
                                 {ev.meetingAgenda && (
                                   <div className="text-[10px] opacity-85 mt-0.5 line-clamp-2 italic">
                                     📝 {ev.meetingAgenda}
@@ -10200,7 +10751,9 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     ...(DEPARTMENT_THEMATIC_TYPES[currentDept] || [])
                   ];
 
-              const customCount = labProjects.filter((p) => p.typeId === "custom_project").length;
+              const customCount = allCompanyProjects.filter((p: any) => p.typeId === "custom_project").length;
+              const rdStageGateCount = allCompanyProjects.filter((p: any) => p.typeId === "rd_stage_gate").length;
+              const ktcnStageGateCount = allCompanyProjects.filter((p: any) => p.typeId === "ktcn_stage_gate").length;
 
               return (
                 <div className="flex items-center gap-1.5 overflow-x-auto pb-2.5 mb-4 no-scrollbar border-b border-slate-100 dark:border-slate-800">
@@ -10221,6 +10774,40 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   </button>
                   <button
                     type="button"
+                    onClick={() => setThematicFilterType(thematicFilterType === "rd_stage_gate" ? "all" : "rd_stage_gate")}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all shrink-0 cursor-pointer border ${
+                      thematicFilterType === "rd_stage_gate"
+                        ? "bg-cyan-50 dark:bg-cyan-950/80 text-cyan-800 dark:text-cyan-200 border-cyan-400 dark:border-cyan-600 font-bold shadow-xs ring-2 ring-cyan-500/20"
+                        : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700"
+                    }`}
+                  >
+                    <span>🧬</span>
+                    <span>R&amp;D Stage-Gate</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold font-mono ${
+                      rdStageGateCount > 0 ? "bg-cyan-100 dark:bg-cyan-950 text-cyan-800 dark:text-cyan-300" : "bg-slate-100 dark:bg-slate-800 text-slate-400"
+                    }`}>
+                      {rdStageGateCount}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setThematicFilterType(thematicFilterType === "ktcn_stage_gate" ? "all" : "ktcn_stage_gate")}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all shrink-0 cursor-pointer border ${
+                      thematicFilterType === "ktcn_stage_gate"
+                        ? "bg-amber-50 dark:bg-amber-950/80 text-amber-800 dark:text-amber-200 border-amber-400 dark:border-amber-600 font-bold shadow-xs ring-2 ring-amber-500/20"
+                        : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700"
+                    }`}
+                  >
+                    <span>⚙️</span>
+                    <span>KTCN Stage-Gate</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold font-mono ${
+                      ktcnStageGateCount > 0 ? "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300" : "bg-slate-100 dark:bg-slate-800 text-slate-400"
+                    }`}>
+                      {ktcnStageGateCount}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setThematicFilterType(thematicFilterType === "custom_project" ? "all" : "custom_project")}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all shrink-0 cursor-pointer border ${
                       thematicFilterType === "custom_project"
@@ -10237,7 +10824,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     </span>
                   </button>
                   {relevantTypes.map((t) => {
-                    const count = labProjects.filter(p => p.typeId === t.id).length;
+                    const count = allCompanyProjects.filter((p: any) => p.typeId === t.id).length;
                     const isSelected = thematicFilterType === t.id;
                     return (
                       <button
@@ -10322,9 +10909,19 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700">
                               {prj.id}
                             </span>
+                            {prj.isHubProject && prj.sourceBadge && (
+                              <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-lg bg-cyan-50 dark:bg-cyan-950/60 text-cyan-800 dark:text-cyan-200 border border-cyan-300 dark:border-cyan-800">
+                                {prj.sourceBadge}
+                              </span>
+                            )}
                             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border ${prj.dept === "Liên Phòng Ban" || (Array.isArray(prj.participatingDepts) && prj.participatingDepts.length > 1) ? "bg-gradient-to-r from-purple-600 to-indigo-600 text-white border-purple-600" : badgeColor}`}>
                               {prj.dept === "Liên Phòng Ban" || (Array.isArray(prj.participatingDepts) && prj.participatingDepts.length > 1) ? "🚀 Liên Phòng Ban" : prj.dept}
                             </span>
+                            {prj.isHubProject && prj.currentStageLabel && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                                🎯 {prj.currentStageLabel}
+                              </span>
+                            )}
                             {prj.customerOrRef && (
                               <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
                                 🔗 {prj.customerOrRef}
@@ -10350,20 +10947,33 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               {prj.status === "Completed" ? "Đã nghiệm thu" : prj.status === "Review" ? "Đang nghiệm thu" : prj.status === "Planning" ? "Lập đề cương" : "Đang thực hiện"}
                             </span>
 
-                            <button
-                              onClick={() => openEditThematicModal(prj)}
-                              className="p-1 rounded text-slate-400 hover:text-purple-600 hover:bg-purple-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                              title="Chỉnh sửa dự án / thêm giai đoạn & công việc"
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteThematicProject(prj.id)}
-                              className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                              title="Xóa dự án"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            {prj.isHubProject ? (
+                              <button
+                                type="button"
+                                onClick={() => navigateToTargetTab(prj.targetTab || "factory-rd")}
+                                className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 cursor-pointer"
+                                title="Mở chi tiết dự án tại Phân hệ Kỹ thuật"
+                              >
+                                ↗ Mở phân hệ
+                              </button>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => openEditThematicModal(prj)}
+                                  className="p-1 rounded text-slate-400 hover:text-purple-600 hover:bg-purple-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                                  title="Chỉnh sửa dự án / thêm giai đoạn & công việc"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteThematicProject(prj.id)}
+                                  className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                                  title="Xóa dự án"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            )}
                           </div>
                         </div>
 
@@ -10474,19 +11084,26 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                     {/* Stage Header */}
                                     <div className="flex items-start justify-between gap-2">
                                       <div
-                                        onClick={() => handleToggleStage(prj.id, stg.id)}
-                                        className="flex items-start gap-2 flex-1 min-w-0 cursor-pointer"
+                                        onClick={() => {
+                                          if (!prj.isHubProject) handleToggleStage(prj.id, stg.id);
+                                        }}
+                                        className={`flex items-start gap-2 flex-1 min-w-0 ${prj.isHubProject ? "" : "cursor-pointer"}`}
                                       >
                                         <button
                                           type="button"
+                                          disabled={Boolean(prj.isHubProject)}
                                           className={`mt-0.5 w-4 h-4 rounded flex items-center justify-center shrink-0 border transition-all ${
                                             isDone
                                               ? "bg-emerald-600 border-emerald-600 text-white"
+                                              : stg.status === "in_progress"
+                                              ? "border-amber-400 bg-amber-50 dark:bg-amber-950/60"
+                                              : prj.isHubProject
+                                              ? "border-slate-300 dark:border-slate-600"
                                               : "border-slate-300 dark:border-slate-600 hover:border-purple-500"
                                           }`}
-                                          title="Đánh dấu hoàn thành toàn bộ giai đoạn này"
+                                          title={prj.isHubProject ? "Tiến độ đồng bộ từ Phân hệ Kỹ thuật" : "Đánh dấu hoàn thành toàn bộ giai đoạn này"}
                                         >
-                                          {isDone && <Check className="w-3 h-3 stroke-[3]" />}
+                                          {isDone ? <Check className="w-3 h-3 stroke-[3]" /> : stg.status === "in_progress" ? <span className="w-1.5 h-1.5 rounded-full bg-amber-500" /> : null}
                                         </button>
                                         <div className="flex-1 min-w-0">
                                           <div className="flex items-center gap-1.5 flex-wrap">
@@ -10523,27 +11140,29 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                         </div>
                                       </div>
 
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          if (isAddingHere) {
-                                            setQuickTaskStageKey(null);
-                                          } else {
-                                            setQuickTaskStageKey(stageKey);
-                                            setQuickStageTaskForm({
-                                              title: "",
-                                              dept: stg.dept || (prj.dept !== "Liên Phòng Ban" ? prj.dept : (prj.participatingDepts?.[0] || "Kinh Doanh")),
-                                              assignee: stg.assignee || "",
-                                              due: prj.endDate || todayVN()
-                                            });
-                                          }
-                                        }}
-                                        className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-purple-100 dark:bg-purple-950/80 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-900 shrink-0 cursor-pointer transition-colors"
-                                        title="Thêm công việc cụ thể vào giai đoạn này"
-                                      >
-                                        + Thêm việc
-                                      </button>
+                                      {!prj.isHubProject && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (isAddingHere) {
+                                              setQuickTaskStageKey(null);
+                                            } else {
+                                              setQuickTaskStageKey(stageKey);
+                                              setQuickStageTaskForm({
+                                                title: "",
+                                                dept: stg.dept || (prj.dept !== "Liên Phòng Ban" ? prj.dept : (prj.participatingDepts?.[0] || "Kinh Doanh")),
+                                                assignee: stg.assignee || "",
+                                                due: prj.endDate || todayVN()
+                                              });
+                                            }
+                                          }}
+                                          className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-purple-100 dark:bg-purple-950/80 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-900 shrink-0 cursor-pointer transition-colors"
+                                          title="Thêm công việc cụ thể vào giai đoạn này"
+                                        >
+                                          + Thêm việc
+                                        </button>
+                                      )}
                                     </div>
 
                                     {/* Sub-tasks inside this Stage */}
@@ -10551,11 +11170,16 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                       <div className="pl-5 space-y-1 pt-1 border-t border-slate-200/60 dark:border-slate-700/60">
                                         {stageTasks.map((stTask: any, tIdx: number) => {
                                           const isTaskDone = stTask.status === "completed";
+                                          const isTaskProg = stTask.status === "in_progress";
                                           return (
                                             <div
                                               key={stTask.id || tIdx}
-                                              onClick={() => handleToggleStageTask(prj.id, stg.id, stTask.id)}
-                                              className={`group/task flex items-center justify-between gap-2 p-1.5 rounded-lg border text-[11px] cursor-pointer transition-all ${
+                                              onClick={() => {
+                                                if (!prj.isHubProject) handleToggleStageTask(prj.id, stg.id, stTask.id);
+                                              }}
+                                              className={`group/task flex items-center justify-between gap-2 p-1.5 rounded-lg border text-[11px] transition-all ${
+                                                prj.isHubProject ? "" : "cursor-pointer "
+                                              }${
                                                 isTaskDone
                                                   ? "bg-white/60 dark:bg-slate-900/40 border-emerald-200/60 dark:border-emerald-900/40 text-slate-400"
                                                   : "bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-800 text-slate-800 dark:text-slate-200 hover:border-purple-300"
@@ -10566,10 +11190,12 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                                   className={`w-3.5 h-3.5 rounded flex items-center justify-center shrink-0 border ${
                                                     isTaskDone
                                                       ? "bg-emerald-600 border-emerald-600 text-white"
+                                                      : isTaskProg
+                                                      ? "border-amber-400 bg-amber-50 dark:bg-amber-950/60"
                                                       : "border-slate-300 dark:border-slate-600"
                                                   }`}
                                                 >
-                                                  {isTaskDone && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                                                  {isTaskDone ? <Check className="w-2.5 h-2.5 stroke-[3]" /> : isTaskProg ? <span className="w-1.5 h-1.5 rounded-full bg-amber-500" /> : null}
                                                 </span>
                                                 <span className="font-mono text-[9px] text-slate-400 shrink-0">
                                                   {sIdx + 1}.{tIdx + 1}
@@ -10594,17 +11220,19 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                                     {String(stTask.due).slice(8, 10)}/{String(stTask.due).slice(5, 7)}
                                                   </span>
                                                 )}
-                                                <button
-                                                  type="button"
-                                                  onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    handleDeleteStageTask(prj.id, stg.id, stTask.id);
-                                                  }}
-                                                  className="opacity-0 group-hover/task:opacity-100 p-0.5 text-slate-400 hover:text-rose-600 transition-opacity cursor-pointer"
-                                                  title="Xóa công việc này"
-                                                >
-                                                  <X className="w-3 h-3" />
-                                                </button>
+                                                {!prj.isHubProject && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      handleDeleteStageTask(prj.id, stg.id, stTask.id);
+                                                    }}
+                                                    className="opacity-0 group-hover/task:opacity-100 p-0.5 text-slate-400 hover:text-rose-600 transition-opacity cursor-pointer"
+                                                    title="Xóa công việc này"
+                                                  >
+                                                    <X className="w-3 h-3" />
+                                                  </button>
+                                                )}
                                               </div>
                                             </div>
                                           );
@@ -10678,92 +11306,157 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         </div>
                       </div>
 
-                      {/* Card Footer: 4 Quick Cross-Module Actions */}
+                      {/* Card Footer: Cross-Module Actions */}
                       <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-1.5 flex-wrap text-xs">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedDept(prj.dept === "Liên Phòng Ban" || (Array.isArray(prj.participatingDepts) && prj.participatingDepts.length > 1) ? "all" : prj.dept);
-                              setSearchQuery(prj.id);
-                              setActiveSubTab("tasks");
-                            }}
-                            className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 cursor-pointer inline-flex items-center gap-1"
-                            title="Mở Bảng Công Việc của tất cả các phòng ban thuộc dự án này"
-                          >
-                            <ListTodo className="w-3 h-3" />
-                            <span>
-                              Bảng việc ({Math.max(
-                                tasks.filter((t: any) =>
-                                  String(t.related_workflow_code || "").toUpperCase() === String(prj.id || "").toUpperCase() ||
-                                  String(t.task_code || "").toUpperCase().startsWith(`TSK-${String(prj.id || "").toUpperCase()}-S`)
-                                ).length,
-                                allStageTasks.length,
-                                stages.length
-                              )})
-                            </span>
-                          </button>
+                          {prj.isHubProject ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => navigateToTargetTab(prj.targetTab || "factory-rd")}
+                                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-cyan-50 dark:bg-cyan-950/60 text-cyan-800 dark:text-cyan-200 border border-cyan-300 dark:border-cyan-800 hover:bg-cyan-100 cursor-pointer inline-flex items-center gap-1"
+                                title="Mở dự án trực tiếp tại Phân hệ Kỹ thuật"
+                              >
+                                <span>↗ Mở Dự án tại Phân hệ</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedDept(prj.dept === "Liên Phòng Ban" || (Array.isArray(prj.participatingDepts) && prj.participatingDepts.length > 1) ? "all" : prj.dept);
+                                  setSearchQuery(prj.id);
+                                  setActiveSubTab("tasks");
+                                }}
+                                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 cursor-pointer inline-flex items-center gap-1"
+                                title="Xem WBS / ELN / Công việc của dự án trên Bảng việc"
+                              >
+                                <ListTodo className="w-3 h-3" />
+                                <span>
+                                  Bảng việc ({Math.max(
+                                    mergedWorkspaceTasks.filter((t: any) =>
+                                      String(t.related_workflow_code || "").toUpperCase() === String(prj.id || "").toUpperCase() ||
+                                      String(t.task_code || "").toUpperCase().includes(String(prj.id || "").toUpperCase()) ||
+                                      String(t.description || "").toUpperCase().includes(String(prj.id || "").toUpperCase())
+                                    ).length,
+                                    allStageTasks.length,
+                                    stages.length
+                                  )})
+                                </span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const stageActors = stages.flatMap((s: any) => [
+                                    s.assignee,
+                                    ...(Array.isArray(s.tasks) ? s.tasks.map((t: any) => t.assignee) : [])
+                                  ]).filter(Boolean);
+                                  const allMembers = Array.from(new Set([
+                                    ...(Array.isArray(prj.collaborators) ? prj.collaborators : []),
+                                    ...stageActors
+                                  ])).filter((m) => m && !sameStaffName(m, prj.lead || currentStaffName));
+                                  openScheduleForm(todayVN(), undefined, "MEETING");
+                                  setScheduleForm((prev) => ({
+                                    ...prev,
+                                    title: `Họp điều phối Dự án [${prj.id}] ${prj.name}`,
+                                    actor: prj.lead || currentStaffName,
+                                    coActors: allMembers,
+                                    category: prj.dept === "Liên Phòng Ban" ? (prj.participatingDepts?.[0] || "Nghiên Cứu R&D") : prj.dept,
+                                    meetingAgenda: `Rà soát ${prj.currentStageLabel || "cổng Stage-Gate"} & tiến độ ${allStageTasks.length || stages.length} hạng mục của Dự án [${prj.id}] ${prj.name}.`,
+                                    linkedTaskCodes: [prj.id]
+                                  }));
+                                }}
+                                className="px-2 py-1 rounded-lg text-[11px] font-bold bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 hover:bg-rose-100 cursor-pointer"
+                                title="Đặt lịch họp duyệt cổng / rà soát tiến độ dự án"
+                              >
+                                🎥 + Họp dự án
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedDept(prj.dept === "Liên Phòng Ban" || (Array.isArray(prj.participatingDepts) && prj.participatingDepts.length > 1) ? "all" : prj.dept);
+                                  setSearchQuery(prj.id);
+                                  setActiveSubTab("tasks");
+                                }}
+                                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 cursor-pointer inline-flex items-center gap-1"
+                                title="Mở Bảng Công Việc của tất cả các phòng ban thuộc dự án này"
+                              >
+                                <ListTodo className="w-3 h-3" />
+                                <span>
+                                  Bảng việc ({Math.max(
+                                    tasks.filter((t: any) =>
+                                      String(t.related_workflow_code || "").toUpperCase() === String(prj.id || "").toUpperCase() ||
+                                      String(t.task_code || "").toUpperCase().startsWith(`TSK-${String(prj.id || "").toUpperCase()}-S`)
+                                    ).length,
+                                    allStageTasks.length,
+                                    stages.length
+                                  )})
+                                </span>
+                              </button>
 
-                          <button
-                            type="button"
-                            onClick={() => openEditThematicModal(prj)}
-                            className="px-2 py-1 rounded-lg text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 cursor-pointer"
-                            title="Quản lý chi tiết các giai đoạn và danh sách công việc trong dự án"
-                          >
-                            + Giai đoạn / Việc
-                          </button>
+                              <button
+                                type="button"
+                                onClick={() => openEditThematicModal(prj)}
+                                className="px-2 py-1 rounded-lg text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 cursor-pointer"
+                                title="Quản lý chi tiết các giai đoạn và danh sách công việc trong dự án"
+                              >
+                                + Giai đoạn / Việc
+                              </button>
 
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const partDepts = Array.isArray(prj.participatingDepts) ? prj.participatingDepts : [];
-                              const srcDept = partDepts[0] || (prj.dept !== "Liên Phòng Ban" ? prj.dept : "Kinh Doanh");
-                              const dstDept = partDepts[1] || "Application";
-                              setWfForm((prev) => ({
-                                ...prev,
-                                title: `[${prj.id}] Phối hợp dự án: ${prj.name}`,
-                                requester_name: prj.lead || currentStaffName,
-                                requester_dept: srcDept,
-                                target_dept: dstDept,
-                                customer_name: prj.customerOrRef || "",
-                                due_date: prj.endDate || toVNDateString(new Date(Date.now() + 5 * 86400000)),
-                                description: `Phiếu phối hợp liên phòng ban thuộc Dự án [${prj.id}] ${prj.name}.\nMục tiêu: ${prj.description || ""}`
-                              }));
-                              setIsWorkflowModalOpen(true);
-                            }}
-                            className="px-2 py-1 rounded-lg text-[11px] font-bold bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 hover:bg-purple-100 cursor-pointer"
-                            title="Tạo phiếu Quy trình phối hợp liên phòng ban cho dự án này"
-                          >
-                            ⚡ + Phối hợp WF
-                          </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const partDepts = Array.isArray(prj.participatingDepts) ? prj.participatingDepts : [];
+                                  const srcDept = partDepts[0] || (prj.dept !== "Liên Phòng Ban" ? prj.dept : "Kinh Doanh");
+                                  const dstDept = partDepts[1] || "Application";
+                                  setWfForm((prev) => ({
+                                    ...prev,
+                                    title: `[${prj.id}] Phối hợp dự án: ${prj.name}`,
+                                    requester_name: prj.lead || currentStaffName,
+                                    requester_dept: srcDept,
+                                    target_dept: dstDept,
+                                    customer_name: prj.customerOrRef || "",
+                                    due_date: prj.endDate || toVNDateString(new Date(Date.now() + 5 * 86400000)),
+                                    description: `Phiếu phối hợp liên phòng ban thuộc Dự án [${prj.id}] ${prj.name}.\nMục tiêu: ${prj.description || ""}`
+                                  }));
+                                  setIsWorkflowModalOpen(true);
+                                }}
+                                className="px-2 py-1 rounded-lg text-[11px] font-bold bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 hover:bg-purple-100 cursor-pointer"
+                                title="Tạo phiếu Quy trình phối hợp liên phòng ban cho dự án này"
+                              >
+                                ⚡ + Phối hợp WF
+                              </button>
 
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const stageActors = stages.flatMap((s: any) => [
-                                s.assignee,
-                                ...(Array.isArray(s.tasks) ? s.tasks.map((t: any) => t.assignee) : [])
-                              ]).filter(Boolean);
-                              const allMembers = Array.from(new Set([
-                                ...(Array.isArray(prj.collaborators) ? prj.collaborators : []),
-                                ...stageActors
-                              ])).filter((m) => m && !sameStaffName(m, prj.lead || currentStaffName));
-                              openScheduleForm(todayVN(), undefined, "MEETING");
-                              setScheduleForm((prev) => ({
-                                ...prev,
-                                title: `Họp điều phối Dự án [${prj.id}] ${prj.name}`,
-                                actor: prj.lead || currentStaffName,
-                                coActors: allMembers,
-                                category: prj.dept === "Liên Phòng Ban" ? (prj.participatingDepts?.[0] || "Kinh Doanh") : prj.dept,
-                                meetingAgenda: `Rà soát tiến độ ${stages.length} giai đoạn của Dự án [${prj.id}] ${prj.name} (${completedStages}/${totalStages} hoàn thành).`,
-                                linkedTaskCodes: stages.map((_: any, i: number) => `TSK-${prj.id}-S${i + 1}`)
-                              }));
-                            }}
-                            className="px-2 py-1 rounded-lg text-[11px] font-bold bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 hover:bg-rose-100 cursor-pointer"
-                            title="Đặt lịch họp điều phối dự án với toàn bộ thành viên các phòng ban"
-                          >
-                            🎥 + Họp dự án
-                          </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const stageActors = stages.flatMap((s: any) => [
+                                    s.assignee,
+                                    ...(Array.isArray(s.tasks) ? s.tasks.map((t: any) => t.assignee) : [])
+                                  ]).filter(Boolean);
+                                  const allMembers = Array.from(new Set([
+                                    ...(Array.isArray(prj.collaborators) ? prj.collaborators : []),
+                                    ...stageActors
+                                  ])).filter((m) => m && !sameStaffName(m, prj.lead || currentStaffName));
+                                  openScheduleForm(todayVN(), undefined, "MEETING");
+                                  setScheduleForm((prev) => ({
+                                    ...prev,
+                                    title: `Họp điều phối Dự án [${prj.id}] ${prj.name}`,
+                                    actor: prj.lead || currentStaffName,
+                                    coActors: allMembers,
+                                    category: prj.dept === "Liên Phòng Ban" ? (prj.participatingDepts?.[0] || "Kinh Doanh") : prj.dept,
+                                    meetingAgenda: `Rà soát tiến độ ${stages.length} giai đoạn của Dự án [${prj.id}] ${prj.name} (${completedStages}/${totalStages} hoàn thành).`,
+                                    linkedTaskCodes: stages.map((_: any, i: number) => `TSK-${prj.id}-S${i + 1}`)
+                                  }));
+                                }}
+                                className="px-2 py-1 rounded-lg text-[11px] font-bold bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 hover:bg-rose-100 cursor-pointer"
+                                title="Đặt lịch họp điều phối dự án với toàn bộ thành viên các phòng ban"
+                              >
+                                🎥 + Họp dự án
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -11027,6 +11720,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         id: "workflows",
                         label: "🔄 Tab Quy Trình Phối Hợp",
                         count: dailyPlanItems.filter(it => getDailyItemOriginMeta(it).originTab === "workflows").length
+                      },
+                      {
+                        id: "hub_technical",
+                        label: "🏭 Phân hệ Kỹ thuật / App",
+                        count: dailyPlanItems.filter(it => getDailyItemOriginMeta(it).originTab === "hub_technical").length
                       },
                       {
                         id: "planner_schedule",
@@ -12210,39 +12908,42 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             <div className="bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200/80 dark:border-indigo-800/80 rounded-xl p-4 text-xs space-y-2">
               <div className="flex items-center gap-2 font-bold text-indigo-900 dark:text-indigo-200">
                 <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                <span>Khuyến Nghị Điều Hành Trọng Tâm Cho Ban Giám Đốc:</span>
+                <span>Khuyến Nghị Điều Hành Trọng Tâm Toàn Công Ty Cho Ban Giám Đốc:</span>
               </div>
               <ol className="list-decimal list-inside space-y-1.5 text-slate-700 dark:text-slate-300 leading-relaxed pl-1">
                 {!analyticsData.hasData ? (
                   <>
                     <li>
-                      <strong>Khởi tạo dữ liệu vận hành:</strong> Dữ liệu vận hành hệ thống hiện đang ở trạng thái sạch (0 công việc, 0 quy trình phối hợp, 0 báo cáo daily). Các Trưởng bộ phận cần bắt đầu phân công nhiệm vụ tuần trên Bảng Công Việc.
+                      <strong>Khởi tạo dữ liệu điều hành liên khối:</strong> Hệ thống đã kết nối đồng thời{" "}
+                      <strong>Khối Kinh Doanh – Vận Hành – Pháp Chế</strong> và{" "}
+                      <strong>Khối Kỹ Thuật – Nhà Máy</strong> (Nghiên Cứu R&amp;D, Sản Xuất Kit, Tổng Hợp Oligo, Kỹ Thuật – Thiết Bị, QA/QC, Kho &amp; Cung Ứng Kỹ Thuật, Đơn Nội Bộ). Các Trưởng bộ phận có thể phân công nhiệm vụ và lên Lịch Công Tác Tuần trực tiếp tại Bảng Công Việc.
                     </li>
                     <li>
-                      <strong>Thiết lập quy trình phối hợp liên phòng:</strong> Khuyến khích phòng Kinh Doanh, Application, Kho và Cung Ứng khởi tạo các phiếu phối hợp luân chuyển để chuẩn hóa luồng xử lý và giám sát thời gian SLA.
+                      <strong>Chuẩn hóa luồng phối hợp liên phòng ban:</strong> Khuyến khích Kinh Doanh, Application, Pháp Chế, Kho &amp; Cung Ứng phối hợp cùng R&amp;D, Sản Xuất Kit, Oligo, KTCN và QA/QC qua phiếu luân chuyển và Đơn đặt hàng nội bộ để kiểm soát SLA toàn chuỗi.
                     </li>
                     <li>
-                      <strong>Thiết lập kỷ luật Daily:</strong> Nhắc nhở nhân sự các phòng ban gửi Nhật Ký Daily mỗi cuối ngày làm việc để hệ thống tự động ghi nhận số giờ, mức độ tương xứng và tính điểm KPI chính xác.
+                      <strong>Thiết lập kỷ luật Daily toàn công ty:</strong> Nhắc nhở nhân sự cả hai khối gửi Nhật Ký Daily mỗi cuối ngày (tự động kéo đầu việc ELN, WBS, Lệnh SX, QC, Application, Công việc giao) để hệ thống tổng hợp giờ công và KPI chính xác.
                     </li>
                   </>
                 ) : (
                   <>
                     <li>
-                      <strong>Thúc đẩy hoàn thành công việc:</strong> Tập trung đẩy nhanh tiến độ {analyticsData.inProgressTasks} đầu việc đang thực hiện và {analyticsData.todoTasks} việc chờ xử lý trên toàn hệ thống để nâng cao tỷ lệ hoàn thành chung ({analyticsData.taskCompletionRate}%).
+                      <strong>Thúc đẩy tiến độ toàn công ty (Kinh doanh &amp; Kỹ thuật – Nhà máy):</strong> Tập trung đẩy nhanh tiến độ{" "}
+                      {analyticsData.inProgressTasks} đầu việc đang thực hiện và {analyticsData.todoTasks} việc chờ xử lý trên toàn hệ thống (bao gồm công việc điều hành, ELN/WBS R&amp;D, Lệnh SX Kit/Oligo, KTCN, QA/QC, Application và Pháp Chế) để nâng cao tỷ lệ hoàn thành chung ({analyticsData.taskCompletionRate}%).
                     </li>
                     {analyticsData.overdueWf > 0 && (
                       <li>
                         <strong>Xử lý phiếu luân chuyển trễ hạn:</strong> Bộ phận{" "}
-                        <strong>{analyticsData.overdueDepts.join(", ") || "liên quan"}</strong> cần ưu tiên xử lý dứt điểm {analyticsData.overdueWf} phiếu phối hợp đang quá hạn SLA.
+                        <strong>{analyticsData.overdueDepts.join(", ") || "liên quan"}</strong> cần ưu tiên xử lý dứt điểm {analyticsData.overdueWf} phiếu phối hợp liên phòng (KD ↔ Nhà máy / Pháp Chế / Kho) đang quá hạn SLA.
                       </li>
                     )}
                     {analyticsData.realIssues.length > 0 && (
                       <li>
-                        <strong>Tháo gỡ vướng mắc nhân sự:</strong> Ban Giám Đốc và các Trưởng phòng cần kiểm tra {analyticsData.realIssues.length} khó khăn được ghi nhận trong Nhật Ký Daily để kịp thời chỉ đạo hỗ trợ.
+                        <strong>Tháo gỡ vướng mắc liên khối:</strong> Ban Giám Đốc và các Trưởng phòng / Quản đốc cần kiểm tra {analyticsData.realIssues.length} khó khăn được ghi nhận trong Nhật Ký Daily để kịp thời chỉ đạo hỗ trợ vật tư, thiết bị hoặc nhân lực.
                       </li>
                     )}
                     <li>
-                      <strong>Duy trì kỷ luật báo cáo:</strong> Tiếp tục đôn đốc tỷ lệ nộp báo cáo daily ({analyticsData.dailySubmittedCount}/{analyticsData.staffCount} nhân sự trong kỳ) hướng tới mục tiêu 100% nhân sự toàn công ty.
+                      <strong>Duy trì kỷ luật báo cáo &amp; đồng bộ lịch tuần:</strong> Tiếp tục đôn đốc tỷ lệ nộp báo cáo daily ({analyticsData.dailySubmittedCount}/{analyticsData.staffCount} nhân sự trong kỳ) và sử dụng lịch tuần đồng bộ trên cả Khối Kinh Doanh lẫn Khối Kỹ Thuật – Nhà Máy hướng tới mục tiêu 100% minh bạch vận hành.
                     </li>
                   </>
                 )}
@@ -15330,41 +16031,12 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             setScheduleForm({ ...scheduleForm, coActors: next });
           };
 
-          // 1. Lấy danh sách Công việc (Tasks) + Phiếu phối hợp (Workflows) + Chuyên đề (Projects) đang mở của nhân sự đang chọn
-          const personOpenTasks = (tasks || []).filter((t: any) => {
-            if (String(t.status || "").toUpperCase() === "DONE") return false;
-            if (!activeActorName) return true;
-            const assignees = String(t.assignee_name || "")
-              .split(/[,;\n]+/)
-              .map((a: string) => cleanWorkspaceAssignee(a))
-              .filter(Boolean);
-            return assignees.some((a: string) => sameStaffName(a, activeActorName));
-          });
+          // 1. Lấy danh sách Công việc (Tasks) + Việc Kỹ thuật/App/Pháp chế (Hub) + Phiếu phối hợp + Dự án đang mở
+          const actorUid = resolveUserIdForStaffName(activeActorName);
+          const detectedActorDept = resolveStaffDept(activeActorName);
+          const activeScheduleDept = detectedActorDept || (scheduleForm.category !== "Họp & Giao Ban" ? scheduleForm.category : "");
 
-          const personOpenWorkflows = (workflows || []).filter((w: any) => {
-            const st = String(w.status || "").toUpperCase();
-            if (st === "COMPLETED" || st === "CANCELLED" || st === "REJECTED") return false;
-            if (!activeActorName) return false;
-            if (sameStaffName(cleanWorkspaceAssignee(w.assignee_name || ""), activeActorName)) return true;
-            if (sameStaffName(cleanWorkspaceAssignee(w.requester_name || ""), activeActorName)) return true;
-            const steps = Array.isArray(w.steps) ? w.steps : [];
-            return steps.some((s: any) => {
-              const sAssignees = Array.isArray(s?.assignees) && s.assignees.length > 0
-                ? s.assignees.map((a: string) => cleanWorkspaceAssignee(a))
-                : String(s?.assignee_name || "").split(",").map((a: string) => cleanWorkspaceAssignee(a));
-              return sAssignees.filter(Boolean).some((a: string) => sameStaffName(a, activeActorName));
-            });
-          });
-
-          const personActiveProjects = (labProjects || []).filter((p: any) => {
-            if (p.status === "Completed") return false;
-            if (!activeActorName) return false;
-            if (sameStaffName(p.lead || "", activeActorName)) return true;
-            const collabs = Array.isArray(p.collaborators) ? p.collaborators : [];
-            return collabs.some((c: string) => sameStaffName(c, activeActorName));
-          });
-
-          const selectableWorkItems: Array<{
+          type ScheduleWorkCandidate = {
             code: string;
             typeLabel: string;
             title: string;
@@ -15372,35 +16044,142 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             dept: string;
             deadline?: string;
             priority?: string;
-          }> = [
-            ...personOpenTasks.map((t: any) => ({
+            metaSummary?: string;
+            isPersonMatch: boolean;
+            isDeptMatch: boolean;
+          };
+
+          const rawCandidates: ScheduleWorkCandidate[] = [];
+          const seenCandidateCodes = new Set<string>();
+          const pushCandidate = (c: ScheduleWorkCandidate) => {
+            const key = String(c.code || "").trim().toUpperCase();
+            if (!key || seenCandidateCodes.has(key)) return;
+            seenCandidateCodes.add(key);
+            rawCandidates.push(c);
+          };
+
+          (tasks || []).forEach((t: any) => {
+            if (String(t.status || "").toUpperCase() === "DONE") return;
+            const assignees = String(t.assignee_name || "")
+              .split(/[,;\n]+/)
+              .map((a: string) => cleanWorkspaceAssignee(a))
+              .filter(Boolean);
+            const isPerson = !activeActorName ? true : assignees.some((a: string) => sameStaffName(a, activeActorName));
+            const isDept = Boolean(activeScheduleDept && taskInvolvesDept(t, activeScheduleDept));
+            if (!isPerson && !isDept) return;
+            pushCandidate({
               code: t.task_code || `TSK-${t.id}`,
               typeLabel: t.status === "IN_PROGRESS" ? "⚡ Đang làm" : "📌 Việc cần làm",
               title: t.title || "",
               location: t.customer_name || "",
               dept: t.department || scheduleForm.category || "Kinh Doanh",
               deadline: t.deadline ? String(t.deadline).slice(0, 10) : undefined,
-              priority: t.priority
-            })),
-            ...personOpenWorkflows.map((w: any) => ({
+              priority: t.priority,
+              isPersonMatch: isPerson,
+              isDeptMatch: isPerson || isDept
+            });
+          });
+
+          (hubWorkItems || []).forEach((h) => {
+            if (!h.isOpenForSchedule) return;
+            const isPerson = Boolean(
+              !activeActorName
+                ? true
+                : (actorUid && Array.isArray(h.assigneeUserIds) && h.assigneeUserIds.includes(actorUid)) ||
+                  (Array.isArray(h.assignees) && h.assignees.some((a) => sameStaffName(a, activeActorName)))
+            );
+            const isDept = Boolean(
+              activeScheduleDept &&
+                (isSameWorkspaceDept(h.dept, activeScheduleDept) ||
+                  (Array.isArray(h.involvedDepts) && h.involvedDepts.some((d) => isSameWorkspaceDept(d, activeScheduleDept))))
+            );
+            if (!isPerson && !isDept) return;
+            pushCandidate({
+              code: h.code,
+              typeLabel: h.typeLabel || "🏭 Phân hệ",
+              title: h.title || "",
+              location: h.location || "",
+              dept: h.dept || activeScheduleDept || "Nghiên Cứu R&D",
+              deadline: h.dueDate ? String(h.dueDate).slice(0, 10) : undefined,
+              priority: h.priority,
+              metaSummary: h.metaSummary,
+              isPersonMatch: isPerson,
+              isDeptMatch: isPerson || isDept
+            });
+          });
+
+          (workflows || []).forEach((w: any) => {
+            const st = String(w.status || "").toUpperCase();
+            if (st === "COMPLETED" || st === "CANCELLED" || st === "REJECTED") return;
+            const steps = Array.isArray(w.steps) ? w.steps : [];
+            const isPerson = Boolean(
+              activeActorName &&
+                (sameStaffName(cleanWorkspaceAssignee(w.assignee_name || ""), activeActorName) ||
+                  sameStaffName(cleanWorkspaceAssignee(w.requester_name || ""), activeActorName) ||
+                  steps.some((s: any) => {
+                    const sAssignees = Array.isArray(s?.assignees) && s.assignees.length > 0
+                      ? s.assignees.map((a: string) => cleanWorkspaceAssignee(a))
+                      : String(s?.assignee_name || "").split(",").map((a: string) => cleanWorkspaceAssignee(a));
+                    return sAssignees.filter(Boolean).some((a: string) => sameStaffName(a, activeActorName));
+                  }))
+            );
+            const isDept = Boolean(activeScheduleDept && workflowInvolvesDept(w, activeScheduleDept));
+            if (!isPerson && !isDept) return;
+            pushCandidate({
               code: w.workflow_code || `WF-${w.id}`,
               typeLabel: "🔄 Phối hợp",
               title: w.title || "",
               location: w.customer_name || "",
               dept: w.target_dept || w.requester_dept || scheduleForm.category || "Application",
               deadline: w.due_date ? String(w.due_date).slice(0, 10) : undefined,
-              priority: w.priority
-            })),
-            ...personActiveProjects.map((p: any) => ({
+              priority: w.priority,
+              isPersonMatch: isPerson,
+              isDeptMatch: isPerson || isDept
+            });
+          });
+
+          (allCompanyProjects || []).forEach((p: any) => {
+            if (p.status === "Completed") return;
+            const collabs = Array.isArray(p.collaborators) ? p.collaborators : [];
+            const memberIds = Array.isArray(p.memberUserIds) ? p.memberUserIds : [];
+            const isPerson = Boolean(
+              activeActorName &&
+                ((actorUid && (Number(p.leadUserId) === actorUid || memberIds.includes(actorUid))) ||
+                  sameStaffName(p.lead || "", activeActorName) ||
+                  collabs.some((c: string) => sameStaffName(c, activeActorName)))
+            );
+            const partDepts = Array.isArray(p.participatingDepts) ? p.participatingDepts : [];
+            const isDept = Boolean(
+              activeScheduleDept &&
+                (isSameWorkspaceDept(p.dept, activeScheduleDept) ||
+                  partDepts.some((d: string) => isSameWorkspaceDept(d, activeScheduleDept)))
+            );
+            if (!isPerson && !isDept) return;
+            pushCandidate({
               code: p.id,
-              typeLabel: "🎯 Chuyên đề",
+              typeLabel: p.isHubProject ? (p.sourceBadge || "🧬 Stage-Gate") : "🎯 Dự án",
               title: p.name || "",
-              location: "",
-              dept: p.dept || scheduleForm.category || "Application",
+              location: p.isHubProject && p.targetTab === "factory-device" ? "Xưởng Kỹ thuật – Thiết bị" : p.isHubProject ? "Phòng Lab R&D" : "",
+              dept: p.dept && p.dept !== "Liên Phòng Ban" ? p.dept : partDepts[0] || activeScheduleDept || "Application",
               deadline: p.endDate ? String(p.endDate).slice(0, 10) : undefined,
-              priority: p.priority === "Cao" ? "HIGH" : "MEDIUM"
-            }))
-          ];
+              priority: p.priority === "Cao" ? "HIGH" : "MEDIUM",
+              metaSummary: p.currentStageLabel || undefined,
+              isPersonMatch: isPerson,
+              isDeptMatch: isPerson || isDept
+            });
+          });
+
+          const personalWorkItems = rawCandidates.filter((c) => c.isPersonMatch);
+          const deptWorkItems = rawCandidates.filter((c) => c.isDeptMatch);
+          const scopedCandidates = scheduleScopeMode === "dept" ? deptWorkItems : personalWorkItems;
+          const workSearchLower = scheduleWorkSearch.trim().toLowerCase();
+          const selectableWorkItems = workSearchLower
+            ? scopedCandidates.filter((w) =>
+                [w.code, w.title, w.typeLabel, w.dept, w.location, w.metaSummary]
+                  .filter(Boolean)
+                  .some((v) => String(v).toLowerCase().includes(workSearchLower))
+              )
+            : scopedCandidates;
 
           // 2. Kiểm tra các lịch đã có của nhân sự này trong ngày đang chọn để tránh trùng giờ
           const activeDateIso = scheduleForm.date || todayVN();
@@ -15421,39 +16200,26 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             "15:30", "16:00", "16:30", "17:00", "17:30", "18:00", "19:00", "20:00", "21:00"
           ];
 
-          const handleToggleWorkItemForSchedule = (item: typeof selectableWorkItems[number]) => {
+          const handleToggleWorkItemForSchedule = (item: ScheduleWorkCandidate) => {
             const currentCodes = Array.isArray(scheduleForm.linkedTaskCodes) ? scheduleForm.linkedTaskCodes : [];
             const isSelected = currentCodes.includes(item.code);
-            let nextCodes: string[];
-            if (isSelected) {
-              nextCodes = currentCodes.filter(c => c !== item.code);
-            } else {
-              nextCodes = [...currentCodes, item.code];
-            }
-            const selectedObjs = selectableWorkItems.filter(w => nextCodes.includes(w.code));
+            const nextCodes = isSelected
+              ? currentCodes.filter((c) => c !== item.code)
+              : [...currentCodes, item.code];
+            const selectedObjs = nextCodes
+              .map((c) => rawCandidates.find((w) => w.code === c))
+              .filter((o): o is ScheduleWorkCandidate => Boolean(o));
             const nextTitle = selectedObjs.length > 0
-              ? selectedObjs.map(o => o.title).join(" + ")
+              ? selectedObjs
+                  .map((o) => (String(o.title || "").startsWith(`[${o.code}]`) ? o.title : `[${o.code}] ${o.title}`))
+                  .join(" + ")
               : scheduleForm.title;
-            const firstWithLoc = selectedObjs.find(o => o.location);
+            const firstWithLoc = selectedObjs.find((o) => o.location);
             const firstDept = selectedObjs[0]?.dept;
-            const validCategories = [
-              "Application",
-              "Kinh Doanh",
-              "Kho & Vận Hành",
-              "Cung Ứng",
-              "Kế Toán",
-              "Pháp Chế",
-              "Nghiên Cứu R&D",
-              "Sản Xuất Kit",
-              "Tổng Hợp Oligo",
-              "Kỹ Thuật – Thiết Bị",
-              "QA/QC",
-              "Kho Nhà Máy",
-              "Cung Ứng Kỹ Thuật",
-              "Đơn Nội Bộ",
-              "Họp & Giao Ban"
-            ];
-            const matchedCat = firstDept && validCategories.includes(firstDept) ? firstDept : scheduleForm.category;
+            const matchedCat =
+              !isMeetingMode && firstDept && SCHEDULE_VALID_CATEGORIES.includes(firstDept)
+                ? firstDept
+                : scheduleForm.category;
 
             setScheduleForm({
               ...scheduleForm,
@@ -15474,7 +16240,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     setScheduleForm({
                       ...scheduleForm,
                       eventType: "WORK",
-                      category: scheduleForm.category === "Họp & Giao Ban" ? "Application" : scheduleForm.category
+                      category:
+                        scheduleForm.category === "Họp & Giao Ban"
+                          ? resolveStaffDept(activeActorName) || "Kinh Doanh"
+                          : scheduleForm.category
                     })
                   }
                   className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
@@ -15557,6 +16326,33 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         agenda: "1. Rà soát cấu hình kỹ thuật & bảng giá chào thầu\n2. Phân công chuẩn bị hồ sơ pháp lý & chứng chỉ hãng"
                       },
                       {
+                        label: "🧬 Họp duyệt cổng R&D / Stage-Gate",
+                        title: "Họp duyệt cổng Stage-Gate R&D & Đánh giá hồ sơ ELN/DHF",
+                        time: "09:30 - 11:00",
+                        st: "09:30",
+                        et: "11:00",
+                        loc: "Phòng Lab R&D / Phòng họp chính",
+                        agenda: "1. Rà soát kết quả thử nghiệm ELN & chỉ tiêu hiệu năng\n2. Thẩm định checklist DHF & quyết định mở cổng Stage-Gate"
+                      },
+                      {
+                        label: "🏭 Họp điều độ SX – QA/QC – Kho NM",
+                        title: "Họp điều độ Sản Xuất Kit – Oligo – KTCN – QA/QC – Kho Nhà Máy",
+                        time: "13:30 - 15:00",
+                        st: "13:30",
+                        et: "15:00",
+                        loc: "Phòng họp Nhà Máy",
+                        agenda: "1. Rà soát tiến độ Lệnh SX Kit, Mẻ Oligo & Lệnh lắp ráp Thiết bị\n2. Kiểm tra phiếu QC (IQC/IPQC/FQC), NC/CAPA & tồn kho NVL theo FEFO"
+                      },
+                      {
+                        label: "🔗 Họp điều phối Đơn Nội Bộ (KD ↔ Nhà máy)",
+                        title: "Họp điều phối Đơn Đặt Hàng Nội Bộ (Kinh Doanh ↔ Nhà Máy ↔ Application)",
+                        time: "10:00 - 11:00",
+                        st: "10:00",
+                        et: "11:00",
+                        loc: "Phòng họp chính Công ty",
+                        agenda: "1. Chốt tiến độ xuất kho & giao hàng các Đơn nội bộ ưu tiên\n2. Xử lý yêu cầu đóng gói đặc biệt & phản hồi kỹ thuật từ khách hàng"
+                      },
+                      {
                         label: "💻 Họp trực tuyến Online",
                         title: "Họp trực tuyến (Google Meet / Zoom / Teams)",
                         time: "10:00 - 11:30",
@@ -15607,7 +16403,20 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     ) : (
                       <select
                         value={scheduleForm.actor}
-                        onChange={(e) => setScheduleForm({ ...scheduleForm, actor: e.target.value, linkedTaskCodes: [] })}
+                        onChange={(e) => {
+                          const nextActor = e.target.value;
+                          const detectedDept = !isMeetingMode ? resolveStaffDept(nextActor) : "";
+                          const nextCat =
+                            detectedDept && SCHEDULE_VALID_CATEGORIES.includes(detectedDept)
+                              ? detectedDept
+                              : scheduleForm.category;
+                          setScheduleForm({
+                            ...scheduleForm,
+                            actor: nextActor,
+                            category: nextCat,
+                            linkedTaskCodes: []
+                          });
+                        }}
                         className="w-full px-3 py-2 rounded-xl border border-indigo-300 dark:border-indigo-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
                       >
                         <option value="">-- Chọn người chủ trì / phụ trách --</option>
@@ -15825,32 +16634,84 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 )}
               </div>
 
-              {/* BƯỚC 2: CHỌN NHANH TỪ CÁC CÔNG VIỆC / PHIẾU PHỐI HỢP ĐANG CÓ CỦA NHÂN SỰ ĐÓ */}
+              {/* BƯỚC 2: CHỌN NHANH TỪ CÁC CÔNG VIỆC / DỰ ÁN / PHÂN HỆ KỸ THUẬT ĐANG MỞ */}
               <div className="p-3 rounded-xl bg-indigo-50/50 dark:bg-indigo-950/25 border border-indigo-200/80 dark:border-indigo-900/60 space-y-2">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <label className="font-bold text-indigo-900 dark:text-indigo-300 flex items-center gap-1.5 text-[11px]">
-                    <span>📋 2. Chọn từ công việc đang có của {activeActorName || "nhân sự"} để đưa vào lịch / cuộc họp</span>
+                  <label className="font-bold text-indigo-900 dark:text-indigo-300 flex items-center gap-1.5 text-[11px] flex-wrap">
+                    <span>📋 2. Chọn từ công việc đang mở ({activeActorName || "nhân sự"}{activeScheduleDept ? ` · ${activeScheduleDept}` : ""})</span>
                     <span className="px-1.5 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/80 text-indigo-700 dark:text-indigo-200 font-mono text-[10px]">
-                      {selectableWorkItems.length} đầu việc đang mở
+                      {selectableWorkItems.length} đầu việc hiển thị
                     </span>
                   </label>
-                  {Array.isArray(scheduleForm.linkedTaskCodes) && scheduleForm.linkedTaskCodes.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setScheduleForm({ ...scheduleForm, linkedTaskCodes: [] })}
-                      className="text-[10px] text-rose-500 hover:underline font-semibold cursor-pointer"
-                    >
-                      Bỏ chọn ({scheduleForm.linkedTaskCodes.length})
-                    </button>
-                  )}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <div className="inline-flex rounded-lg bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800 p-0.5 text-[10px] font-bold">
+                      <button
+                        type="button"
+                        onClick={() => setScheduleScopeMode("person")}
+                        className={`px-2 py-0.5 rounded-md transition-colors cursor-pointer ${
+                          scheduleScopeMode === "person"
+                            ? "bg-indigo-600 text-white"
+                            : "text-slate-600 dark:text-slate-300 hover:bg-indigo-50 dark:hover:bg-slate-800"
+                        }`}
+                      >
+                        👤 Việc cá nhân ({personalWorkItems.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setScheduleScopeMode("dept")}
+                        className={`px-2 py-0.5 rounded-md transition-colors cursor-pointer ${
+                          scheduleScopeMode === "dept"
+                            ? "bg-indigo-600 text-white"
+                            : "text-slate-600 dark:text-slate-300 hover:bg-indigo-50 dark:hover:bg-slate-800"
+                        }`}
+                      >
+                        🏢 Toàn phòng{activeScheduleDept ? ` ${activeScheduleDept}` : ""} ({deptWorkItems.length})
+                      </button>
+                    </div>
+                    {Array.isArray(scheduleForm.linkedTaskCodes) && scheduleForm.linkedTaskCodes.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setScheduleForm({ ...scheduleForm, linkedTaskCodes: [] })}
+                        className="text-[10px] text-rose-500 hover:underline font-semibold cursor-pointer"
+                      >
+                        Bỏ chọn ({scheduleForm.linkedTaskCodes.length})
+                      </button>
+                    )}
+                  </div>
                 </div>
+
+                {(personalWorkItems.length > 0 || deptWorkItems.length > 0 || scheduleWorkSearch) && (
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={scheduleWorkSearch}
+                      onChange={(e) => setScheduleWorkSearch(e.target.value)}
+                      placeholder="Tìm mã ELN, WBS, LSX, dự án, nội dung..."
+                      className="w-full px-3 py-1.5 pr-7 rounded-lg border border-indigo-200/80 dark:border-indigo-800 bg-white dark:bg-slate-950 text-[11px] font-medium text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                    />
+                    {scheduleWorkSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setScheduleWorkSearch("")}
+                        title="Xóa tìm kiếm"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-bold text-xs cursor-pointer"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 {selectableWorkItems.length === 0 ? (
                   <p className="text-[11px] text-slate-500 italic">
-                    Hiện {activeActorName || "nhân sự này"} chưa có công việc tồn đọng nào trong danh sách. Bạn có thể nhập trực tiếp nội dung ở mục 4 bên dưới.
+                    {scheduleWorkSearch
+                      ? `Không tìm thấy đầu việc nào khớp "${scheduleWorkSearch}". Hãy xóa bộ lọc tìm kiếm hoặc chuyển sang "Toàn phòng".`
+                      : scheduleScopeMode === "person" && deptWorkItems.length > 0
+                      ? `Hiện ${activeActorName || "nhân sự này"} chưa có việc giao riêng, nhưng phòng đang có ${deptWorkItems.length} đầu việc mở — bấm "Toàn phòng" ở trên để chọn, hoặc nhập trực tiếp ở mục 4.`
+                      : `Hiện ${activeActorName || "nhân sự / bộ phận này"} chưa có công việc tồn đọng nào trong danh sách. Bạn có thể nhập trực tiếp nội dung ở mục 4 bên dưới.`}
                   </p>
                 ) : (
-                  <div className="max-h-32 overflow-y-auto space-y-1.5 pr-1">
+                  <div className="max-h-52 overflow-y-auto space-y-1.5 pr-1">
                     {selectableWorkItems.map((item) => {
                       const isPicked = (scheduleForm.linkedTaskCodes || []).includes(item.code);
                       return (
@@ -15879,9 +16740,21 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             <span className="font-semibold truncate text-[11px]">{item.title}</span>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0 text-[10px]">
+                            {item.dept && (
+                              <span className={`hidden sm:inline px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                isPicked ? "bg-white/20 text-white" : "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300"
+                              }`}>
+                                {item.dept}
+                              </span>
+                            )}
                             {item.location && (
                               <span className={`truncate max-w-[110px] ${isPicked ? "text-indigo-100" : "text-slate-500"}`}>
                                 📍 {item.location}
+                              </span>
+                            )}
+                            {item.metaSummary && !item.location && (
+                              <span className={`truncate max-w-[120px] ${isPicked ? "text-indigo-100" : "text-slate-500"}`}>
+                                {item.metaSummary}
                               </span>
                             )}
                             <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold ${
@@ -16167,20 +17040,24 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       placeholder={
                         isMeetingMode
                           ? "VD: Họp giao ban đầu tuần, Họp phương án thầu BV Chợ Rẫy..."
-                          : "VD: Demo máy Real-time PCR tại BV Chợ Rẫy, Giao 20 kit cho Pasteur..."
+                          : "VD: Chạy mẻ Oligo / Kiểm tra ELN R&D / Demo máy Real-time PCR / Xuất kho FEFO..."
                       }
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
                     />
                   </div>
                   <div className="md:col-span-5">
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                      {isMeetingMode ? "Phòng họp / Địa điểm họp" : "Địa điểm / Bệnh viện / KH"}
+                      {isMeetingMode ? "Phòng họp / Địa điểm họp" : "Địa điểm / Phòng Lab / Xưởng / Khách hàng"}
                     </label>
                     <input
                       type="text"
                       value={scheduleForm.location}
                       onChange={(e) => setScheduleForm({ ...scheduleForm, location: e.target.value })}
-                      placeholder={isMeetingMode ? "VD: Phòng họp chính Tầng 2, Online..." : "VD: BV Chợ Rẫy, Viện Pasteur..."}
+                      placeholder={
+                        isMeetingMode
+                          ? "VD: Phòng họp chính Tầng 2, Online..."
+                          : "VD: Phòng Lab R&D, Xưởng Kit, Trạm Oligo, BV Chợ Rẫy..."
+                      }
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
                     />
                   </div>
@@ -18012,7 +18889,9 @@ const TaskCard: React.FC<{
   task: any;
   onStatusChange: (id: number, status: string) => void;
   onEdit: (task: any) => void;
-}> = ({ task, onStatusChange, onEdit }) => {
+  onScheduleHubItem?: (task: any) => void;
+  onNavigateTab?: (tab: string) => void;
+}> = ({ task, onStatusChange, onEdit, onScheduleHubItem, onNavigateTab }) => {
   return (
     <div className="bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700 rounded-xl p-3.5 shadow-xs hover:shadow-md transition-all space-y-2">
       <div className="flex items-center justify-between gap-1">
@@ -18020,8 +18899,26 @@ const TaskCard: React.FC<{
         <PriorityBadge priority={task.priority} />
       </div>
 
+      {task.isHubItem && (
+        <div className="flex items-center gap-1 flex-wrap text-[10px]">
+          <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 font-bold border border-indigo-200/80 dark:border-indigo-800/70">
+            {task.department}
+          </span>
+          {task.task_category && (
+            <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-700/70 dark:text-slate-200 font-semibold">
+              {task.task_category}
+            </span>
+          )}
+          {task.hubStatusLabel && (
+            <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 font-semibold">
+              {task.hubStatusLabel}
+            </span>
+          )}
+        </div>
+      )}
+
       <h4
-        onClick={() => onEdit(task)}
+        onClick={() => (task.isHubItem && task.hubTargetTab ? onNavigateTab?.(task.hubTargetTab) : onEdit(task))}
         className="text-xs font-bold text-slate-900 dark:text-white hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer leading-snug line-clamp-2"
       >
         {task.title}
@@ -18081,9 +18978,9 @@ const TaskCard: React.FC<{
         ) : (
           <button
             type="button"
-            onClick={() => onEdit(task)}
+            onClick={() => (task.isHubItem && task.hubTargetTab ? onNavigateTab?.(task.hubTargetTab) : onEdit(task))}
             className="px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 font-bold text-[10px] hover:bg-amber-200 dark:hover:bg-amber-900/70 transition-colors cursor-pointer"
-            title="Nhấn để phân công nhân sự phụ trách"
+            title={task.isHubItem ? "Mở tại phân hệ chuyên môn" : "Nhấn để phân công nhân sự phụ trách"}
           >
             ⏳ Chờ phân công
           </button>
@@ -18091,30 +18988,57 @@ const TaskCard: React.FC<{
         <span className="text-[10px] font-mono">{task.deadline ? formatDayVN(task.deadline, true) : ""}</span>
       </div>
 
-      <div className="flex items-center justify-end gap-1 pt-1">
-        {task.status === "TODO" && (
-          <button
-            onClick={() => onStatusChange(task.id, "IN_PROGRESS")}
-            className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 hover:bg-blue-100"
-          >
-            Bắt đầu ►
-          </button>
-        )}
-        {task.status === "IN_PROGRESS" && (
-          <button
-            onClick={() => onStatusChange(task.id, "DONE")}
-            className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 hover:bg-emerald-100"
-          >
-            Hoàn tất ✓
-          </button>
-        )}
-        {task.status === "DONE" && (
-          <button
-            onClick={() => onStatusChange(task.id, "TODO")}
-            className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 hover:bg-slate-200"
-          >
-            Mở lại
-          </button>
+      <div className="flex items-center justify-end gap-1 pt-1 flex-wrap">
+        {task.isHubItem ? (
+          <>
+            {onScheduleHubItem && (
+              <button
+                type="button"
+                onClick={() => onScheduleHubItem(task)}
+                className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 hover:bg-indigo-100 cursor-pointer"
+                title="Đưa vào lịch công tác tuần"
+              >
+                📅 Lên lịch tuần
+              </button>
+            )}
+            {task.hubTargetTab && onNavigateTab && (
+              <button
+                type="button"
+                onClick={() => onNavigateTab(task.hubTargetTab)}
+                className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200 hover:bg-slate-200 cursor-pointer"
+                title="Mở tại phân hệ chuyên môn"
+              >
+                ↗ Mở phân hệ
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            {task.status === "TODO" && (
+              <button
+                onClick={() => onStatusChange(task.id, "IN_PROGRESS")}
+                className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 hover:bg-blue-100"
+              >
+                Bắt đầu ►
+              </button>
+            )}
+            {task.status === "IN_PROGRESS" && (
+              <button
+                onClick={() => onStatusChange(task.id, "DONE")}
+                className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 hover:bg-emerald-100"
+              >
+                Hoàn tất ✓
+              </button>
+            )}
+            {task.status === "DONE" && (
+              <button
+                onClick={() => onStatusChange(task.id, "TODO")}
+                className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 hover:bg-slate-200"
+              >
+                Mở lại
+              </button>
+            )}
+          </>
         )}
       </div>
     </div>
