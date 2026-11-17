@@ -1903,6 +1903,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
+    // 7b. Xóa hẳn một phiếu phối hợp đã khởi tạo (cùng các công việc liên quan): Admin / Trưởng bộ phận / người lập phiếu
+    if (action === "delete_workflow") {
+      const wfId = Number(body.id);
+      const wfCodeIn = String(body.workflow_code || "").trim();
+      if (!wfId && !wfCodeIn) return NextResponse.json({ error: "Thiếu mã phiếu cần xóa" }, { status: 400 });
+      const found = wfId
+        ? await query("SELECT id, workflow_code, requester_name FROM workflow_requests WHERE id = $1", [wfId])
+        : await query("SELECT id, workflow_code, requester_name FROM workflow_requests WHERE workflow_code = $1", [wfCodeIn]);
+      if (found.rows.length === 0) return NextResponse.json({ error: "Không tìm thấy phiếu" }, { status: 404 });
+      const row = found.rows[0];
+      const isCreator = Boolean(me.full_name) && lower(row.requester_name) === lower(me.full_name);
+      const canDelete = isAdminUser(me) || hasPermission(me, "workspace.approve_dept") || hasPermission(me, "workspace.manage_templates") || isCreator;
+      if (!canDelete) {
+        return forbiddenResponse("Chỉ Quản trị viên, Trưởng bộ phận hoặc người lập phiếu mới được xóa phiếu phối hợp.");
+      }
+      await query("DELETE FROM company_tasks WHERE related_workflow_code = $1", [row.workflow_code]);
+      await query("DELETE FROM workflow_requests WHERE id = $1", [row.id]);
+      await logAudit("DELETE", "WORKFLOW", `Xóa phiếu phối hợp ${row.workflow_code}`);
+      return NextResponse.json({ success: true });
+    }
+
     return NextResponse.json({ error: "Hành động POST không hợp lệ" }, { status: 400 });
   } catch (error: any) {
     console.error("Workflow API POST Error:", error);

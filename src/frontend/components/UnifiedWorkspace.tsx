@@ -9991,6 +9991,36 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             <Eye className="w-3.5 h-3.5" />
                             <span>Xem &amp; Trao Đổi</span>
                           </button>
+
+                          {(rolePerspective !== "staff" || sameStaffName(wf.requester_name, currentStaffName)) && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (!window.confirm(`Xóa vĩnh viễn phiếu phối hợp [${wf.workflow_code}] "${wf.title}" cùng toàn bộ các bước và công việc liên quan?\n\nKhông thể hoàn tác.`)) return;
+                                try {
+                                  const res = await fetch("/api/workflows?action=delete_workflow", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ id: wf.id })
+                                  });
+                                  const data = await res.json().catch(() => ({}));
+                                  if (res.ok && data.success) {
+                                    showToast(`Đã xóa phiếu ${wf.workflow_code}`, "info");
+                                    fetchData();
+                                  } else {
+                                    showToast(data.error || "Không thể xóa phiếu phối hợp", "error");
+                                  }
+                                } catch {
+                                  showToast("Lỗi kết nối máy chủ", "error");
+                                }
+                              }}
+                              className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold border border-rose-200 dark:border-rose-900/80 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 cursor-pointer"
+                              title="Xóa phiếu phối hợp này (kèm các bước và công việc liên quan)"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Xóa phiếu</span>
+                            </button>
+                          )}
                         </div>
                       </div>
 
