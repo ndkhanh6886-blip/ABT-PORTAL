@@ -15,7 +15,7 @@ import { allocate, findCandidates } from "../inv/allocation";
 import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import { createLot } from "../inv/lots";
 import { releaseDemandReservations, releaseReservationById, reserve, reserveLot } from "../inv/reservations";
-import { getItem, toBaseQty } from "../master/service";
+import { getItem, isDiscreteUomCode, toBaseQty } from "../master/service";
 import { isUserTrainedForSop } from "../qms/documents";
 import { raiseDeviation } from "../qms/incidents";
 import { issueCoaFromQcTest } from "../qms/qaOps";
@@ -185,32 +185,6 @@ async function postTrustedKitStockDoc(tx: Tx, actor: AuthzActor, input: Record<s
   return doc;
 }
 
-const DISCRETE_UOMS = new Set([
-  "CAI",
-  "CÁI",
-  "HOP",
-  "HỘP",
-  "LO",
-  "LỌ",
-  "TUI",
-  "TÚI",
-  "ONG",
-  "ỐNG",
-  "BO",
-  "BỘ",
-  "TEM",
-  "NHAN",
-  "NHÃN",
-  "KIT",
-  "PCS",
-  "BOX",
-  "TUBE",
-  "VIAL",
-  "BOTTLE",
-  "SET",
-  "EA",
-]);
-
 export function parseDemoRatio(spec: string | null | undefined, baseTests: number): number {
   if (!spec || !spec.trim()) return 0.5;
   const s = spec.trim().toLowerCase();
@@ -249,6 +223,9 @@ export interface ExplodedBomLine {
   is_bundled: boolean;
   bundle_parent_code: string | null;
   allow_substitute: boolean;
+  is_stocked: boolean;
+  is_integer_qty: boolean;
+  include_in_qc_retention: boolean;
   item_tracking?: string;
   uom_error?: string | null;
 }
@@ -351,7 +328,9 @@ export async function explodeKitBom(
 
   const lines = (
     await tx.query(
-      `SELECT bl.*, it.code AS component_code, it.name AS component_name, it.base_uom, it.item_type
+      `SELECT bl.*, it.code AS component_code, it.name AS component_name, it.base_uom, it.item_type,
+              coalesce(it.is_stocked, true) AS item_is_stocked,
+              coalesce(it.is_integer_uom, false) AS item_is_integer_uom
          FROM kit.bom_line bl
          JOIN master.item it ON it.id = bl.component_item_id
         WHERE bl.bom_id = $1
@@ -451,7 +430,7 @@ export async function explodeKitBom(
       unitNorm = Math.round(((unitNorm * 64) / 75) * 1e4) / 1e4;
     }
 
-    const includeQcRet = l.include_in_qc_retention !== false && l.component_role !== "PACKAGING" && !isPcrTubeLine;
+    const includeQcRet = l.include_in_qc_retention !== false;
     const effectiveOrderQty = includeQcRet ? plannedQty + retQty : plannedQty;
     const scale = effectiveOrderQty / baseQty;
 
@@ -461,8 +440,12 @@ export async function explodeKitBom(
 
     const scrapFactor = 1 + Number(l.scrap_pct || 0) / 100;
     const rawQty = scale * unitNorm * lineDemoRatio * scrapFactor;
-    const isDiscrete = DISCRETE_UOMS.has(String(compUom || "").trim().toUpperCase()) || isPcrTubeLine;
-    const requiredQty = isDiscrete ? Math.ceil(rawQty - 1e-9) : Math.round(rawQty * 1e6) / 1e6;
+    const isStocked = l.is_stocked !== undefined && l.is_stocked !== null ? Boolean(l.is_stocked) : l.item_is_stocked !== false;
+    const isIntegerQty =
+      l.is_integer_qty !== undefined && l.is_integer_qty !== null
+        ? Boolean(l.is_integer_qty)
+        : Boolean(l.item_is_integer_uom) || isDiscreteUomCode(compUom) || isPcrTubeLine;
+    const requiredQty = isIntegerQty ? Math.ceil(rawQty - 1e-9) : Math.round(rawQty * 1e6) / 1e6;
 
     const compItem = await getItem(tx, compItemId);
     let qtyBase = 0;
@@ -470,7 +453,7 @@ export async function explodeKitBom(
     try {
       qtyBase = Math.round((await toBaseQty(tx, compItem, requiredQty, compUom)) * 1e6) / 1e6;
     } catch (err: any) {
-      if (opts?.lenientUom && err?.code === "NO_UOM_CONVERSION") {
+      if ((opts?.lenientUom || !isStocked) && err?.code === "NO_UOM_CONVERSION") {
         qtyBase = 0;
         uomError = String(err.message || err);
       } else {
@@ -498,6 +481,9 @@ export async function explodeKitBom(
       is_bundled: Boolean(l.is_bundled),
       bundle_parent_code: l.bundle_parent_code ?? null,
       allow_substitute: Boolean(l.allow_substitute),
+      is_stocked: isStocked,
+      is_integer_qty: isIntegerQty,
+      include_in_qc_retention: includeQcRet,
       item_tracking: compItem.tracking,
       uom_error: uomError,
     });
@@ -541,6 +527,9 @@ export async function explodeKitBom(
       is_bundled: false,
       bundle_parent_code: null,
       allow_substitute: false,
+      is_stocked: selectedTubeItem.is_stocked !== false,
+      is_integer_qty: true,
+      include_in_qc_retention: false,
       item_tracking: selectedTubeItem.tracking,
       uom_error: uomError,
     });
@@ -1864,7 +1853,10 @@ const createOrderSchema = z.object({
   is_aliquoted: z.boolean().optional(),
   is_demo: z.boolean().optional(),
   demo_specification: z.string().trim().max(100).optional().nullable(),
-  qc_retention_qty: z.coerce.number().min(0).default(0),
+  qc_retention_qty: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? undefined : v),
+    z.coerce.number().min(0).optional()
+  ),
   no_retention: z.boolean().default(false),
   actual_ph: z.string().trim().max(40).optional().nullable(),
   internal_order_line_id: z.string().uuid().optional().nullable(),
@@ -2090,7 +2082,7 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
   }
 
   const defaultBomRetention = Number(bom.qc_retention_qty ?? 0);
-  const retQty = d.no_retention ? 0 : Number(d.qc_retention_qty || defaultBomRetention || 0);
+  const retQty = d.no_retention ? 0 : Number(d.qc_retention_qty !== undefined ? d.qc_retention_qty : defaultBomRetention || 0);
   const autoResponsible = bom.responsible_person_name ? String(bom.responsible_person_name) : null;
   const autoQa = bom.qc_assignee_name ? String(bom.qc_assignee_name) : null;
 
@@ -2243,7 +2235,7 @@ async function ensureOrderMaterialConsumptions(tx: Tx, actor: AuthzActor, order:
   }
 
   for (const l of exploded) {
-    if (l.is_bundled) continue;
+    if (l.is_bundled || l.is_stocked === false) continue;
     if (!(l.qty_base > 0)) continue;
     if (!UUID_RE.test(l.bom_line_id)) continue;
 
@@ -2445,6 +2437,9 @@ export async function selectDraftMaterialLot(tx: Tx, actor: AuthzActor, orderId:
   const exploded = await explodeKitBom(tx, order, bom, { lenientUom: true });
   const bomLine = exploded.find((x) => x.bom_line_id === d.bom_line_id);
   if (!bomLine) throw notFound("dòng định mức BOM trong lệnh");
+  if (bomLine.is_stocked === false) {
+    throw invalid("Dòng vật tư này được đánh dấu Không lưu kho nên không cần chọn lô xuất kho.");
+  }
 
   const snap =
     order.bom_snapshot_json && typeof order.bom_snapshot_json === "object"

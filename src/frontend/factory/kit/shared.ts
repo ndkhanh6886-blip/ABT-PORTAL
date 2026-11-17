@@ -9,6 +9,8 @@ export interface KitOptions {
     base_uom: string;
     tracking: string;
     shelf_life_days: number | null;
+    is_stocked?: boolean;
+    is_integer_uom?: boolean;
   }[];
   assets: {
     id: string;
@@ -80,6 +82,7 @@ export interface KitOptions {
     variant_code?: string;
     supply_form?: string;
     tests_per_kit?: number;
+    qc_retention_qty?: number | null;
     specification?: string;
   }[];
   custom_step_functions?: StepFunctionArchetype[];
@@ -1570,5 +1573,18 @@ export function matchesEquipmentGroup(asset: KitAssetOption, groupKey: string | 
     return String(asset.location || "").trim().toLowerCase() === target;
   }
   return asset.asset_type === raw || String(asset.equipment_category || "").trim() === raw;
+}
+
+const CLIENT_DISCRETE_STOCK_UOMS = new Set([
+  "EA", "PCS", "CAI", "CÁI", "TUBE", "ONG", "ỐNG", "VIAL", "LO", "LỌ",
+  "BOTTLE", "CHAI", "BOX", "HOP", "HỘP", "BAG", "TUI", "TÚI", "GOI", "GÓI",
+  "SET", "BO", "BỘ", "KIT", "PLATE", "DIA", "ĐĨA", "TEM", "NHAN", "NHÃN",
+  "SHEET", "TO", "TỜ", "STRIP", "CAP", "NAP", "NẮP", "RACK", "COL", "COT", "CỘT", "CUON", "CUỘN",
+]);
+
+/** Returns true when a unit represents whole countable physical items rather than continuous bulk volumes/masses. */
+export function isDiscreteStockUomClient(uom?: string | null): boolean {
+  const key = String(uom ?? "").trim().toUpperCase();
+  return key.length > 0 && CLIENT_DISCRETE_STOCK_UOMS.has(key);
 }
 

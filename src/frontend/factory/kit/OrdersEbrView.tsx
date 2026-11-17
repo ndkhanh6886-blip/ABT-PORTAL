@@ -341,6 +341,10 @@ export function OrdersEbrView({
         product_item_id: targetProdId,
         bom_id: bestBom?.id ?? prev.bom_id,
         planned_qty: String(remQty),
+        qc_retention_qty:
+          bestBom?.qc_retention_qty !== undefined && bestBom?.qc_retention_qty !== null
+            ? String(Number(bestBom.qc_retention_qty))
+            : prev.qc_retention_qty,
         supply_form: nextSupplyForm,
         tube_code: nextTubeCode,
         order_mode: sfSpec.is_aliquoted ? "ALIQUOTED" : "STANDARD",
@@ -1311,6 +1315,10 @@ export function OrdersEbrView({
                           ...orderForm,
                           product_item_id: nextProdId,
                           bom_id: defaultBom?.id ?? "",
+                          qc_retention_qty:
+                            defaultBom?.qc_retention_qty !== undefined && defaultBom?.qc_retention_qty !== null
+                              ? String(Number(defaultBom.qc_retention_qty))
+                              : orderForm.qc_retention_qty,
                           supply_form: nextSupplyForm,
                           tube_code: isSemi ? "" : orderForm.tube_code || "T02",
                           order_mode: orderForm.is_demo ? "DEMO" : sf.is_aliquoted ? "ALIQUOTED" : "STANDARD",
@@ -1338,6 +1346,10 @@ export function OrdersEbrView({
                         setOrderForm({
                           ...orderForm,
                           bom_id: nextBomId,
+                          qc_retention_qty:
+                            chosenBom?.qc_retention_qty !== undefined && chosenBom?.qc_retention_qty !== null
+                              ? String(Number(chosenBom.qc_retention_qty))
+                              : orderForm.qc_retention_qty,
                           supply_form: nextSf,
                           order_mode: orderForm.is_demo ? "DEMO" : sf.is_aliquoted ? "ALIQUOTED" : "STANDARD",
                         });
@@ -1469,6 +1481,10 @@ export function OrdersEbrView({
                                 ...orderForm,
                                 supply_form: sfKey,
                                 bom_id: matchedBom ? matchedBom.id : orderForm.bom_id,
+                                qc_retention_qty:
+                                  matchedBom?.qc_retention_qty !== undefined && matchedBom?.qc_retention_qty !== null
+                                    ? String(Number(matchedBom.qc_retention_qty))
+                                    : orderForm.qc_retention_qty,
                                 order_mode: orderForm.is_demo ? "DEMO" : sf.is_aliquoted ? "ALIQUOTED" : "STANDARD",
                               });
                             }}
@@ -2130,10 +2146,21 @@ export function OrdersEbrView({
                               {eb.unit_norm !== undefined ? `${fmtQty(eb.unit_norm)} ${eb.uom}` : "—"}
                             </td>
                             <td className="px-2.5 py-1.5 text-xs font-mono font-bold text-indigo-700 dark:text-indigo-300">
-                              {fmtQty(eb.required_qty ?? eb.planned_qty)} {eb.uom}
+                              <div>
+                                {fmtQty(eb.required_qty ?? eb.planned_qty)} {eb.uom}
+                              </div>
+                              {eb.is_integer_qty && eb.raw_qty != null && Math.abs(Number(eb.required_qty) - Number(eb.raw_qty)) > 1e-6 && (
+                                <div className="text-[10px] font-sans font-normal text-indigo-600 dark:text-indigo-400">
+                                  Làm tròn nguyên từ {fmtQty(eb.raw_qty)}
+                                </div>
+                              )}
                             </td>
                             <td className="px-2.5 py-1.5 text-xs font-mono">
-                              {matchedCons.length > 0 ? (
+                              {eb.is_stocked === false ? (
+                                <span className="font-sans inline-block px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                                  ⚪ Không lưu kho (Không trừ tồn)
+                                </span>
+                              ) : matchedCons.length > 0 ? (
                                 matchedCons.map((c: any) => (
                                   <div key={c.id}>
                                     <b className="text-emerald-700 dark:text-emerald-400">{c.lot_code || "Lô FEFO"}</b>{" "}
@@ -2173,13 +2200,19 @@ export function OrdersEbrView({
                               )}
                             </td>
                             <td className="px-2.5 py-1.5 text-xs font-mono">
-                              {matchedCons.map((c: any) => c.location_code).filter(Boolean).join(", ") ||
-                                prefCand?.location_code ||
-                                firstCand?.location_code ||
-                                detail.order.warehouse_code}
+                              {eb.is_stocked === false
+                                ? "—"
+                                : matchedCons.map((c: any) => c.location_code).filter(Boolean).join(", ") ||
+                                  prefCand?.location_code ||
+                                  firstCand?.location_code ||
+                                  detail.order.warehouse_code}
                             </td>
                             <td className="px-2.5 py-1.5 text-xs">
-                              {detail.order.materials_issued ? (
+                              {eb.is_stocked === false ? (
+                                <span className="inline-block px-2 py-0.5 rounded bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 font-semibold">
+                                  ⚪ Không lưu kho
+                                </span>
+                              ) : detail.order.materials_issued ? (
                                 <div className="space-y-0.5">
                                   <span className="inline-block px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 dark:bg-emerald-950/70 dark:text-emerald-300 font-semibold">
                                     ✓ Đã xuất kho
@@ -2248,8 +2281,16 @@ export function OrdersEbrView({
                           </td>
                           <td className="px-3 py-1.5 text-xs">{fmtQty(eb.scrap_pct)}%</td>
                           <td className="px-3 py-1.5 text-xs font-mono font-bold text-sky-800">
-                            {fmtQty(eb.required_qty)} {eb.uom}
-                            {eb.is_bundled && " (Đi kèm)"}
+                            <div>
+                              {fmtQty(eb.required_qty)} {eb.uom}
+                              {eb.is_bundled && " (Đi kèm)"}
+                              {eb.is_stocked === false && " (Không lưu kho)"}
+                            </div>
+                            {eb.is_integer_qty && eb.raw_qty != null && Math.abs(Number(eb.required_qty) - Number(eb.raw_qty)) > 1e-6 && (
+                              <div className="text-[10px] font-sans font-normal text-indigo-600">
+                                Làm tròn nguyên từ {fmtQty(eb.raw_qty)}
+                              </div>
+                            )}
                             {eb.uom_error && <div className="text-[11px] font-sans font-normal text-rose-600">{eb.uom_error}</div>}
                           </td>
                         </tr>
@@ -2329,23 +2370,28 @@ export function OrdersEbrView({
                       <div className="font-bold text-sky-900 dark:text-sky-200">
                         🧮 Bảng Định Mức Số Lượng Bản In Tự Động Cho Lệnh {detail.order.code} {detail.order.kd_po_code ? `(PO: ${detail.order.kd_po_code})` : ""}:
                       </div>
+                      {(() => {
+                        const printKits = Math.ceil(totalKits - 1e-9);
+                        return (
                       <div className="flex flex-wrap gap-3 text-[11px]">
                         <span className="px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-                          📦 Nhãn Hộp Ngoài: <b>{totalKits} tem</b> ({poQty} bộ PO + {retQty} bộ mẫu lưu)
+                          📦 Nhãn Hộp Ngoài: <b>{printKits} tem</b> ({fmtQty(poQty)} bộ PO + {fmtQty(retQty)} bộ mẫu lưu)
                         </span>
                         <span className="px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
                           📖 Tờ HDSD ({isPcrOrder ? activeSfSpec.short_label : detail.order.ifu_code ?? `IFU-${detail.order.product_code}`}
-                          {resolvedIfu?.file_name ? ` · ${resolvedIfu.file_name}` : ""}): <b>{totalKits} tờ</b> (1 tờ/hộp)
+                          {resolvedIfu?.file_name ? ` · ${resolvedIfu.file_name}` : ""}): <b>{printKits} tờ</b> (1 tờ/hộp)
                         </span>
                         {(detail.packaging || []).map((pk: any) => (
                           <span
                             key={pk.id}
                             className="px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
                           >
-                            🧪 Nhãn ống <b>{pk.component_name}</b>: <b>{totalKits * Number(pk.units_per_kit || 1)} tem</b> ({pk.units_per_kit} ống/bộ)
+                            🧪 Nhãn ống <b>{pk.component_name}</b>: <b>{Math.ceil(totalKits * Number(pk.units_per_kit || 1) - 1e-9)} tem</b> ({pk.units_per_kit} ống/bộ)
                           </span>
                         ))}
                       </div>
+                        );
+                      })()}
                     </div>
 
                     {/* Bảng 2: Mô phỏng Hình Ảnh Tem Nhãn Thực Tế Trên Nền Giấy In Nhiệt Trắng (ISO 15223-1 + GS1-128 Barcode + 2D DataMatrix) */}
@@ -2715,10 +2761,19 @@ export function OrdersEbrView({
                                   <span className="font-mono font-semibold">{eb.component_code}</span> — {eb.component_name}
                                 </td>
                                 <td className="px-3 py-2 text-xs font-mono font-semibold">
-                                  {fmtQty(eb.required_qty)} {eb.uom}
+                                  <div>{fmtQty(eb.required_qty)} {eb.uom}</div>
+                                  {eb.is_integer_qty && eb.raw_qty != null && Math.abs(Number(eb.required_qty) - Number(eb.raw_qty)) > 1e-6 && (
+                                    <div className="text-[10px] font-sans font-normal text-indigo-600">
+                                      Làm tròn nguyên từ {fmtQty(eb.raw_qty)}
+                                    </div>
+                                  )}
                                 </td>
                                 <td className="px-3 py-2 text-xs">
-                                  {eb.item_tracking === "NONE" ? (
+                                  {eb.is_stocked === false ? (
+                                    <span className="inline-block px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-semibold">
+                                      ⚪ Không lưu kho (Không giữ chỗ / không trừ tồn)
+                                    </span>
+                                  ) : eb.item_tracking === "NONE" ? (
                                     <span className="text-stone-500">Vật tư không quản lý theo lô</span>
                                   ) : !isRealBomLine ? (
                                     <span className="text-stone-500">Tự động phân bổ theo FEFO</span>
@@ -2762,7 +2817,9 @@ export function OrdersEbrView({
                                   )}
                                 </td>
                                 <td className="px-3 py-2 text-xs font-mono">
-                                  {cands.length > 0 ? (
+                                  {eb.is_stocked === false ? (
+                                    <span className="text-slate-400 font-sans">—</span>
+                                  ) : cands.length > 0 ? (
                                     <div>
                                       <b>{fmtQty(totalAvail)}</b> {cands[0]?.base_uom ?? eb.base_uom}{" "}
                                       <span className="text-slate-500 font-sans">({cands.filter((x) => !x.is_substitute).length} lô RELEASED)</span>

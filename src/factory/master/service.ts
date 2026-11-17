@@ -27,8 +27,23 @@ export interface Item {
   shelf_life_days: number | null;
   open_shelf_life_days: number | null;
   receipt_qc_required: boolean;
+  is_stocked?: boolean;
+  is_integer_uom?: boolean;
   status: string;
   version: number;
+}
+
+const DISCRETE_UOM_CODES = new Set([
+  "EA", "PCS", "CAI", "CÁI", "TUBE", "ONG", "ỐNG", "VIAL", "LO", "LỌ",
+  "BOTTLE", "CHAI", "BOX", "HOP", "HỘP", "BAG", "TUI", "TÚI", "GOI", "GÓI",
+  "SET", "BO", "BỘ", "KIT", "PLATE", "DIA", "ĐĨA", "TEM", "NHAN", "NHÃN",
+  "SHEET", "TO", "TỜ", "STRIP", "CAP", "NAP", "NẮP", "RACK", "COL", "COT", "CỘT", "CUON", "CUỘN",
+]);
+
+/** Returns true when a unit of measure represents discrete countable pieces requiring whole-integer warehouse quantities. */
+export function isDiscreteUomCode(uom: string | null | undefined): boolean {
+  const key = String(uom ?? "").trim().toUpperCase();
+  return key.length > 0 && DISCRETE_UOM_CODES.has(key);
 }
 
 const BUILTIN_METRIC_UOMS = new Set(["kg", "g", "mg", "\u00b5g", "L", "mL", "\u00b5L", "mol", "\u00b5mol", "nmol"]);
@@ -112,10 +127,16 @@ export async function createItem(tx: Tx, actor: AuthzActor, input: unknown): Pro
   const canonicalUom = await assertUom(tx, data.base_uom);
   if (data.tracking === "SERIAL" && canonicalUom.toLowerCase() !== "pcs")
     throw invalid("Vật tư quản lý theo serial phải có đơn vị gốc là 'pcs' (cái).");
+  const isIntegerUom = data.is_integer_uom ?? (data.tracking === "SERIAL" || isDiscreteUomCode(canonicalUom));
   const code = data.code ?? (await nextNumber(tx, "ITEM"));
   const dup = await tx.query("SELECT 1 FROM master.item WHERE code = $1", [code]);
   if (dup.rowCount) throw conflict(`Mã vật tư ${code} đã tồn tại.`, "DUPLICATE_CODE");
-  return insertRecord<Item>(tx, actor, "master.item", "item", { ...data, base_uom: canonicalUom, code });
+  return insertRecord<Item>(tx, actor, "master.item", "item", {
+    ...data,
+    base_uom: canonicalUom,
+    is_integer_uom: isIntegerUom,
+    code,
+  });
 }
 
 async function rescaleItemStockForNewBaseUom(

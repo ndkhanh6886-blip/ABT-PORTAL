@@ -29,6 +29,8 @@ export const itemFields = {
   is_purchasable: z.boolean().default(true),
   is_saleable: z.boolean().default(false),
   is_manufacturable: z.boolean().default(false),
+  is_stocked: z.boolean().default(true),
+  is_integer_uom: z.boolean().optional(),
   hazard_class: optionalText,
   kd_item_code: z.string().trim().max(60).optional().nullable().transform((s) => s || null),
   /** Unit the Kinh doanh side orders in (e.g. "Hộp"), and how many base units one of it holds. */

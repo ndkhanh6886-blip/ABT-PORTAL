@@ -88,7 +88,7 @@ export const GET = factoryRoute(async (tx, { actor, url }) => {
               coalesce(b.bom_category, 'PCR Kit') AS bom_category,
               coalesce(b.variant_code, 'BASE') AS variant_code,
               coalesce(b.supply_form, 'NO_SPLIT_NO_IC') AS supply_form,
-              b.tests_per_kit, b.status,
+              b.tests_per_kit, b.qc_retention_qty::float AS qc_retention_qty, b.status,
               i.code AS product_code, i.name AS product_name
          FROM kit.bom b
          JOIN master.item i ON i.id = b.product_item_id

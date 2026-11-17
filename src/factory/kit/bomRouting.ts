@@ -6,7 +6,7 @@ import { conflict, invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { insertRecord, parseInput } from "../core/records";
 import { defineMachine, listAllowedActions, runTransition, type Guard } from "../core/stateMachine";
-import { foldSql, foldViText, getItem, toBaseQty } from "../master/service";
+import { foldSql, foldViText, getItem, isDiscreteUomCode, toBaseQty } from "../master/service";
 import "./permissions";
 
 export type SpecDocStatus = "DRAFT" | "IN_REVIEW" | "EFFECTIVE" | "OBSOLETE";
@@ -565,9 +565,9 @@ export async function createBom(tx: Tx, actor: AuthzActor, input: unknown) {
     await tx.query(
       `INSERT INTO kit.bom_line
          (bom_id, line_no, component_item_id, qty_per_base, qty_per_base_aliquoted, uom, scrap_pct, box_no, component_role,
-          is_critical, is_bundled, bundle_parent_code, allow_substitute, is_mix_component, is_demo_fixed_component, include_in_qc_retention, notes, created_by, updated_by)
+          is_critical, is_bundled, bundle_parent_code, allow_substitute, is_mix_component, is_demo_fixed_component, include_in_qc_retention, is_stocked, is_integer_qty, notes, created_by, updated_by)
        SELECT $1, line_no, component_item_id, qty_per_base, qty_per_base_aliquoted, uom, scrap_pct, box_no, component_role,
-              is_critical, is_bundled, bundle_parent_code, allow_substitute, is_mix_component, is_demo_fixed_component, include_in_qc_retention, notes, $2, $2
+              is_critical, is_bundled, bundle_parent_code, allow_substitute, is_mix_component, is_demo_fixed_component, include_in_qc_retention, coalesce(is_stocked, true), coalesce(is_integer_qty, false), notes, $2, $2
          FROM kit.bom_line WHERE bom_id = $3 ORDER BY line_no`,
       [bom.id, actor.userId, d.clone_from_bom_id]
     );
@@ -619,7 +619,10 @@ export async function updateBomHeader(tx: Tx, actor: AuthzActor, bomId: string, 
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as Record<string, unknown> | undefined;
   if (!bom) throw notFound("định mức BOM");
   await authorize(tx, actor, "kit.bom.manage", String(bom.org_unit_id));
-  await assertBomEditable(tx, { id: String(bom.id), status: String(bom.status) });
+  const sameTestsPerKit =
+    input.tests_per_kit === undefined ||
+    Number(input.tests_per_kit || 50) === Number(bom.tests_per_kit || 50);
+  await assertBomEditable(tx, { id: String(bom.id), status: String(bom.status) }, { allowActiveWithOrders: sameTestsPerKit });
 
   const name = input.name !== undefined ? String(input.name).trim() : String(bom.name);
   const testsPerKit = input.tests_per_kit !== undefined ? Math.max(1, Number(input.tests_per_kit) || 50) : Number(bom.tests_per_kit || 50);
@@ -631,6 +634,11 @@ export async function updateBomHeader(tx: Tx, actor: AuthzActor, bomId: string, 
     input.shelf_life_days !== undefined && input.shelf_life_days !== null && input.shelf_life_days !== ""
       ? Math.max(1, Number(input.shelf_life_days))
       : shelfMonths * 30;
+  const parsedQcRet =
+    input.qc_retention_qty !== undefined && input.qc_retention_qty !== null && input.qc_retention_qty !== ""
+      ? Number(input.qc_retention_qty)
+      : Number(bom.qc_retention_qty ?? 0);
+  const qcRetentionQty = Number.isFinite(parsedQcRet) && parsedQcRet >= 0 ? parsedQcRet : Number(bom.qc_retention_qty ?? 0);
 
   const updated = (
     await tx.query(
@@ -680,7 +688,7 @@ export async function updateBomHeader(tx: Tx, actor: AuthzActor, bomId: string, 
         input.qc_assignee_name ? String(input.qc_assignee_name).trim() : null,
         input.specification ? String(input.specification).trim() : null,
         input.storage_condition ? String(input.storage_condition).trim() : null,
-        input.qc_retention_qty !== undefined && input.qc_retention_qty !== "" ? Number(input.qc_retention_qty) : Number(bom.qc_retention_qty ?? 0),
+        qcRetentionQty,
         input.ph_min !== undefined && input.ph_min !== null && input.ph_min !== "" ? Number(input.ph_min) : null,
         input.ph_max !== undefined && input.ph_max !== null && input.ph_max !== "" ? Number(input.ph_max) : null,
         input.notes !== undefined ? (input.notes ? String(input.notes).trim() : null) : bom.notes,
@@ -704,6 +712,7 @@ export async function updateBomHeader(tx: Tx, actor: AuthzActor, bomId: string, 
       bom_type: [bom.bom_type, updated.bom_type],
       tccs_code: [bom.tccs_code, updated.tccs_code],
       responsible_person_name: [bom.responsible_person_name, updated.responsible_person_name],
+      qc_retention_qty: [Number(bom.qc_retention_qty ?? 0), Number(updated.qc_retention_qty ?? 0)],
       routing_id: [bom.routing_id ?? null, updated.routing_id ?? null],
     },
   });
@@ -789,6 +798,8 @@ const bomLineItemSchema = z.object({
   is_mix_component: z.boolean().optional(),
   is_demo_fixed_component: z.boolean().optional(),
   include_in_qc_retention: z.boolean().optional(),
+  is_stocked: z.boolean().optional(),
+  is_integer_qty: z.boolean().optional(),
   notes: z.string().trim().max(500).optional().nullable(),
 });
 
@@ -809,9 +820,12 @@ export async function addBomLine(tx: Tx, actor: AuthzActor, input: unknown) {
   await toBaseQty(tx, compItem, d.qty_per_base, d.uom);
 
   const isPackaging = d.component_role === "PACKAGING" || compItem.item_type === "PACKAGING";
+  const isDiscreteComponent = isPackaging || d.component_role === "PCR_TUBE_STRIP" || isDiscreteUomCode(d.uom);
   const isMixComponent = d.is_mix_component ?? !isPackaging;
   const isDemoFixed = d.is_demo_fixed_component ?? isPackaging;
-  const includeInQcRet = d.include_in_qc_retention ?? !isPackaging;
+  const includeInQcRet = d.include_in_qc_retention ?? !(isPackaging || d.component_role === "PCR_TUBE_STRIP");
+  const isStocked = d.is_stocked ?? compItem.is_stocked ?? true;
+  const isIntegerQty = d.is_integer_qty ?? (Boolean(compItem.is_integer_uom) || isDiscreteComponent);
 
   const nextLine = Number(
     (await tx.query("SELECT coalesce(max(line_no), 0) + 1 AS n FROM kit.bom_line WHERE bom_id = $1", [d.bom_id])).rows[0].n
@@ -820,8 +834,8 @@ export async function addBomLine(tx: Tx, actor: AuthzActor, input: unknown) {
     await tx.query(
       `INSERT INTO kit.bom_line
          (bom_id, line_no, component_item_id, qty_per_base, qty_per_base_aliquoted, uom, scrap_pct, box_no, component_role,
-          is_critical, is_bundled, bundle_parent_code, allow_substitute, is_mix_component, is_demo_fixed_component, include_in_qc_retention, notes, created_by, updated_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $18) RETURNING *`,
+          is_critical, is_bundled, bundle_parent_code, allow_substitute, is_mix_component, is_demo_fixed_component, include_in_qc_retention, is_stocked, is_integer_qty, notes, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $20) RETURNING *`,
       [
         d.bom_id,
         nextLine,
@@ -839,6 +853,8 @@ export async function addBomLine(tx: Tx, actor: AuthzActor, input: unknown) {
         isMixComponent,
         isDemoFixed,
         includeInQcRet,
+        isStocked,
+        isIntegerQty,
         d.notes ?? null,
         actor.userId,
       ]
@@ -897,6 +913,16 @@ export async function updateBomLine(tx: Tx, actor: AuthzActor, bomId: string, in
     input.include_in_qc_retention !== undefined
       ? Boolean(input.include_in_qc_retention)
       : Boolean(existing.include_in_qc_retention ?? true);
+  const isStocked =
+    input.is_stocked !== undefined
+      ? Boolean(input.is_stocked)
+      : Boolean(existing.is_stocked ?? true);
+  const isIntegerQty =
+    input.is_integer_qty !== undefined
+      ? Boolean(input.is_integer_qty)
+      : Boolean(existing.is_integer_qty ?? false);
+  const isMixComp =
+    input.is_mix_component !== undefined ? Boolean(input.is_mix_component) : !isDemoFixed;
 
   const row = (
     await tx.query(
@@ -914,7 +940,9 @@ export async function updateBomLine(tx: Tx, actor: AuthzActor, bomId: string, in
               is_demo_fixed_component = $12,
               is_mix_component = $13,
               include_in_qc_retention = $14,
-              updated_by = $15,
+              is_stocked = $15,
+              is_integer_qty = $16,
+              updated_by = $17,
               updated_at = now()
         WHERE id = $1
         RETURNING *`,
@@ -931,8 +959,10 @@ export async function updateBomLine(tx: Tx, actor: AuthzActor, bomId: string, in
         bundleParentCode,
         allowSub,
         isDemoFixed,
-        !isDemoFixed,
+        isMixComp,
         incRetention,
+        isStocked,
+        isIntegerQty,
         actor.userId,
       ]
     )
@@ -942,7 +972,12 @@ export async function updateBomLine(tx: Tx, actor: AuthzActor, bomId: string, in
     entityType: "kit_bom",
     entityId: bomId,
     action: "update_bom_line",
-    changes: { line: [`#${existing.line_no}`, `#${existing.line_no} ${compItem.code} (${qty} ${uom}, Hộp ${boxNo})`] },
+    changes: {
+      line: [`#${existing.line_no}`, `#${existing.line_no} ${compItem.code} (${qty} ${uom}, Hộp ${boxNo})`],
+      is_stocked: [Boolean(existing.is_stocked ?? true), isStocked],
+      is_integer_qty: [Boolean(existing.is_integer_qty ?? false), isIntegerQty],
+      include_in_qc_retention: [Boolean(existing.include_in_qc_retention ?? true), incRetention],
+    },
   });
   return row;
 }
@@ -1096,19 +1131,29 @@ export async function bulkAddBomLines(tx: Tx, actor: AuthzActor, input: unknown)
   const criticals = d.lines.map((l) => l.is_critical);
   const bundleds = d.lines.map((l) => l.is_bundled);
   const substitutes = d.lines.map((l) => l.allow_substitute);
+  const stockeds: Array<boolean | null> = d.lines.map((l) => (l.is_stocked === undefined ? null : l.is_stocked));
+  const intQtys: Array<boolean | null> = d.lines.map((l) => (l.is_integer_qty === undefined ? null : l.is_integer_qty));
+  const discreteHints = d.lines.map(
+    (l) => l.component_role === "PACKAGING" || l.component_role === "PCR_TUBE_STRIP" || isDiscreteUomCode(l.uom)
+  );
   const notes = d.lines.map((l) => l.notes ?? null);
 
   const inserted = (
     await tx.query(
       `INSERT INTO kit.bom_line
          (bom_id, line_no, component_item_id, qty_per_base, uom, scrap_pct, box_no, component_role,
-          is_critical, is_bundled, allow_substitute, notes, created_by, updated_by)
+          is_critical, is_bundled, allow_substitute, is_stocked, is_integer_qty, notes, created_by, updated_by)
        SELECT $1, u.line_no, u.comp_id, u.qty, u.uom, u.scrap, u.box_no, u.role,
-              u.is_crit, u.is_bund, u.allow_sub, u.note, $2, $2
+              u.is_crit, u.is_bund, u.allow_sub,
+              coalesce(u.is_stk, it.is_stocked, true),
+              coalesce(u.is_int, it.is_integer_uom OR u.discrete_hint, false),
+              u.note, $2, $2
          FROM unnest(
            $3::int[], $4::uuid[], $5::numeric[], $6::text[], $7::numeric[],
-           $8::int[], $9::text[], $10::bool[], $11::bool[], $12::bool[], $13::text[]
-         ) AS u(line_no, comp_id, qty, uom, scrap, box_no, role, is_crit, is_bund, allow_sub, note)
+           $8::int[], $9::text[], $10::bool[], $11::bool[], $12::bool[],
+           $13::bool[], $14::bool[], $15::bool[], $16::text[]
+         ) AS u(line_no, comp_id, qty, uom, scrap, box_no, role, is_crit, is_bund, allow_sub, is_stk, is_int, discrete_hint, note)
+         JOIN master.item it ON it.id = u.comp_id
        RETURNING *`,
       [
         d.bom_id,
@@ -1123,6 +1168,9 @@ export async function bulkAddBomLines(tx: Tx, actor: AuthzActor, input: unknown)
         criticals,
         bundleds,
         substitutes,
+        stockeds,
+        intQtys,
+        discreteHints,
         notes,
       ]
     )
@@ -2332,7 +2380,9 @@ export async function listKitCatalogItems(
          UNION
          SELECT substitute_item_id AS id FROM kit.bom_line_substitute
        )
-       SELECT i.id, i.code, i.name, i.item_type, i.base_uom, i.tracking, i.shelf_life_days
+       SELECT i.id, i.code, i.name, i.item_type, i.base_uom, i.tracking, i.shelf_life_days,
+              coalesce(i.is_stocked, true) AS is_stocked,
+              coalesce(i.is_integer_uom, false) AS is_integer_uom
          FROM master.item i
         WHERE ${whereClauses.join(" AND ")}
         ${orderBySql}
@@ -2354,6 +2404,16 @@ export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
   if (kitBomRoutingIfuSchemaEnsured) return;
 
   await tx.query("ALTER TABLE kit.bom ADD COLUMN IF NOT EXISTS ifu_files_json jsonb NOT NULL DEFAULT '{}'::jsonb");
+  await tx.query(
+    `ALTER TABLE master.item
+       ADD COLUMN IF NOT EXISTS is_stocked boolean NOT NULL DEFAULT true,
+       ADD COLUMN IF NOT EXISTS is_integer_uom boolean NOT NULL DEFAULT false`
+  );
+  await tx.query(
+    `ALTER TABLE kit.bom_line
+       ADD COLUMN IF NOT EXISTS is_stocked boolean NOT NULL DEFAULT true,
+       ADD COLUMN IF NOT EXISTS is_integer_qty boolean NOT NULL DEFAULT false`
+  );
 
   // Backfill neutral operational defaults (never inject fake registration numbers or PDF file sizes)
   await tx.query(`
@@ -3413,7 +3473,7 @@ export async function listBoms(tx: Tx, actor: AuthzActor, filter: ListFormulaFil
 
   return (
     await tx.query(
-      `SELECT b.*, b.base_qty::float AS base_qty, u.name AS org_unit_name,
+      `SELECT b.*, b.base_qty::float AS base_qty, b.qc_retention_qty::float AS qc_retention_qty, u.name AS org_unit_name,
               it.code AS product_code, it.name AS product_name, it.item_type AS product_type,
               qs.code AS qc_spec_code, qs.name AS qc_spec_name,
               rt.code AS routing_code, rt.name AS routing_name, rt.status AS routing_status, rt.routing_category AS routing_category,
@@ -3447,7 +3507,7 @@ export async function getBomDetail(
   await ensureKitBomRoutingAndIfuSchema(tx);
   const bom = (
     await tx.query(
-      `SELECT b.*, b.base_qty::float AS base_qty, u.name AS org_unit_name,
+      `SELECT b.*, b.base_qty::float AS base_qty, b.qc_retention_qty::float AS qc_retention_qty, u.name AS org_unit_name,
               it.code AS product_code, it.name AS product_name,
               qs.code AS qc_spec_code, qs.name AS qc_spec_name,
               ap.display_name AS approved_by_name,
@@ -3476,8 +3536,12 @@ export async function getBomDetail(
       `SELECT bl.*, bl.qty_per_base::float AS qty_per_base,
               bl.qty_per_base_aliquoted::float AS qty_per_base_aliquoted,
               bl.scrap_pct::float AS scrap_pct,
+              coalesce(bl.is_stocked, true) AS is_stocked,
+              coalesce(bl.is_integer_qty, false) AS is_integer_qty,
               it.code AS item_code, it.name AS item_name, it.code AS component_code, it.name AS component_name,
-              it.item_type, it.base_uom AS component_base_uom
+              it.item_type, it.base_uom AS component_base_uom,
+              coalesce(it.is_stocked, true) AS item_is_stocked,
+              coalesce(it.is_integer_uom, false) AS item_is_integer_uom
          FROM kit.bom_line bl
          JOIN master.item it ON it.id = bl.component_item_id
         WHERE bl.bom_id = $1

@@ -16,6 +16,7 @@ import {
   CONTAINER_LABELS,
   emptyIfuFilesMap,
   formatEquipmentGroupLabel,
+  isDiscreteStockUomClient,
   type KitIfuFileSlot,
   type KitOptions,
   matchesEquipmentGroup,
@@ -316,6 +317,8 @@ export function BomRoutingView({
     is_mix_component: true,
     is_demo_fixed_component: false,
     include_in_qc_retention: true,
+    is_stocked: true,
+    is_integer_qty: false,
   });
 
   const [subForm, setSubForm] = useState({
@@ -334,6 +337,8 @@ export function BomRoutingView({
     base_uom: "KIT",
     storage_temp: "-20°C",
     shelf_life_days: "365",
+    is_stocked: true,
+    is_integer_uom: true,
   });
 
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
@@ -1097,7 +1102,7 @@ export function BomRoutingView({
           tests_per_kit: String(d.bom.tests_per_kit ?? 50),
           shelf_life_months: String(d.bom.shelf_life_months ?? Math.max(1, Math.round(Number(d.bom.shelf_life_days || 365) / 30))),
           shelf_life_days: String(d.bom.shelf_life_days ?? 365),
-          qc_retention_qty: String(d.bom.qc_retention_qty ?? (isSemi ? 0 : 1)),
+          qc_retention_qty: String(Number(d.bom.qc_retention_qty ?? (isSemi ? 0 : 1))),
           ph_min: d.bom.ph_min != null ? String(d.bom.ph_min) : "",
           ph_max: d.bom.ph_max != null ? String(d.bom.ph_max) : "",
           notes: d.bom.notes ?? "",
@@ -1183,7 +1188,7 @@ export function BomRoutingView({
           supply_form: defaultSf,
           tube_code: "T02",
           is_demo: false,
-          qc_retention_qty: String(d.bom.qc_retention_qty ?? (isSemi ? 0 : 1)),
+          qc_retention_qty: String(Number(d.bom.qc_retention_qty ?? (isSemi ? 0 : 1))),
           no_retention: isSemi,
           lot_code: autoLot,
           mfg_date: defaultMfg,
@@ -1270,6 +1275,8 @@ export function BomRoutingView({
           base_uom: l.component_base_uom || l.uom || "pcs",
           tracking: "LOT",
           shelf_life_days: null,
+          is_stocked: l.item_is_stocked !== false,
+          is_integer_uom: Boolean(l.item_is_integer_uom ?? l.is_integer_qty),
         });
       }
     }
@@ -1611,6 +1618,8 @@ export function BomRoutingView({
           is_mix_component: lineForm.is_mix_component,
           is_demo_fixed_component: lineForm.is_demo_fixed_component,
           include_in_qc_retention: lineForm.include_in_qc_retention,
+          is_stocked: lineForm.is_stocked,
+          is_integer_qty: lineForm.is_integer_qty,
         },
       });
       setEditingLineId(null);
@@ -1640,11 +1649,33 @@ export function BomRoutingView({
       is_mix_component: l.is_mix_component !== false,
       is_demo_fixed_component: Boolean(l.is_demo_fixed_component),
       include_in_qc_retention: l.include_in_qc_retention !== false,
+      is_stocked: l.is_stocked !== false,
+      is_integer_qty: Boolean(
+        l.is_integer_qty ?? (l.item_is_integer_uom || l.component_role === "PACKAGING" || l.component_role === "PCR_TUBE_STRIP" || isDiscreteStockUomClient(l.uom))
+      ),
     });
     setShowAddLine(true);
     setTimeout(() => {
       lineEditFormRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }, 50);
+  };
+
+  const handleQuickToggleBomLineFlag = async (line: any, patch: Record<string, unknown>) => {
+    if (!selectedBomId) return;
+    setError(null);
+    try {
+      await api(`/api/factory/kit/boms/${selectedBomId}`, {
+        method: "POST",
+        json: {
+          kind: "update_line",
+          line_id: line.id,
+          ...patch,
+        },
+      });
+      await loadBomDetail(selectedBomId, lineSearch, lineBoxFilter);
+    } catch (err) {
+      setError(err);
+    }
   };
 
   const handleDeleteBomLine = async (lineId: string) => {
@@ -1696,12 +1727,14 @@ export function BomRoutingView({
       const created = await api<any>("/api/factory/master/items", {
         method: "POST",
         json: {
-          code: quickItemForm.code.trim(),
+          code: quickItemForm.code.trim() || undefined,
           name: quickItemForm.name.trim(),
           item_type: quickItemForm.item_type,
           base_uom: quickItemForm.base_uom.trim() || "KIT",
           storage_temp: quickItemForm.storage_temp || "-20°C",
           shelf_life_days: Number(quickItemForm.shelf_life_days || 365),
+          is_stocked: quickItemForm.is_stocked,
+          is_integer_uom: quickItemForm.is_integer_uom,
           lot_tracked: true,
           qc_required: ["FINISHED_KIT", "SEMI_FINISHED", "RAW_MATERIAL"].includes(quickItemForm.item_type),
         },
@@ -2255,63 +2288,93 @@ export function BomRoutingView({
 
       {showQuickItem && (
         <Card title="Tạo nhanh Sản phẩm Kit / Bán thành phẩm / Vật tư ngay tại Phòng Sản xuất Kit">
-          <form onSubmit={handleCreateQuickItem} className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
-            <Field label="Mã sản phẩm / VT">
-              <input
-                className={`${inputClass} font-mono`}
-                placeholder="VD: KIT-ASFV-50T"
-                value={quickItemForm.code}
-                onChange={(e) => setQuickItemForm({ ...quickItemForm, code: e.target.value })}
-                required
-              />
-            </Field>
-            <div className="md:col-span-2">
-              <Field label="Tên sản phẩm / Bán TP / Hóa chất">
+          <form onSubmit={handleCreateQuickItem} className="space-y-2">
+            <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
+              <Field label="Mã sản phẩm / VT">
                 <input
-                  className={inputClass}
-                  placeholder="VD: Kit TopSPEC ASFV qPCR (50 test)"
-                  value={quickItemForm.name}
-                  onChange={(e) => setQuickItemForm({ ...quickItemForm, name: e.target.value })}
+                  className={`${inputClass} font-mono`}
+                  placeholder="VD: KIT-M1-50T"
+                  value={quickItemForm.code}
+                  onChange={(e) => setQuickItemForm({ ...quickItemForm, code: e.target.value })}
                   required
                 />
               </Field>
-            </div>
-            <Field label="Phân loại">
-              <select
-                className={inputClass}
-                value={quickItemForm.item_type}
-                onChange={(e) =>
-                  setQuickItemForm({
-                    ...quickItemForm,
-                    item_type: e.target.value,
-                    base_uom: e.target.value === "FINISHED_KIT" ? "KIT" : e.target.value === "SEMI_FINISHED" ? "mL" : "EA",
-                  })
-                }
-              >
-                <option value="FINISHED_KIT">Thành phẩm Kit (FINISHED_KIT)</option>
-                <option value="SEMI_FINISHED">Bán thành phẩm / Hóa chất tách chiết (SEMI_FINISHED)</option>
-                <option value="RAW_MATERIAL">Nguyên liệu / Enzyme (RAW_MATERIAL)</option>
-                <option value="PACKAGING">Bao bì / Vỏ hộp / Ống / Tem (PACKAGING)</option>
-              </select>
-            </Field>
-            <Field label="ĐVT & Bảo quản">
-              <div className="flex gap-1">
-                <input
-                  className={`${inputClass} w-20 font-mono`}
-                  value={quickItemForm.base_uom}
-                  onChange={(e) => setQuickItemForm({ ...quickItemForm, base_uom: e.target.value })}
-                  placeholder="KIT"
-                  required
-                />
-                <input
-                  className={inputClass}
-                  value={quickItemForm.storage_temp}
-                  onChange={(e) => setQuickItemForm({ ...quickItemForm, storage_temp: e.target.value })}
-                  placeholder="-20°C"
-                />
+              <div className="md:col-span-2">
+                <Field label="Tên sản phẩm / Bán TP / Hóa chất">
+                  <input
+                    className={inputClass}
+                    placeholder="VD: Bộ Kit Tách Chiết / PCR M1 (50 test)"
+                    value={quickItemForm.name}
+                    onChange={(e) => setQuickItemForm({ ...quickItemForm, name: e.target.value })}
+                    required
+                  />
+                </Field>
               </div>
-            </Field>
-            <Button type="submit">Lưu Mã Mới</Button>
+              <Field label="Phân loại">
+                <select
+                  className={inputClass}
+                  value={quickItemForm.item_type}
+                  onChange={(e) => {
+                    const nextType = e.target.value;
+                    const nextUom = nextType === "FINISHED_KIT" ? "KIT" : nextType === "SEMI_FINISHED" ? "mL" : "pcs";
+                    setQuickItemForm({
+                      ...quickItemForm,
+                      item_type: nextType,
+                      base_uom: nextUom,
+                      is_integer_uom: nextType === "PACKAGING" || isDiscreteStockUomClient(nextUom),
+                    });
+                  }}
+                >
+                  <option value="FINISHED_KIT">Thành phẩm Kit (FINISHED_KIT)</option>
+                  <option value="SEMI_FINISHED">Bán thành phẩm / Hóa chất tách chiết (SEMI_FINISHED)</option>
+                  <option value="RAW_MATERIAL">Nguyên liệu / Enzyme (RAW_MATERIAL)</option>
+                  <option value="CONSUMABLE">Vật tư tiêu hao / Bao bì (CONSUMABLE)</option>
+                </select>
+              </Field>
+              <Field label="ĐVT & Bảo quản">
+                <div className="flex gap-1">
+                  <input
+                    className={`${inputClass} w-20 font-mono`}
+                    value={quickItemForm.base_uom}
+                    onChange={(e) => {
+                      const nextUom = e.target.value;
+                      setQuickItemForm({
+                        ...quickItemForm,
+                        base_uom: nextUom,
+                        is_integer_uom: isDiscreteStockUomClient(nextUom),
+                      });
+                    }}
+                    placeholder="KIT"
+                    required
+                  />
+                  <input
+                    className={inputClass}
+                    value={quickItemForm.storage_temp}
+                    onChange={(e) => setQuickItemForm({ ...quickItemForm, storage_temp: e.target.value })}
+                    placeholder="-20°C"
+                  />
+                </div>
+              </Field>
+              <Button type="submit">Lưu Mã Mới</Button>
+            </div>
+            <div className="flex flex-wrap gap-4 text-xs text-slate-700 dark:text-slate-300 pt-1">
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={quickItemForm.is_stocked}
+                  onChange={(e) => setQuickItemForm({ ...quickItemForm, is_stocked: e.target.checked })}
+                />
+                📦 Có lưu kho (Quản lý tồn &amp; Trừ kho khi sản xuất)
+              </label>
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={quickItemForm.is_integer_uom}
+                  onChange={(e) => setQuickItemForm({ ...quickItemForm, is_integer_uom: e.target.checked })}
+                />
+                🔢 Lưu kho số nguyên (Chai, ống, túi, tem… luôn làm tròn lên số nguyên)
+              </label>
+            </div>
           </form>
         </Card>
       )}
@@ -2677,7 +2740,7 @@ export function BomRoutingView({
                     </div>
 
                     {bomForm.bom_type === "semi_finished" ? (
-                      <div className="grid grid-cols-3 gap-2 pt-1">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
                         <Field label="pH Tiêu chuẩn Min">
                           <input
                             type="number"
@@ -2712,6 +2775,16 @@ export function BomRoutingView({
                             }
                           />
                         </Field>
+                        <Field label="Mẫu lưu QC / lô">
+                          <input
+                            type="number"
+                            min={0}
+                            step="any"
+                            className={inputClass}
+                            value={bomForm.qc_retention_qty}
+                            onChange={(e) => setBomForm({ ...bomForm, qc_retention_qty: e.target.value })}
+                          />
+                        </Field>
                       </div>
                     ) : (
                       <div className="grid grid-cols-4 gap-2 pt-1">
@@ -2741,6 +2814,7 @@ export function BomRoutingView({
                           <input
                             type="number"
                             min={0}
+                            step="any"
                             className={inputClass}
                             value={bomForm.qc_retention_qty}
                             onChange={(e) => setBomForm({ ...bomForm, qc_retention_qty: e.target.value })}
@@ -3541,6 +3615,7 @@ export function BomRoutingView({
                         <input
                           type="number"
                           min={0}
+                          step="any"
                           className={inputClass}
                           value={editHeaderForm.qc_retention_qty}
                           onChange={(e) => setEditHeaderForm({ ...editHeaderForm, qc_retention_qty: e.target.value })}
@@ -3637,6 +3712,24 @@ export function BomRoutingView({
                               if (editingLineId) {
                                 setEditingLineId(null);
                                 setLineItemFilter("");
+                                setLineForm({
+                                  component_item_id: "",
+                                  qty_per_base: "1",
+                                  qty_per_base_aliquoted: "",
+                                  uom: "",
+                                  scrap_pct: "2",
+                                  box_no: "1",
+                                  component_role: "MASTER_MIX",
+                                  is_critical: true,
+                                  is_bundled: false,
+                                  bundle_parent_code: "",
+                                  allow_substitute: false,
+                                  is_mix_component: true,
+                                  is_demo_fixed_component: false,
+                                  include_in_qc_retention: true,
+                                  is_stocked: true,
+                                  is_integer_qty: false,
+                                });
                                 setShowAddLine(true);
                                 return;
                               }
@@ -3776,10 +3869,11 @@ export function BomRoutingView({
                                     it?.code && it.code.toUpperCase().startsWith("VT-TUBE-")
                                   );
                                   const isPack = it?.item_type === "PACKAGING";
+                                  const nextUom = it?.base_uom || lineForm.uom || "";
                                   setLineForm({
                                     ...lineForm,
                                     component_item_id: e.target.value,
-                                    uom: it?.base_uom || lineForm.uom || "",
+                                    uom: nextUom,
                                     component_role: isTubeStrip
                                       ? "PCR_TUBE_STRIP"
                                       : isPack
@@ -3788,6 +3882,12 @@ export function BomRoutingView({
                                     is_mix_component: !(isPack || isTubeStrip),
                                     is_demo_fixed_component: isPack || isTubeStrip,
                                     include_in_qc_retention: !(isPack || isTubeStrip),
+                                    is_stocked: it?.is_stocked !== false,
+                                    is_integer_qty:
+                                      Boolean(it?.is_integer_uom) ||
+                                      isPack ||
+                                      isTubeStrip ||
+                                      isDiscreteStockUomClient(nextUom),
                                   });
                                 }}
                                 required
@@ -3822,12 +3922,17 @@ export function BomRoutingView({
                             onChange={(e) => {
                               const isPack =
                                 e.target.value === "PACKAGING" || e.target.value === "PCR_TUBE_STRIP";
+                              const selectedIt = mergedCatalogItems.find((x) => x.id === lineForm.component_item_id);
                               setLineForm({
                                 ...lineForm,
                                 component_role: e.target.value,
                                 is_mix_component: !isPack,
                                 is_demo_fixed_component: isPack,
                                 include_in_qc_retention: !isPack,
+                                is_integer_qty:
+                                  isPack ||
+                                  Boolean(selectedIt?.is_integer_uom) ||
+                                  isDiscreteStockUomClient(lineForm.uom),
                               });
                             }}
                           >
@@ -3852,7 +3957,21 @@ export function BomRoutingView({
                               className={`${inputClass} w-20`}
                               placeholder="ĐVT"
                               value={lineForm.uom}
-                              onChange={(e) => setLineForm({ ...lineForm, uom: e.target.value })}
+                              onChange={(e) => {
+                                const nextUom = e.target.value;
+                                const selectedIt = mergedCatalogItems.find((x) => x.id === lineForm.component_item_id);
+                                const isPack =
+                                  lineForm.component_role === "PACKAGING" ||
+                                  lineForm.component_role === "PCR_TUBE_STRIP";
+                                setLineForm({
+                                  ...lineForm,
+                                  uom: nextUom,
+                                  is_integer_qty:
+                                    isPack ||
+                                    Boolean(selectedIt?.is_integer_uom) ||
+                                    isDiscreteStockUomClient(nextUom),
+                                });
+                              }}
                               required
                             />
                           </div>
@@ -3905,6 +4024,30 @@ export function BomRoutingView({
                       </div>
                       <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                         <div className="flex flex-wrap gap-3 text-xs text-stone-700 dark:text-stone-300">
+                          <label className="flex items-center gap-1 font-semibold text-emerald-800 dark:text-emerald-300 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={lineForm.is_stocked}
+                              onChange={(e) => setLineForm({ ...lineForm, is_stocked: e.target.checked })}
+                            />
+                            📦 Có lưu kho (Trừ tồn kho khi SX)
+                          </label>
+                          <label
+                            className={`flex items-center gap-1 font-semibold ${
+                              lineForm.is_stocked
+                                ? "text-indigo-800 dark:text-indigo-300 cursor-pointer"
+                                : "text-slate-400 cursor-not-allowed"
+                            }`}
+                            title="Làm tròn lên số nguyên (1, 2, 3...) khi tính nổ BOM & cộng mẫu lưu QC lẻ"
+                          >
+                            <input
+                              type="checkbox"
+                              disabled={!lineForm.is_stocked}
+                              checked={lineForm.is_integer_qty}
+                              onChange={(e) => setLineForm({ ...lineForm, is_integer_qty: e.target.checked })}
+                            />
+                            🔢 Lưu kho số nguyên (Làm tròn lên số nguyên: 1, 2, 3…)
+                          </label>
                           <label className="flex items-center gap-1">
                             <input
                               type="checkbox"
@@ -3974,7 +4117,7 @@ export function BomRoutingView({
                         "Mã VT / Bán TP",
                         "Định mức",
                         "🫙 Đánh dấu Vật chứa & Loại Nhãn",
-                        "Cấu hình Nổ BOM",
+                        "Lưu Kho & Nổ BOM",
                         "Thao tác",
                       ]}
                     >
@@ -4093,18 +4236,63 @@ export function BomRoutingView({
                                   </div>
                                 )}
                               </td>
-                              <td className="px-2 py-2 text-[10px] text-stone-600 max-w-[165px]">
+                              <td className="px-2 py-2 text-[10px] text-stone-600 max-w-[210px]">
                                 <div className="flex flex-wrap gap-1">
-                                  <span className="px-1.5 py-0.5 rounded bg-stone-100 whitespace-nowrap">
-                                    {l.is_bundled ? `Đi kèm (${l.bundle_parent_code || "ngoài"})` : "Trừ kho"}
-                                  </span>
+                                  {l.is_bundled ? (
+                                    <span className="px-1.5 py-0.5 rounded bg-stone-100 whitespace-nowrap">
+                                      Đi kèm ({l.bundle_parent_code || "ngoài"})
+                                    </span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      disabled={bomDetail.bom.status === "OBSOLETE"}
+                                      onClick={() => handleQuickToggleBomLineFlag(l, { is_stocked: l.is_stocked === false })}
+                                      title="Bấm để bật/tắt chế độ Có lưu kho (trừ tồn kho khi sản xuất)"
+                                      className={`px-1.5 py-0.5 rounded font-semibold whitespace-nowrap transition ${
+                                        l.is_stocked !== false
+                                          ? "bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200 cursor-pointer"
+                                          : "bg-slate-100 text-slate-500 border border-dashed border-slate-400 hover:bg-slate-200 cursor-pointer"
+                                      } disabled:opacity-60 disabled:cursor-default`}
+                                    >
+                                      {l.is_stocked !== false ? "📦 Có lưu kho" : "⚪ Không lưu kho"}
+                                    </button>
+                                  )}
+                                  {!l.is_bundled && l.is_stocked !== false && (
+                                    <button
+                                      type="button"
+                                      disabled={bomDetail.bom.status === "OBSOLETE"}
+                                      onClick={() => handleQuickToggleBomLineFlag(l, { is_integer_qty: !Boolean(l.is_integer_qty) })}
+                                      title="Bấm để chuyển giữa Lưu kho số nguyên (làm tròn lên 1, 2, 3...) và Cho phép số lẻ"
+                                      className={`px-1.5 py-0.5 rounded font-semibold whitespace-nowrap transition ${
+                                        l.is_integer_qty
+                                          ? "bg-indigo-100 text-indigo-800 border border-indigo-300 hover:bg-indigo-200 cursor-pointer"
+                                          : "bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 cursor-pointer"
+                                      } disabled:opacity-60 disabled:cursor-default`}
+                                    >
+                                      {l.is_integer_qty ? "🔢 Lưu kho số nguyên" : "💧 Cho phép số lẻ"}
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    disabled={bomDetail.bom.status === "OBSOLETE"}
+                                    onClick={() =>
+                                      handleQuickToggleBomLineFlag(l, {
+                                        include_in_qc_retention: l.include_in_qc_retention === false,
+                                      })
+                                    }
+                                    title="Bấm để bật/tắt cộng thêm phần Mẫu lưu QC khi nổ BOM"
+                                    className={`px-1.5 py-0.5 rounded font-semibold whitespace-nowrap transition ${
+                                      l.include_in_qc_retention !== false
+                                        ? "bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200 cursor-pointer"
+                                        : "bg-stone-100 text-stone-400 border border-stone-200 hover:bg-stone-200 cursor-pointer"
+                                    } disabled:opacity-60 disabled:cursor-default`}
+                                  >
+                                    {l.include_in_qc_retention !== false ? "+Mẫu lưu QC" : "Không +Mẫu lưu"}
+                                  </button>
                                   {l.is_demo_fixed_component ? (
                                     <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 whitespace-nowrap">Demo: Cố định 1 bộ</span>
                                   ) : (
                                     <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 whitespace-nowrap">Demo: Co giãn</span>
-                                  )}
-                                  {l.include_in_qc_retention !== false && (
-                                    <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 whitespace-nowrap">+Mẫu lưu QC</span>
                                   )}
                                   {l.allow_substitute && (
                                     <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 whitespace-nowrap">Cho thay thế</span>

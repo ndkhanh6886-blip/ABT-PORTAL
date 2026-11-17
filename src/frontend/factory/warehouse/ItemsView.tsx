@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, fmtQty, useDebouncedValue } from "../api";
+import { isDiscreteStockUomClient } from "../kit/shared";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, Pager, StatusBadge, Table } from "../ui";
 
 const ITEM_TYPE_LABEL: Record<string, string> = {
@@ -46,6 +47,8 @@ interface ItemRow {
   kd_item_code: string | null;
   kd_unit: string | null;
   kd_unit_factor: string;
+  is_stocked?: boolean;
+  is_integer_uom?: boolean;
   has_stock?: boolean;
 }
 
@@ -85,6 +88,70 @@ function KdMapping({ item }: { item: ItemRow }) {
     >
       {item.kd_item_code ? `${item.kd_item_code} (1 ${item.kd_unit ?? "ĐV"} = ${fmtQty(item.kd_unit_factor)} ${item.base_uom})` : "Gắn mã KD"}
     </button>
+  );
+}
+
+/** One-click toggle for per-item warehouse stocking & whole-integer rounding defaults. */
+function StockModeControls({ item, canManage }: { item: ItemRow; canManage: boolean }) {
+  const qc = useQueryClient();
+  const isStocked = item.is_stocked !== false;
+  const isIntegerUom = Boolean(item.is_integer_uom);
+  const save = useMutation({
+    mutationFn: (patch: { is_stocked?: boolean; is_integer_uom?: boolean }) =>
+      api(`/api/factory/master/items/${item.id}`, {
+        method: "PATCH",
+        json: { version: item.version, ...patch, reason: "Cập nhật chế độ lưu kho vật tư" },
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["factory", "items"] }),
+    onError: (e) => window.alert((e as Error).message),
+  });
+
+  if (!canManage) {
+    return (
+      <div className="flex flex-wrap gap-1 text-[11px]">
+        <span className={`px-1.5 py-0.5 rounded ${isStocked ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-500"}`}>
+          {isStocked ? "📦 Có lưu kho" : "⚪ Không lưu kho"}
+        </span>
+        {isStocked && (
+          <span className={`px-1.5 py-0.5 rounded ${isIntegerUom ? "bg-indigo-100 text-indigo-800" : "bg-sky-50 text-sky-700"}`}>
+            {isIntegerUom ? "🔢 Số nguyên" : "💧 Số lẻ"}
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1 text-[11px]">
+      <button
+        type="button"
+        disabled={save.isPending}
+        onClick={() => save.mutate({ is_stocked: !isStocked })}
+        title="Bấm để bật/tắt chế độ Có lưu kho"
+        className={`px-1.5 py-0.5 rounded font-semibold whitespace-nowrap cursor-pointer transition ${
+          isStocked
+            ? "bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800"
+            : "bg-slate-100 text-slate-600 border border-dashed border-slate-400 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"
+        }`}
+      >
+        {isStocked ? "📦 Có lưu kho" : "⚪ Không lưu kho"}
+      </button>
+      {isStocked && (
+        <button
+          type="button"
+          disabled={save.isPending}
+          onClick={() => save.mutate({ is_integer_uom: !isIntegerUom })}
+          title="Bấm để bật/tắt chế độ Lưu kho số nguyên (làm tròn lên số nguyên khi cấp phát / nổ BOM)"
+          className={`px-1.5 py-0.5 rounded font-semibold whitespace-nowrap cursor-pointer transition ${
+            isIntegerUom
+              ? "bg-indigo-100 text-indigo-800 border border-indigo-300 hover:bg-indigo-200 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-800"
+              : "bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800"
+          }`}
+        >
+          {isIntegerUom ? "🔢 Số nguyên" : "💧 Số lẻ"}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -484,7 +551,19 @@ function UomConversionPanel({
   );
 }
 
-const emptyForm = { code: "", name: "", item_type: "REAGENT", base_uom: "", tracking: "LOT", storage_condition: "RT", shelf_life_days: "", min_stock: "0", receipt_qc_required: true };
+const emptyForm = {
+  code: "",
+  name: "",
+  item_type: "REAGENT",
+  base_uom: "",
+  tracking: "LOT",
+  storage_condition: "RT",
+  shelf_life_days: "",
+  min_stock: "0",
+  receipt_qc_required: true,
+  is_stocked: true,
+  is_integer_uom: false,
+};
 
 function NewItemForm({ uoms, onDone }: { uoms: UomOption[]; onDone: () => void }) {
   const [form, setForm] = useState(emptyForm);
@@ -527,7 +606,19 @@ function NewItemForm({ uoms, onDone }: { uoms: UomOption[]; onDone: () => void }
         </select>
       </Field>
       <Field label="Đơn vị gốc *" hint="Hệ mét mL ↔ µL tự quy đổi 2 chiều">
-        <select className={inputClass} value={form.base_uom} onChange={set("base_uom")} required>
+        <select
+          className={inputClass}
+          value={form.base_uom}
+          onChange={(e) => {
+            const nextUom = e.target.value;
+            setForm({
+              ...form,
+              base_uom: nextUom,
+              is_integer_uom: form.tracking === "SERIAL" || isDiscreteStockUomClient(nextUom),
+            });
+          }}
+          required
+        >
           <option value="">Chọn đơn vị</option>
           {uoms.map((u) => (
             <option key={u.code} value={u.code}>{u.code} — {u.name}</option>
@@ -535,7 +626,18 @@ function NewItemForm({ uoms, onDone }: { uoms: UomOption[]; onDone: () => void }
         </select>
       </Field>
       <Field label="Quản lý">
-        <select className={inputClass} value={form.tracking} onChange={set("tracking")}>
+        <select
+          className={inputClass}
+          value={form.tracking}
+          onChange={(e) => {
+            const nextTracking = e.target.value;
+            setForm({
+              ...form,
+              tracking: nextTracking,
+              is_integer_uom: nextTracking === "SERIAL" || isDiscreteStockUomClient(form.base_uom),
+            });
+          }}
+        >
           {Object.entries(TRACKING_LABEL).map(([k, v]) => (
             <option key={k} value={k}>{v}</option>
           ))}
@@ -554,11 +656,21 @@ function NewItemForm({ uoms, onDone }: { uoms: UomOption[]; onDone: () => void }
       <Field label="Tồn tối thiểu">
         <input className={inputClass} type="number" min={0} step="any" value={form.min_stock} onChange={set("min_stock")} />
       </Field>
-      <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 sm:col-span-2">
-        <input type="checkbox" checked={form.receipt_qc_required} onChange={set("receipt_qc_required")} />
-        Bắt buộc QC khi nhận hàng (lô chỉ được dùng sau khi QA giải phóng)
-      </label>
-      <div className="flex items-end justify-end gap-2 sm:col-span-2">
+      <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600 dark:text-slate-300 sm:col-span-2 lg:col-span-3">
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={form.receipt_qc_required} onChange={set("receipt_qc_required")} />
+          Bắt buộc QC khi nhận hàng (lô chỉ được dùng sau khi QA giải phóng)
+        </label>
+        <label className="flex items-center gap-2 font-semibold text-emerald-700 dark:text-emerald-300">
+          <input type="checkbox" checked={form.is_stocked} onChange={set("is_stocked")} />
+          📦 Có lưu kho (Quản lý tồn kho)
+        </label>
+        <label className={`flex items-center gap-2 font-semibold ${form.is_stocked ? "text-indigo-700 dark:text-indigo-300" : "text-slate-400"}`}>
+          <input type="checkbox" disabled={!form.is_stocked} checked={form.is_integer_uom} onChange={set("is_integer_uom")} />
+          🔢 Lưu kho số nguyên (chẵn đơn vị)
+        </label>
+      </div>
+      <div className="flex items-end justify-end gap-2 sm:col-span-2 lg:col-span-1">
         <Button type="button" variant="ghost" onClick={onDone}>Hủy</Button>
         <Button type="submit" disabled={create.isPending}>{create.isPending ? "Đang lưu…" : "Lưu vật tư"}</Button>
       </div>
@@ -686,7 +798,7 @@ export function ItemsView({ canManage }: { canManage: boolean }) {
         {items.data && items.data.rows.length === 0 && <Empty>Chưa có vật tư nào.</Empty>}
         {items.data && items.data.rows.length > 0 && (
           <>
-            <Table head={["Mã", "Tên", "Loại", "ĐVT gốc", "Quản lý", "Bảo quản", "Tồn tối thiểu", "QC nhận hàng", "Mã hàng KD", "Trạng thái", ""]}>
+            <Table head={["Mã", "Tên", "Loại", "ĐVT gốc", "Quản lý", "Chế độ lưu kho", "Bảo quản", "Tồn tối thiểu", "QC nhận hàng", "Mã hàng KD", "Trạng thái", ""]}>
               {items.data.rows.map((r) => {
                 const badUom = isPlaceholderUomClient(r.base_uom);
                 return (
@@ -716,6 +828,9 @@ export function ItemsView({ canManage }: { canManage: boolean }) {
                       )}
                     </td>
                     <td className="py-2 pr-3 whitespace-nowrap">{TRACKING_LABEL[r.tracking]}</td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      <StockModeControls item={r} canManage={canManage} />
+                    </td>
                     <td className="py-2 pr-3 whitespace-nowrap">{STORAGE_LABEL[r.storage_condition]}</td>
                     <td className="py-2 pr-3 text-right">{fmtQty(r.min_stock)}</td>
                     <td className="py-2 pr-3">{r.receipt_qc_required ? "Có" : "Không"}</td>
