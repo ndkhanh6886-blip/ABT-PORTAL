@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiErrorResponse } from "@/backend/services/apiErrors";
 import { query, logAudit, ensurePersonnelTable, withTransaction, httpErrorStatus, HttpError } from "@/backend/db/db";
 import { hashPassword, generateTemporaryPassword } from "@/backend/services/passwords";
 import { getAuthorizedUser, isAdminUser, isAccountantUser, unauthorizedResponse, forbiddenResponse, setAuditActor } from "@/backend/services/authz";
@@ -723,7 +724,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ error: "Hành động không hợp lệ" }, { status: 400 });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: httpErrorStatus(error) });
+    return apiErrorResponse(error);
   }
 }
 
@@ -2634,7 +2635,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ error: "Hành động POST không hợp lệ" }, { status: 400 });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: httpErrorStatus(error) });
+    return apiErrorResponse(error);
   }
 }
 

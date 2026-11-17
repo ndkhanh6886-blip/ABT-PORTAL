@@ -3,13 +3,13 @@ import { NextResponse } from "next/server";
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse } from "@/backend/services/authz";
 import { clientIp } from "@/backend/services/rateLimit";
 import type { AuthzActor } from "./core/authz";
-import { getFactoryPool, withTransaction, type Tx } from "./core/db";
+import { getFactoryPool, isRetryableTxError, withTransaction, type Tx } from "./core/db";
 import { migrate } from "./db/migrate";
 import { FactoryError, notFound } from "./core/errors";
 import { parseInput } from "./core/records";
 import { listAllowedActions, preAuthenticate, runTransition, type MachineDef, type TransitionRequest } from "./core/stateMachine";
 import { verifyPortalPassword } from "./portalBridge";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { withIdempotency } from "./core/idempotency";
 import { processOutbox } from "./core/worker";
 import "./modules";
@@ -41,6 +41,11 @@ async function ensureFactoryMigrated(): Promise<void> {
   await startupMigrationPromise;
 }
 
+/** JSON bodies of the factory API are small records; files go through /api/upload. */
+const MAX_JSON_BODY_BYTES = 20 * 1024 * 1024;
+/** Attempts of one request's transaction when PostgreSQL aborts it for a deadlock or serialization failure. */
+const MAX_TX_ATTEMPTS = 3;
+
 export function factoryRoute(
   handler: (tx: Tx, ctx: RouteContext) => Promise<unknown>,
   opts: { before?: (ctx: RouteContext) => Promise<void> } = {}
@@ -59,6 +64,10 @@ export function factoryRoute(
     };
     try {
       await ensureFactoryMigrated();
+      const declaredSize = Number(req.headers.get("content-length") || 0);
+      if (declaredSize > MAX_JSON_BODY_BYTES) {
+        return NextResponse.json({ error: "Nội dung gửi lên quá lớn.", code: "PAYLOAD_TOO_LARGE" }, { status: 413 });
+      }
       const params = (await segment?.params) ?? {};
       const body = req.method === "GET" || req.method === "HEAD" ? {} : await req.json().catch(() => ({}));
       // Own statement, outside the business transaction: never holds the profile row lock
@@ -71,7 +80,19 @@ export function factoryRoute(
       );
       const ctx: RouteContext = { req, url: new URL(req.url), actor, params, body };
       await opts.before?.(ctx);
-      const result = await withTransaction((tx) => handler(tx, ctx));
+      // Deadlock / serialization failure: PostgreSQL already rolled the whole transaction back, so running it again
+      // is safe. Happens mostly right after a restart, when concurrent first requests run the schema bootstrap.
+      let result: unknown;
+      for (let attempt = 1; ; attempt++) {
+        try {
+          result = await withTransaction((tx) => handler(tx, ctx));
+          break;
+        } catch (error: any) {
+          if (!isRetryableTxError(error) || attempt >= MAX_TX_ATTEMPTS) throw error;
+          console.warn(JSON.stringify({ level: "warn", requestId, path: ctx.url.pathname, msg: `${error.code} ${error.message}: retry ${attempt}` }));
+          await new Promise((r) => setTimeout(r, 50 * attempt + Math.floor(Math.random() * 150)));
+        }
+      }
       kickOutbox();
       return NextResponse.json(result ?? { ok: true });
     } catch (error: any) {

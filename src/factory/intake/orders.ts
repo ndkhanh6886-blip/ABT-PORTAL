@@ -8,7 +8,7 @@ import { nextNumber } from "../core/numbering";
 import { enqueueEvent } from "../core/outbox";
 import { parseInput } from "../core/records";
 import { defineMachine, type GuardContext } from "../core/stateMachine";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { ensureInternalOrderLineKitSpecColumns } from "./kdEvents";
 import "./gateway";
 

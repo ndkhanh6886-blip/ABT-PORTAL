@@ -1,6 +1,7 @@
 "use client";
 
 import { api } from "./api";
+import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import { barcode128SvgMarkup } from "./barcodeSvg";
 import {
   normalizeQcFormsConfig,
@@ -872,37 +873,17 @@ function wrapCoaPopupWithLangSwitcher(
   configOverrides?: Partial<QcFormsConfig> | null,
   initialLang: CoaExportLang = "BI",
   signerOverrides?: QcSignerOverrides | null
-): string {
-  const sheets: Record<CoaExportLang, string> = {
-    BI: buildCoaCertificateSheetHtml(prepareCoaCertificateModel(coa, configOverrides, "BI", signerOverrides)),
-    VI: buildCoaCertificateSheetHtml(prepareCoaCertificateModel(coa, configOverrides, "VI", signerOverrides)),
-    EN: buildCoaCertificateSheetHtml(prepareCoaCertificateModel(coa, configOverrides, "EN", signerOverrides)),
-  };
-  const safeJson = JSON.stringify(sheets).replace(/</g, "\\u003c");
-  return `<!doctype html><html lang="${initialLang === "EN" ? "en" : "vi"}"><head><meta charset="utf-8">${safeOriginBase()}<title>${esc(coa?.code || "COA")} - ${esc(coa?.lot_code || "")}</title><style>${OFFICIAL_SHEET_CSS}</style></head><body>
-<div class="no-print">
-  <div><b>📜 Phiếu COA ${esc(coa?.code || "")}</b> — Lô <b>${esc(coa?.lot_code || "")}</b></div>
-  <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
-    <button id="btn-BI" class="no-print-btn ${initialLang === "BI" ? "active" : "alt"}" onclick="window.__setCoaLang('BI')">Song ngữ (Mẫu chuẩn)</button>
-    <button id="btn-VI" class="no-print-btn ${initialLang === "VI" ? "active" : "alt"}" onclick="window.__setCoaLang('VI')">🇻🇳 Tiếng Việt</button>
-    <button id="btn-EN" class="no-print-btn ${initialLang === "EN" ? "active" : "alt"}" onclick="window.__setCoaLang('EN')">🇬🇧 English</button>
-    <button class="no-print-btn" onclick="window.print()">🖨️ In / Lưu PDF (A4)</button>
-    <button class="no-print-btn alt" onclick="window.close()">Đóng</button>
-  </div>
-</div>
-<div id="coa-sheet" class="print-sheet">${sheets[initialLang]}</div>
-<script>
-window.__coaSheets = ${safeJson};
-window.__setCoaLang = function(lang) {
-  var el = document.getElementById('coa-sheet');
-  if (el && window.__coaSheets[lang]) el.innerHTML = window.__coaSheets[lang];
-  ['BI','VI','EN'].forEach(function(k) {
-    var b = document.getElementById('btn-' + k);
-    if (b) b.className = 'no-print-btn ' + (k === lang ? 'active' : 'alt');
-  });
-};
-</script>
+): { html: string; alternates: { label: string; html: string }[] } {
+  // One static document per language; the safe print window swaps between them (no inline script needed)
+  const pageFor = (lang: CoaExportLang) =>
+    `<!doctype html><html lang="${lang === "EN" ? "en" : "vi"}"><head><meta charset="utf-8">${safeOriginBase()}<title>${esc(coa?.code || "COA")} - ${esc(coa?.lot_code || "")}</title><style>${OFFICIAL_SHEET_CSS}</style></head><body>
+<div id="coa-sheet" class="print-sheet">${buildCoaCertificateSheetHtml(prepareCoaCertificateModel(coa, configOverrides, lang, signerOverrides))}</div>
 </body></html>`;
+  const labels: Record<CoaExportLang, string> = { BI: "Song ngữ (Mẫu chuẩn)", VI: "🇻🇳 Tiếng Việt", EN: "🇬🇧 English" };
+  const alternates = (["BI", "VI", "EN"] as CoaExportLang[])
+    .filter((l) => l !== initialLang)
+    .map((l) => ({ label: labels[l], html: pageFor(l) }));
+  return { html: pageFor(initialLang), alternates };
 }
 interface Result { name: string; unit: string | null; method?: string | null; value_type: string; lower_limit: number | string | null; upper_limit: number | string | null; target: string | null }
 const spec = (p: Result) =>
@@ -986,20 +967,11 @@ function waitForDocumentImagesAndPrint(doc: Document | null | undefined, onPrint
   setTimeout(trigger, 600);
 }
 
-export function renderHtmlToPrintWindow(html: string, existingWin?: Window | null) {
+export function renderHtmlToPrintWindow(html: string, existingWin?: Window | null, alternates?: { label: string; html: string }[]) {
   const w = existingWin ?? window.open("", "_blank", "width=1020,height=860");
   if (w) {
-    w.document.open();
-    w.document.write(html);
-    w.document.close();
-    waitForDocumentImagesAndPrint(w.document, () => {
-      try {
-        w.focus();
-        w.print();
-      } catch {
-        // user can also click the Print button inside the window
-      }
-    });
+    // rendered in a sandboxed iframe without scripts (see safePrint.ts): unescaped data cannot run code with the user's session
+    writeSafePrintDocument(w, html, { alternates });
     return;
   }
 
@@ -1012,15 +984,15 @@ export function renderHtmlToPrintWindow(html: string, existingWin?: Window | nul
   const frame = document.createElement("iframe");
   frame.id = "__abt_print_frame__";
   frame.style.cssText = "position:fixed;width:1px;height:1px;border:0;right:0;bottom:0;opacity:0";
+  frame.setAttribute("sandbox", "allow-same-origin allow-modals");
+  frame.srcdoc = html;
+  frame.addEventListener("load", () => {
+    waitForDocumentImagesAndPrint(frame.contentDocument, () => {
+      frame.contentWindow?.focus();
+      frame.contentWindow?.print();
+    });
+  }, { once: true });
   document.body.appendChild(frame);
-  const doc = frame.contentDocument!;
-  doc.open();
-  doc.write(html);
-  doc.close();
-  waitForDocumentImagesAndPrint(doc, () => {
-    frame.contentWindow?.focus();
-    frame.contentWindow?.print();
-  });
   setTimeout(() => {
     frame.remove();
     style.remove();
@@ -1120,8 +1092,8 @@ export function printKitCoaCertificate(
     }
   }
   const win = openPrintWindowSync(`Phiếu COA ${coa.code ?? ""} - Lô ${coa.lot_code ?? ""}`);
-  const html = wrapCoaPopupWithLangSwitcher(coa, configOverrides, lang, signerOverrides);
-  renderHtmlToPrintWindow(html, win);
+  const { html, alternates } = wrapCoaPopupWithLangSwitcher(coa, configOverrides, lang, signerOverrides);
+  renderHtmlToPrintWindow(html, win, alternates);
 }
 
 /**

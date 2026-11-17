@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiErrorResponse } from "@/backend/services/apiErrors";
 import { query, withTransaction } from "@/backend/db/db";
 import { getAuthorizedUser, isAdminUser, setAuditActor, unauthorizedResponse } from "@/backend/services/authz";
 import { getFactoryPool, withTransaction as withFactoryTx } from "@/factory/core/db";
@@ -419,7 +420,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ notifications: normalized });
   } catch (error: any) {
     console.error("[Notifications Feed GET Error]:", error);
-    return NextResponse.json({ error: error?.message || "Lỗi tải thông báo" }, { status: 500 });
+    return apiErrorResponse(error);
   }
 }
 
@@ -489,6 +490,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unsupported action" }, { status: 400 });
   } catch (error: any) {
     console.error("[Notifications Feed POST Error]:", error);
-    return NextResponse.json({ error: error?.message || "Lỗi cập nhật thông báo" }, { status: 500 });
+    return apiErrorResponse(error);
   }
 }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiErrorResponse } from "@/backend/services/apiErrors";
 import { query, logAudit } from "@/backend/db/db";
 import { hashPassword, verifyPassword, needsRehash } from "@/backend/services/passwords";
 import { createSessionToken, getSessionFromRequest, SESSION_COOKIE, sessionCookieOptions } from "@/backend/services/session";
@@ -92,7 +93,7 @@ export async function GET(req: NextRequest) {
     delete user.session_version;
     return NextResponse.json({ user });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiErrorResponse(error);
   }
 }
 
@@ -305,6 +306,6 @@ export async function POST(req: NextRequest) {
     await issueSession(req, { ...user, session_version: sessionVersion }, response);
     return response;
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiErrorResponse(error);
   }
 }

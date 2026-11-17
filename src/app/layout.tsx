@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { connection } from "next/server";
 import "./globals.css";
 import { ThemeProvider } from "@/frontend/contexts/ThemeContext";
 import { AuthProvider } from "@/frontend/contexts/AuthContext";
@@ -17,11 +18,14 @@ export const metadata: Metadata = {
   }
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Rendered per request: the Content-Security-Policy carries a fresh nonce (src/proxy.ts) that Next can only put
+  // on its inline scripts when the page is not prerendered.
+  await connection();
   return (
     <html lang="vi" suppressHydrationWarning>
       <head>

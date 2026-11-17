@@ -1409,7 +1409,8 @@ export function openOrPrintDataFile(fileUrl: string, fileName: string, autoPrint
         blob = new Blob([decodeURIComponent(dataPart)], { type: mime });
       }
       const blobUrl = URL.createObjectURL(blob);
-      const isViewable = mime === "application/pdf" || mime.startsWith("image/") || mime.startsWith("text/");
+      // html / svg / xml opened as a blob are same-origin documents that can run script: they are downloaded, never opened
+      const isViewable = mime === "application/pdf" || (mime.startsWith("image/") && !mime.includes("svg")) || mime === "text/plain";
       if (isViewable) {
         const win = window.open(blobUrl, "_blank");
         if (win && autoPrint) {

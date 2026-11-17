@@ -366,6 +366,30 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
   const [personnel, setPersonnel] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
+  const [logsTotal, setLogsTotal] = useState(0);
+  const [logsLoadingMore, setLogsLoadingMore] = useState(false);
+  const loadMoreLogs = async () => {
+    if (logsLoadingMore) return;
+    setLogsLoadingMore(true);
+    try {
+      const res = await fetch(`/api/settings?action=audit_logs&offset=${logs.length}&limit=100`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !Array.isArray(data?.logs)) {
+        showToast("error", data?.error || "Không tải thêm được nhật ký hệ thống");
+        return;
+      }
+      // Bỏ dòng trùng (nhật ký mới phát sinh làm lệch vị trí trang)
+      setLogs((prev) => {
+        const seen = new Set(prev.map((l) => l.id));
+        return [...prev, ...data.logs.filter((l: any) => !seen.has(l.id))];
+      });
+      setLogsTotal(Number(data.total) || 0);
+    } catch {
+      showToast("error", "Lỗi kết nối máy chủ khi tải nhật ký");
+    } finally {
+      setLogsLoadingMore(false);
+    }
+  };
   const [loading, setLoading] = useState(true);
 
   // Filter & Search states for Users
@@ -1022,6 +1046,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
         setPersonnel(data.personnel || []);
         setUsers(data.users || []);
         setLogs(data.logs || []);
+        setLogsTotal(Number(data.logs_total) || (data.logs || []).length);
       }
 
       // Also load custom positions and assignments from /api/storage
@@ -1553,7 +1578,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                 subTab === "audit" ? "bg-white dark:bg-slate-700 text-orange-600 dark:text-orange-400 shadow-xs font-bold" : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
               }`}
             >
-              <FileText className="w-3.5 h-3.5 shrink-0" /> Nhật Ký Hệ Thống ({logs.length})
+              <FileText className="w-3.5 h-3.5 shrink-0" /> Nhật Ký Hệ Thống ({Math.max(logsTotal, logs.length)})
             </button>
             <button
               onClick={() => setSubTab("notifications")}
@@ -2885,6 +2910,19 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="flex items-center justify-between gap-3 pt-2 text-xs text-slate-500 dark:text-slate-400">
+            <span>Đang hiển thị {logs.length} / {Math.max(logsTotal, logs.length)} bản ghi</span>
+            {logs.length < logsTotal && (
+              <button
+                type="button"
+                onClick={loadMoreLogs}
+                disabled={logsLoadingMore}
+                className="px-4 py-2 rounded-xl font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-60"
+              >
+                {logsLoadingMore ? "Đang tải..." : `Tải thêm ${Math.min(100, logsTotal - logs.length)} bản ghi`}
+              </button>
+            )}
           </div>
         </div>
       )}

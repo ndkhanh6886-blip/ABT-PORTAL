@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiErrorResponse } from "@/backend/services/apiErrors";
 import { query, logAudit, withTransaction, httpErrorStatus } from "@/backend/db/db";
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse, setAuditActor, AuthorizedUser } from "@/backend/services/authz";
 import { hasPermission } from "@/backend/services/permissions";
@@ -445,7 +446,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Hành động không hợp lệ" }, { status: 400 });
   } catch (error: any) {
     console.error("Workflow API GET Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiErrorResponse(error);
   }
 }
 
@@ -1927,6 +1928,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Hành động POST không hợp lệ" }, { status: 400 });
   } catch (error: any) {
     console.error("Workflow API POST Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiErrorResponse(error);
   }
 }

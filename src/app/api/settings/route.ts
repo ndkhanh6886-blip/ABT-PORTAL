@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiErrorResponse } from "@/backend/services/apiErrors";
 import { query, logAudit, ensurePersonnelTable, withTransaction } from "@/backend/db/db";
 import { syncPersonnelToZaloBindings } from "@/backend/db/zaloDb";
 import { hashPassword, verifyPassword, generateTemporaryPassword } from "@/backend/services/passwords";
@@ -198,6 +199,8 @@ async function syncPersonnelToUsers(): Promise<InitialCredential[]> {
   return created;
 }
 
+const AUDIT_PAGE_SIZE = 100;
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -214,6 +217,7 @@ export async function GET(req: NextRequest) {
       let personnelRows: any[] = [];
       let usersRows: any[] = [];
       let logsRows: any[] = [];
+      let logsTotal = 0;
 
       try {
         const pRes = await query("SELECT * FROM personnel ORDER BY id ASC");
@@ -283,8 +287,14 @@ export async function GET(req: NextRequest) {
 
       try {
         // Nhật ký hệ thống chỉ trả về cho quản trị viên
-        const lRes = isAdmin ? await query("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 100") : { rows: [] as any[] };
-        logsRows = lRes.rows;
+        if (isAdmin) {
+          const [lRes, cRes] = await Promise.all([
+            query("SELECT * FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT $1", [AUDIT_PAGE_SIZE]),
+            query("SELECT COUNT(*)::int AS total FROM audit_logs"),
+          ]);
+          logsRows = lRes.rows;
+          logsTotal = Number(cRes.rows[0]?.total || 0);
+        }
       } catch (e: any) {
         console.error("Failed to query audit_logs:", e.message);
       }
@@ -306,12 +316,25 @@ export async function GET(req: NextRequest) {
         personnel: personnelRows,
         users: usersRows,
         logs: logsRows,
+        logs_total: logsTotal,
       });
+    }
+
+    // Nhật ký hệ thống theo trang (Tải thêm): chỉ quản trị viên
+    if (action === "audit_logs") {
+      if (!isAdmin) return forbiddenResponse("Chỉ Quản trị viên mới được xem nhật ký hệ thống.");
+      const offset = Math.max(0, Math.floor(Number(searchParams.get("offset")) || 0));
+      const limit = Math.min(500, Math.max(1, Math.floor(Number(searchParams.get("limit")) || AUDIT_PAGE_SIZE)));
+      const [lRes, cRes] = await Promise.all([
+        query("SELECT * FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2", [limit, offset]),
+        query("SELECT COUNT(*)::int AS total FROM audit_logs"),
+      ]);
+      return NextResponse.json({ logs: lRes.rows, total: Number(cRes.rows[0]?.total || 0) });
     }
 
     return NextResponse.json({ error: "Hành động không hợp lệ" }, { status: 400 });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiErrorResponse(error);
   }
 }
 
@@ -837,7 +860,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ error: "Hành động POST không hợp lệ" }, { status: 400 });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiErrorResponse(error);
   }
 }
 

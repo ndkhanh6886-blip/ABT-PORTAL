@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import QRCode from "qrcode";
 import JsBarcode from "jsbarcode";
@@ -578,7 +579,7 @@ export function OrdersEbrView({
       window.print();
       return;
     }
-    w.document.write(`<!DOCTYPE html>
+    writeSafePrintDocument(w, `<!DOCTYPE html>
 <html lang="vi">
 <head>
   <meta charset="utf-8"/>
@@ -703,8 +704,6 @@ export function OrdersEbrView({
   </div>
 </body>
 </html>`);
-    w.document.close();
-    setTimeout(() => w.print(), 250);
   };
 
   /**
@@ -756,7 +755,7 @@ export function OrdersEbrView({
       window.print();
       return;
     }
-    w.document.write(`<!DOCTYPE html>
+    writeSafePrintDocument(w, `<!DOCTYPE html>
 <html lang="vi">
 <head>
   <meta charset="utf-8"/>
@@ -844,8 +843,6 @@ export function OrdersEbrView({
   </div>
 </body>
 </html>`);
-    w.document.close();
-    setTimeout(() => w.print(), 250);
   };
 
   const handleUpdateOrderLot = async (regenerate = false) => {

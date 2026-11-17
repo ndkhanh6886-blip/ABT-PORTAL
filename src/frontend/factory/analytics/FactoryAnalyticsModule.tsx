@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import { api, escHtml, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge } from "../ui";
 
@@ -181,7 +182,7 @@ export function FactoryAnalyticsModule() {
         </tr>`
       )
       .join("");
-    w.document.write(`
+    writeSafePrintDocument(w, `
       <html>
         <head>
           <title>Báo Cáo Xem Xét Của Lãnh Đạo ISO 13485:2016 — ABT Biolab</title>
@@ -218,11 +219,9 @@ export function FactoryAnalyticsModule() {
             <div><b>Đại diện Lãnh đạo Chất lượng (QMR / QA Manager)</b><br/><br/><br/>___________________________</div>
             <div><b>Ban Giám đốc Phê duyệt (Director)</b><br/><br/><br/>___________________________</div>
           </div>
-          <script>window.print();</script>
         </body>
       </html>
     `);
-    w.document.close();
   }
 
   const zeroExCount = (data?.review_by_exception_batches ?? []).filter((b: any) => b.rbe_status === "ZERO_EXCEPTION").length;

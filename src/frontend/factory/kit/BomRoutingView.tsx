@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import { ActionBar } from "../actions";
 import { api, fmtQty, vnToday } from "../api";
 import { printElementHtml } from "../coa";
@@ -1498,7 +1499,7 @@ export function BomRoutingView({
 
     const win = window.open("", "_blank", "width=920,height=860");
     if (!win) return;
-    win.document.write(`
+    writeSafePrintDocument(win, `
       <!DOCTYPE html>
       <html>
       <head>
@@ -1586,11 +1587,7 @@ export function BomRoutingView({
         </div>
       </body>
       </html>
-    `);
-    win.document.close();
-    if (autoPrint) {
-      setTimeout(() => win.print(), 350);
-    }
+    `);
   };
 
   const handleAddBomLine = async (e: React.FormEvent) => {

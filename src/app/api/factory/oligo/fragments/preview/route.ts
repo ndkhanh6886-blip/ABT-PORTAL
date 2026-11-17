@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { factoryRoute } from "@/factory/http";
 import { authorizeAnywhere } from "@/factory/core/authz";
 import { invalid } from "@/factory/core/errors";

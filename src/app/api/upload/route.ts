@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiErrorResponse } from "@/backend/services/apiErrors";
 import { getAuthorizedUser, unauthorizedResponse, setAuditActor } from "@/backend/services/authz";
 import fs from "fs";
 import fsp from "fs/promises";
@@ -186,10 +187,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (error: any) {
     console.error("Upload error:", error);
-    return NextResponse.json(
-      { error: error?.message || "Lỗi trong quá trình lưu trữ tệp lên máy chủ" },
-      { status: 500 }
-    );
+    return apiErrorResponse(error);
   }
 }
 
@@ -291,6 +289,6 @@ export async function GET(req: NextRequest) {
     return new NextResponse(stream, { headers: { ...baseHeaders, "Content-Length": String(size) } });
   } catch (error: any) {
     console.error("[upload] Lỗi đọc tệp:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiErrorResponse(error);
   }
 }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiErrorResponse } from "@/backend/services/apiErrors";
 import { query, logAudit, withTransaction, httpErrorStatus, HttpError } from "@/backend/db/db";
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse, setAuditActor } from "@/backend/services/authz";
 import { applyStoragePatch, StoragePatch } from "@/backend/services/storagePatch";
@@ -178,7 +179,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ data: readableData(me, key, res.rows[0].data), version: res.rows[0].version || 1 });
   } catch (error: any) {
     console.error("[Storage API GET Error]:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiErrorResponse(error);
   }
 }
 
@@ -348,7 +349,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, version: newVersion });
   } catch (error: any) {
     console.error("[Storage API POST Error]:", error);
-    return NextResponse.json({ error: error.message }, { status: httpErrorStatus(error) });
+    return apiErrorResponse(error);
   }
 }
 
@@ -370,6 +371,6 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error("[Storage API DELETE Error]:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiErrorResponse(error);
   }
 }

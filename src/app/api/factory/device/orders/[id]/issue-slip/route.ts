@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { parseInput } from "@/factory/core/records";
 import { authenticateSigner } from "@/factory/core/signature";
 import { getIssueSlip, signIssueSlip } from "@/factory/device/issueSlip";

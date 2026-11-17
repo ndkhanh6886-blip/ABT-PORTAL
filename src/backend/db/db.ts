@@ -1002,21 +1002,24 @@ async function runIntegrityMigrations() {
         `DELETE FROM catalog_items WHERE UPPER(TRIM(code)) = ANY($1::text[])`,
         [legacyCodes]
       );
+      // Khối JSON cũ (bản dự phòng của catalog_items) nằm trong app_storage.data
       await client.query(`
-        UPDATE app_kv_store
-           SET value = COALESCE(
+        UPDATE app_storage
+           SET data = COALESCE(
              (
                SELECT jsonb_agg(elem)
-                 FROM jsonb_array_elements(
-                   CASE WHEN jsonb_typeof(value) = 'array' THEN value ELSE '[]'::jsonb END
-                 ) elem
+                 FROM jsonb_array_elements(data) elem
                 WHERE UPPER(TRIM(COALESCE(elem->>'code', ''))) <> ALL($1::text[])
              ),
              '[]'::jsonb
            ),
            updated_at = now()
          WHERE key = 'sales_commercial_products'
-           AND jsonb_typeof(value) = 'array'
+           AND jsonb_typeof(data) = 'array'
+           AND EXISTS (
+             SELECT 1 FROM jsonb_array_elements(data) e
+              WHERE UPPER(TRIM(COALESCE(e->>'code', ''))) = ANY($1::text[])
+           )
       `, [legacyCodes]);
       await client.query(
         `DELETE FROM inventory_items
@@ -1025,15 +1028,10 @@ async function runIntegrityMigrations() {
             AND COALESCE(quantity_allocated, 0) <= 0`,
         [legacyCodes]
       );
+      // Kết nối migration ở chế độ autocommit: mỗi lệnh tự là một giao dịch (không dùng SAVEPOINT ngoài BEGIN).
+      // Mã còn được tham chiếu (khóa ngoại) thì giữ lại.
       for (const code of legacyCodes) {
-        await client.query("SAVEPOINT sp_del_legacy_oligo");
-        try {
-          await client.query(`DELETE FROM products WHERE UPPER(TRIM(code)) = $1`, [code]);
-          await client.query("RELEASE SAVEPOINT sp_del_legacy_oligo");
-        } catch {
-          await client.query("ROLLBACK TO SAVEPOINT sp_del_legacy_oligo");
-          await client.query("RELEASE SAVEPOINT sp_del_legacy_oligo");
-        }
+        await client.query(`DELETE FROM products WHERE UPPER(TRIM(code)) = $1`, [code]).catch(() => {});
       }
       await client.query(`
         UPDATE products SET min_stock_level = 0
@@ -1045,10 +1043,6 @@ async function runIntegrityMigrations() {
     // Chuẩn hóa NFC / khoảng trắng và gộp bản ghi nhân sự-tài khoản trùng lặp (kể cả bản ghi sót sau khi Admin xóa 1 bản ghi)
     await step("normalize_and_dedupe_personnel_v1", async () => {
       if (await flagDone("migration_normalize_dedupe_personnel_v1")) return;
-
-      const hasZaloTable = Boolean(
-        (await client.query("SELECT to_regclass('public.zalo_user_bindings') AS tbl")).rows[0]?.tbl
-      );
 
       // 1. Chuẩn hóa NFC & khoảng trắng trên personnel và users
       const rawPersonnel = (
@@ -1069,7 +1063,8 @@ async function runIntegrityMigrations() {
           nextPos !== (r.position ?? "") ||
           nextEmail !== (r.email ?? "");
         if (codeChanged || otherChanged) {
-          await client.query("SAVEPOINT sp_norm_pers");
+          // Kết nối migration ở chế độ autocommit: lệnh lỗi (vd. mã chuẩn hóa trùng mã đã có) tự hủy riêng nó,
+          // không cần SAVEPOINT (PostgreSQL từ chối SAVEPOINT ngoài BEGIN).
           try {
             await client.query(
               `UPDATE personnel
@@ -1081,10 +1076,7 @@ async function runIntegrityMigrations() {
                 WHERE id = $1`,
               [r.id, nextCode, nextName || r.full_name, nextDept, nextPos, nextEmail]
             );
-            await client.query("RELEASE SAVEPOINT sp_norm_pers");
           } catch {
-            await client.query("ROLLBACK TO SAVEPOINT sp_norm_pers");
-            await client.query("RELEASE SAVEPOINT sp_norm_pers");
             if (otherChanged) {
               await client.query(
                 `UPDATE personnel SET full_name = $2, department = $3, position = $4, email = $5 WHERE id = $1`,
@@ -1161,26 +1153,24 @@ async function runIntegrityMigrations() {
         }
 
         if (ghostIds.length > 0) {
-          await client.query("DELETE FROM personnel WHERE id = ANY($1::int[])", [ghostIds]);
+          // CHỈ BÁO CÁO, không xóa: so khớp theo họ tên có thể trúng người khác cùng tên. Quản trị viên xem log
+          // rồi tự xóa trên màn hình Nhân sự nếu đúng là bản ghi sót.
           const allU = (
             await client.query("SELECT id, username, full_name, role FROM users WHERE id <> 1 AND LOWER(username) <> 'admin' AND role <> 'admin'")
           ).rows;
-          const delUserIds = allU
-            .filter((u) => {
-              const nk = personNameKey(u.full_name);
-              const uk = normalizePersonText(u.username).toLowerCase();
-              return ghostNames.has(nk) || ghostCodes.has(uk);
+          const wouldDeleteUsers = allU.filter((u) => {
+            const nk = personNameKey(u.full_name);
+            const uk = normalizePersonText(u.username).toLowerCase();
+            return ghostNames.has(nk) || ghostCodes.has(uk);
+          });
+          const ghostRows = curPersonnel.filter((p) => ghostIds.includes(Number(p.id)));
+          console.warn(
+            "[MIGRATION:normalize_and_dedupe_personnel_v1] BÁO CÁO (không xóa) - nhân sự trùng tên với người đã bị xóa trong nhật ký:",
+            JSON.stringify({
+              personnel: ghostRows.map((p) => ({ id: p.id, employee_code: p.employee_code, full_name: p.full_name })),
+              users: wouldDeleteUsers.map((u) => ({ id: u.id, username: u.username, full_name: u.full_name })),
             })
-            .map((u) => Number(u.id));
-          if (delUserIds.length > 0) {
-            await client.query("DELETE FROM users WHERE id = ANY($1::int[])", [delUserIds]).catch(() => {});
-          }
-          if (hasZaloTable && ghostCodes.size > 0) {
-            await client.query(
-              "DELETE FROM zalo_user_bindings WHERE LOWER(employee_id) = ANY($1::text[])",
-              [Array.from(ghostCodes)]
-            ).catch(() => {});
-          }
+          );
         }
       }
 
@@ -1207,8 +1197,8 @@ async function runIntegrityMigrations() {
         return 3; // NV-ABT-<stamp>-...
       };
 
-      const redundantPersonnelIds: number[] = [];
-      const redundantCodes = new Set<string>();
+      // CHỈ BÁO CÁO, không gộp / xóa: hai người khác nhau có thể trùng họ tên và phòng ban
+      const duplicateReport: Array<{ keep: any; duplicates: any[] }> = [];
       for (const list of groups.values()) {
         if (list.length < 2) continue;
         list.sort((a, b) => {
@@ -1224,51 +1214,15 @@ async function runIntegrityMigrations() {
           return Number(a.id) - Number(b.id);
         });
 
-        const keep = list[0];
-        const dups = list.slice(1);
-        const mergedEmail = keep.email || dups.find((d) => d.email)?.email || "";
-        const mergedPhone = keep.phone || dups.find((d) => d.phone)?.phone || "";
-        const mergedPos = keep.position || dups.find((d) => d.position)?.position || "";
-        if (mergedEmail !== keep.email || mergedPhone !== keep.phone || mergedPos !== keep.position) {
-          await client.query(
-            "UPDATE personnel SET email = $2, phone = $3, position = $4 WHERE id = $1",
-            [keep.id, mergedEmail, mergedPhone, mergedPos]
-          ).catch(() => {});
-        }
-        const keepCodes = new Set(employeeCodeVariants(keep.employee_code));
-        for (const d of dups) {
-          redundantPersonnelIds.push(Number(d.id));
-          for (const v of employeeCodeVariants(d.employee_code)) {
-            if (!keepCodes.has(v)) redundantCodes.add(v);
-          }
-        }
+        const pick = (p: any) => ({ id: p.id, employee_code: p.employee_code, full_name: p.full_name, department: p.department, status: p.status });
+        duplicateReport.push({ keep: pick(list[0]), duplicates: list.slice(1).map(pick) });
       }
 
-      if (redundantPersonnelIds.length > 0) {
-        await client.query("DELETE FROM personnel WHERE id = ANY($1::int[])", [redundantPersonnelIds]);
-        if (hasZaloTable && redundantCodes.size > 0) {
-          await client.query(
-            "DELETE FROM zalo_user_bindings WHERE LOWER(employee_id) = ANY($1::text[])",
-            [Array.from(redundantCodes)]
-          ).catch(() => {});
-        }
-        if (redundantCodes.size > 0) {
-          const allU = (
-            await client.query("SELECT id, username, full_name, role FROM users WHERE id <> 1 AND LOWER(username) <> 'admin' AND role <> 'admin'")
-          ).rows;
-          const dupUserIds = allU
-            .filter((u) => {
-              const uk = normalizePersonText(u.username).toLowerCase();
-              if (!redundantCodes.has(uk)) return false;
-              const nk = personNameKey(u.full_name);
-              // Chỉ xóa tài khoản phụ nếu chính nhân sự đó còn ít nhất 1 tài khoản khác giữ lại
-              return allU.some((other) => other.id !== u.id && personNameKey(other.full_name) === nk && !redundantCodes.has(normalizePersonText(other.username).toLowerCase()));
-            })
-            .map((u) => Number(u.id));
-          if (dupUserIds.length > 0) {
-            await client.query("DELETE FROM users WHERE id = ANY($1::int[])", [dupUserIds]).catch(() => {});
-          }
-        }
+      if (duplicateReport.length > 0) {
+        console.warn(
+          `[MIGRATION:normalize_and_dedupe_personnel_v1] BÁO CÁO (không xóa) - ${duplicateReport.length} nhóm nhân sự trùng họ tên + phòng ban:`,
+          JSON.stringify(duplicateReport)
+        );
       }
 
       await setFlag("migration_normalize_dedupe_personnel_v1");
