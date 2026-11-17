@@ -263,7 +263,11 @@ export async function deleteAsset(tx: Tx, actor: AuthzActor, assetId: string, in
 }
 
 /** Auto-marks any IN_SERVICE / ACTIVE assets with next_calibration_due < CURRENT_DATE as OUT_OF_CALIBRATION. */
-export async function syncOverdueCalibrationAssets(tx: Tx): Promise<void> {
+let lastOverdueSyncAt = 0;
+export async function syncOverdueCalibrationAssets(tx: Tx, force = false): Promise<void> {
+  const now = Date.now();
+  if (!process.env.VITEST && !force && now - lastOverdueSyncAt < 60_000) return;
+  lastOverdueSyncAt = now;
   await tx.query(
     `UPDATE asset.asset
         SET status = 'OUT_OF_CALIBRATION', version = version + 1, updated_at = now()

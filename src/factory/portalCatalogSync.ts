@@ -8,7 +8,7 @@ import {
 import type { Tx } from "./core/db";
 import { isPlaceholderUom, normalizeUomAlias } from "./master/service";
 
-const SYNC_TTL_MS = 30_000;
+const SYNC_TTL_MS = 300_000;
 let lastSyncAt = 0;
 
 interface SyncCandidate {

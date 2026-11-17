@@ -2317,7 +2317,7 @@ export async function listKitCatalogItems(
 ) {
   await ensureStandardVtTubeItems(tx);
   const rawSearch = opts.q ? opts.q.normalize("NFC").trim() : "";
-  const defaultLimit = rawSearch ? 300 : 25000;
+  const defaultLimit = rawSearch ? 300 : 6000;
   const limit = Math.min(Math.max(Number(opts.limit) || defaultLimit, 1), 30000);
 
   const params: unknown[] = [];
@@ -2364,7 +2364,8 @@ export async function listKitCatalogItems(
     orderBySql = `ORDER BY CASE
       WHEN i.code ILIKE 'VT-TUBE-%' THEN 0
       WHEN EXISTS (SELECT 1 FROM bom_refs r WHERE r.id = i.id) THEN 1
-      ELSE 2
+      WHEN i.item_type IN ('FINISHED_KIT', 'SEMI_FINISHED') THEN 2
+      ELSE 3
     END ASC, i.code ASC`;
   }
 

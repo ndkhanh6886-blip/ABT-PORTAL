@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Boxes, ClipboardList, ShieldCheck, Wrench } from "lucide-react";
 import { api, useFactoryMe } from "../api";
 import { Empty, ErrorNote } from "../ui";
@@ -29,10 +29,12 @@ export default function FactoryKitModule() {
   const [options, setOptions] = useState<KitOptions>(EMPTY_OPTIONS);
   const [error, setError] = useState<unknown>(null);
 
+  const lastOptionsLoadRef = useRef(0);
   const loadOptions = useCallback(async () => {
     setError(null);
     try {
       const res = await api<KitOptions>("/api/factory/kit/options");
+      lastOptionsLoadRef.current = Date.now();
       setOptions(res);
     } catch (e) {
       setError(e);
@@ -69,7 +71,9 @@ export default function FactoryKitModule() {
             onClick={() => {
               setError(null);
               setTab(t.key);
-              if (options.units.length === 0 || t.key === "bom" || t.key === "orders") {
+              // Chỉ nạp lại danh mục nặng khi chưa có dữ liệu hoặc đã cũ > 60 giây (tránh tải lại mỗi lần bấm tab)
+              const stale = Date.now() - lastOptionsLoadRef.current > 60_000;
+              if (options.units.length === 0 || ((t.key === "bom" || t.key === "orders") && stale)) {
                 void loadOptions();
               }
             }}
