@@ -546,6 +546,32 @@ function scheduleMirror(key: string, value: string) {
   }, 400));
 }
 
+const quotaWarned = new Set<string>();
+
+/**
+ * Giải phóng chỗ khi localStorage đầy (~5MB): xoá bộ nhớ đệm đã có bản trên máy chủ (key đồng bộ đã migrate)
+ * hoặc bộ nhớ đệm thuần (`*_cached_*`), ưu tiên mục lớn nhất. Không đụng tới khoá đang ghi, phiên đăng nhập, cờ migrate.
+ */
+function evictLocalStorageSpace(storage: Storage, protectedKey: string, bytesNeeded: number): boolean {
+  const entries: Array<{ key: string; size: number }> = [];
+  for (let i = 0; i < storage.length; i++) {
+    const k = storage.key(i);
+    if (!k || k === protectedKey) continue;
+    const isMigratedServerKey = SERVER_BACKED_SET.has(k) && storage.getItem(`tbr_srv_migrated_v1_${k}`) === "1";
+    const isPureCache = /_cached_|_cache$/.test(k);
+    if (!isMigratedServerKey && !isPureCache) continue;
+    entries.push({ key: k, size: (storage.getItem(k) || "").length * 2 });
+  }
+  entries.sort((a, b) => b.size - a.size);
+  let freed = 0;
+  for (const e of entries) {
+    try { Storage.prototype.removeItem.call(storage, e.key); } catch { /* bỏ qua */ }
+    freed += e.size;
+    if (freed >= bytesNeeded * 1.5) break;
+  }
+  return freed > 0;
+}
+
 function installLocalStorageGuards() {
   const proto = Object.getPrototypeOf(window.localStorage) as Storage;
   const originalSetItem = proto.setItem;
@@ -553,7 +579,19 @@ function installLocalStorageGuards() {
     try {
       originalSetItem.call(this, key, value);
     } catch (err) {
-      console.warn(`[storageSync] localStorage đầy, không lưu được bộ nhớ đệm "${key}" (dữ liệu máy chủ không bị ảnh hưởng).`, err);
+      let saved = false;
+      if (this === window.localStorage) {
+        try {
+          if (evictLocalStorageSpace(this, key, String(value).length * 2)) {
+            originalSetItem.call(this, key, value);
+            saved = true;
+          }
+        } catch { /* vẫn đầy */ }
+      }
+      if (!saved && !quotaWarned.has(key)) {
+        quotaWarned.add(key);
+        console.warn(`[storageSync] localStorage đầy, không lưu được bộ nhớ đệm "${key}" (dữ liệu máy chủ không bị ảnh hưởng).`, err);
+      }
     }
     if (this === window.localStorage && SERVER_BACKED_SET.has(key) && !suppressMirror) {
       scheduleMirror(key, String(value));
