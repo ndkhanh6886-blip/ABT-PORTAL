@@ -120,6 +120,11 @@ const ALL_SETS: AccessorySet[] = EXTRACTION_ACCESSORY_GROUPS.flatMap((g) =>
 
 const norm = (v: any) => String(v ?? "").trim().toUpperCase();
 
+/** Toàn bộ mã phụ (mọi nhóm) với định mức mặc định. */
+export function listAllAccessorySets(): AccessorySet[] {
+  return ALL_SETS;
+}
+
 /** Kit tách chiết máy có mã phụ (mã chính nằm trong danh mục mã phụ ở trên). */
 export function isExtractionAccessoryProduct(code: any): boolean {
   const c = norm(code);

@@ -6,6 +6,7 @@ import { api, useFactoryMe } from "../api";
 import { Empty, ErrorNote } from "../ui";
 import { BomRoutingView } from "./BomRoutingView";
 import { OrdersEbrView } from "./OrdersEbrView";
+import { AccessorySetsPanel } from "./AccessorySetsPanel";
 import { QualityTraceView } from "./QualityTraceView";
 import { DepartmentEquipmentView } from "../asset/DepartmentEquipmentView";
 import { DeptMaterialActionBar } from "../warehouse/DeptMaterialActionBar";
@@ -98,6 +99,7 @@ export default function FactoryKitModule() {
           onClearFocusOrder={() => setFocusOrderId("")}
         />
       )}
+      {tab === "bom" && <AccessorySetsPanel canEdit={perms.has("kit.bom.manage")} />}
       {tab === "bom" && (
         <BomRoutingView
           options={options}

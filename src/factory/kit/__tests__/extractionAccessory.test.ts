@@ -5,7 +5,14 @@ import { closeFactoryPool, getFactoryPool, withTransaction } from "../../core/db
 import { preAuthenticate, runTransition, type MachineDef, type TransitionRequest } from "../../core/stateMachine";
 import { makeItem, makeSite, stockedLot, type Site } from "../../inv/__tests__/fixtures";
 import { addBomLine, addRoutingStep, bomMachine, createBom, createRouting, routingMachine } from "../bomRouting";
-import { createProductionOrder, getProductionOrderDetail, issueOrderMaterials, productionOrderMachine } from "../ordersEbr";
+import {
+  createProductionOrder,
+  getProductionOrderDetail,
+  issueOrderMaterials,
+  productionOrderMachine,
+  selectDraftMaterialLot,
+  setAccessoryQty,
+} from "../ordersEbr";
 import "../../modules";
 
 afterAll(closeFactoryPool);
@@ -47,6 +54,7 @@ describe("Kit tách chiết máy — mã phụ → vật tư cấp kèm tự tr�
     await stockedLot(site, buf.id, 5000, "2028-12-31", { uom: "mL" });
     const dpaLot = await stockedLot(site, dpa.id, 100, "2029-12-31", { uom: "pcs" });
     await stockedLot(site, tcbi.id, 100, "2029-12-31", { uom: "pcs" });
+    const dpaLot2 = await stockedLot(site, dpa.id, 100, "2030-12-31", { uom: "pcs" });
 
     const bom = await withTransaction(async (tx) => {
       const b = await createBom(tx, operator, {
@@ -87,29 +95,44 @@ describe("Kit tách chiết máy — mã phụ → vật tư cấp kèm tự tr�
     // Mã phụ của nhóm khác không được dùng cho mã này
     await expect(withTransaction((tx) => createProductionOrder(tx, operator, { ...base, accessory_set: "HI.B:KF" }))).rejects.toThrow(/không áp dụng/);
 
-    const order = await withTransaction((tx) => createProductionOrder(tx, operator, { ...base, accessory_set: "HM.A:B32" }));
-    expect(order.accessory_set).toBe("HM.A:B32");
-    const lotRow = (await getFactoryPool().query("SELECT l.code FROM inv.lot l JOIN kit.production_order o ON o.lot_id = l.id WHERE o.id = $1", [order.id])).rows[0];
-    expect(lotRow.code).toMatch(/^B\d{4,}\d{3,4}\.B32$/);
+    // Cài định mức: DPA cấp 2 / kit (mặc định 1); TCBI32 giữ mặc định
+    await withTransaction((tx) => setAccessoryQty(tx, checker, { accessory_set: "HM.A:B32", item_code: "DPA", qty_per_kit: 2 }));
+    try {
+      const order = await withTransaction((tx) => createProductionOrder(tx, operator, { ...base, accessory_set: "HM.A:B32" }));
+      expect(order.accessory_set).toBe("HM.A:B32");
+      const lotRow = (await getFactoryPool().query("SELECT l.code FROM inv.lot l JOIN kit.production_order o ON o.lot_id = l.id WHERE o.id = $1", [order.id])).rows[0];
+      expect(lotRow.code).toMatch(/^B\d{4,}\d{3,4}\.B32$/);
 
-    await act(productionOrderMachine, operator, order.id, "confirm");
-    const acc = (await getFactoryPool().query("SELECT * FROM kit.order_accessory_consumption WHERE order_id = $1", [order.id])).rows;
-    expect(acc).toHaveLength(2);
-    expect(acc.map((r) => r.item_id).sort()).toEqual([dpa.id, tcbi.id].sort());
-    expect(acc.every((r) => Number(r.planned_qty) === 10 && r.reservation_id)).toBe(true);
+      // Bản nháp: phiếu hiện các mã vật tư cấp kèm + danh sách lô để chọn; chỉ định lô có HSD xa hơn (FEFO sẽ chọn lô cũ)
+      const draft = await withTransaction((tx) => getProductionOrderDetail(tx, operator, order.id));
+      const dpaRow = draft.accessories?.items.find((i: any) => i.code === "DPA");
+      expect(dpaRow.required_qty).toBe(20);
+      expect(dpaRow.available_lots.map((l: any) => l.lot_id)).toEqual(expect.arrayContaining([dpaLot.id, dpaLot2.id]));
+      await withTransaction((tx) => selectDraftMaterialLot(tx, operator, order.id, { bom_line_id: "acc:DPA", lot_id: dpaLot2.id }));
 
-    const detailBefore = await withTransaction((tx) => getProductionOrderDetail(tx, operator, order.id));
-    expect(detailBefore.accessories?.variant).toBe("B32");
-    expect(detailBefore.accessories?.items.map((i: any) => i.code)).toEqual(["DPA", "TCBI32"]);
-    expect(detailBefore.accessories?.items[0].required_qty).toBe(10);
+      await act(productionOrderMachine, operator, order.id, "confirm");
+      const acc = (await getFactoryPool().query("SELECT * FROM kit.order_accessory_consumption WHERE order_id = $1", [order.id])).rows;
+      expect(acc).toHaveLength(2);
+      const accDpa = acc.find((r) => r.item_id === dpa.id);
+      const accTc = acc.find((r) => r.item_id === tcbi.id);
+      expect(Number(accDpa.planned_qty)).toBe(20);
+      expect(accDpa.lot_id).toBe(dpaLot2.id);
+      expect(Number(accTc.planned_qty)).toBe(10);
+      expect(acc.every((r) => r.reservation_id)).toBe(true);
 
-    await withTransaction((tx) => issueOrderMaterials(tx, operator, order.id));
-    const after = (await getFactoryPool().query("SELECT * FROM kit.order_accessory_consumption WHERE order_id = $1", [order.id])).rows;
-    expect(after.every((r) => Number(r.issued_qty) === 10 && r.stock_document_id)).toBe(true);
-    // Tồn lô đĩa deep plate đã bị trừ 10
-    const bal = (
-      await getFactoryPool().query("SELECT coalesce(sum(qty_on_hand), 0)::float AS q FROM inv.stock_balance WHERE lot_id = $1", [dpaLot.id])
-    ).rows[0];
-    expect(Number(bal.q)).toBeCloseTo(90, 3);
+      const detail = await withTransaction((tx) => getProductionOrderDetail(tx, operator, order.id));
+      expect(detail.accessories?.variant).toBe("B32");
+      expect(detail.accessories?.items.map((i: any) => i.code)).toEqual(["DPA", "TCBI32"]);
+
+      await withTransaction((tx) => issueOrderMaterials(tx, operator, order.id));
+      const after = (await getFactoryPool().query("SELECT * FROM kit.order_accessory_consumption WHERE order_id = $1", [order.id])).rows;
+      expect(after.every((r) => Number(r.issued_qty) === Number(r.planned_qty) && r.stock_document_id)).toBe(true);
+      const bal = async (lotId: string) =>
+        Number((await getFactoryPool().query("SELECT coalesce(sum(qty_on_hand), 0)::float AS q FROM inv.stock_balance WHERE lot_id = $1", [lotId])).rows[0].q);
+      expect(await bal(dpaLot2.id)).toBeCloseTo(80, 3); // trừ 20 đúng lô đã chọn
+      expect(await bal(dpaLot.id)).toBeCloseTo(100, 3); // lô FEFO không bị đụng
+    } finally {
+      await withTransaction((tx) => setAccessoryQty(tx, checker, { accessory_set: "HM.A:B32", item_code: "DPA", qty_per_kit: 1 }));
+    }
   });
 });

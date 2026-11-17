@@ -1828,6 +1828,7 @@ export function OrdersEbrView({
                           <th className="py-1">Mã NVL</th>
                           <th className="py-1">Tên vật tư</th>
                           <th className="py-1 text-right">Cần</th>
+                          <th className="py-1 w-72">Chọn lô xuất</th>
                           <th className="py-1">Lô giữ chỗ / đã xuất</th>
                         </tr>
                       </thead>
@@ -1836,7 +1837,29 @@ export function OrdersEbrView({
                           <tr key={it.code} className="border-t border-teal-100 dark:border-teal-900">
                             <td className="py-1 font-mono font-bold">{it.code}</td>
                             <td className="py-1">{it.name}</td>
-                            <td className="py-1 text-right font-bold">{it.required_qty}</td>
+                            <td className="py-1 text-right font-bold">
+                              {it.required_qty}
+                              <div className="text-[10px] font-normal text-slate-500">({it.qty_per_kit}/kit)</div>
+                            </td>
+                            <td className="py-1">
+                              {detail.order.status === "DRAFT" ? (
+                                <select
+                                  className="w-full px-1.5 py-0.5 rounded border border-teal-300 bg-white dark:bg-slate-800 text-[11px]"
+                                  value={it.preferred_lot_id ?? ""}
+                                  onChange={(e) => handleSelectDraftLot(`acc:${it.code}`, e.target.value)}
+                                >
+                                  <option value="">Tự động theo FEFO (lô gần hết hạn trước)</option>
+                                  {(it.available_lots ?? []).map((l: any) => (
+                                    <option key={l.lot_id} value={l.lot_id} disabled={Number(l.available) < Number(it.required_qty)}>
+                                      {l.lot_code} · tồn {fmtQty(l.available)}{l.expiry_date ? ` · HSD ${l.expiry_date}` : ""}
+                                      {Number(l.available) < Number(it.required_qty) ? " (không đủ)" : ""}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <span className="text-slate-400">Đã khóa khi xác nhận lệnh</span>
+                              )}
+                            </td>
                             <td className="py-1">
                               {it.consumptions.length === 0
                                 ? <span className="text-slate-400">Chưa giữ chỗ (giữ chỗ khi xác nhận lệnh)</span>

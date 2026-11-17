@@ -22,7 +22,12 @@ import { issueCoaFromQcTest } from "../qms/qaOps";
 import { createQcTest, registerQcSubject } from "../qms/qcTests";
 import { findEffectiveSpec } from "../qms/specs";
 import { stripVnAccents } from "../../frontend/factory/qcSignatures";
-import { findAccessorySet, isAccessorySetValidForProduct } from "../../frontend/utils/extractionAccessories";
+import {
+  findAccessorySet,
+  isAccessorySetValidForProduct,
+  listAllAccessorySets,
+  type AccessoryItem,
+} from "../../frontend/utils/extractionAccessories";
 import {
   buildIfuFilesMapFromRow,
   ensureKitBomRoutingAndIfuSchema,
@@ -2402,20 +2407,104 @@ async function ensureOrderMaterialConsumptions(tx: Tx, actor: AuthzActor, order:
   }
 }
 
+/** Định mức vật tư cấp kèm / 1 kit đã chỉnh (mặc định 1). Khóa: `${mã phụ}|${MÃ NVL}`. */
+async function loadAccessoryQtyOverrides(tx: Tx): Promise<Map<string, number>> {
+  const rows = (await tx.query("SELECT accessory_set, item_code, qty_per_kit::float AS qty FROM kit.extraction_accessory_qty")).rows;
+  return new Map(rows.map((r: any) => [`${r.accessory_set}|${String(r.item_code).toUpperCase()}`, Number(r.qty)]));
+}
+
+/** Mã phụ + bộ vật tư cấp kèm với định mức đã cài đặt. */
+async function resolveAccessoryItems(
+  tx: Tx,
+  setKey: string | null | undefined
+): Promise<{ key: string; variant: string; group: string; items: AccessoryItem[] } | null> {
+  const set = findAccessorySet(setKey);
+  if (!set) return null;
+  const ov = await loadAccessoryQtyOverrides(tx);
+  return {
+    key: set.key,
+    variant: set.variant,
+    group: set.group,
+    items: set.items.map((it) => ({ ...it, qty: ov.get(`${set.key}|${it.code.toUpperCase()}`) ?? it.qty })),
+  };
+}
+
+/** Danh sách mọi mã phụ kèm định mức đang cài đặt và tình trạng mã vật tư trong danh mục (màn cài đặt). */
+export async function listAccessorySetConfig(tx: Tx, actor: AuthzActor) {
+  await authorizeAnywhere(tx, actor, "kit.view");
+  const ov = await loadAccessoryQtyOverrides(tx);
+  const codes = Array.from(new Set(listAllAccessorySets().flatMap((s) => s.items.map((i) => i.code.toUpperCase()))));
+  const found = (
+    await tx.query("SELECT upper(code) AS code FROM master.item WHERE upper(code) = ANY($1::text[]) AND status = 'ACTIVE'", [codes])
+  ).rows.map((r: any) => String(r.code));
+  const foundSet = new Set(found);
+  return {
+    sets: listAllAccessorySets().map((s) => ({
+      key: s.key,
+      group: s.group,
+      variant: s.variant,
+      items: s.items.map((it) => ({
+        code: it.code,
+        name: it.name,
+        default_qty: it.qty,
+        qty: ov.get(`${s.key}|${it.code.toUpperCase()}`) ?? it.qty,
+        in_catalog: foundSet.has(it.code.toUpperCase()),
+      })),
+    })),
+  };
+}
+
+const setAccessoryQtySchema = z.object({
+  accessory_set: z.string().trim().min(1),
+  item_code: z.string().trim().min(1),
+  qty_per_kit: z.coerce.number().positive("định mức phải > 0").max(100000),
+});
+
+/** Cài đặt số lượng vật tư cấp kèm / 1 kit cho một mã phụ (áp dụng cho lệnh sản xuất xác nhận sau đó). */
+export async function setAccessoryQty(tx: Tx, actor: AuthzActor, input: unknown) {
+  const d = parseInput(setAccessoryQtySchema, input);
+  await authorizeAnywhere(tx, actor, "kit.bom.manage");
+  const set = findAccessorySet(d.accessory_set);
+  const item = set?.items.find((i) => i.code.toUpperCase() === d.item_code.toUpperCase());
+  if (!set || !item) throw invalid("Mã phụ hoặc mã vật tư không có trong danh mục mã phụ kit tách chiết máy.");
+  const prev = (
+    await tx.query("SELECT qty_per_kit::float AS q FROM kit.extraction_accessory_qty WHERE accessory_set = $1 AND item_code = $2", [set.key, item.code])
+  ).rows[0];
+  const row = (
+    await tx.query(
+      `INSERT INTO kit.extraction_accessory_qty (accessory_set, item_code, qty_per_kit, updated_by)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (accessory_set, item_code) DO UPDATE SET qty_per_kit = EXCLUDED.qty_per_kit, updated_by = EXCLUDED.updated_by, updated_at = now()
+       RETURNING id`,
+      [set.key, item.code, d.qty_per_kit, actor.userId]
+    )
+  ).rows[0];
+  await writeAudit(tx, actor, {
+    entityType: "kit_extraction_accessory_qty",
+    entityId: row.id,
+    action: "set_qty",
+    changes: { [`${set.key}|${item.code}`]: [prev?.q ?? item.qty, d.qty_per_kit] },
+  });
+  return { accessory_set: set.key, item_code: item.code, qty_per_kit: d.qty_per_kit };
+}
+
 /**
- * Kit tách chiết máy: giữ chỗ (FEFO) các mã vật tư cấp kèm tương ứng với mã phụ đã chọn trên SO
+ * Kit tách chiết máy: giữ chỗ (FEFO hoặc lô đã chỉ định ở bản nháp) các mã vật tư cấp kèm tương ứng với mã phụ đã chọn trên SO
  * (`production_order.accessory_set`). Bảng riêng `kit.order_accessory_consumption` vì các vật tư này không nằm trong BOM chung.
  */
 async function ensureOrderAccessoryReservations(tx: Tx, actor: AuthzActor, order: ProductionOrderRow) {
   if (["DRAFT", "CANCELLED"].includes(order.status)) return;
   const setKey = String(order.accessory_set || "").trim();
   if (!setKey) return;
-  const set = findAccessorySet(setKey);
+  const set = await resolveAccessoryItems(tx, setKey);
   if (!set) return;
   const existing = Number(
     (await tx.query("SELECT count(*)::int AS c FROM kit.order_accessory_consumption WHERE order_id = $1", [order.id])).rows[0]?.c ?? 0
   );
   if (existing > 0) return;
+
+  const snapRow = (await tx.query("SELECT bom_snapshot_json FROM kit.production_order WHERE id = $1", [order.id])).rows[0];
+  const preferredLots = (snapRow?.bom_snapshot_json?.preferred_lots ?? {}) as Record<string, { lot_id?: string }>;
 
   const plannedQty = Number(order.planned_qty) || 0;
   for (const it of set.items) {
@@ -2434,15 +2523,24 @@ async function ensureOrderAccessoryReservations(tx: Tx, actor: AuthzActor, order
     if (!(required > 0)) continue;
     const qtyBase = Math.round((await toBaseQty(tx, item, required, item.base_uom)) * 1e6) / 1e6;
     if (!(qtyBase > 0)) continue;
-    const picks = await reserve(tx, actor, {
-      item_id: item.id,
-      qty_base: qtyBase,
-      warehouse_ids: [order.warehouse_id],
-      demand_entity_type: "PRODUCTION_ORDER",
-      demand_entity_id: order.id,
-      module: "KIT",
-      allow_substitutes: false,
-    });
+    const prefLot = preferredLots[`acc:${it.code.toUpperCase()}`]?.lot_id;
+    const picks = prefLot
+      ? await reserveLot(tx, actor, {
+          lot_id: prefLot,
+          qty_base: qtyBase,
+          warehouse_ids: [order.warehouse_id],
+          demand_entity_type: "PRODUCTION_ORDER",
+          demand_entity_id: order.id,
+        })
+      : await reserve(tx, actor, {
+          item_id: item.id,
+          qty_base: qtyBase,
+          warehouse_ids: [order.warehouse_id],
+          demand_entity_type: "PRODUCTION_ORDER",
+          demand_entity_id: order.id,
+          module: "KIT",
+          allow_substitutes: false,
+        });
     for (const p of picks) {
       await tx.query(
         `INSERT INTO kit.order_accessory_consumption
@@ -2462,6 +2560,63 @@ async function ensureOrderAccessoryReservations(tx: Tx, actor: AuthzActor, order
       );
     }
   }
+}
+
+/** Chỉ định lô cho vật tư cấp kèm (mã phụ) ở lệnh nháp — khóa preferred_lots dạng "acc:MÃ NVL". */
+async function selectDraftAccessoryLot(
+  tx: Tx,
+  actor: AuthzActor,
+  order: ProductionOrderRow & { bom_snapshot_json?: any },
+  d: { bom_line_id: string; lot_id?: string | null; reason?: string | null }
+) {
+  const code = d.bom_line_id.slice(4).trim().toUpperCase();
+  const set = await resolveAccessoryItems(tx, order.accessory_set);
+  const cfg = set?.items.find((i) => i.code.toUpperCase() === code);
+  if (!set || !cfg) throw notFound("vật tư cấp kèm của mã phụ trong lệnh");
+  const item = (await tx.query("SELECT * FROM master.item WHERE upper(code) = $1 AND status = 'ACTIVE' LIMIT 1", [code])).rows[0];
+  if (!item) throw invalid(`Vật tư ${code} chưa có trong danh mục vật tư.`, undefined, "MISSING_ACCESSORY_ITEM");
+
+  const snap = order.bom_snapshot_json && typeof order.bom_snapshot_json === "object" ? { ...order.bom_snapshot_json } : {};
+  const preferred: Record<string, { lot_id: string; lot_code?: string; item_id?: string; reason?: string | null }> = {
+    ...(snap.preferred_lots ?? {}),
+  };
+  const key = `acc:${code}`;
+  const prevLotId = preferred[key]?.lot_id ?? null;
+
+  if (d.lot_id) {
+    const lotId = z.string().uuid("Mã ID lô không hợp lệ.").parse(d.lot_id);
+    const lot = (await tx.query("SELECT l.*, i.base_uom FROM inv.lot l JOIN master.item i ON i.id = l.item_id WHERE l.id = $1", [lotId])).rows[0];
+    if (!lot) throw notFound("lô vật tư");
+    if (lot.item_id !== item.id) throw invalid(`Lô ${lot.code} không thuộc mã vật tư ${code}.`);
+    if (lot.status !== "RELEASED") {
+      throw invalid(`Lô ${lot.code} đang ở trạng thái ${lot.status}; chỉ lô đã giải phóng (RELEASED) mới được chọn để xuất.`, undefined, "LOT_NOT_RELEASED");
+    }
+    const expYmd = toYmd(lot.expiry_date);
+    if (expYmd && expYmd < vnToday()) throw invalid(`Lô ${lot.code} đã hết hạn sử dụng (${expYmd}).`, undefined, "LOT_EXPIRED");
+    const required = Math.ceil((Number(order.planned_qty) || 0) * cfg.qty - 1e-9);
+    const reqQtyBase = Math.round((await toBaseQty(tx, item, required, item.base_uom)) * 1e6) / 1e6;
+    const avail = (await findCandidates(tx, item.id, [order.warehouse_id])).filter((x) => x.lot_id === lotId).reduce((s, x) => s + x.available, 0);
+    if (avail + 1e-9 < reqQtyBase) {
+      throw invalid(`Lô ${lot.code} không đủ tồn khả dụng tại kho (${avail} / cần ${reqQtyBase} ${lot.base_uom}).`, undefined, "INSUFFICIENT_STOCK");
+    }
+    preferred[key] = { lot_id: lotId, lot_code: lot.code, item_id: item.id, reason: d.reason ?? null };
+  } else {
+    delete preferred[key];
+  }
+
+  await tx.query("UPDATE kit.production_order SET bom_snapshot_json = $2::jsonb, updated_at = now(), updated_by = $3 WHERE id = $1", [
+    order.id,
+    JSON.stringify({ ...snap, preferred_lots: preferred }),
+    actor.userId,
+  ]);
+  await writeAudit(tx, actor, {
+    entityType: "kit_production_order",
+    entityId: order.id,
+    action: "select_draft_lot",
+    changes: { bom_line_id: [d.bom_line_id, d.bom_line_id], preferred_lot_id: [prevLotId, d.lot_id ?? null] },
+    reason: d.reason ?? undefined,
+  });
+  return { preferred_lots: preferred };
 }
 
 /**
@@ -2559,6 +2714,7 @@ export async function selectDraftMaterialLot(tx: Tx, actor: AuthzActor, orderId:
   if (order.status !== "DRAFT") {
     throw invalid("Lệnh sản xuất đã xác nhận; vui lòng dùng thao tác 'Đổi lô' trên dòng nguyên vật liệu.");
   }
+  if (d.bom_line_id.startsWith("acc:")) return selectDraftAccessoryLot(tx, actor, order, d);
   if (!UUID_RE.test(d.bom_line_id)) {
     throw invalid("Dòng vật tư tự động không hỗ trợ chọn lô trước.");
   }
@@ -4333,7 +4489,7 @@ export async function getProductionOrderDetail(tx: Tx, actor: AuthzActor, id: st
     )
   ).rows;
 
-  const accSetDef = (order as any).accessory_set ? findAccessorySet((order as any).accessory_set) : null;
+  const accSetDef = await resolveAccessoryItems(tx, (order as any).accessory_set);
   const accRows = (
     await tx.query(
       `SELECT ac.*, i.code AS item_code, i.name AS item_name, l.code AS lot_code
@@ -4345,20 +4501,49 @@ export async function getProductionOrderDetail(tx: Tx, actor: AuthzActor, id: st
       [id]
     )
   ).rows;
-  const accessories = accSetDef
-    ? {
-        key: accSetDef.key,
-        variant: accSetDef.variant,
-        group: accSetDef.group,
-        items: accSetDef.items.map((it) => ({
-          code: it.code,
-          name: it.name,
-          qty_per_kit: it.qty,
-          required_qty: Math.ceil((Number((order as any).planned_qty) || 0) * it.qty - 1e-9),
-          consumptions: accRows.filter((r) => String(r.item_code).toUpperCase() === it.code.toUpperCase()),
-        })),
-      }
-    : null;
+  let accessories: any = null;
+  if (accSetDef) {
+    const accCodes = accSetDef.items.map((i) => i.code.toUpperCase());
+    const accLotRows = (
+      await tx.query(
+        `SELECT upper(i.code) AS item_code, l.id AS lot_id, l.code AS lot_code, l.expiry_date,
+                 sum(sb.qty_on_hand - sb.qty_reserved)::float AS available
+            FROM inv.stock_balance sb
+            JOIN master.location loc ON loc.id = sb.location_id
+            JOIN inv.lot l ON l.id = sb.lot_id
+            JOIN master.item i ON i.id = sb.item_id
+           WHERE loc.warehouse_id = $1 AND loc.status = 'ACTIVE' AND NOT loc.is_quarantine
+             AND upper(i.code) = ANY($2::text[]) AND l.status = 'RELEASED'
+             AND (l.expiry_date IS NULL OR l.expiry_date >= $3::date)
+             AND sb.qty_on_hand - sb.qty_reserved > 0
+           GROUP BY i.code, l.id, l.code, l.expiry_date
+           ORDER BY l.expiry_date ASC NULLS LAST, l.code ASC`,
+        [(order as any).warehouse_id, accCodes, vnToday()]
+      )
+    ).rows;
+    const prefLots = ((order as any).bom_snapshot_json?.preferred_lots ?? {}) as Record<string, { lot_id?: string }>;
+    accessories = {
+      key: accSetDef.key,
+      variant: accSetDef.variant,
+      group: accSetDef.group,
+      items: accSetDef.items.map((it) => ({
+        code: it.code,
+        name: it.name,
+        qty_per_kit: it.qty,
+        required_qty: Math.ceil((Number((order as any).planned_qty) || 0) * it.qty - 1e-9),
+        preferred_lot_id: prefLots[`acc:${it.code.toUpperCase()}`]?.lot_id ?? null,
+        available_lots: accLotRows
+          .filter((r) => r.item_code === it.code.toUpperCase())
+          .map((r) => ({
+            lot_id: String(r.lot_id),
+            lot_code: r.lot_code,
+            expiry_date: toYmd(r.expiry_date) || null,
+            available: Number(r.available || 0),
+          })),
+        consumptions: accRows.filter((r) => String(r.item_code).toUpperCase() === it.code.toUpperCase()),
+      })),
+    };
+  }
 
   const allowed_actions = await listAllowedActions(tx, productionOrderMachine, actor, order);
   return {
