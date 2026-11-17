@@ -25,7 +25,8 @@ import {
   ROLE_LABELS,
   STEP_CATEGORY_LABELS,
 } from "./shared";
-import { kitSpecOf, kitSpecToFactorySupplyAndTube, kitSpecLabel, hasKitSpec } from "@/frontend/utils/packagingForm";
+import { accessorySetsForProduct, findAccessorySet, isExtractionAccessoryProduct } from "@/frontend/utils/extractionAccessories";
+import { kitSpecOf, kitSpecToFactorySupplyAndTube, kitSpecLabel, hasKitSpec, hasPackagingSpec } from "@/frontend/utils/packagingForm";
 import { ProductionPlanView } from "./ProductionPlanView";
 
 const SHIFT_LABELS: Record<string, string> = {
@@ -153,6 +154,7 @@ export function OrdersEbrView({
     planned_qty: "100",
     supply_form: "NO_SPLIT_NO_IC",
     tube_code: "T02",
+    accessory_set: "",
     is_demo: false,
     order_mode: "STANDARD" as "STANDARD" | "ALIQUOTED" | "DEMO",
     demo_specification: "25 test",
@@ -309,6 +311,7 @@ export function OrdersEbrView({
       const ks = kitSpecOf({
         supply_form: poLine.supply_form,
         tube_code: poLine.tube_code,
+        accessory_set: poLine.accessory_set,
         specification: `${poLine.specification ?? ""} ${poLine.description ?? ""}`,
         notes: poLine.line_notes,
       });
@@ -334,7 +337,7 @@ export function OrdersEbrView({
         supplyForm: nextSupplyForm,
         tubeCode: nextTubeCode,
       });
-      const specNote = hasKitSpec(ks) ? ` [Dạng: ${kitSpecLabel(ks)}]` : "";
+      const specNote = hasPackagingSpec(ks) ? ` [Dạng: ${kitSpecLabel(ks)}]` : "";
       return {
         ...prev,
         internal_order_line_id: lineId,
@@ -347,6 +350,7 @@ export function OrdersEbrView({
             : prev.qc_retention_qty,
         supply_form: nextSupplyForm,
         tube_code: nextTubeCode,
+        accessory_set: ks.accessorySet ?? "",
         order_mode: sfSpec.is_aliquoted ? "ALIQUOTED" : "STANDARD",
         lot_code: nextLotCode,
         notes: `Sản xuất theo PO ${poLine.kd_po_code} (Đơn nội bộ ${poLine.internal_order_code})${specNote}`,
@@ -371,6 +375,7 @@ export function OrdersEbrView({
           planned_qty: Number(orderForm.planned_qty),
           supply_form: orderForm.supply_form,
           tube_code: orderForm.tube_code || null,
+          accessory_set: orderForm.accessory_set || null,
           order_mode: effectiveMode,
           is_aliquoted: sfSpec.is_aliquoted,
           is_demo: orderForm.is_demo,
@@ -1275,6 +1280,30 @@ export function OrdersEbrView({
                     </select>
                   </Field>
                 </div>
+                {(() => {
+                  const selProd = kitProducts.find((x) => x.id === orderForm.product_item_id);
+                  if (!selProd || !isExtractionAccessoryProduct(selProd.code)) return null;
+                  const accSel = orderForm.accessory_set ? findAccessorySet(orderForm.accessory_set) : null;
+                  return (
+                    <Field label="Mã phụ Kit tách chiết máy — quyết định vật tư cấp kèm (đĩa, tube strip, tipcomb...) sẽ tự trừ kho khi xác nhận lệnh">
+                      <select
+                        className={inputClass}
+                        value={orderForm.accessory_set}
+                        onChange={(e) => setOrderForm({ ...orderForm, accessory_set: e.target.value })}
+                      >
+                        <option value="">-- Chọn mã phụ (nên chọn theo SO) --</option>
+                        {accessorySetsForProduct(selProd.code).map((s) => (
+                          <option key={s.key} value={s.key}>
+                            {`${s.variant} (${s.group}) · ${s.items.map((i) => `${i.name} (${i.code})`).join(" + ")}`}
+                          </option>
+                        ))}
+                      </select>
+                      {accSel ? null : (
+                        <div className="mt-1 text-[11px] font-semibold text-rose-600">⚠ Chưa chọn mã phụ: lệnh sẽ không cấp kèm / trừ kho vật tư phụ.</div>
+                      )}
+                    </Field>
+                  );
+                })()}
                 <Field label="Liên kết Đơn nội bộ (PO Kinh doanh) — Tự động nạp Mã Kit, Dạng cung cấp, Tube PCR & Số Lô">
                   <select
                     className={inputClass}
@@ -1289,7 +1318,7 @@ export function OrdersEbrView({
                         specification: `${p.specification ?? ""} ${p.description ?? ""}`,
                         notes: p.line_notes,
                       });
-                      const specStr = hasKitSpec(ks) ? ` [${kitSpecLabel(ks)}]` : "";
+                      const specStr = hasPackagingSpec(ks) ? ` [${kitSpecLabel(ks)}]` : "";
                       return (
                         <option key={p.line_id} value={p.line_id}>
                           {p.kd_po_code} ({p.internal_order_code}) — {p.item_code}: Cần {p.qty_ordered} {p.uom}{specStr}
@@ -1787,6 +1816,42 @@ export function OrdersEbrView({
                     </div>
                   );
                 })()}
+
+                {detail.accessories && (
+                  <div className="p-3 rounded-xl border border-teal-200 dark:border-teal-800 bg-teal-50/60 dark:bg-teal-950/30 space-y-2">
+                    <div className="text-xs font-extrabold text-teal-900 dark:text-teal-200 uppercase">
+                      🧪 Mã phụ {detail.accessories.variant} ({detail.accessories.group}) — Vật tư cấp kèm kit tách chiết máy
+                    </div>
+                    <table className="w-full text-[11px]">
+                      <thead>
+                        <tr className="text-left text-slate-500">
+                          <th className="py-1">Mã NVL</th>
+                          <th className="py-1">Tên vật tư</th>
+                          <th className="py-1 text-right">Cần</th>
+                          <th className="py-1">Lô giữ chỗ / đã xuất</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detail.accessories.items.map((it: any) => (
+                          <tr key={it.code} className="border-t border-teal-100 dark:border-teal-900">
+                            <td className="py-1 font-mono font-bold">{it.code}</td>
+                            <td className="py-1">{it.name}</td>
+                            <td className="py-1 text-right font-bold">{it.required_qty}</td>
+                            <td className="py-1">
+                              {it.consumptions.length === 0
+                                ? <span className="text-slate-400">Chưa giữ chỗ (giữ chỗ khi xác nhận lệnh)</span>
+                                : it.consumptions.map((c: any) => (
+                                    <span key={c.id} className="mr-2 font-mono">
+                                      {c.lot_code ?? "—"}: {Number(c.planned_qty)} {c.uom}{Number(c.issued_qty) > 0 ? " ✓ đã xuất" : ""}
+                                    </span>
+                                  ))}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
 
                 {/* Review-by-Exception (RbE) & Actual Batch Costing Banner */}
                 {(() => {

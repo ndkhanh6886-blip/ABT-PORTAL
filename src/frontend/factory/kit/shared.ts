@@ -46,6 +46,7 @@ export interface KitOptions {
     uom: string;
     supply_form?: string | null;
     tube_code?: string | null;
+    accessory_set?: string | null;
     specification?: string | null;
     line_notes?: string | null;
     internal_order_code: string;

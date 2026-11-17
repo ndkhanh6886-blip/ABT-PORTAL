@@ -21,6 +21,7 @@ import {
     type OligoExtraSkuInput,
 } from "@/frontend/utils/oligoCatalogPricing";
 import { packagingFormOfLot, normalizePackagingForm, normalizeIcForm, normalizeTubeType, withPackagingNote, isPcrKitProduct, PACKAGING_LABEL, IC_LABEL, PCR_TUBE_CODES, kitSpecOf, kitSpecLabel, lotKitSpec, lotMatchesKitSpec, kitSpecMismatches, missingKitSpec, hasKitSpec, type KitSpec } from "@/frontend/utils/packagingForm";
+import { accessorySetsForProduct, findAccessorySet, isAccessorySetValidForProduct, isExtractionAccessoryProduct } from "@/frontend/utils/extractionAccessories";
 import {
     Wallet,
     Briefcase,
@@ -3965,7 +3966,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     /** Các trường quy cách kit lưu kèm dòng SO / phiếu giao. */
     const kitSpecFields = (it: any) => {
         const spec = kitSpecOf(it);
-        return { packagingForm: spec.packagingForm, icForm: spec.icForm, tubeType: spec.tubeType };
+        return { packagingForm: spec.packagingForm, icForm: spec.icForm, tubeType: spec.tubeType, accessorySet: spec.accessorySet };
     };
     /** So sánh điều kiện bảo quản theo phần nhiệt độ (bỏ phần chú thích trong ngoặc). */
     const storageKey = (v: any) => String(v || "").replace(/\(.*$/, "").replace(/\s+/g, "").toLowerCase();
@@ -13064,6 +13065,20 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 needsInvoice: item.needsInvoice !== false
             };
         });
+
+        // Kit tách chiết máy (HI-..., HM-...): bắt buộc chọn mã phụ để sản xuất biết cấp kèm đúng bộ vật tư (đĩa, tube strip, tipcomb...)
+        for (const it of items as any[]) {
+            if (!isExtractionAccessoryProduct(it.productCode)) continue;
+            const accKey = kitSpecOf(it).accessorySet;
+            if (!accKey) {
+                showToast(`⚠️ Mặt hàng ${it.productCode} là kit tách chiết máy: vui lòng chọn Mã phụ (bộ vật tư cấp kèm) trước khi lưu SO.`, "warning");
+                return;
+            }
+            if (!isAccessorySetValidForProduct(it.productCode, accKey)) {
+                showToast(`⚠️ Mã phụ ${accKey} không áp dụng cho mã kit ${it.productCode}. Vui lòng chọn lại mã phụ.`, "warning");
+                return;
+            }
+        }
 
         // Kit PCR (mã có phụ kiện): bắt buộc chọn đủ quy cách (chia sẵn, IC, loại tube) để kho xuất đúng lô
         for (const it of items as any[]) {
@@ -31482,6 +31497,35 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         🚚 PO Đang về: <strong>{stockIntel.incomingQty}</strong>
                                                     </span>
                                                 ) : null}
+                                                {isExtractionAccessoryProduct(item.productCode) && (() => {
+                                                    // Kit tách chiết máy: chọn mã phụ -> sản xuất tự cấp kèm & trừ kho bộ vật tư tương ứng
+                                                    const accSets = accessorySetsForProduct(item.productCode);
+                                                    const accKey = kitSpecOf(item).accessorySet || "";
+                                                    const accSel = accKey ? findAccessorySet(accKey) : null;
+                                                    const setAccessory = (key: string) => setFactoryOrderItems(prev => prev.map((it, i) => {
+                                                        if (i !== index) return it;
+                                                        const next: any = { ...it, accessorySet: key || undefined };
+                                                        const ns = kitSpecOf(next);
+                                                        return { ...next, accessorySet: ns.accessorySet, notes: withPackagingNote((it as any).notes, ns) };
+                                                    }));
+                                                    return (
+                                                        <span className="inline-flex flex-wrap items-center gap-1.5 font-sans" title="Mã phụ của kit tách chiết máy: quyết định bộ vật tư cấp kèm (ghi vào cột Ghi chú và chuyển sang sản xuất)">
+                                                            <select value={accKey} onChange={(e) => setAccessory(e.target.value)} className={cn("bg-slate-950 border rounded px-1.5 py-0.5 text-[10px] font-bold cursor-pointer focus:outline-none", accKey ? "border-teal-600 text-teal-300" : "border-rose-600 text-rose-300")}>
+                                                                <option value="">-- Mã phụ (bắt buộc) --</option>
+                                                                {accSets.map(s => (
+                                                                    <option key={s.key} value={s.key}>{`${s.variant} (${s.group}) · ${s.items.map(i => i.code).join(" + ")}`}</option>
+                                                                ))}
+                                                            </select>
+                                                            {accSel ? (
+                                                                <span className="px-1.5 py-0.5 rounded bg-teal-950/80 text-teal-200 border border-teal-700/50">
+                                                                    Cấp kèm: {accSel.items.map(i => `${i.name} (${i.code})`).join(" + ")}
+                                                                </span>
+                                                            ) : (
+                                                                <span className="px-1.5 py-0.5 rounded bg-rose-950/80 text-rose-300 border border-rose-700/50 font-bold">⚠ Bắt buộc chọn mã phụ</span>
+                                                            )}
+                                                        </span>
+                                                    );
+                                                })()}
                                                 {isTwoFormKit(item.productCode) && (() => {
                                                     // Kit PCR: quy cách theo số lô (chia sẵn ".C", IC ".IC", loại tube ".T01"...); bắt buộc chọn đủ 3 mục
                                                     const formLots = getAvailableLotsForProduct(item.productCode, (item as any).productName);

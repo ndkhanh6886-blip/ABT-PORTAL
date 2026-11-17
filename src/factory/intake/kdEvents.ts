@@ -367,8 +367,8 @@ async function receivePo(tx: Tx, payload: unknown): Promise<void> {
         });
         const mapped = kitSpecToFactorySupplyAndTube(ks);
         await tx.query(
-          `INSERT INTO intake.internal_order_line (order_id, line_no, kd_line_index, kd_item_code, kd_item_name, kd_unit, item_id, qty, transfer_price, supply_form, tube_code, specification, line_notes)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+          `INSERT INTO intake.internal_order_line (order_id, line_no, kd_line_index, kd_item_code, kd_item_name, kd_unit, item_id, qty, transfer_price, supply_form, tube_code, specification, line_notes, accessory_set)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
           [
             existing.id,
             ++n,
@@ -383,6 +383,7 @@ async function receivePo(tx: Tx, payload: unknown): Promise<void> {
             mapped.tube_code ?? l.tube_code ?? null,
             l.specification ?? null,
             l.notes ?? null,
+            ks.accessorySet ?? null,
           ]
         );
       }
@@ -418,8 +419,8 @@ async function receivePo(tx: Tx, payload: unknown): Promise<void> {
     });
     const mapped = kitSpecToFactorySupplyAndTube(ks);
     await tx.query(
-      `INSERT INTO intake.internal_order_line (order_id, line_no, kd_line_index, kd_item_code, kd_item_name, kd_unit, item_id, qty, transfer_price, supply_form, tube_code, specification, line_notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+      `INSERT INTO intake.internal_order_line (order_id, line_no, kd_line_index, kd_item_code, kd_item_name, kd_unit, item_id, qty, transfer_price, supply_form, tube_code, specification, line_notes, accessory_set)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
       [
         order.id,
         ++n,
@@ -434,6 +435,7 @@ async function receivePo(tx: Tx, payload: unknown): Promise<void> {
         mapped.tube_code ?? l.tube_code ?? null,
         l.specification ?? null,
         l.notes ?? null,
+        ks.accessorySet ?? null,
       ]
     );
   }

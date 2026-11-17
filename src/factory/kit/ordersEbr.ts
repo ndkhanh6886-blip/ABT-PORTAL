@@ -22,6 +22,7 @@ import { issueCoaFromQcTest } from "../qms/qaOps";
 import { createQcTest, registerQcSubject } from "../qms/qcTests";
 import { findEffectiveSpec } from "../qms/specs";
 import { stripVnAccents } from "../../frontend/factory/qcSignatures";
+import { findAccessorySet, isAccessorySetValidForProduct } from "../../frontend/utils/extractionAccessories";
 import {
   buildIfuFilesMapFromRow,
   ensureKitBomRoutingAndIfuSchema,
@@ -85,6 +86,8 @@ export interface ProductionOrderRow {
   order_mode?: "STANDARD" | "ALIQUOTED" | "DEMO";
   supply_form?: "NO_SPLIT_NO_IC" | "NO_SPLIT_WITH_IC" | "SPLIT_NO_IC" | "SPLIT_WITH_IC" | string | null;
   tube_code?: string | null;
+  /** Mã phụ kit tách chiết máy đã chọn trên SO (vd "HI.A:B32"). */
+  accessory_set?: string | null;
   bom_variant_code?: string | null;
   mix_tests_per_kit?: number | null;
   pcr_tubes_per_kit?: number | null;
@@ -761,6 +764,8 @@ export const productionOrderMachine = defineMachine<ProductionOrderStatus, Produ
 
         // 2. Reserve FEFO/FIFO materials for all non-bundled BOM lines via ABT Smart BOM Explosion Engine (`explodeKitBom`)
         await ensureOrderMaterialConsumptions(tx, actor, row);
+        // 2b. Giữ chỗ vật tư cấp kèm theo mã phụ của kit tách chiết máy (đĩa, tube strip, tipcomb...)
+        await ensureOrderAccessoryReservations(tx, actor, row);
 
         // 3. Copy EBR steps from Routing (including functional step tags & operational flags) if not already initialized at order creation
         await ensureKitBomRoutingAndIfuSchema(tx);
@@ -888,6 +893,41 @@ export const productionOrderMachine = defineMachine<ProductionOrderStatus, Produ
               stockDocumentMachine,
               actor,
               { id: retDoc.id, action: "post", expectedVersion: retDoc.version },
+              { trusted: true }
+            );
+          }
+          const accCons = (
+            await tx.query(
+              "SELECT * FROM kit.order_accessory_consumption WHERE order_id = $1 AND issued_qty > 0 ORDER BY id",
+              [row.id]
+            )
+          ).rows;
+          if (accCons.length) {
+            const accRet = await createStockDocument(
+              tx,
+              actor,
+              {
+                doc_type: "RETURN",
+                warehouse_id: row.warehouse_id,
+                reason_code: "PRODUCTION_RETURN",
+                source_entity_type: "KIT_ORDER",
+                source_entity_id: row.id,
+                notes: `Hoàn trả vật tư cấp kèm (mã phụ) do hủy lệnh ${row.code}`,
+                lines: accCons.map((c) => ({
+                  item_id: c.item_id,
+                  lot_id: c.lot_id,
+                  to_location_id: c.location_id,
+                  qty: Number(c.issued_qty),
+                  uom: c.uom,
+                })),
+              },
+              { trusted: true }
+            );
+            await runTransition(
+              tx,
+              stockDocumentMachine,
+              actor,
+              { id: accRet.id, action: "post", expectedVersion: accRet.version },
               { trusted: true }
             );
           }
@@ -1850,6 +1890,7 @@ const createOrderSchema = z.object({
   order_mode: z.enum(["STANDARD", "ALIQUOTED", "DEMO"]).optional(),
   supply_form: z.enum(["NO_SPLIT_NO_IC", "NO_SPLIT_WITH_IC", "SPLIT_NO_IC", "SPLIT_WITH_IC"]).optional().nullable(),
   tube_code: z.string().trim().max(20).optional().nullable(),
+  accessory_set: z.string().trim().max(40).optional().nullable(),
   is_aliquoted: z.boolean().optional(),
   is_demo: z.boolean().optional(),
   demo_specification: z.string().trim().max(100).optional().nullable(),
@@ -1917,6 +1958,15 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
   const d = parseInput(createOrderSchema, input);
   await authorize(tx, actor, "kit.order.manage", d.org_unit_id);
   const product = await getItem(tx, d.product_item_id);
+
+  let accessorySetKey: string | null = null;
+  if (d.accessory_set) {
+    const accSet = findAccessorySet(d.accessory_set);
+    if (!accSet || !isAccessorySetValidForProduct(product.code, accSet.key)) {
+      throw invalid(`Mã phụ ${d.accessory_set} không áp dụng cho mã kit ${product.code}.`, undefined, "INVALID_ACCESSORY_SET");
+    }
+    accessorySetKey = accSet.key;
+  }
 
   const parsedTypedLot = parseLotCodeToSupplyFormAndTube(d.lot_code);
 
@@ -2104,6 +2154,7 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
     order_mode: orderMode,
     supply_form: resolvedSupplyForm,
     tube_code: resolvedTubeCode,
+    accessory_set: accessorySetKey,
     bom_variant_code: bomVariantCode,
     mix_tests_per_kit: mixTestsPerKit,
     pcr_tubes_per_kit: pcrTubesPerKit,
@@ -2344,6 +2395,68 @@ async function ensureOrderMaterialConsumptions(tx: Tx, actor: AuthzActor, order:
 }
 
 /**
+ * Kit tách chiết máy: giữ chỗ (FEFO) các mã vật tư cấp kèm tương ứng với mã phụ đã chọn trên SO
+ * (`production_order.accessory_set`). Bảng riêng `kit.order_accessory_consumption` vì các vật tư này không nằm trong BOM chung.
+ */
+async function ensureOrderAccessoryReservations(tx: Tx, actor: AuthzActor, order: ProductionOrderRow) {
+  if (["DRAFT", "CANCELLED"].includes(order.status)) return;
+  const setKey = String(order.accessory_set || "").trim();
+  if (!setKey) return;
+  const set = findAccessorySet(setKey);
+  if (!set) return;
+  const existing = Number(
+    (await tx.query("SELECT count(*)::int AS c FROM kit.order_accessory_consumption WHERE order_id = $1", [order.id])).rows[0]?.c ?? 0
+  );
+  if (existing > 0) return;
+
+  const plannedQty = Number(order.planned_qty) || 0;
+  for (const it of set.items) {
+    const item = (
+      await tx.query("SELECT * FROM master.item WHERE upper(code) = $1 AND status = 'ACTIVE' LIMIT 1", [it.code.toUpperCase()])
+    ).rows[0];
+    if (!item) {
+      throw invalid(
+        `Vật tư cấp kèm ${it.code} (${it.name}) của mã phụ ${set.variant} chưa có trong danh mục vật tư hoặc đang ngừng dùng. Hãy tạo / kích hoạt mã này trước khi xác nhận lệnh.`,
+        undefined,
+        "MISSING_ACCESSORY_ITEM"
+      );
+    }
+    if (item.is_stocked === false) continue;
+    const required = Math.ceil(plannedQty * it.qty - 1e-9);
+    if (!(required > 0)) continue;
+    const qtyBase = Math.round((await toBaseQty(tx, item, required, item.base_uom)) * 1e6) / 1e6;
+    if (!(qtyBase > 0)) continue;
+    const picks = await reserve(tx, actor, {
+      item_id: item.id,
+      qty_base: qtyBase,
+      warehouse_ids: [order.warehouse_id],
+      demand_entity_type: "PRODUCTION_ORDER",
+      demand_entity_id: order.id,
+      module: "KIT",
+      allow_substitutes: false,
+    });
+    for (const p of picks) {
+      await tx.query(
+        `INSERT INTO kit.order_accessory_consumption
+           (order_id, accessory_set, item_id, lot_id, location_id, reservation_id, planned_qty, issued_qty, uom)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          order.id,
+          set.key,
+          p.item_id,
+          p.lot_id,
+          p.location_id,
+          p.reservation_id,
+          p.qty_base,
+          order.materials_issued ? p.qty_base : 0,
+          item.base_uom,
+        ]
+      );
+    }
+  }
+}
+
+/**
  * Issues reserved materials into the Kit Production Order by posting an `ISSUE` `inv.stock_document`
  * that consumes the reservations created during `confirm`.
  */
@@ -2359,11 +2472,15 @@ export async function issueOrderMaterials(tx: Tx, actor: AuthzActor, orderId: st
   if (order.materials_issued) throw invalid("Nguyên vật liệu của lệnh sản xuất này đã được xuất kho.");
 
   await ensureOrderMaterialConsumptions(tx, actor, order);
+  await ensureOrderAccessoryReservations(tx, actor, order);
 
   const cons = (
     await tx.query("SELECT * FROM kit.material_consumption WHERE order_id = $1 ORDER BY id FOR UPDATE", [orderId])
   ).rows;
-  if (!cons.length) throw invalid("Lệnh sản xuất không có dòng nguyên vật liệu giữ chỗ nào để xuất.");
+  const accCons = (
+    await tx.query("SELECT * FROM kit.order_accessory_consumption WHERE order_id = $1 ORDER BY id FOR UPDATE", [orderId])
+  ).rows;
+  if (!cons.length && !accCons.length) throw invalid("Lệnh sản xuất không có dòng nguyên vật liệu giữ chỗ nào để xuất.");
 
   const doc = await postTrustedKitStockDoc(tx, actor, {
     doc_type: "ISSUE",
@@ -2372,7 +2489,7 @@ export async function issueOrderMaterials(tx: Tx, actor: AuthzActor, orderId: st
     source_entity_type: "KIT_ORDER",
     source_entity_id: order.id,
     notes: `Xuất nguyên vật liệu theo lệnh sản xuất Kit ${order.code}`,
-    lines: cons.map((c) => ({
+    lines: [...cons, ...accCons].map((c) => ({
       item_id: c.item_id,
       lot_id: c.lot_id,
       from_location_id: c.location_id,
@@ -2381,6 +2498,12 @@ export async function issueOrderMaterials(tx: Tx, actor: AuthzActor, orderId: st
       reservation_id: c.reservation_id,
     })),
   });
+  for (const c of accCons) {
+    await tx.query(
+      "UPDATE kit.order_accessory_consumption SET issued_qty = planned_qty, stock_document_id = $2 WHERE id = $1",
+      [c.id, doc.id]
+    );
+  }
 
   for (const c of cons) {
     await tx.query(
@@ -4202,9 +4325,37 @@ export async function getProductionOrderDetail(tx: Tx, actor: AuthzActor, id: st
     )
   ).rows;
 
+  const accSetDef = (order as any).accessory_set ? findAccessorySet((order as any).accessory_set) : null;
+  const accRows = (
+    await tx.query(
+      `SELECT ac.*, i.code AS item_code, i.name AS item_name, l.code AS lot_code
+         FROM kit.order_accessory_consumption ac
+         JOIN master.item i ON i.id = ac.item_id
+         LEFT JOIN inv.lot l ON l.id = ac.lot_id
+        WHERE ac.order_id = $1
+        ORDER BY ac.created_at, ac.id`,
+      [id]
+    )
+  ).rows;
+  const accessories = accSetDef
+    ? {
+        key: accSetDef.key,
+        variant: accSetDef.variant,
+        group: accSetDef.group,
+        items: accSetDef.items.map((it) => ({
+          code: it.code,
+          name: it.name,
+          qty_per_kit: it.qty,
+          required_qty: Math.ceil((Number((order as any).planned_qty) || 0) * it.qty - 1e-9),
+          consumptions: accRows.filter((r) => String(r.item_code).toUpperCase() === it.code.toUpperCase()),
+        })),
+      }
+    : null;
+
   const allowed_actions = await listAllowedActions(tx, productionOrderMachine, actor, order);
   return {
     order,
+    accessories,
     steps,
     consumptions,
     packaging,

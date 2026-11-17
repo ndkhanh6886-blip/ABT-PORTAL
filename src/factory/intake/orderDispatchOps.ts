@@ -12,7 +12,8 @@ import { ensureInternalOrderLineKitSpecColumns } from "./kdEvents";
 import { createProductionOrder } from "../kit/ordersEbr";
 import { addSequences, createOligoOrder } from "../oligo/orders";
 import { convertPoToWorkOrder } from "../device/workflow";
-import { kitSpecOf, kitSpecToFactorySupplyAndTube, kitSpecLabel, hasKitSpec } from "@/frontend/utils/packagingForm";
+import { findAccessorySet, isExtractionAccessoryProduct } from "@/frontend/utils/extractionAccessories";
+import { kitSpecOf, kitSpecToFactorySupplyAndTube, kitSpecLabel, hasKitSpec, hasPackagingSpec } from "@/frontend/utils/packagingForm";
 import "./permissions";
 import "../kit/permissions";
 import "../oligo/orders";
@@ -394,6 +395,7 @@ export async function dispatchInternalOrderLineToProduction(tx: Tx, actor: Authz
     const ks = kitSpecOf({
       supply_form: line.supply_form,
       tube_code: line.tube_code,
+      accessory_set: line.accessory_set,
       specification: `${line.specification ?? ""} ${line.kd_item_name ?? ""}`,
       notes: `${line.line_notes ?? ""} ${order.notes ?? ""}`,
     });
@@ -432,7 +434,13 @@ export async function dispatchInternalOrderLineToProduction(tx: Tx, actor: Authz
       );
     }
 
-    const specSummaryNote = hasKitSpec(ks) ? ` [Dạng: ${kitSpecLabel(ks)}]` : "";
+    const accessorySet = ks.accessorySet ? findAccessorySet(ks.accessorySet) : null;
+    const accessoryNote = accessorySet
+      ? ` [Mã phụ ${accessorySet.variant}: ${accessorySet.items.map((i) => i.code).join(" + ")}]`
+      : isExtractionAccessoryProduct(line.item_code || line.kd_item_code)
+        ? " [Chưa chọn mã phụ trên SO — không cấp kèm vật tư phụ]"
+        : "";
+    const specSummaryNote = (hasPackagingSpec(ks) ? ` [Dạng: ${kitSpecLabel(ks)}]` : "") + accessoryNote;
     const kitOrder = await createProductionOrder(tx, dispatchActor, {
       org_unit_id: order.org_unit_id,
       product_item_id: line.item_id,
@@ -442,6 +450,7 @@ export async function dispatchInternalOrderLineToProduction(tx: Tx, actor: Authz
       planned_qty: qtyToProduce,
       supply_form: resolvedSupplyForm,
       tube_code: resolvedTubeCode,
+      accessory_set: accessorySet?.key ?? null,
       order_mode: isAliquoted ? "ALIQUOTED" : "STANDARD",
       is_aliquoted: isAliquoted,
       priority: "HIGH",

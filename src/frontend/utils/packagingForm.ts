@@ -1,3 +1,5 @@
+import { normalizeAccessorySetKey } from "./extractionAccessories";
+
 /**
  * Quy cách đóng gói của kit PCR (mã hàng có khai báo phụ kiện): cùng một mã hàng, cùng giá, phân biệt theo SỐ LÔ.
  * Số lô gồm các đoạn cách nhau bởi dấu chấm, vd "B293092.D.IC.T01" hoặc "200635.C324800.IC":
@@ -30,6 +32,8 @@ export interface KitSpec {
   packagingForm?: PackagingForm;
   icForm?: IcForm;
   tubeType?: TubeType;
+  /** Mã phụ của kit tách chiết máy (khóa dạng "HI.A:B32"), xem extractionAccessories.ts. */
+  accessorySet?: string;
 }
 
 /** Mã kit PCR: SQ-, MQ-, SP-, MP- (kể cả có thêm 1 chữ trước dấu gạch: SQH-, SQS-...). */
@@ -55,6 +59,11 @@ export function parseKitSpecFromText(rawText: any): KitSpec {
   const text = String(rawText ?? "").trim();
   if (!text) return {};
   const spec: KitSpec = {};
+  const accMatch = text.match(/\[Mã phụ:\s*([^\]]+)\]/i);
+  if (accMatch) {
+    const key = normalizeAccessorySetKey(accMatch[1]);
+    if (key) spec.accessorySet = key;
+  }
   const tagMatch = text.match(/\[Dạng:\s*([^\]]+)\]/i);
   const target = tagMatch ? tagMatch[1] : text;
 
@@ -165,10 +174,15 @@ export function kitSpecOf(it: any): KitSpec {
   if (f) spec.packagingForm = f;
   if (ic) spec.icForm = ic;
   if (tube) spec.tubeType = tube;
+  const acc = normalizeAccessorySetKey(it?.accessorySet ?? it?.accessory_set) || fromText.accessorySet;
+  if (acc) spec.accessorySet = acc;
   return spec;
 }
 
-export const hasKitSpec = (spec: KitSpec) => Boolean(spec.packagingForm || spec.icForm || spec.tubeType);
+export const hasKitSpec = (spec: KitSpec) => Boolean(spec.packagingForm || spec.icForm || spec.tubeType || spec.accessorySet);
+
+/** Có phần quy cách đóng gói PCR (chia sẵn / IC / tube), không tính mã phụ kit tách chiết. */
+export const hasPackagingSpec = (spec: KitSpec) => Boolean(spec.packagingForm || spec.icForm || spec.tubeType);
 
 /** Các mục quy cách còn thiếu (kit PCR phải chọn đủ dạng, IC và loại tube). */
 export function missingKitSpec(spec: KitSpec): string[] {
@@ -236,8 +250,14 @@ export const lotMatchesKitSpec = (lot: any, spec: KitSpec) => kitSpecMismatches(
 /** Thẻ ghi trong ô Ghi chú của dòng SO, vd "[Dạng: Chia sẵn · Sẵn IC · Tube T01]". */
 export const packagingNoteTag = (spec: KitSpec) => `[Dạng: ${kitSpecLabel(spec)}]`;
 
-/** Đặt / bỏ thẻ quy cách ở đầu ghi chú, giữ nguyên phần ghi chú người dùng gõ. */
+/** Thẻ mã phụ kit tách chiết máy, vd "[Mã phụ: HI.A:B32]". */
+export const accessoryNoteTag = (spec: KitSpec) => (spec.accessorySet ? `[Mã phụ: ${spec.accessorySet}]` : "");
+
+/** Đặt / bỏ thẻ quy cách + mã phụ ở đầu ghi chú, giữ nguyên phần ghi chú người dùng gõ. */
 export function withPackagingNote(notes: any, spec: KitSpec | null): string {
-  const rest = String(notes ?? "").replace(/^\s*\[Dạng:[^\]]*\]\s*/u, "");
-  return spec && hasKitSpec(spec) ? `${packagingNoteTag(spec)}${rest ? " " + rest : ""}` : rest;
+  const rest = String(notes ?? "")
+    .replace(/^\s*(?:\[(?:Dạng|Mã phụ):[^\]]*\]\s*)+/u, "");
+  if (!spec || !hasKitSpec(spec)) return rest;
+  const tags = [hasPackagingSpec(spec) ? packagingNoteTag(spec) : "", accessoryNoteTag(spec)].filter(Boolean).join(" ");
+  return `${tags}${rest ? " " + rest : ""}`;
 }

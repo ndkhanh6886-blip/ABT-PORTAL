@@ -12,6 +12,7 @@ import {
   type IcForm,
   type TubeType,
 } from "@/frontend/utils/packagingForm";
+import { accessorySetsForProduct, findAccessorySet, isExtractionAccessoryProduct } from "@/frontend/utils/extractionAccessories";
 import {
   ShoppingCart,
   Building2,
@@ -3305,6 +3306,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
         packagingForm: ks.packagingForm,
         icForm: ks.icForm,
         tubeType: ks.tubeType,
+        accessorySet: ks.accessorySet,
         source_pr_code: pr.workflow_code || undefined,
         is_stock: !forCustomer,
         target_customer_name: forCustomer ? pr.customer_name : undefined,
@@ -3475,6 +3477,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               packagingForm: ks.packagingForm,
               icForm: ks.icForm,
               tubeType: ks.tubeType,
+              accessorySet: ks.accessorySet,
               source_pr_code: pr.workflow_code || undefined,
               is_stock: !forCustomer,
               target_customer_name: forCustomer ? pr.customer_name : undefined,
@@ -9470,6 +9473,44 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               />
                             </div>
                           </div>
+                          {isExtractionAccessoryProduct(it.product_code) && (() => {
+                            const ks = kitSpecOf(it);
+                            const accSel = ks.accessorySet ? findAccessorySet(ks.accessorySet) : null;
+                            const setPrAccessory = (key: string) => {
+                              const next = { ...ks, accessorySet: key || undefined };
+                              setPRForm((prev: any) => {
+                                const nextItems = [...(prev.items || [])];
+                                const cur = nextItems[idx] || {};
+                                nextItems[idx] = {
+                                  ...cur,
+                                  accessorySet: next.accessorySet,
+                                  specification: withPackagingNote(cur.specification || "", next),
+                                  notes: withPackagingNote(cur.notes || "", next),
+                                };
+                                return { ...prev, items: nextItems };
+                              });
+                            };
+                            return (
+                              <div className="p-2 rounded-lg bg-teal-50/70 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-800/80 flex flex-wrap items-center gap-2">
+                                <span className="text-[11px] font-bold text-teal-800 dark:text-teal-300">🧪 Mã phụ kit tách chiết máy:</span>
+                                <select
+                                  value={ks.accessorySet || ""}
+                                  onChange={(e) => setPrAccessory(e.target.value)}
+                                  className="px-2 py-1 text-xs font-bold rounded border border-teal-300 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 cursor-pointer"
+                                >
+                                  <option value="">-- Chọn mã phụ --</option>
+                                  {accessorySetsForProduct(it.product_code).map((s) => (
+                                    <option key={s.key} value={s.key}>{`${s.variant} (${s.group}) · ${s.items.map((i) => i.code).join(" + ")}`}</option>
+                                  ))}
+                                </select>
+                                {accSel ? (
+                                  <span className="text-[11px] text-teal-700 dark:text-teal-300">Cấp kèm: {accSel.items.map((i) => `${i.name} (${i.code})`).join(" + ")}</span>
+                                ) : (
+                                  <span className="text-[11px] font-bold text-rose-600">⚠ Chưa chọn mã phụ — sản xuất sẽ không biết cấp kèm vật tư nào</span>
+                                )}
+                              </div>
+                            );
+                          })()}
                           {(() => {
                             const matchedProd = mergedCatalogProducts.find((pp: any) => pp.code === it.product_code) || products.find((pp: any) => pp.code === it.product_code) || { code: it.product_code };
                             if (!isPcrKitProduct(matchedProd)) return null;
