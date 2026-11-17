@@ -152,7 +152,7 @@ export async function ensureProduct(c: Queryable, p: ProductMasterInput): Promis
       p.specification || "",
       isSvc ? 0 : (Number(p.standard_price) || 0),
       isSvc ? 0 : (Number(p.cost_price) || 0),
-      p.manufacturer || "TBR Phân Phối",
+      p.manufacturer || "ABT Phân Phối",
       p.origin || "Nhập khẩu / Chính hãng",
       isSvc ? 0 : (Number(p.min_stock_level) || 10),
       p.storage_condition || null,

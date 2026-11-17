@@ -557,7 +557,7 @@ export const DEPARTMENT_THEMATIC_TYPES: Record<string, ThematicTypeDefinition[]>
         { name: "Kiểm tra bộ chứng từ xuất nhập khẩu (Invoice, Packing List, CO, CQ, BL)", estimatedDays: 2 },
         { name: "Đăng ký kiểm tra chất lượng nhà nước / Giấy phép nhập khẩu BYT", estimatedDays: 3 },
         { name: "Truyền tờ khai hải quan điện tử & Phối hợp thông quan tại cửa khẩu", estimatedDays: 2 },
-        { name: "Điều xe lạnh chuyên dụng vận chuyển hàng về kho TBR an toàn", estimatedDays: 1 }
+        { name: "Điều xe lạnh chuyên dụng vận chuyển hàng về kho ABT an toàn", estimatedDays: 1 }
       ]
     },
     {
@@ -1211,7 +1211,7 @@ const SearchablePersonnelSelect: React.FC<SearchablePersonnelSelectProps> = ({
                         )}
                       </div>
                       <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                        {p.position || "Nhân sự TBR"} • {p.department || "TBR"}
+                        {p.position || "Nhân sự ABT"} • {p.department || "ABT"}
                       </div>
                     </div>
                     {isSelected && (
@@ -9787,7 +9787,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
                           <div className="flex items-center gap-x-4 gap-y-1.5 text-xs text-slate-600 dark:text-slate-400 flex-wrap">
                             <span className="inline-flex items-center gap-1">
-                              <strong className="text-slate-700 dark:text-slate-300">Khách hàng / Đơn vị:</strong> {wf.customer_name || "Nội bộ TBR"}
+                              <strong className="text-slate-700 dark:text-slate-300">Khách hàng / Đơn vị:</strong> {wf.customer_name || "Nội bộ ABT"}
                             </span>
                             {wf.product_info && (
                               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800/90 text-slate-800 dark:text-slate-200 font-medium">
@@ -14749,7 +14749,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               .filter((p: any) => p.full_name && !stepAssignees.includes(p.full_name))
                               .map((p: any) => (
                                 <option key={p.id || p.employee_code || p.full_name} value={p.full_name} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
-                                  + {p.full_name} ({p.department || "TBR"})
+                                  + {p.full_name} ({p.department || "ABT"})
                                 </option>
                               ))}
                           </select>
@@ -15203,7 +15203,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               .filter((p: any) => p.full_name && !stAssignees.includes(p.full_name))
                               .map((p: any) => (
                                 <option key={p.id || p.employee_code || p.full_name} value={p.full_name} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
-                                  + {p.full_name} ({p.department || "TBR"})
+                                  + {p.full_name} ({p.department || "ABT"})
                                 </option>
                               ))}
                           </select>
@@ -15451,7 +15451,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 <div>Phòng xử lý: <strong>{selectedWorkflowDetail.target_dept}</strong></div>
                 <div>Người yêu cầu: <strong>{selectedWorkflowDetail.requester_name}</strong></div>
                 <div>Người xử lý: <strong>{selectedWorkflowDetail.assignee_name || "Chờ phân công"}</strong></div>
-                <div>Khách hàng / ĐV: <strong>{selectedWorkflowDetail.customer_name || "Nội bộ TBR"}</strong></div>
+                <div>Khách hàng / ĐV: <strong>{selectedWorkflowDetail.customer_name || "Nội bộ ABT"}</strong></div>
                 <div>Sản phẩm / TB: <strong>{selectedWorkflowDetail.product_info || "—"}</strong></div>
                 <div>Hạn chót: <strong>{selectedWorkflowDetail.due_date ? formatDayVN(selectedWorkflowDetail.due_date) : "—"}</strong></div>
                 <div>Bước hiện tại: <strong>Bước {(Number(selectedWorkflowDetail.current_step_index) || 0) + 1}/{Array.isArray(selectedWorkflowDetail.steps) && selectedWorkflowDetail.steps.length > 0 ? selectedWorkflowDetail.steps.length : 1}</strong></div>
@@ -15771,7 +15771,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 {selectedWorkflowForRecord.title}
               </h3>
               <div className="text-slate-500 text-[11px] mt-1 flex flex-wrap gap-3">
-                <span>Khách hàng: <strong>{selectedWorkflowForRecord.customer_name || "Nội bộ TBR"}</strong></span>
+                <span>Khách hàng: <strong>{selectedWorkflowForRecord.customer_name || "Nội bộ ABT"}</strong></span>
                 {selectedWorkflowForRecord.product_info && <span>Thiết bị / SP: <strong>{selectedWorkflowForRecord.product_info}</strong></span>}
                 <span>Người yêu cầu: <strong>{selectedWorkflowForRecord.requester_name}</strong></span>
               </div>
@@ -18701,7 +18701,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         className="flex items-center justify-between px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-slate-800 text-[11px]"
                       >
                         <span className="font-bold text-slate-800 dark:text-slate-200">
-                          ✓ {ack.name} <span className="text-slate-400 font-normal">({ack.dept || "TBR"})</span>
+                          ✓ {ack.name} <span className="text-slate-400 font-normal">({ack.dept || "ABT"})</span>
                         </span>
                         <span className="font-mono text-[10px] text-slate-400">{ack.time}</span>
                       </div>
@@ -18888,7 +18888,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     <FileText className="w-12 h-12 text-indigo-400 mx-auto" />
                     <div className="font-bold text-white text-sm">{activeName}</div>
                     <p className="text-xs text-slate-400">
-                      Tệp tin đã được số hóa và lưu trữ an toàn trên máy chủ TBR Portal.
+                      Tệp tin đã được số hóa và lưu trữ an toàn trên máy chủ ABT Portal.
                     </p>
                     <a
                       href={activeUrl}

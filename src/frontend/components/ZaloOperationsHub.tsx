@@ -154,7 +154,7 @@ export const ZaloOperationsHub: React.FC = () => {
   const [chatMessages, setChatMessages] = useState<Array<{ sender: "user" | "bot"; text: string; time: string; buttons?: any[] }>>([
     {
       sender: "bot",
-      text: "👋 Xin chào! Tôi là Trợ lý điều hành Zalo Công ty cổ phần Công nghệ TBR kết nối cơ sở dữ liệu thực tế. Bạn có thể soạn báo giá, tra cứu tồn kho, giữ chỗ hoặc nộp Daily tại đây!",
+      text: "👋 Xin chào! Tôi là Trợ lý điều hành Zalo Công ty cổ phần Công nghệ ABT kết nối cơ sở dữ liệu thực tế. Bạn có thể soạn báo giá, tra cứu tồn kho, giữ chỗ hoặc nộp Daily tại đây!",
       time: "Vừa xong"
     }
   ]);

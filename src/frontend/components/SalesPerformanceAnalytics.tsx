@@ -203,7 +203,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
             order_code: ord.order_code,
             date: ord.deliveredAt ? String(ord.deliveredAt).slice(0, 10) : (ord.deliveryDate || todayVN()),
             customer_code: ord.customer_code || ord.customerId || "KH-CUSTOM",
-            customer_name: ord.customer_name || ord.customerName || "Khách hàng TBR",
+            customer_name: ord.customer_name || ord.customerName || "Khách hàng ABT",
             customer_group: ord.customer_group || ord.customerGroup || "Khách hàng doanh nghiệp",
             sales_rep_id: ord.sales_rep_id || ord.salesRepId || "UNASSIGNED",
             sales_rep_name: ord.sales_rep_name || ord.salesRepName || "Chưa gán NVKD",

@@ -243,8 +243,8 @@ const DEFAULT_EQUIPMENT_PRODUCTS: CommercialProduct[] = [
             { id: "cfg-pcr-3", name: "Bộ phụ kiện tiêu chuẩn (Cáp nguồn, cáp mạng, khay đỡ, adapter)", model: "Std. Pack", origin: "Tianlong", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Đồng bộ từ nhà sản xuất" },
             { id: "cfg-pcr-4", name: "Bộ lưu điện trực tuyến UPS Online Santak 2kVA (Bảo vệ nguồn điện)", model: "Santak C2K-LCD", origin: "Santak", quantity: 1, unit: "Bộ", isStandard: false, isIncluded: true, notes: "Lưu điện và chống xung nhiễu điện áp" },
             { id: "cfg-pcr-5", name: "Bộ máy vi tính điều khiển Core i5, RAM 16GB, SSD 512GB + Màn hình Dell 24 inch", model: "OptiPlex 7010", origin: "Dell", quantity: 1, unit: "Bộ", isStandard: false, isIncluded: true, notes: "Cài sẵn hệ điều hành và phần mềm Gentier" },
-            { id: "cfg-pcr-6", name: "Dịch vụ kỹ thuật: Giao hàng, lắp đặt, thẩm định IQ/OQ/PQ & đào tạo hướng dẫn sử dụng", model: "Technical Service", origin: "Việt Nam (Kỹ sư TBR)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Bàn giao hồ sơ thẩm định và chứng nhận đào tạo" },
-            { id: "cfg-pcr-7", name: "Gói bảo hành chính hãng 24 tháng & bảo dưỡng định kỳ 06 tháng/lần", model: "Warranty 24M", origin: "Tianlong / TBR", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Hỗ trợ kỹ thuật 24/7, xử lý sự cố trong vòng 24h" }
+            { id: "cfg-pcr-6", name: "Dịch vụ kỹ thuật: Giao hàng, lắp đặt, thẩm định IQ/OQ/PQ & đào tạo hướng dẫn sử dụng", model: "Technical Service", origin: "Việt Nam (Kỹ sư ABT)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Bàn giao hồ sơ thẩm định và chứng nhận đào tạo" },
+            { id: "cfg-pcr-7", name: "Gói bảo hành chính hãng 24 tháng & bảo dưỡng định kỳ 06 tháng/lần", model: "Warranty 24M", origin: "Tianlong / ABT", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Hỗ trợ kỹ thuật 24/7, xử lý sự cố trong vòng 24h" }
         ],
         notes: "Dòng máy PCR định lượng cao cấp độ nhạy cao dùng cho phòng lab xét nghiệm đạt chuẩn ISO 15189"
     },
@@ -272,8 +272,8 @@ const DEFAULT_EQUIPMENT_PRODUCTS: CommercialProduct[] = [
             { id: "cfg-ext-2", name: "Khối thanh từ 96 mẫu (96-well Magnetic Rod)", model: "Mag-96", origin: "Tianlong", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Đồng bộ theo máy" },
             { id: "cfg-ext-3", name: "Giá đỡ khay đĩa Deep-well 96 và giá đựng tip từ", model: "Plate Holder", origin: "Tianlong", quantity: 2, unit: "Cái", isStandard: true, isIncluded: true, notes: "Inox chuyên dụng kháng hóa chất" },
             { id: "cfg-ext-4", name: "Bộ lưu điện Santak 1kVA lưu điện dự phòng", model: "TG1000", origin: "Santak", quantity: 1, unit: "Bộ", isStandard: false, isIncluded: true, notes: "Trang bị bảo vệ máy khi ngắt điện" },
-            { id: "cfg-ext-5", name: "Dịch vụ vận chuyển, lắp đặt, nghiệm thu & đào tạo vận hành", model: "Service", origin: "Việt Nam (TBR)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Đào tạo kỹ thuật viên phòng xét nghiệm" },
-            { id: "cfg-ext-6", name: "Gói bảo hành chính hãng 12 tháng tận nơi", model: "Warranty 12M", origin: "Tianlong / TBR", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Linh kiện thay thế chính hãng có sẵn" }
+            { id: "cfg-ext-5", name: "Dịch vụ vận chuyển, lắp đặt, nghiệm thu & đào tạo vận hành", model: "Service", origin: "Việt Nam (ABT)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Đào tạo kỹ thuật viên phòng xét nghiệm" },
+            { id: "cfg-ext-6", name: "Gói bảo hành chính hãng 12 tháng tận nơi", model: "Warranty 12M", origin: "Tianlong / ABT", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Linh kiện thay thế chính hãng có sẵn" }
         ],
         notes: "Tách chiết DNA/RNA tự động cho mẫu bệnh phẩm máu, huyết thanh, mô, dịch phết..."
     },
@@ -302,7 +302,7 @@ const DEFAULT_EQUIPMENT_PRODUCTS: CommercialProduct[] = [
             { id: "cfg-bsc-3", name: "Hệ thống đèn chiếu sáng LED và đèn UV diệt khuẩn 30W hẹn giờ", model: "Lighting & UV", origin: "Haier Biomedical", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Khóa liên động an toàn đèn UV và kính" },
             { id: "cfg-bsc-4", name: "02 ổ cắm điện chống nước chuẩn IP54 bên trong buồng làm việc", model: "Power Socket", origin: "Haier Biomedical", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Cung cấp nguồn cho máy vortex/shaker nhỏ" },
             { id: "cfg-bsc-5", name: "Dịch vụ: Lắp đặt, thẩm định tốc độ gió, kiểm tra rò rỉ màng lọc & cấp giấy kiểm định", model: "Certification Package", origin: "Việt Nam", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Kèm chứng nhận hiệu chuẩn kiểm định độc lập" },
-            { id: "cfg-bsc-6", name: "Gói bảo hành chính hãng 24 tháng", model: "Warranty 24M", origin: "Haier Biomedical / TBR", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Bảo hành tận nơi 24 tháng" }
+            { id: "cfg-bsc-6", name: "Gói bảo hành chính hãng 24 tháng", model: "Warranty 24M", origin: "Haier Biomedical / ABT", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Bảo hành tận nơi 24 tháng" }
         ],
         notes: "Bảo vệ tối đa người thao tác, mẫu thử và môi trường phòng xét nghiệm"
     },
@@ -329,7 +329,7 @@ const DEFAULT_EQUIPMENT_PRODUCTS: CommercialProduct[] = [
             { id: "cfg-cen-1", name: "Thân máy ly tâm lạnh TGL-16M", model: "TGL-16M", origin: "Anting / Dlab", quantity: 1, unit: "Máy", isStandard: true, isIncluded: true, notes: "Mới 100%, bảo hành 12 tháng" },
             { id: "cfg-cen-2", name: "Rotor góc bằng hợp kim nhôm 24 vị trí x 1.5/2.0ml", model: "NO.1 Angle Rotor", origin: "Chính hãng", quantity: 1, unit: "Cái", isStandard: true, isIncluded: true, notes: "Hấp tiệt trùng được ở 121°C" },
             { id: "cfg-cen-3", name: "Bộ adapter chuyển đổi cho tube PCR 0.2ml và 0.5ml", model: "Adapter Kit", origin: "Chính hãng", quantity: 24, unit: "Cái", isStandard: true, isIncluded: true, notes: "Mỗi loại 24 cái" },
-            { id: "cfg-cen-4", name: "Dịch vụ lắp đặt, bàn giao kỹ thuật & bảo hành 12 tháng", model: "Service & Warranty", origin: "Việt Nam (TBR)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Hỗ trợ kỹ thuật định kỳ" }
+            { id: "cfg-cen-4", name: "Dịch vụ lắp đặt, bàn giao kỹ thuật & bảo hành 12 tháng", model: "Service & Warranty", origin: "Việt Nam (ABT)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Hỗ trợ kỹ thuật định kỳ" }
         ],
         notes: "Chuyên dụng cho ly tâm tách chiết sinh học phân tử và kết tủa mẫu"
     },
@@ -356,7 +356,7 @@ const DEFAULT_EQUIPMENT_PRODUCTS: CommercialProduct[] = [
             { id: "cfg-nano-1", name: "Thân máy đo quang vi lượng Nano-100 tích hợp màn hình cảm ứng", model: "Nano-100", origin: "Allsheng", quantity: 1, unit: "Máy", isStandard: true, isIncluded: true, notes: "Đo trực tiếp không cần cuvette, không cần PC" },
             { id: "cfg-nano-2", name: "Bút quang học kiểm tra chuẩn máy (Calibration Check Pen)", model: "Cal-Pen", origin: "Allsheng", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Kiểm tra độ chính xác định kỳ" },
             { id: "cfg-nano-3", name: "Dây cáp nguồn, bút cảm ứng, adapter và cổng USB sao lưu dữ liệu", model: "Acc-Nano", origin: "Allsheng", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Đồng bộ theo máy" },
-            { id: "cfg-nano-4", name: "Dịch vụ lắp đặt, chuyển giao kỹ thuật & bảo hành 12 tháng", model: "Service", origin: "TBR", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Kỹ sư TBR hướng dẫn tận nơi" }
+            { id: "cfg-nano-4", name: "Dịch vụ lắp đặt, chuyển giao kỹ thuật & bảo hành 12 tháng", model: "Service", origin: "ABT", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Kỹ sư ABT hướng dẫn tận nơi" }
         ],
         notes: "Định lượng chuẩn xác nồng độ DNA/RNA trước khi chạy phản ứng PCR/Realtime PCR"
     }
@@ -708,7 +708,7 @@ const CustomerAllocationSearchInput: React.FC<{
 const defaultStockCustomerName = () =>
     typeof window !== "undefined" && (window.location.port === "3006" || window.location.href.includes("3006"))
         ? "Công ty Cổ phần Công nghệ VIA"
-        : "Công ty Cổ phần Công nghệ TBR";
+        : "Công ty Cổ phần Công nghệ ABT";
 
 /** Mã SO do máy chủ cấp (SO26-KH-1001, SO26-STOCK-1001, ...): không bao giờ được đổi mã phía trình duyệt. */
 /** "CÔNG TY TNHH GIẢI PHÁP Y SINH ABT- CHI NHÁNH LONG HẬU" -> "GIẢI PHÁP Y SINH ABT" (tên đầy đủ để ở tooltip). */
@@ -1670,7 +1670,7 @@ export function SalesFullABT() {
             let orderId = o?.order_code || (typeof o?.id === "string" && o.id.startsWith("SO") ? o.id : (o?.orderCode || o?.code || (o?.id ? String(o.id) : "")));
             const custName = (o.customerName || o.customer_name || "").trim();
             const hasQuote = Boolean(o.quoteId || o.quote_code);
-            const hasRealCustomer = Boolean(custName && !String(custName).includes("Kho Tổng TBR") && !String(custName).includes("Lưu Kho Nội Bộ") && custName !== defaultStockCustomerName());
+            const hasRealCustomer = Boolean(custName && !String(custName).includes("Kho Tổng ABT") && !String(custName).includes("Lưu Kho Nội Bộ") && custName !== defaultStockCustomerName());
             const isStock = Boolean((o.isStockOrder === true || o.orderCategory === "STOCK" || o.is_stock_order === true || o.applied_price_policy === "STOCK" || String(o.notes || "").includes("STOCK")) && !hasQuote && !hasRealCustomer);
 
             const isWronglyNamedStock = Boolean(orderId.includes("STOCK") && !isStock);
@@ -3257,7 +3257,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         if (typeof window !== "undefined") return localStorage.getItem("sales_default_quote_delivery_terms") || "Giao hàng tận nơi trong vòng 3-5 ngày làm việc.";
         return "Giao hàng tận nơi trong vòng 3-5 ngày làm việc.";
     });
-    const TBR_DEFAULT_PAYMENT_TERMS = "Thanh toán 100% bằng tiền mặt hoặc chuyển khoản trong vòng 15-30 ngày kể từ ngày nhận đủ hàng hóa và hóa đơn GTGT. Thông tin tài khoản: Công ty Cổ Phần Công nghệ TBR – STK: 170 270 499 tại Ngân hàng Á Châu (ACB) – Chi nhánh TP. Hồ Chí Minh.";
+    const TBR_DEFAULT_PAYMENT_TERMS = "Thanh toán 100% bằng tiền mặt hoặc chuyển khoản trong vòng 15-30 ngày kể từ ngày nhận đủ hàng hóa và hóa đơn GTGT. Thông tin tài khoản: Công ty Cổ Phần Công nghệ ABT – STK: 170 270 499 tại Ngân hàng Á Châu (ACB) – Chi nhánh TP. Hồ Chí Minh.";
     const [quotePaymentTerms, setQuotePaymentTerms] = useState(() => {
         if (typeof window !== "undefined") {
             const saved = localStorage.getItem("sales_default_quote_payment_terms");
@@ -4044,7 +4044,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             badge: isDetailedOligoSkuCode(p.code)
                 ? "🧬 Oligo ABT"
                 : (p.brand === "ABT" || (p.code && (p.code.startsWith("SQH") || p.code.startsWith("EXS") || p.code.startsWith("LBC"))))
-                ? "🧪 TBR / ABT"
+                ? "🧪 ABT / ABT"
                 : `🛒 ${p.brand || "Thương mại"}`
         }));
         const mfg = biolabProducts
@@ -4070,7 +4070,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 isEquipment: (p as any).isEquipment || false,
                 configurations: (p as any).configurations || [],
                 isCommercial: false,
-                badge: "🧪 TBR / ABT"
+                badge: "🧪 ABT / ABT"
             }));
         const existingCodes = new Set([...comm.map(p => p.code), ...mfg.map(p => p.code)]);
         const dbItems = dbMasterProducts
@@ -4102,7 +4102,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     isEquipment: (p.category ? p.category.includes("Thiết bị") : false) || (p.code ? p.code.startsWith("EQ-") : false),
                     configurations: [],
                     isCommercial: !isMfg,
-                    badge: isMfg ? "🧪 TBR / ABT" : `🛒 ${p.manufacturer || "Thương mại"}`
+                    badge: isMfg ? "🧪 ABT / ABT" : `🛒 ${p.manufacturer || "Thương mại"}`
                 };
             });
         return [...comm, ...mfg, ...dbItems];
@@ -4856,7 +4856,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [vatEmail, setVatEmail] = useState("");
     const [invoiceNotes, setInvoiceNotes] = useState("");
     const [partialInvItemVatRates, setPartialInvItemVatRates] = useState<Record<string, number>>({});
-    const [shippingMethod, setShippingMethod] = useState("Xe lạnh chuyên dụng TBR (-20°C đến 8°C)");
+    const [shippingMethod, setShippingMethod] = useState("Xe lạnh chuyên dụng ABT (-20°C đến 8°C)");
     const [trackingCode, setTrackingCode] = useState("");
 
     // Phase 3: Contract Expiry & File Attachments (Yêu cầu 3)
@@ -4915,7 +4915,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setVatTaxCode("");
         setVatAddress("");
         setVatEmail("");
-        setShippingMethod("Xe lạnh chuyên dụng TBR (-20°C đến 8°C)");
+        setShippingMethod("Xe lạnh chuyên dụng ABT (-20°C đến 8°C)");
         setTrackingCode("");
         setFactoryOrderContactPerson("");
         setFactoryOrderContactPhone("");
@@ -8322,7 +8322,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 id: `cfg-${Date.now()}-6`,
                 name: "Dịch vụ: Vận chuyển, lắp đặt, chạy thử nghiệm thu & đào tạo vận hành tận nơi (Kèm IQ/OQ/PQ)",
                 model: "Service Package",
-                origin: "Việt Nam (Kỹ sư TBR)",
+                origin: "Việt Nam (Kỹ sư ABT)",
                 quantity: 1,
                 unit: "Gói",
                 isIncluded: true,
@@ -12750,7 +12750,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setVatTaxCode(isVatReq ? String(req.vat_tax_code || req.vatTaxCode || "") : "");
         setVatAddress(isVatReq ? String(req.vat_address || req.vatAddress || "") : "");
         setVatEmail(isVatReq ? String(req.vat_email || req.vatEmail || "") : "");
-        setShippingMethod(String(req.shipping_method || req.shippingMethod || "Xe lạnh chuyên dụng TBR (-20°C đến 8°C)"));
+        setShippingMethod(String(req.shipping_method || req.shippingMethod || "Xe lạnh chuyên dụng ABT (-20°C đến 8°C)"));
         setTrackingCode(String(req.tracking_code || req.trackingCode || ""));
         setFactoryOrderCustomerName(req.customerName || "");
         setFactoryOrderContractId(req.contractId || "");
@@ -13455,7 +13455,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             tracking_code: trackingCode
         };
 
-        // Sync directly to TBR PostgreSQL backend
+        // Sync directly to ABT PostgreSQL backend
         fetch("/api/sales?action=order", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -13779,7 +13779,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             }
             return req;
         }));
-        showToast(`Đơn hàng ${poCode} đã về kho TBR thành công! Có thể xuất giao cho khách.`, "success");
+        showToast(`Đơn hàng ${poCode} đã về kho ABT thành công! Có thể xuất giao cho khách.`, "success");
     };
 
     // ===== HELPER LUỒNG PHIẾU GIAO HÀNG THEO ĐỢT =====
@@ -14019,7 +14019,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
     const defaultStockCustomer = typeof window !== "undefined" && (window.location.port === "3006" || window.location.href.includes("3006"))
         ? "Công ty Cổ phần Công nghệ VIA"
-        : "Công ty Cổ phần Công nghệ TBR";
+        : "Công ty Cổ phần Công nghệ ABT";
 
     const checkIsPureStock = (o: any): boolean => {
         if (!o) return false;
@@ -14918,7 +14918,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const handleCompleteProcureOrder = (orderId: string) => {
         const order = factoryOrders.find(o => o.id === orderId);
         const poCode = (order?.procureOrderCode || order?.mfgOrderCode || `PO-${orderId}`).replace(/^ĐHX-/, "PO-");
-        if (!window.confirm(`Xác nhận hàng của đơn ${orderId} (${poCode}) đã về kho TBR và kiểm đếm nhập kho đầy đủ?`)) {
+        if (!window.confirm(`Xác nhận hàng của đơn ${orderId} (${poCode}) đã về kho ABT và kiểm đếm nhập kho đầy đủ?`)) {
             return;
         }
         setFactoryOrders(prev => prev.map(req => {
@@ -15925,7 +15925,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     reference_code: slip.orderCode,
                     // ngày xuất = ngày giao của phiếu (không phải ngày bấm lưu)
                     date: slip.deliveryDate ? parseSlipDateToIso(slip.deliveryDate) : todayVN(),
-                    performed_by: slip.dispatcherName || loggedInStaff?.full_name || "Thủ kho TBR",
+                    performed_by: slip.dispatcherName || loggedInStaff?.full_name || "Thủ kho ABT",
                     warehouse_name: is13B ? "Kho Trung Tâm" : (slip.dispatchLocation || "Kho Trung Tâm"),
                     items: valid.map((it: any) => ({
                         // Luôn xuất theo mã của dòng: lô trùng số của mã khác không được trừ tồn sang mã đó
@@ -16247,7 +16247,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     // Bước 2 (Slide 2 & Slide 8): Kho xác nhận Đã giao hàng (hàng đã xuất ra khỏi kho & hoàn tất điều kiện xuất hóa đơn)
     // Lưu ý: giữ nguyên ngày giao trên phiếu (slip.deliveryDate), không ghi đè bằng ngày bấm nút xác nhận.
     const handleConfirmWarehouseShipped = (slip: any) => {
-        const staffName = loggedInStaff?.full_name || user?.name || slip.dispatcherName || "Thủ kho TBR";
+        const staffName = loggedInStaff?.full_name || user?.name || slip.dispatcherName || "Thủ kho ABT";
         const slipIsoDate = parseSlipDateToIso(slip.deliveryDate || slip.delivery_date || slip.deliveredAt || todayVN());
         const updated = {
             ...slip,
@@ -25455,7 +25455,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </span>
                             </div>
                             <p className="text-[10px] text-slate-500 mt-0.5">
-                                Danh mục thống nhất toàn bộ sản phẩm, hóa chất sinh phẩm và thiết bị phân phối của Công ty TBR.
+                                Danh mục thống nhất toàn bộ sản phẩm, hóa chất sinh phẩm và thiết bị phân phối của Công ty ABT.
                             </p>
                         </div>
 
@@ -27670,8 +27670,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             { id: `cfg-${Date.now()}-3`, name: "Bộ phụ kiện tiêu chuẩn kết nối & vận hành chuẩn từ nhà sản xuất", model: "Std. Accessories", origin: commBrand || "Chính hãng", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Dây nguồn, cáp dữ liệu, khay đỡ, adapter" },
                                             { id: `cfg-${Date.now()}-4`, name: "Bộ lưu điện UPS Online chuyên dụng (Bảo vệ ổn định nguồn điện)", model: "Online 2kVA", origin: "Santak / APC", quantity: 1, unit: "Bộ", isStandard: false, isIncluded: true, notes: "Khuyến nghị trang bị bảo vệ thiết bị" },
                                             { id: `cfg-${Date.now()}-5`, name: "Bộ máy vi tính điều khiển Core i5, RAM 16GB, SSD 512GB + Màn hình Full HD", model: "OptiPlex", origin: "Dell / HP", quantity: 1, unit: "Bộ", isStandard: false, isIncluded: true, notes: "Trang bị đồng bộ theo yêu cầu phòng xét nghiệm" },
-                                            { id: `cfg-${Date.now()}-6`, name: "Dịch vụ: Vận chuyển, lắp đặt, thẩm định IQ/OQ/PQ & đào tạo hướng dẫn sử dụng", model: "Technical Service", origin: "Việt Nam (Kỹ sư TBR)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Kèm biên bản nghiệm thu & cấp chứng nhận" },
-                                            { id: `cfg-${Date.now()}-7`, name: `Gói bảo hành chính hãng ${commWarranty || "24 tháng"} & bảo dưỡng định kỳ`, model: "Warranty", origin: commBrand || "TBR", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Hỗ trợ kỹ thuật 24/7, xử lý sự cố trong 24-48h" }
+                                            { id: `cfg-${Date.now()}-6`, name: "Dịch vụ: Vận chuyển, lắp đặt, thẩm định IQ/OQ/PQ & đào tạo hướng dẫn sử dụng", model: "Technical Service", origin: "Việt Nam (Kỹ sư ABT)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Kèm biên bản nghiệm thu & cấp chứng nhận" },
+                                            { id: `cfg-${Date.now()}-7`, name: `Gói bảo hành chính hãng ${commWarranty || "24 tháng"} & bảo dưỡng định kỳ`, model: "Warranty", origin: commBrand || "ABT", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Hỗ trợ kỹ thuật 24/7, xử lý sự cố trong 24-48h" }
                                         ];
                                         setCommConfigurations(sampleConfigs);
                                     }}
@@ -31570,7 +31570,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                             {allocList.length === 0 ? (
                                                 <div className="text-[11px] text-slate-500 italic py-1">
-                                                    Chưa gán khách hàng cụ thể (100% số lượng sẽ đưa vào Tồn kho tự do dự phòng của TBR).
+                                                    Chưa gán khách hàng cụ thể (100% số lượng sẽ đưa vào Tồn kho tự do dự phòng của ABT).
                                                 </div>
                                             ) : (
                                                 <div className="space-y-1.5">
@@ -31725,7 +31725,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         onChange={(e) => setShippingMethod(e.target.value)}
                                         className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white font-medium"
                                     >
-                                        <option value="Xe lạnh chuyên dụng TBR (-20°C đến 8°C)">🚛 Xe lạnh chuyên dụng TBR (-20°C đến 8°C)</option>
+                                        <option value="Xe lạnh chuyên dụng ABT (-20°C đến 8°C)">🚛 Xe lạnh chuyên dụng ABT (-20°C đến 8°C)</option>
                                         <option value="Grab / Ahamove Express (Nội thành)">🛵 Grab / Ahamove Express (Nội thành hỏa tốc)</option>
                                         <option value="Chành xe liên tỉnh (Hàng khô/bảo ôn)">🚚 Chành xe liên tỉnh (Hàng khô / Thùng xốp đá gel)</option>
                                         <option value="NVKD trực tiếp giao & bàn giao">👤 NVKD trực tiếp giao & bàn giao</option>
@@ -32571,7 +32571,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 else currentStep = 1;
                             }
 
-                            const shipping = viewingFactoryOrderItems.shipping_method || viewingFactoryOrderItems.shippingMethod || viewingFactoryOrderItems.rawOrder?.shipping_method || "Xe lạnh chuyên dụng TBR (-20°C đến 8°C)";
+                            const shipping = viewingFactoryOrderItems.shipping_method || viewingFactoryOrderItems.shippingMethod || viewingFactoryOrderItems.rawOrder?.shipping_method || "Xe lạnh chuyên dụng ABT (-20°C đến 8°C)";
                             const tracking = viewingFactoryOrderItems.tracking_code || viewingFactoryOrderItems.trackingCode || viewingFactoryOrderItems.rawOrder?.tracking_code || `TBR-EXP-${viewingFactoryOrderItems.id?.replace(/\D/g, '') || "2026"}`;
                             const vatReq = viewingFactoryOrderItems.vat_requested || viewingFactoryOrderItems.vatRequested || viewingFactoryOrderItems.rawOrder?.vat_requested;
 
@@ -37130,7 +37130,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Địa điểm thực hiện</label>
                                     <textarea
                                         rows={2}
-                                        placeholder="Ví dụ: Khách sạn Rex, Quận 1 hoặc Phòng Lab TBR"
+                                        placeholder="Ví dụ: Khách sạn Rex, Quận 1 hoặc Phòng Lab ABT"
                                         value={planLocation}
                                         onChange={(e) => setPlanLocation(e.target.value)}
                                         className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white resize-y"
@@ -40445,7 +40445,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none font-bold text-center"
                             />
                             <span className="text-[10px] text-slate-400 mt-1 block">
-                                Tồn kho trung tâm TBR Trung Tâm khả dụng: <strong className="text-emerald-400 font-mono">{stock13b[giveStockProductCode] || 0}</strong>
+                                Tồn kho trung tâm ABT Trung Tâm khả dụng: <strong className="text-emerald-400 font-mono">{stock13b[giveStockProductCode] || 0}</strong>
                             </span>
                         </div>
                     </div>
@@ -41645,7 +41645,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div className="bg-indigo-950/40 border border-indigo-500/30 rounded-lg p-2.5 flex items-center gap-2 text-xs text-indigo-200">
                             <Package className="w-4 h-4 text-indigo-400 shrink-0" />
                             <span>
-                                <strong>Nguyên tắc Quản lý Kho TBR:</strong> Nghiệp vụ cài đặt giữ chỗ gắn liền với <strong>Số Lô (LOT)</strong>, <strong>Hạn dùng (EXP)</strong> và <strong>Tồn kho thực tế</strong>, do đó được thực hiện tập trung tại <strong>Tab Quản lý kho</strong>. Sổ theo dõi dưới đây hiển thị dữ liệu giữ chỗ phục vụ Sales tra cứu đối chiếu.
+                                <strong>Nguyên tắc Quản lý Kho ABT:</strong> Nghiệp vụ cài đặt giữ chỗ gắn liền với <strong>Số Lô (LOT)</strong>, <strong>Hạn dùng (EXP)</strong> và <strong>Tồn kho thực tế</strong>, do đó được thực hiện tập trung tại <strong>Tab Quản lý kho</strong>. Sổ theo dõi dưới đây hiển thị dữ liệu giữ chỗ phục vụ Sales tra cứu đối chiếu.
                             </span>
                         </div>
 

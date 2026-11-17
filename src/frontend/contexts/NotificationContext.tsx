@@ -840,7 +840,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             eventKey: matchedKey,
             createdAt: new Date().toISOString(),
             readBy: [],
-            sender: sender || { name: user?.name || "Hệ thống TBR" },
+            sender: sender || { name: user?.name || "Hệ thống ABT" },
             targetEmployeeIds: resolvedEmployeeIds,
             targetEmployeeNames: resolvedEmployeeNames,
             targetUsers: params.targetUsers,
@@ -1325,7 +1325,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                                 {toast.type === "info" && <Bell className="w-5 h-5 text-orange-400 animate-pulse" />}
                             </div>
                             <div className="flex-1 leading-snug">
-                                <span className="font-bold block text-white text-xs mb-0.5">Thông báo hoạt động TBR</span>
+                                <span className="font-bold block text-white text-xs mb-0.5">Thông báo hoạt động ABT</span>
                                 <p className="text-xs text-slate-200">{toast.message}</p>
                             </div>
                             <button

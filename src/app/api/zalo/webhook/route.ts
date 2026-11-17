@@ -190,7 +190,7 @@ export async function POST(req: NextRequest) {
         const sendRes = await sendZaloCustomerServiceMessage({
           recipientId: senderId,
           text: result.text,
-          senderName: "TBR OA Gateway"
+          senderName: "ABT OA Gateway"
         });
         deliveryStatus = sendRes.status;
       } catch (replyErr) {

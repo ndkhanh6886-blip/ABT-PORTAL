@@ -1884,7 +1884,7 @@ export async function POST(req: NextRequest) {
 
         const targetWarehouse = String(warehouse_name || "Kho Trung Tâm").trim() || "Kho Trung Tâm";
         const effectiveDate = normalizeExcelDateToISO(receipt_date, todayVN());
-        const effectivePerformer = String(received_by || me.full_name || me.username || "Thủ kho TBR").trim();
+        const effectivePerformer = String(received_by || me.full_name || me.username || "Thủ kho ABT").trim();
 
         const inboundCode = await generateDocumentCode({ docType: "PNK", tagMode: "GENERAL" });
         const txItems = clean.map(x => ({
@@ -1970,7 +1970,7 @@ export async function POST(req: NextRequest) {
             code: x.pCode,
             name: pName,
             category: it.category || "Hàng Thương Mại",
-            brand: po.supplier_name || it.supplier_name || "TBR Phân Phối",
+            brand: po.supplier_name || it.supplier_name || "ABT Phân Phối",
             origin: it.origin || "Chính hãng",
             unit: x.unit || it.unit || "Hộp",
             specification: x.specification || it.specification || "",

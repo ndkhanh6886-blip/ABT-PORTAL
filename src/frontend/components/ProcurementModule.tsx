@@ -729,7 +729,7 @@ export const ProcurementModule: React.FC = () => {
         updated[index] = {
           ...updated[index],
           is_custom: true,
-          product_code: updated[index].product_code?.startsWith("TBR-") ? "" : updated[index].product_code,
+          product_code: updated[index].product_code?.startsWith("ABT-") ? "" : updated[index].product_code,
           specification: updated[index].specification || "",
           unit: updated[index].unit || "Cái"
         };
@@ -2206,7 +2206,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     setReceiveHeader({
       receipt_date: todayVN(),
       warehouse_name: "Kho Trung Tâm",
-      received_by: user?.full_name || user?.username || "Thủ kho TBR",
+      received_by: user?.full_name || user?.username || "Thủ kho ABT",
       vat_invoice_no: "",
       vat_invoice_date: todayVN(),
       shipping_unit: "",
@@ -2638,7 +2638,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
   const handleDownloadCatalogTemplate = () => {
     const sample = [
       {
-        "Mã hàng (*)": "TBR-KIT-001",
+        "Mã hàng (*)": "ABT-KIT-001",
         "Tên sản phẩm (*)": "Bộ Kít Tách Chiết RNA/DNA Viral",
         "Quy cách": "50 test/hộp",
         "Đơn vị tính": "Hộp",
@@ -2646,7 +2646,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
         "Ghi chú": "Bảng giá áp dụng quý 4/2026"
       },
       {
-        "Mã hàng (*)": "TBR-PCR-002",
+        "Mã hàng (*)": "ABT-PCR-002",
         "Tên sản phẩm (*)": "MasterMix Real-time PCR 2X",
         "Quy cách": "100 phản ứng/lọ",
         "Đơn vị tính": "Lọ",
@@ -5590,7 +5590,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 Hồ Sơ & Đánh Giá Các Nhà Cung Cấp / Hãng Sản Xuất
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Quản lý các hãng thiết bị PCR, sinh phẩm tách chiết, vật tư tiêu hao và đối tác thương mại của TBR.
+                Quản lý các hãng thiết bị PCR, sinh phẩm tách chiết, vật tư tiêu hao và đối tác thương mại của ABT.
               </p>
             </div>
 
@@ -9403,7 +9403,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                   <option value="">
                                     {q
                                       ? `-- Kết quả lọc "${q}" (${filteredList.length} sản phẩm phù hợp) --`
-                                      : `-- Bấm để chọn mặt hàng trong danh mục TBR (${mergedCatalogProducts.length} SP) --`}
+                                      : `-- Bấm để chọn mặt hàng trong danh mục ABT (${mergedCatalogProducts.length} SP) --`}
                                   </option>
                                   {!filteredList.some((p: any) => p.code === it.product_code) && it.product_code && (
                                     <option value={it.product_code}>
@@ -9532,7 +9532,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 type="text"
                                 value={it.product_code}
                                 onChange={(e) => handlePRItemChange(idx, "product_code", e.target.value)}
-                                placeholder="VD: TBR-NEW-01..."
+                                placeholder="VD: ABT-NEW-01..."
                                 className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-xs"
                               />
                             </div>

@@ -554,7 +554,7 @@ export async function processZaloInboundMessage(params: {
     console.warn("Binding lookup error:", err);
   }
 
-  // 1B. LINKING: the message contains a one-time code "LK-XXXXXX" created by the employee in TBR Portal
+  // 1B. LINKING: the message contains a one-time code "LK-XXXXXX" created by the employee in ABT Portal
   const linkCodeMatch = rawText.toUpperCase().replace(/\s+/g, "").match(/LK-?([A-F0-9]{6})/);
   if (linkCodeMatch) {
     try {
@@ -625,12 +625,12 @@ Gõ "menu" hoặc "help" bất kỳ lúc nào để xem danh sách lệnh hỗ t
       recipientId: senderId,
       messageType: "TEXT",
       text: 
-`👋 Xin chào! Hệ thống nhận diện tin nhắn từ tài khoản Zalo của bạn tới trang Zalo OA Công ty Cổ phần Công nghệ TBR.
+`👋 Xin chào! Hệ thống nhận diện tin nhắn từ tài khoản Zalo của bạn tới trang Zalo OA Công ty Cổ phần Công nghệ ABT.
 
-⚠️ Hiện tại tài khoản Zalo này CHƯA ĐƯỢC LIÊN KẾT với hồ sơ nhân sự trên hệ thống TBR Portal.
+⚠️ Hiện tại tài khoản Zalo này CHƯA ĐƯỢC LIÊN KẾT với hồ sơ nhân sự trên hệ thống ABT Portal.
 
-👉 ĐỂ LIÊN KẾT TÀI KHOẢN (dành cho nhân viên TBR):
-1. Đăng nhập TBR Portal → bấm vào tên của bạn → "Bảo mật tài khoản" → "Tạo mã liên kết Zalo".
+👉 ĐỂ LIÊN KẾT TÀI KHOẢN (dành cho nhân viên ABT):
+1. Đăng nhập ABT Portal → bấm vào tên của bạn → "Bảo mật tài khoản" → "Tạo mã liên kết Zalo".
 2. Nhắn mã vừa nhận (dạng LK-XXXXXX, hiệu lực 30 phút) vào khung chat này.
 
 Vì lý do bảo mật, hệ thống không liên kết theo số điện thoại hay mã nhân viên.`
@@ -651,7 +651,7 @@ Vì lý do bảo mật, hệ thống không liên kết theo số điện thoạ
 Nhân sự: ${empName}${empCode}
 Trạng thái: ❌ KHÔNG KẾT NỐI (Chưa có số điện thoại Zalo trong hồ sơ)
 
-Hồ sơ nhân sự của bạn trên TBR Portal hiện đang để trống thông tin số điện thoại, do đó hệ thống chưa thể kích hoạt tính năng điều hành, kiểm tra kho và nhận lệnh qua Zalo.
+Hồ sơ nhân sự của bạn trên ABT Portal hiện đang để trống thông tin số điện thoại, do đó hệ thống chưa thể kích hoạt tính năng điều hành, kiểm tra kho và nhận lệnh qua Zalo.
 
 👉 HƯỚNG DẪN KÍCH HOẠT:
 Vui lòng liên hệ Quản trị viên hệ thống để cập nhật số điện thoại chính thức vào danh mục nhân sự.`
@@ -662,7 +662,7 @@ Vui lòng liên hệ Quản trị viên hệ thống để cập nhật số đi
   let config = {
     director_discount_threshold: 10.0,
     director_zalo_id: "zalo_dir_bld_01",
-    oa_name: "Công ty cổ phần Công nghệ TBR"
+    oa_name: "Công ty cổ phần Công nghệ ABT"
   };
   try {
     const cfgRes = await query("SELECT * FROM zalo_config LIMIT 1");
@@ -671,7 +671,7 @@ Vui lòng liên hệ Quản trị viên hệ thống để cập nhật số đi
         ...config,
         director_discount_threshold: parseFloat(cfgRes.rows[0].director_discount_threshold) || 10.0,
         director_zalo_id: cfgRes.rows[0].director_zalo_id || "zalo_dir_bld_01",
-        oa_name: cfgRes.rows[0].oa_name || "Công ty cổ phần Công nghệ TBR"
+        oa_name: cfgRes.rows[0].oa_name || "Công ty cổ phần Công nghệ ABT"
       };
     }
   } catch (err) {
@@ -1281,7 +1281,7 @@ ${Number(row.total_amount) > 0 ? `💰 Giá trị: ${fmtVnd(row.total_amount)} V
         text:
           "⚠️ Vui lòng ghi rõ mã hồ sơ cần duyệt hoặc từ chối.\n" +
           "Ví dụ:\n" +
-          "• Báo giá (CK cao / 0đ): 'Duyệt BG-TBR-2609-089'\n" +
+          "• Báo giá (CK cao / 0đ): 'Duyệt BG-ABT-2609-089'\n" +
           "• Đơn hàng 0đ / Công nợ: 'Duyệt 0đ SO26-...' hoặc 'Duyệt nợ SO26-...'\n" +
           "• Nghỉ phép / Tờ trình: 'Duyệt DX-202611-0001'\n" +
           "• Đơn mua hàng / Trả hàng: 'Duyệt PO26-...' hoặc 'Duyệt RMA26-...'\n" +
@@ -1420,9 +1420,9 @@ ${signedDocumentUrl("quotation", q.quote_code)}`;
 Vui lòng cung cấp mã báo giá cần lập hợp đồng mua bán.
 
 💡 Ví dụ:
-• "Hợp đồng BG-TBR-2610-9017"
-• "Soạn hợp đồng từ BG-TBR-2610-9017"
-• "Tạo HĐ BG-TBR-2610-9017 mặc định"`
+• "Hợp đồng BG-ABT-2610-9017"
+• "Soạn hợp đồng từ BG-ABT-2610-9017"
+• "Tạo HĐ BG-ABT-2610-9017 mặc định"`
       };
     }
 
@@ -1590,8 +1590,8 @@ HĐ ${q.quote_code}: Đại diện: Bác sĩ Nguyễn Văn A - Giám Đốc, ĐC
       deliveryTerms = deliveryTerms || "Trong vòng 07 ngày làm việc kể từ ngày hợp đồng có hiệu lực.";
       paymentTerms = paymentTerms || existingCust?.payment_terms || "Chuyển khoản trong vòng 30 ngày kể từ ngày nhận đủ hóa đơn GTGT và biên bản bàn giao.";
 
-      const brandPrefix = BASE_APP_URL.includes("via") ? "VIA" : "TBR";
-      const isTBR = brandPrefix === "TBR";
+      const brandPrefix = BASE_APP_URL.includes("via") ? "VIA" : "ABT";
+      const isTBR = brandPrefix === "ABT";
       const contractCode = `HD-${brandPrefix}-${new Date().getFullYear().toString().slice(-2)}${(new Date().getMonth() + 1).toString().padStart(2, "0")}-${Date.now().toString().slice(-4)}`;
 
       const contractMeta = {
@@ -1635,7 +1635,7 @@ HĐ ${q.quote_code}: Đại diện: Bác sĩ Nguyễn Văn A - Giám Đốc, ĐC
         typeof q.items === "string" ? q.items : JSON.stringify(q.items)
       ]);
 
-      const companyTitle = isTBR ? "CÔNG TY CỔ PHẦN CÔNG NGHỆ TBR" : "CÔNG TY TNHH XÉT NGHIỆM VIA";
+      const companyTitle = isTBR ? "CÔNG TY CỔ PHẦN CÔNG NGHỆ ABT" : "CÔNG TY TNHH XÉT NGHIỆM VIA";
       const contractPdfUrl = signedDocumentUrl("contract", contractCode);
 
       return {
@@ -1766,7 +1766,7 @@ Thêm KH: Bệnh Viện Ung Bướu, 47 Nguyễn Huy Lượng Quận Bình Thạ
 
       const salesRepName = senderBinding?.display_name || senderName || "Bùi Lê Phương Quân (NVKD)";
       const salesRepId = senderBinding?.employee_id || "KD-01";
-      const brandPrefix = BASE_APP_URL.includes("via") ? "VIA" : "TBR";
+      const brandPrefix = BASE_APP_URL.includes("via") ? "VIA" : "ABT";
       const newCustomerCode = `KH-${brandPrefix}-${Date.now().toString().slice(-4)}`;
       const isHospital = /(?:bệnh\s*viện|viện|phòng\s*khám|trung\s*tâm|cdc)/i.test(cleanName);
       const classification = isHospital ? "Bệnh viện / Cơ sở Y tế" : "Khách hàng trực tiếp";
@@ -2068,7 +2068,7 @@ Soạn: "Báo giá ${suggestedName}: 2 bộ HI-612, ck 0%"`
           messageType: "TEXT",
           text: `⚠️ CHƯA NHẬN DIỆN ĐƯỢC MÃ HÀNG CẦN BÁO GIÁ
 
-Vui lòng ghi rõ mã sản phẩm của TBR trong tin nhắn.
+Vui lòng ghi rõ mã sản phẩm của ABT trong tin nhắn.
 Ví dụ:
 • "Báo giá BV Bạch Mai: 10 SQH-115, 2 EQ-EXTRACT-32, ck 12%"
 • "Báo giá BV Chợ Rẫy: 20 EXS-021, 5 CS-TIP-FILTER, ck 5%"
@@ -2090,7 +2090,7 @@ ${sampleSkus}
 
       // Determine approval status based on Director Discount Threshold!
       const requiresDirectorApproval = discountRate >= config.director_discount_threshold;
-      const quoteCode = `BG-TBR-${new Date().getFullYear().toString().slice(-2)}${(new Date().getMonth() + 1).toString().padStart(2, "0")}-${Date.now().toString().slice(-4)}`;
+      const quoteCode = `BG-ABT-${new Date().getFullYear().toString().slice(-2)}${(new Date().getMonth() + 1).toString().padStart(2, "0")}-${Date.now().toString().slice(-4)}`;
       const status = requiresDirectorApproval ? "PENDING_DIRECTOR_APPROVAL" : "APPROVED";
       const salesRepName = senderBinding?.display_name || senderName || "Bùi Lê Phương Quân (NVKD)";
 
@@ -2310,9 +2310,9 @@ ${signedDocumentUrl("quotation", quoteCode)}${notExistNotice}`;
 
         const lotDetails = prodLots.length > 0
           ? prodLots.map((l: any) =>
-              `   • Lô ${l.lot_number || "N/A"}: ${l.quantity_on_hand} ${row.unit || "Hộp"} • HSD: ${formatExpStr(l.expiry_date)}${l.is_quarantined ? " [ĐANG BIỆT TRỮ]" : ""} (${l.warehouse_location || row.warehouse_location || "Kho TBR"})`
+              `   • Lô ${l.lot_number || "N/A"}: ${l.quantity_on_hand} ${row.unit || "Hộp"} • HSD: ${formatExpStr(l.expiry_date)}${l.is_quarantined ? " [ĐANG BIỆT TRỮ]" : ""} (${l.warehouse_location || row.warehouse_location || "Kho ABT"})`
             ).join("\n")
-          : `   • Số Lô: ${row.lot_number || "Chưa có Lô"} • HSD: ${expDate} (${row.warehouse_location || "Kho TBR"})`;
+          : `   • Số Lô: ${row.lot_number || "Chưa có Lô"} • HSD: ${expDate} (${row.warehouse_location || "Kho ABT"})`;
 
         return `${i + 1}. [${row.product_code}] ${row.product_name}
    • Quy cách: ${row.specification || "Tiêu chuẩn"}${priceFmt}
@@ -3068,7 +3068,7 @@ Danh sách các nghiệp vụ tự động hỗ trợ Nhân sự & Ban Giám Đ�
 
 5. 📄 Soạn Báo Giá & Hợp Đồng Tự Động (Kèm File PDF):
    • Gõ: "Báo giá BV Chợ Rẫy: 20 kit HBV, ck 12%"
-   • Gõ: "Hợp đồng BG-TBR-..."
+   • Gõ: "Hợp đồng BG-ABT-..."
 
 6. 📦 Tra Cứu Tồn Kho FEFO, Giữ Chỗ 48h, Khách Hàng & Daily:
    • Gõ: "Tồn kho KIT-HBV-100" | "Giữ chỗ 20 KIT-HBV cho BV Chợ Rẫy"

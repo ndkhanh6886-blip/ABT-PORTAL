@@ -308,7 +308,7 @@ export const WarehouseModule: React.FC = () => {
   const [prFormData, setPRFormData] = useState({
     requestedQty: 50,
     urgentLevel: "CAO - Cần gấp phòng ngừa đứt gãy hàng cung ứng",
-    notes: "Đề xuất phòng Cung Ứng lập PO khẩn cấp bổ sung tồn an toàn theo quy chuẩn định mức TBR."
+    notes: "Đề xuất phòng Cung Ứng lập PO khẩn cấp bổ sung tồn an toàn theo quy chuẩn định mức ABT."
   });
 
   const [isPushSalesModalOpen, setIsPushSalesModalOpen] = useState(false);
@@ -476,7 +476,7 @@ export const WarehouseModule: React.FC = () => {
     }
   };
 
-  // Real TBR Staff Mappings
+  // Real ABT Staff Mappings
   const salesStaff = useMemo(() => {
     const list = personnelList.filter(p => 
       p.department === "Kinh Doanh" || 
@@ -825,7 +825,7 @@ export const WarehouseModule: React.FC = () => {
       const manufacturer = item.manufacturer || matchedCatalogProd?.manufacturer || (
         item.product_code?.startsWith("HI") || item.product_code?.startsWith("HM") || item.product_code?.startsWith("HE") ? "TopPURE (ABT)" :
         item.product_code?.startsWith("SQH") ? "TopSPEC (ABT)" :
-        item.product_code?.startsWith("EQ") ? "Bioer Technology" : "TBR Phân Phối"
+        item.product_code?.startsWith("EQ") ? "Bioer Technology" : "ABT Phân Phối"
       );
 
       return {
@@ -975,7 +975,7 @@ export const WarehouseModule: React.FC = () => {
       totalListVal += lVal;
 
       // 1. By Brand
-      const brand = it.manufacturer || "TBR Phân Phối";
+      const brand = it.manufacturer || "ABT Phân Phối";
       if (!byBrandMap[brand]) {
         byBrandMap[brand] = { brand, count: 0, totalQty: 0, costVal: 0, listVal: 0 };
       }
@@ -1128,7 +1128,7 @@ export const WarehouseModule: React.FC = () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          product_code: targetProd.product_code || "TBR-GENERIC",
+          product_code: targetProd.product_code || "ABT-GENERIC",
           product_name: targetProd.product_name || "Sản phẩm thu hồi",
           lot_number: targetLot,
           reason: recallReason,
@@ -1202,7 +1202,7 @@ export const WarehouseModule: React.FC = () => {
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.json_to_sheet(rows);
       XLSX.utils.book_append_sheet(wb, ws, "Danh_Sach_Thu_Hoi");
-      XLSX.writeFile(wb, `Danh_Sach_Thu_Hoi_Lo_${traceResult.lot_number || "TBR"}_${todayVN()}.xlsx`);
+      XLSX.writeFile(wb, `Danh_Sach_Thu_Hoi_Lo_${traceResult.lot_number || "ABT"}_${todayVN()}.xlsx`);
       setActionNotice("✅ Đã xuất thành công Bảng liên hệ thu hồi khách hàng ra file Excel!");
     } catch (e) {
       alert("Lỗi khi xuất file Excel thu hồi");
@@ -1375,7 +1375,7 @@ export const WarehouseModule: React.FC = () => {
     const productsData = products.length > 0 ? products.slice(0, 10).map((p) => ({
       "Mã SKU (*)": p.code,
       "Tên sản phẩm (*)": p.name,
-      "Hãng sản xuất (*)": p.manufacturer || (p.code?.startsWith("HI") || p.code?.startsWith("HM") || p.code?.startsWith("HE") ? "TopPURE (ABT)" : p.code?.startsWith("SQH") ? "TopSPEC (ABT)" : "TBR"),
+      "Hãng sản xuất (*)": p.manufacturer || (p.code?.startsWith("HI") || p.code?.startsWith("HM") || p.code?.startsWith("HE") ? "TopPURE (ABT)" : p.code?.startsWith("SQH") ? "TopSPEC (ABT)" : "ABT"),
       "Nhà cung cấp": "",
       "Nhóm ngành hàng (*)": p.category || "Hóa chất / Sinh phẩm",
       "Quy cách đóng gói": p.specification || "Tiêu chuẩn",
@@ -1527,7 +1527,7 @@ export const WarehouseModule: React.FC = () => {
     const firstProd = products[0] || { code: "HI-007.A (B32)", name: "TopPURE Maga Quick Genomic DNA/RNA Extraction Kit", cost_price: 1800000 };
     const sampleData = [
       {
-        "Mã đơn PO (*)": `PO-TBR-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
+        "Mã đơn PO (*)": `PO-ABT-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
         "Nhà cung cấp (*)": "Công ty TNHH Giải pháp Y Sinh ABT",
         "Ngày đặt hàng (*)": todayVN(),
         "Hạn giao dự kiến (*)": toVNDateString(new Date(Date.now() + 10 * 86400000)),
@@ -1682,7 +1682,7 @@ export const WarehouseModule: React.FC = () => {
         "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận Kho Vận",
         "Vai Trò Hệ Thống": "warehouse_lead",
         "Tên Tiếng Anh": "Warehouse Manager",
-        "Quyền Hạn & Phạm Vi Truy Cập": "Quản lý toàn diện kho TBR, ký duyệt phiếu xuất nhập kho, xem giá vốn lô nhập, điều chuyển vị trí kho lạnh, tạo PR mua bù tồn kho và quản lý cảnh báo HSD."
+        "Quyền Hạn & Phạm Vi Truy Cập": "Quản lý toàn diện kho ABT, ký duyệt phiếu xuất nhập kho, xem giá vốn lô nhập, điều chuyển vị trí kho lạnh, tạo PR mua bù tồn kho và quản lý cảnh báo HSD."
       },
       {
         "Phòng Ban": "Kho Vận",
@@ -2426,7 +2426,7 @@ export const WarehouseModule: React.FC = () => {
       inbound_type: inboundType,
       reference_code: tx.reference_code && tx.reference_code !== "N/A" ? tx.reference_code : "",
       vat_invoice_no: vatInvoiceNo,
-      supplier_name: supplierName === "TBR Phân Phối" ? "" : supplierName,
+      supplier_name: (supplierName === "ABT Phân Phối" || supplierName === "TBR Phân Phối") ? "" : supplierName,
       warehouse_name: tx.warehouse_name || "Kho Trung Tâm",
       performed_by: tx.performed_by || currentUserName,
       shipping_unit: shippingUnit,
@@ -2565,7 +2565,7 @@ export const WarehouseModule: React.FC = () => {
             product_code: it.product_code.trim(),
             product_name: it.product_name.trim(),
             category: it.category || matchedCatalogProd?.category || "Hàng Thương Mại",
-            manufacturer: inboundForm.supplier_name?.trim() || it.manufacturer || matchedCatalogProd?.manufacturer || "TBR Phân Phối",
+            manufacturer: inboundForm.supplier_name?.trim() || it.manufacturer || matchedCatalogProd?.manufacturer || "ABT Phân Phối",
             supplier_name: inboundForm.supplier_name?.trim() || "",
             vat_invoice_no: inboundForm.vat_invoice_no?.trim() || "",
             shipping_unit: inboundForm.shipping_unit?.trim() || "",
@@ -2892,7 +2892,7 @@ export const WarehouseModule: React.FC = () => {
       order_code: outboundForm.reference_code || "SO-2026-088",
       customer_name: outboundForm.customer_name || "Bệnh viện Đa Khoa / Viện Nghiên Cứu",
       warehouse_name: outboundForm.warehouse_name || "Kho Trung Tâm",
-      performed_by: outboundForm.performed_by || "Thủ kho TBR",
+      performed_by: outboundForm.performed_by || "Thủ kho ABT",
       product_code: selectedProdCode,
       product_name: selectedProd?.name || outboundForm.items[0]?.product_name,
       quantity: qty,
@@ -3188,7 +3188,7 @@ export const WarehouseModule: React.FC = () => {
           const manufacturer =
             String(r["Nhãn hiệu"] || r["Hãng SX"] || r["Hãng sản xuất"] || r["manufacturer"] || r["brand"] || "").trim() ||
             matchedProd?.manufacturer ||
-            "TBR Phân Phối";
+            "ABT Phân Phối";
 
           const quantity =
             Number(
@@ -3658,7 +3658,7 @@ export const WarehouseModule: React.FC = () => {
           reservation_id: reservation.id,
           product_code: reservation.product_code,
           quantity_reserved: reservation.quantity_reserved,
-          actor: "Thủ kho TBR",
+          actor: "Thủ kho ABT",
           reason: "Thủ kho giải phóng lại cho tồn khả dụng chung"
         })
       });
@@ -3790,11 +3790,11 @@ export const WarehouseModule: React.FC = () => {
           <div className="flex items-center gap-2 text-orange-600 dark:text-orange-400">
             <Package className="w-6 h-6" />
             <h2 className="text-xl font-black tracking-tight text-slate-900 dark:text-white">
-              HỆ THỐNG QUẢN LÝ KHO TBR
+              HỆ THỐNG QUẢN LÝ KHO ABT
             </h2>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Phân hệ độc lập quản lý xuất nhập tồn hàng hóa, theo dõi rủi ro lô hạn và giữ chỗ tồn kho (ATP) TBR.
+            Phân hệ độc lập quản lý xuất nhập tồn hàng hóa, theo dõi rủi ro lô hạn và giữ chỗ tồn kho (ATP) ABT.
           </p>
         </div>
 
@@ -4664,7 +4664,7 @@ export const WarehouseModule: React.FC = () => {
                       {isAtpViewMode && (
                         <td className="py-3 px-3">
                           <div className="font-bold text-indigo-600 dark:text-indigo-400">
-                            {item.manufacturer || "TBR"}
+                            {item.manufacturer || "ABT"}
                           </div>
                           <div className="text-[10px] text-slate-500 mt-0.5">
                             {item.category || "Sinh phẩm"}
@@ -5376,7 +5376,7 @@ export const WarehouseModule: React.FC = () => {
                         )}
                       </td>
                       <td className="py-3.5 px-3 text-slate-700 dark:text-slate-300 max-w-[120px]">
-                        {tx.performed_by || "Thủ kho TBR"}
+                        {tx.performed_by || "Thủ kho ABT"}
                       </td>
                       <td className="py-3.5 px-3 font-mono text-slate-500 whitespace-nowrap">
                         {tx.date ? formatDayVN(tx.date) : ""}
@@ -5923,7 +5923,7 @@ export const WarehouseModule: React.FC = () => {
               </div>
               <p className="text-[10px] text-slate-500 mt-1.5 flex items-center justify-between">
                 <span>Biên lợi nhuận trung bình</span>
-                <span className="font-bold text-cyan-600">Đạt định mức TBR</span>
+                <span className="font-bold text-cyan-600">Đạt định mức ABT</span>
               </p>
             </div>
           </div>
@@ -6563,7 +6563,7 @@ export const WarehouseModule: React.FC = () => {
                           <div className="grid grid-cols-2 gap-2 text-[11px] pt-2 border-t border-slate-100 dark:border-slate-800/80">
                             <div>
                               <span className="text-slate-400 block text-[10px]">Hãng sản xuất:</span>
-                              <strong className="text-slate-800 dark:text-slate-200">{itm.manufacturer || "ABT / TBR"}</strong>
+                              <strong className="text-slate-800 dark:text-slate-200">{itm.manufacturer || "ABT / ABT"}</strong>
                             </div>
                             <div>
                               <span className="text-slate-400 block text-[10px]">Quy cách:</span>
@@ -6778,7 +6778,7 @@ export const WarehouseModule: React.FC = () => {
                               x{c.quantity}
                             </td>
                             <td className="py-3 px-3 text-[11px]">
-                              <div className="text-slate-300">{c.shipping_method || "Xe lạnh chuyên dụng TBR"}</div>
+                              <div className="text-slate-300">{c.shipping_method || "Xe lạnh chuyên dụng ABT"}</div>
                               <div className="text-[10px] font-mono text-sky-400 mt-0.5">{c.tracking_code || "—"}</div>
                             </td>
                             <td className="py-3 px-3 text-[11px] text-slate-300 font-sans">
@@ -7050,7 +7050,7 @@ export const WarehouseModule: React.FC = () => {
               <p className="text-[11px] text-slate-500 mb-3">
                 {isDraggingGeneralExcel
                   ? "Hệ thống sẽ tự động phân tích và nhận diện cấu trúc cột"
-                  : "Tự động nhận diện cấu trúc cột theo chuẩn biểu mẫu TBR"}
+                  : "Tự động nhận diện cấu trúc cột theo chuẩn biểu mẫu ABT"}
               </p>
               <button
                 type="button"
@@ -7406,7 +7406,7 @@ export const WarehouseModule: React.FC = () => {
                           {currentProduct?.name || activeParentCode}
                         </h3>
                         <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                          Quy cách: <strong>{currentProduct?.specification || "Tiêu chuẩn"}</strong> • ĐVT: <strong>{currentProduct?.unit || "Bộ"}</strong> • Hãng SX: <strong>{currentProduct?.manufacturer || "TBR"}</strong>
+                          Quy cách: <strong>{currentProduct?.specification || "Tiêu chuẩn"}</strong> • ĐVT: <strong>{currentProduct?.unit || "Bộ"}</strong> • Hãng SX: <strong>{currentProduct?.manufacturer || "ABT"}</strong>
                         </div>
                       </div>
 
@@ -7718,7 +7718,7 @@ export const WarehouseModule: React.FC = () => {
               <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <strong className="text-emerald-900 dark:text-emerald-300 block mb-0.5">
-                    Tải mẫu Excel nhập kho rút gọn 7 cột chuẩn TBR:
+                    Tải mẫu Excel nhập kho rút gọn 7 cột chuẩn ABT:
                   </strong>
                   <p className="text-emerald-800 dark:text-emerald-400 text-[11px] leading-relaxed">
                     Chỉ cần nhập <strong>7 cột cốt lõi</strong>: <code>Mã SP</code>, <code>Số Lô (Lot)</code>, <code>Hạn dùng (Date)</code>, <code>Số lượng</code>, <code>Giá trị / Đơn giá đầu kỳ</code>, <code>Nhiệt độ bảo quản</code>, <code>Khu vực / Vị trí kho</code>. <br />
@@ -9587,7 +9587,7 @@ export const WarehouseModule: React.FC = () => {
                     </span>
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Giao dịch thực hiện ngày {selectedTxDetail.date ? formatDayVN(selectedTxDetail.date) : ""} bởi {selectedTxDetail.performed_by || "Thủ kho TBR"}
+                    Giao dịch thực hiện ngày {selectedTxDetail.date ? formatDayVN(selectedTxDetail.date) : ""} bởi {selectedTxDetail.performed_by || "Thủ kho ABT"}
                   </p>
                 </div>
               </div>
@@ -9612,7 +9612,7 @@ export const WarehouseModule: React.FC = () => {
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 font-bold block uppercase">Thủ Kho / Người Thực Hiện</span>
-                  <strong className="text-slate-900 dark:text-white text-xs">{selectedTxDetail.performed_by || "Thủ kho TBR"}</strong>
+                  <strong className="text-slate-900 dark:text-white text-xs">{selectedTxDetail.performed_by || "Thủ kho ABT"}</strong>
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 font-bold block uppercase">Ngày Lập Chứng Từ</span>
@@ -10375,7 +10375,7 @@ export const WarehouseModule: React.FC = () => {
                   <span className="font-bold uppercase text-purple-700 dark:text-purple-400 block text-xs">
                     I. ĐẠI DIỆN BÊN GIAO ({companyConfig.companyName ? companyConfig.companyName.toUpperCase() : "BÊN GIAO"})
                   </span>
-                  <div>Đơn vị: <strong>{companyConfig.companyName || "CÔNG TY TNHH THƯƠNG MẠI & PHÂN PHỐI TBR"}</strong></div>
+                  <div>Đơn vị: <strong>{companyConfig.companyName || "CÔNG TY TNHH THƯƠNG MẠI & PHÂN PHỐI ABT"}</strong></div>
                   <div>Kho xuất hàng: <strong>{handoverData.warehouse_name}</strong></div>
                   <div>Người thực hiện bàn giao: <strong>{handoverData.performed_by}</strong></div>
                 </div>
@@ -10670,7 +10670,7 @@ export const WarehouseModule: React.FC = () => {
                                 </span>
                               </div>
                               <div className="text-[10px] text-slate-500 mt-1">
-                                📍 {comp.shelf_position || "Kho TBR"}
+                                📍 {comp.shelf_position || "Kho ABT"}
                               </div>
                               {isDiffTemp && (
                                 <span className="inline-block text-[9px] text-amber-600 dark:text-amber-400 font-bold mt-0.5">
