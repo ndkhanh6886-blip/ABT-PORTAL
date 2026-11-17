@@ -89,8 +89,15 @@ describe("Sales Admin role", () => {
 });
 
 describe("org structure, commercial vs factory separation & migration", () => {
-  it("groups all 11 canonical ABT departments across 4 blocks including Khối Kỹ Thuật – Nhà Máy", () => {
-    expect(PRIMARY_DEPT_KEYS).toHaveLength(11);
+  it("groups all 12 canonical ABT departments across 4 blocks including Khối Kỹ Thuật – Nhà Máy and Phòng IT in Khối Kinh Doanh", () => {
+    expect(PRIMARY_DEPT_KEYS).toHaveLength(12);
+    const businessBlock = DEPT_KEYS_BY_BLOCK.find((b) => b.block === "Khối Kinh Doanh");
+    expect(businessBlock?.keys).toContain("IT");
+    expect(canonicalDepartment("IT")).toBe("IT");
+    expect(canonicalDepartment("Phòng IT")).toBe("IT");
+    expect(inferFactoryModuleFromDept("IT", "device_staff")).toBe("DEVICE");
+    expect(inferSystemRoleFromPosition("IT", "Nhân viên IT")).toBe("staff");
+    expect(inferSystemRoleFromPosition("IT", "Nhân viên nghiên cứu phần mềm")).toBe("device_staff");
     expect(DEPT_KEYS_BY_BLOCK.map((b) => b.block)).toEqual([
       "Điều Hành",
       "Khối Văn Phòng",
@@ -164,7 +171,7 @@ describe("org structure, commercial vs factory separation & migration", () => {
     expect(upgraded["Ban Giám Đốc"].positions.some((p) => p.title.includes("(CEO)"))).toBe(false);
     expect(upgraded["Kinh Doanh"].positions.some((p) => p.title.includes("(Head of Sales)"))).toBe(false);
     expect(upgraded["Kinh Doanh"].positions.some((p) => p.title === "Chuyên viên Hỗ trợ Thầu KD")).toBe(true);
-    expect(upgraded["KTCN"].positions.some((p) => p.title === "Nhân viên IT")).toBe(true);
+    expect(upgraded["IT"].positions.some((p) => p.title === "Nhân viên IT")).toBe(true);
     expect(upgraded["Cung ứng Kho"].code).toBe("P-KHO");
     expect(upgraded["Kho Vận"].code).toBe("SALES");
 

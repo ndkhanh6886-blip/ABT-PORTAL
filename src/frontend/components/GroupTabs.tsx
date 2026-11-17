@@ -5,6 +5,7 @@ import {
   BarChart3,
   Briefcase,
   ClipboardList,
+  Code2,
   Cpu,
   Factory,
   FileSpreadsheet,
@@ -71,7 +72,7 @@ function SectionTabs({
   );
 }
 
-export const BUSINESS_TABS: MainTab[] = ["sales", "warehouse", "application", "procurement"];
+export const BUSINESS_TABS: MainTab[] = ["sales", "warehouse", "application", "procurement", "factory-it"];
 export const TECHNICAL_TABS: MainTab[] = [
   "factory-rd",
   "factory-kit",
@@ -88,6 +89,7 @@ export const SETTINGS_TABS: MainTab[] = ["settings", "factory-settings"];
 /** "Khối Kinh Doanh": Kinh doanh, Quản lý kho, Application and Cung ứng under one Navbar entry. */
 export function BusinessTabs({ active, onChange }: { active: MainTab; onChange: (t: MainTab) => void }) {
   const { can } = useAuth();
+  const me = useFactoryMe();
   return (
     <SectionTabs
       title="Khối Kinh Doanh"
@@ -98,6 +100,7 @@ export function BusinessTabs({ active, onChange }: { active: MainTab; onChange: 
         { tab: "warehouse", label: "Quản Lý Kho", icon: Package, show: can("warehouse.view") },
         { tab: "application", label: "Application", icon: FlaskConical, show: can("application.view") },
         { tab: "procurement", label: "Cung Ứng", icon: ShoppingCart, show: can("procurement.view") },
+        { tab: "factory-it", label: "Phòng IT", icon: Code2, show: hasAny(me.data, ["device"]) },
       ]}
     />
   );

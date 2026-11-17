@@ -29,6 +29,7 @@ const FactoryOligoModule = dynamic(() => import("@/frontend/factory/oligo/Factor
 const FactoryQaModule = dynamic(() => import("@/frontend/factory/qa/FactoryQaModule").then(m => m.FactoryQaModule), { ssr: false });
 const FactoryRdModule = dynamic(() => import("@/frontend/factory/rd/FactoryRdModule").then(m => m.FactoryRdModule), { ssr: false });
 const FactoryDeviceModule = dynamic(() => import("@/frontend/factory/device/FactoryDeviceModule"), { ssr: false });
+const FactoryItModule = dynamic(() => import("@/frontend/factory/it/FactoryItModule"), { ssr: false });
 const FactoryKitModule = dynamic(() => import("@/frontend/factory/kit/FactoryKitModule"), { ssr: false });
 const FactoryAnalyticsModule = dynamic(() => import("@/frontend/factory/analytics/FactoryAnalyticsModule"), { ssr: false });
 const FactoryExcelImportModule = dynamic(() => import("@/frontend/factory/import/FactoryExcelImportModule"), { ssr: false });
@@ -36,7 +37,7 @@ const FactoryExcelImportModule = dynamic(() => import("@/frontend/factory/import
 const VALID_TABS: MainTab[] = [
   "workspace", "sales", "warehouse", "application", "procurement", "legal", "chat", "zalo", "settings",
   "factory-warehouse", "factory-settings", "factory-qa", "factory-purchase", "factory-orders",
-  "factory-oligo", "factory-rd", "factory-device", "factory-kit", "factory-analytics", "factory-import"
+  "factory-oligo", "factory-rd", "factory-device", "factory-it", "factory-kit", "factory-analytics", "factory-import"
 ];
 
 export default function Home() {
@@ -240,6 +241,7 @@ export default function Home() {
           {activeTab === "factory-oligo" && <FactoryOligoModule />}
           {activeTab === "factory-rd" && <FactoryRdModule />}
           {activeTab === "factory-device" && <FactoryDeviceModule />}
+          {activeTab === "factory-it" && <FactoryItModule />}
           {activeTab === "factory-kit" && <FactoryKitModule />}
           {activeTab === "factory-purchase" && <FactoryPurchaseModule />}
           {activeTab === "factory-qa" && <FactoryQaModule />}

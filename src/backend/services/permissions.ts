@@ -855,6 +855,9 @@ export const COMPANY_DEPARTMENTS: { key: string; code: string; block: (typeof CO
   { key: "Kinh Doanh", code: "SALES", block: "Khối Kinh Doanh", headRole: "sales_head", staffRole: "sales_rep" },
   { key: "Marketing", code: "MKT", block: "Khối Kinh Doanh", headRole: "sales_head", staffRole: "marketing" },
   { key: "APP", code: "APP", block: "Khối Kinh Doanh", headRole: "app_head", staffRole: "app_rep" },
+  // Phòng IT (thuộc Khối Kinh doanh): IT chung + nghiên cứu phần mềm. Giữ phân hệ nhà máy DEVICE để các nhân sự này vẫn
+  // dùng các dự án / hồ sơ phần mềm (IEC 62304) đã cấp quyền qua vai trò nhà máy Kỹ thuật – Thiết bị.
+  { key: "IT", code: "IT", block: "Khối Kinh Doanh", headRole: "device_head", staffRole: "device_staff", factory: "DEVICE" },
   { key: "R&D", code: "P-RD", block: "Khối Kỹ Thuật – Nhà Máy", headRole: "rd_head", staffRole: "rd_staff", factory: "RD" },
   { key: "Sản xuất", code: "P-KIT", block: "Khối Kỹ Thuật – Nhà Máy", headRole: "kit_head", staffRole: "kit_staff", factory: "KIT" },
   { key: "Tổng hợp Oligo", code: "P-OLIGO", block: "Khối Kỹ Thuật – Nhà Máy", headRole: "oligo_head", staffRole: "oligo_staff", factory: "OLIGO" },
@@ -869,6 +872,7 @@ export function canonicalDepartment(raw?: string | null): string | null {
   if (!s) return null;
   const exact = COMPANY_DEPARTMENTS.find((d) => d.key.toLowerCase() === s || d.code.toLowerCase() === s);
   if (exact) return exact.key;
+  if (/^(phòng |bộ phận |p\.?\s?)?it$/.test(s) || s.includes("công nghệ thông tin") || s === "p-it") return "IT";
   if (s.includes("oligo")) return "Tổng hợp Oligo";
   if (s.includes("r&d") || s.includes("nghiên cứu")) return "R&D";
   if (s.includes("ktcn") || s.includes("kỹ thuật công nghệ") || s.includes("thiết bị") || s.includes("device")) return "KTCN";

@@ -679,6 +679,15 @@ async function runIntegrityMigrations() {
       }
       await setFlag("migration_fix_abt_supplier_name_v1");
     });
+    // Thành lập Phòng IT (Khối Kinh doanh): chuyển 4 nhân sự IT / nghiên cứu phần mềm từ KTCN sang IT (chạy một lần)
+    await step("it_department_staff", async () => {
+      if (await flagDone("migration_it_department_staff_v1")) return;
+      const codes = ["NV-ABT-029", "NV-ABT-030", "NV-ABT-031", "NV-ABT-032"];
+      const usernames = [...codes, ...codes.map((c) => c.replace("NV-ABT-", "ABT"))];
+      await client.query("UPDATE users SET department = 'IT' WHERE UPPER(username) = ANY($1::text[])", [usernames]);
+      await client.query("UPDATE personnel SET department = 'IT' WHERE UPPER(employee_code) = ANY($1::text[])", [codes]);
+      await setFlag("migration_it_department_staff_v1");
+    });
     // Dữ liệu thời gian cũ được ghi khi CSDL còn dùng múi giờ mặc định của máy chủ (UTC trên máy chủ thật):
     // dời một lần cho đúng giờ Việt Nam. Không dời nếu máy chủ CSDL vốn đã là UTC+7.
     await step("shift_timestamps_to_vn", async () => {

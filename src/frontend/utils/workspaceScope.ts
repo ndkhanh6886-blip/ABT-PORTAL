@@ -14,6 +14,7 @@ export const WORKSPACE_BLOCKS: Record<"BLOCK_COMMERCIAL" | "BLOCK_TECHNICAL" | "
       "Kinh Doanh",
       "Sales Admin",
       "Application",
+      "IT",
       "Kho & Vận Hành",
       "Cung Ứng",
       "PM",
@@ -83,6 +84,7 @@ export function normalizeWorkspaceDept(raw: any): string {
     return "Cung Ứng Kỹ Thuật";
   }
   // 2. Các phòng ban thuộc Khối Kỹ Thuật – Nhà Máy
+  if (l === "it" || l === "p-it" || l.startsWith("phòng it") || l.includes("công nghệ thông tin")) return "IT";
   if (l.includes("đơn nội bộ") || l.includes("điều phối sản xuất") || l.includes("điều phối đơn")) return "Đơn Nội Bộ";
   if (l.includes("r&d") || l.includes("nghiên cứu") || l === "p-rd") return "Nghiên Cứu R&D";
   if (l.includes("sản xuất kit") || l.includes("sx kit") || l === "p-kit") return "Sản Xuất Kit";

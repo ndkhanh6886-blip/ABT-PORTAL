@@ -42,6 +42,7 @@ export type MainTab =
   | "factory-oligo"
   | "factory-rd"
   | "factory-device"
+  | "factory-it"
   | "factory-kit"
   | "factory-analytics"
   | "factory-import";
@@ -64,8 +65,12 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
   const canFactoryWarehouse = hasAny(factoryMe.data, ["inv", "master"]);
   const canFactorySettings = Boolean(factoryMe.data?.permissions.length);
 
-  // Khối Kinh Doanh groups the four Kinh doanh modules; the Navbar shows one entry for them
-  const businessTabs = (["sales", "warehouse", "application", "procurement"] as const).filter((t) => can(`${t}.view`));
+  // Khối Kinh Doanh groups the Kinh doanh modules and Phòng IT; the Navbar shows one entry for them
+  const canFactoryIt = hasAny(factoryMe.data, ["device"]);
+  const businessTabs = ([
+    ...(["sales", "warehouse", "application", "procurement"] as const).filter((t) => can(`${t}.view`)),
+    ...(canFactoryIt ? (["factory-it"] as const) : []),
+  ] as MainTab[]);
   const canBusiness = businessTabs.length > 0;
   const isBusinessTab = (businessTabs as readonly string[]).includes(activeTab);
   const firstBusinessTab: MainTab = isBusinessTab ? activeTab : businessTabs[0] ?? "sales";

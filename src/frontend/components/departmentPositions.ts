@@ -139,7 +139,7 @@ export const DEPARTMENT_POSITIONS: Record<string, DepartmentPositionGroup> = {
   "KTCN": {
     name: "Phòng Kỹ Thuật Công Nghệ (KTCN – P-DEVICE)",
     code: "P-DEVICE",
-    desc: "Thiết kế, sản xuất và lắp ráp thiết bị (DMR/DHR), lắp đặt – bảo trì – sửa chữa, phát triển phần mềm, IT chung, hành chính kỹ thuật, khoa học công nghệ",
+    desc: "Thiết kế, sản xuất và lắp ráp thiết bị (DMR/DHR), lắp đặt – bảo trì – sửa chữa, hành chính kỹ thuật, khoa học công nghệ (IT và phát triển phần mềm thuộc Phòng IT – Khối Kinh Doanh)",
     badgeColor: "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-800",
     borderTheme: "border-amber-500",
     positions: [
@@ -150,7 +150,17 @@ export const DEPARTMENT_POSITIONS: Record<string, DepartmentPositionGroup> = {
       { title: "Nhân viên Sản xuất thiết bị", defaultRole: "device_staff", level: "Staff", desc: "Lắp ráp, chạy lão hóa, ghi hồ sơ DHR" },
       { title: "Nhân viên Thiết kế và phát triển thiết bị", defaultRole: "device_staff", level: "Staff", desc: "Thiết kế cơ khí, điện tử, firmware; bản vẽ gia công" },
       { title: "Nhân viên Kỹ thuật", defaultRole: "device_staff", level: "Staff", desc: "Kỹ thuật thiết bị, gia công và QC chi tiết" },
-      { title: "Chuyên viên Khoa học Công nghệ", defaultRole: "device_staff", level: "Specialist", desc: "Đề tài khoa học công nghệ, hồ sơ sở hữu trí tuệ" },
+      { title: "Chuyên viên Khoa học Công nghệ", defaultRole: "device_staff", level: "Specialist", desc: "Đề tài khoa học công nghệ, hồ sơ sở hữu trí tuệ" }
+    ]
+  },
+  "IT": {
+    name: "Phòng IT (Công nghệ thông tin – Phát triển phần mềm)",
+    code: "IT",
+    desc: "Khối Kinh Doanh: IT chung toàn công ty (máy tính, mạng, máy chủ, tài khoản, sao lưu) và nghiên cứu – phát triển phần mềm nội bộ / phần mềm thiết bị (hồ sơ thiết kế IEC 62304)",
+    badgeColor: "bg-cyan-100 text-cyan-800 border-cyan-200 dark:bg-cyan-950/50 dark:text-cyan-300 dark:border-cyan-800",
+    borderTheme: "border-cyan-500",
+    positions: [
+      { title: "Trưởng phòng IT", defaultRole: "device_head", level: "Manager", desc: "Điều hành phòng IT; duyệt cổng dự án và ký phát hành phần mềm (chưa bố trí: Ban Giám Đốc duyệt thay)" },
       { title: "Nhân viên nghiên cứu phần mềm", defaultRole: "device_staff", level: "Staff", desc: "Phát triển phần mềm phân tích và điều khiển thiết bị, phần mềm nội bộ (hồ sơ thiết kế IEC 62304)" },
       { title: "Nhân viên IT", defaultRole: "staff", level: "Staff", desc: "IT chung toàn công ty: máy tính, mạng, máy chủ, tài khoản, sao lưu" }
     ]

@@ -76,7 +76,8 @@ import {
   MessageCircle,
   ClipboardList,
   Megaphone,
-  Wrench
+  Wrench,
+  Code2
 } from "lucide-react";
 import { Modal } from "@/frontend/components/Modal";
 import { useNotification } from "@/frontend/contexts/NotificationContext";
@@ -92,6 +93,7 @@ import type { HubProject, HubWeeklyPlanEvent, HubWorkItem } from "@/factory/work
 export const SCHEDULE_VALID_CATEGORIES = [
   "Application",
   "Kinh Doanh",
+  "IT",
   "Kho & Vận Hành",
   "Cung Ứng",
   "Kế Toán",
@@ -114,6 +116,7 @@ export const DEPARTMENTS = [
   { id: "Kinh Doanh", name: "Kinh Doanh (Sales)", icon: Briefcase, block: "COMMERCIAL" },
   { id: "Sales Admin", name: "Sales Admin", icon: ClipboardList, block: "COMMERCIAL" },
   { id: "Application", name: "Application (Lab KD)", icon: FlaskConical, block: "COMMERCIAL" },
+  { id: "IT", name: "Phòng IT (Công nghệ thông tin & Phần mềm)", icon: Code2, block: "COMMERCIAL" },
   { id: "Kho & Vận Hành", name: "Kho Kinh Doanh (Vận Hành)", icon: Package, block: "COMMERCIAL" },
   { id: "Cung Ứng", name: "Cung Ứng Kinh Doanh", icon: ShoppingCart, block: "COMMERCIAL" },
   { id: "PM", name: "Quản Lý Sản Phẩm (PM)", icon: Target, block: "COMMERCIAL" },
@@ -8597,7 +8600,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     🏢 Toàn công ty (Tất cả các Khối)
                   </option>
                   <optgroup label="⚡ Hiển Thị Công Việc Theo Khối (Toàn Khối)" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
-                    <option value="BLOCK_COMMERCIAL">🏢 Toàn Khối Kinh Doanh &amp; Văn Phòng (10 phòng ban)</option>
+                    <option value="BLOCK_COMMERCIAL">🏢 Toàn Khối Kinh Doanh &amp; Văn Phòng (11 phòng ban)</option>
                     <option value="BLOCK_TECHNICAL">🏭 Toàn Khối Kỹ Thuật – Nhà Máy (8 phòng ban)</option>
                     <option value="BLOCK_EXECUTIVE">🏛️ Khối Ban Lãnh Đạo (BOD)</option>
                   </optgroup>
@@ -8605,6 +8608,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     <option value="Kinh Doanh">💼 Kinh Doanh (Sales)</option>
                     <option value="Sales Admin">📋 Sales Admin</option>
                     <option value="Application">🔬 Application (Kỹ Thuật & Ứng Dụng KD)</option>
+                    <option value="IT">💻 Phòng IT (Công nghệ thông tin & Phần mềm)</option>
                     <option value="Kho & Vận Hành">📦 Kho Kinh Doanh & Vận Hành (Thương Mại)</option>
                     <option value="Cung Ứng">🛒 Cung Ứng Kinh Doanh (Mua Hàng TM & XNK)</option>
                     <option value="PM">🎯 Quản Lý Sản Phẩm (PM)</option>
