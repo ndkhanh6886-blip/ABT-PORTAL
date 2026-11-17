@@ -305,12 +305,13 @@ const PERMISSION_MATRIX = [
   { block: "Khối Kinh Doanh", module: "Kho Kinh Doanh & Chuỗi Lạnh Thương Mại", director: "Xem & Giám sát", manager: "Duyệt xuất/nhập KD", staff: "Sales Admin / Kho KD", accountant: "Đối soát FIFO thương mại" },
   { block: "Khối Kinh Doanh", module: "Cung Ứng Kinh Doanh (PR/PO Thương Mại & XNK)", director: "Duyệt PO vượt hạn mức", manager: "Duyệt PR/PO KD", staff: "Sales Admin / Mua hàng KD", accountant: "Thanh toán NCC thương mại" },
   { block: "Khối Kinh Doanh", module: "Application / Phòng Lab (Khối Kinh Doanh)", director: "Giám sát", manager: "Phân công FSE", staff: "Xử lý mẫu/lắp đặt", accountant: "Xem chi phí demo" },
+  { block: "Khối Kinh Doanh", module: "Phòng IT – Phát triển phần mềm (P-IT)", director: "Duyệt phát hành phần mềm", manager: "it_head / IT_HEAD: Dự án, Cổng, Thẩm định CSV", staff: "it_staff / IT_STAFF: Yêu cầu, Test, Bản phát hành nháp", accountant: "Xem chi phí dự án phần mềm" },
   { block: "Khối Kỹ Thuật – Nhà Máy", module: "Kho Nhà Máy (P-KHO — NVL, BTP, Thành Phẩm SX, FEFO)", director: "Toàn quyền / Giám sát", manager: "WH_HEAD: Duyệt nhập/xuất & FEFO", staff: "WH_STAFF: Cấp phát NVL, thẻ kho", accountant: "Đối soát tồn kho nhà máy" },
   { block: "Khối Kỹ Thuật – Nhà Máy", module: "Cung Ứng Kỹ Thuật (P-KHO — PR/PO NVL & Hóa Chất SX)", director: "Duyệt PR vượt hạn mức & PO", manager: "PUR_HEAD: Duyệt PR/PO kỹ thuật", staff: "PUR_STAFF: Lập PR/PO, CO/CQ", accountant: "Đối soát công nợ NCC SX" },
   { block: "Khối Kỹ Thuật – Nhà Máy", module: "Nghiên Cứu & Phát Triển R&D (P-RD)", director: "Phê duyệt ý tưởng & Cổng giai đoạn", manager: "rd_head / RD_HEAD: Duyệt ELN & Chuyển giao", staff: "rd_staff / RD_STAFF: ELN & Thử nghiệm", accountant: "Theo dõi chi phí đề tài" },
   { block: "Khối Kỹ Thuật – Nhà Máy", module: "Sản Xuất Kit IVD & Tách Chiết (P-KIT)", director: "Giám sát lệnh & Giải phóng", manager: "kit_head / KIT_HEAD: BOM, Lệnh SX, eBR", staff: "kit_staff / KIT_STAFF: Pha chế & Ghi eBR", accountant: "Giá thành lệnh SX Kit" },
   { block: "Khối Kỹ Thuật – Nhà Máy", module: "Tổng Hợp Oligo & Tinh Sạch HPLC (P-OLIGO)", director: "Giám sát & Phê duyệt", manager: "oligo_head / OLIGO_HEAD: Duyệt mẻ & Giao", staff: "oligo_staff / OLIGO_STAFF: Tổng hợp & HPLC", accountant: "Đối soát sản lượng Oligo" },
-  { block: "Khối Kỹ Thuật – Nhà Máy", module: "Kỹ Thuật Công Nghệ – Thiết Bị & Phần Mềm (KTCN / P-DEVICE)", director: "Duyệt phát hành & Ngân sách", manager: "device_head / DEV_HEAD: DMR, ECO, DHR", staff: "device_staff / DEV_STAFF: Lắp ráp & PM", accountant: "Vật tư & Tài sản thiết bị" },
+  { block: "Khối Kỹ Thuật – Nhà Máy", module: "Kỹ Thuật Công Nghệ – Thiết Bị (KTCN / P-DEVICE)", director: "Duyệt phát hành & Ngân sách", manager: "device_head / DEV_HEAD: DMR, ECO, DHR", staff: "device_staff / DEV_STAFF: Lắp ráp & Bảo hành", accountant: "Vật tư & Tài sản thiết bị" },
   { block: "Khối Kỹ Thuật – Nhà Máy", module: "Đảm Bảo & Kiểm Soát Chất Lượng (QC/QA – P-QA)", director: "Duyệt thu hồi & Nhân nhượng", manager: "qa_qc_lead / QMS_HEAD: Giải phóng lô & COA", staff: "qa_qc / QC_ANALYST: IQC/IPQC/FQC & CAPA", accountant: "Hồ sơ lô hàng lỗi NCR" },
   { block: "Điều Hành & Văn Phòng", module: "Pháp Chế & Hợp Đồng Thầu", director: "Phê duyệt ký", manager: "Thẩm định pháp lý", staff: "Soạn thảo hồ sơ", accountant: "Lưu trữ hợp đồng" },
   { block: "Điều Hành & Văn Phòng", module: "Sổ Hóa Đơn & Doanh Thu (Hành Chính – Kế Toán)", director: "Toàn quyền", manager: "Xem doanh thu", staff: "Xem doanh số cá nhân", accountant: "Xuất & đính kèm HĐ" },
@@ -3559,9 +3560,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                       <option value="oligo_head">Trưởng Phòng Tổng Hợp Oligo (oligo_head)</option>
                       <option value="oligo_staff">Kỹ Thuật Viên Tổng Hợp Oligo (oligo_staff)</option>
                       <option value="device_head">Trưởng Phòng Kỹ Thuật Công Nghệ – Thiết Bị (device_head)</option>
-                      <option value="it_head">Trưởng Phòng IT (it_head)</option>
-                      <option value="it_staff">Nhân Viên IT / Nghiên Cứu Phần Mềm (it_staff)</option>
-                      <option value="device_staff">Kỹ Sư Thiết Bị / Phần Mềm KTCN (device_staff)</option>
+                      <option value="device_staff">Kỹ Sư Thiết Bị KTCN (device_staff)</option>
                       <option value="qa_qc_lead">Trưởng Bộ Phận QA/QC Nhà Máy (qa_qc_lead)</option>
                       <option value="qa_qc">Chuyên Viên QA/QC &amp; ISO 13485 (qa_qc)</option>
                     </optgroup>
@@ -3574,6 +3573,8 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                       <option value="sales_admin">Sales Admin — Đơn hàng, Kho &amp; Cung ứng KD (sales_admin)</option>
                       <option value="sales_rep">Chuyên Viên Kinh Doanh / Quản Lý Sản Phẩm (sales_rep)</option>
                       <option value="marketing">Nhân Viên Marketing (marketing)</option>
+                <option value="it_head">Trưởng Phòng IT (it_head)</option>
+                <option value="it_staff">Nhân Viên IT / Nghiên Cứu Phần Mềm (it_staff)</option>
                     </optgroup>
                     <optgroup label="🏢 Kho Kinh Doanh (Hàng Thương Mại & Giao Hàng SO)">
                       <option value="warehouse_lead">Trưởng Bộ Phận Kho Kinh Doanh (warehouse_lead)</option>
@@ -3955,6 +3956,8 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                       <option value="sales_admin">sales_admin (Sales Admin — Đơn hàng, Kho &amp; Cung ứng KD)</option>
                       <option value="sales_rep">sales_rep (Chuyên viên Kinh Doanh / PM)</option>
                       <option value="marketing">marketing (Nhân viên Marketing)</option>
+                <option value="it_head">it_head (Trưởng phòng IT)</option>
+                <option value="it_staff">it_staff (Nhân viên IT / Nghiên cứu phần mềm)</option>
                       <option value="app_head">app_head (Trưởng / Phó phòng Ứng dụng APP)</option>
                       <option value="app_rep">app_rep (Chuyên viên Ứng dụng / KT Thiết bị APP)</option>
                       <option value="warehouse_lead">warehouse_lead (Trưởng Kho Kinh Doanh)</option>
@@ -3977,9 +3980,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                       <option value="oligo_head">oligo_head (Trưởng phòng Tổng hợp Oligo)</option>
                       <option value="oligo_staff">oligo_staff (Nhân viên Tổng hợp Oligo)</option>
                       <option value="device_head">device_head (Trưởng phòng KTCN)</option>
-                      <option value="it_head">it_head (Trưởng phòng IT)</option>
-                      <option value="it_staff">it_staff (Nhân viên IT / Nghiên cứu phần mềm)</option>
-                      <option value="device_staff">device_staff (Kỹ sư Thiết bị / Phần mềm KTCN)</option>
+                      <option value="device_staff">device_staff (Kỹ sư Thiết bị KTCN)</option>
                       <option value="qa_qc_lead">qa_qc_lead (Quản lý QC/QA Nhà máy)</option>
                       <option value="qa_qc">qa_qc (Nhân viên QC / ISO)</option>
                     </optgroup>
