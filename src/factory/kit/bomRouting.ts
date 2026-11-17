@@ -1,5 +1,5 @@
 import { z } from "zod/v3";
-import type { Tx } from "../core/db";
+import { onCommit, type Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
 import { authorize, authorizeAnywhere, hasFactoryPermission, type AuthzActor } from "../core/authz";
 import { conflict, invalid, notFound } from "../core/errors";
@@ -2754,7 +2754,10 @@ export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
     `);
   }
 
-  kitBomRoutingIfuSchemaEnsured = true;
+  // Only once committed: if this request's transaction rolls back (deadlock, error), the DDL above is undone too
+  onCommit(tx, () => {
+    kitBomRoutingIfuSchemaEnsured = true;
+  });
 }
 
 export async function updateBomLabelIfuSpec(tx: Tx, actor: AuthzActor, bomId: string, input: Record<string, unknown>) {

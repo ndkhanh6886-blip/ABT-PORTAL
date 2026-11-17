@@ -46,18 +46,43 @@ export async function closeFactoryPool(): Promise<void> {
 
 export type Tx = PoolClient;
 
+const commitHooks = new WeakMap<Tx, Array<() => void>>();
+
+/**
+ * Runs `fn` once the current transaction of `tx` has committed (dropped if it rolls back). For a client that is not
+ * inside `withTransaction` (tests, scripts) it runs at once. Use it for process-level "already done" flags, so a
+ * rolled-back transaction never leaves the flag set while its work was undone.
+ */
+export function onCommit(tx: Tx, fn: () => void): void {
+  const hooks = commitHooks.get(tx);
+  if (hooks) hooks.push(fn);
+  else fn();
+}
+
 /** Runs `fn` in one transaction; rolls back on any error. */
 export async function withTransaction<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
   const client = await getFactoryPool().connect();
+  const hooks: Array<() => void> = [];
+  commitHooks.set(client, hooks);
   try {
     await client.query("BEGIN");
     const result = await fn(client);
     await client.query("COMMIT");
+    commitHooks.delete(client);
+    for (const h of hooks) {
+      try { h(); } catch { /* a hook never fails the committed request */ }
+    }
     return result;
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;
   } finally {
+    commitHooks.delete(client);
     client.release();
   }
+}
+
+/** deadlock_detected / serialization_failure: the transaction was rolled back and can simply run again. */
+export function isRetryableTxError(error: any): boolean {
+  return error?.code === "40P01" || error?.code === "40001";
 }
