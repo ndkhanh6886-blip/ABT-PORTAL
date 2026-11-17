@@ -89,6 +89,8 @@ describe("Kit tách chiết máy — mã phụ → vật tư cấp kèm tự tr�
 
     const order = await withTransaction((tx) => createProductionOrder(tx, operator, { ...base, accessory_set: "HM.A:B32" }));
     expect(order.accessory_set).toBe("HM.A:B32");
+    const lotRow = (await getFactoryPool().query("SELECT l.code FROM inv.lot l JOIN kit.production_order o ON o.lot_id = l.id WHERE o.id = $1", [order.id])).rows[0];
+    expect(lotRow.code).toMatch(/^B\d{4,}\d{3,4}\.B32$/);
 
     await act(productionOrderMachine, operator, order.id, "confirm");
     const acc = (await getFactoryPool().query("SELECT * FROM kit.order_accessory_consumption WHERE order_id = $1", [order.id])).rows;

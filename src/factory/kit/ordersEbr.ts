@@ -2126,6 +2126,14 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
   if (isPcrKit && !customLotCode && resolvedTubeCode) {
     customLotCode = await generateAbtStructuredKitLotCode(tx, mfgDate, resolvedSupplyForm, resolvedTubeCode);
   }
+  // Kit tách chiết máy: mã phụ hiển thị ở đuôi số lô, vd B2611001.B32 (lô tự sinh hoặc lô người dùng gõ)
+  if (accessorySetKey) {
+    const variant = String(findAccessorySet(accessorySetKey)?.variant || "").toUpperCase();
+    if (variant) {
+      if (!customLotCode) customLotCode = await generateAbtStructuredKitLotCode(tx, mfgDate, null, null);
+      if (!customLotCode.toUpperCase().endsWith(`.${variant}`)) customLotCode = `${customLotCode.toUpperCase()}.${variant}`;
+    }
+  }
   if (customLotCode) {
     const dup = await tx.query("SELECT 1 FROM inv.lot WHERE lower(code) = lower($1) LIMIT 1", [customLotCode]);
     if (dup.rowCount) throw invalid(`Mã số lô '${customLotCode}' đã tồn tại trong hệ thống kho.`);
