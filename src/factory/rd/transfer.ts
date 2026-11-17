@@ -985,7 +985,7 @@ export async function getProjectTransferPrefill(tx: Tx, actor: AuthzActor, proje
   await authorize(tx, actor, "rd.view", proj.owner_org_unit_id);
 
   const targetDomain = ["KIT", "OLIGO", "DEVICE", "SOFTWARE"].includes(proj.target_domain) ? proj.target_domain : "KIT";
-  const targetModule = targetDomain === "SOFTWARE" ? "DEVICE" : targetDomain;
+  const targetModule = targetDomain === "SOFTWARE" ? "IT" : targetDomain;
   const targetUnit = (
     await tx.query("SELECT id FROM core.org_unit WHERE module_key = $1 AND status = 'ACTIVE' LIMIT 1", [targetModule])
   ).rows[0];

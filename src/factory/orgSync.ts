@@ -10,6 +10,7 @@ export const FACTORY_MODULE_TO_PORTAL_DEPT: Record<string, string> = {
   KIT: "Sản xuất",
   OLIGO: "Tổng hợp Oligo",
   DEVICE: "KTCN",
+  IT: "IT",
   QA: "QC/QA",
   WH: "Cung ứng Kho",
 };
@@ -39,6 +40,25 @@ export function inferFactoryRoleCode(moduleKey: string | null, portalRole?: stri
   // team leaders ("Trưởng nhóm") get the staff role; department heads, deputies, directors the head role
   const isHead = r.includes("head") || r.includes("lead") || r.includes("admin") || r.includes("director") || isDepartmentLeaderPosition(p) || p.includes("giám đốc");
   return `${moduleKey}_${isHead ? "HEAD" : "STAFF"}`;
+}
+
+/**
+ * Phòng IT tách khỏi KTCN: nhân sự thuộc phòng IT được chuyển hồ sơ nhà máy sang đơn vị P-IT và
+ * thu hồi vai trò Kỹ thuật – Thiết bị (DEVICE_HEAD / DEVICE_STAFF) đã cấp khi còn thuộc KTCN.
+ */
+async function moveUserOutOfDeviceToIt(
+  db: { query: (sql: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number | null }> },
+  userId: number,
+  itOrgId: string
+): Promise<void> {
+  await db.query("UPDATE core.user_profile SET org_unit_id = $2, updated_at = now() WHERE user_id = $1 AND org_unit_id IS DISTINCT FROM $2", [userId, itOrgId]);
+  await db.query(
+    `UPDATE core.user_role
+        SET revoked_at = now(), revoked_by = 1, revoke_reason = 'Chuyển sang Phòng IT (tách khỏi KTCN)'
+      WHERE user_id = $1 AND revoked_at IS NULL
+        AND role_id IN (SELECT id FROM core.role WHERE code IN ('DEVICE_HEAD', 'DEVICE_STAFF'))`,
+    [userId]
+  );
 }
 
 const SAFE_DEPT_SUPPORT = [
@@ -88,8 +108,10 @@ const STANDARD_FACTORY_ROLES: { code: string; name: string; desc: string; prefix
   { code: "KIT_STAFF", name: "Kỹ thuật viên Sản xuất Kit", desc: "Thực hiện các công đoạn pha chế, chia chuẩn, lắp ráp Kit và ghi nhận hồ sơ lô eBR", prefixes: ["kit.", "intake.order.view", "intake.shipment.post"], isHead: false },
   { code: "OLIGO_HEAD", name: "Trưởng phòng Tổng hợp Oligo", desc: "Toàn quyền nhận đơn Oligo, lập mẻ tổng hợp CPG, duyệt QC OD/HPLC/PAGE và giao hàng", prefixes: ["oligo.", "intake."], isHead: true },
   { code: "OLIGO_STAFF", name: "Kỹ thuật viên Tổng hợp Oligo", desc: "Vận hành máy tổng hợp CPG, cắt khử bảo vệ, tinh sạch HPLC/PAGE và đo OD", prefixes: ["oligo.", "intake.order.view", "intake.shipment.post"], isHead: false },
-  { code: "DEVICE_HEAD", name: "Trưởng phòng Kỹ thuật – Thiết bị", desc: "Toàn quyền quản lý dòng máy, DMR, phát hành lệnh lắp ráp DHR, FQC và bảo hành RMA", prefixes: ["device.", "rd.view", "rd.project.", "rd.eln.", "rd.gate.", "rd.transfer.manage", "rd.software.", "intake."], isHead: true },
+  { code: "DEVICE_HEAD", name: "Trưởng phòng Kỹ thuật – Thiết bị", desc: "Toàn quyền quản lý dòng máy, DMR, phát hành lệnh lắp ráp DHR, FQC và bảo hành RMA", prefixes: ["device.", "rd.view", "rd.project.", "rd.eln.", "rd.gate.", "rd.transfer.manage", "intake."], isHead: true },
   { code: "DEVICE_STAFF", name: "Kỹ sư Lắp ráp Thiết bị & FSE", desc: "Thực hiện lắp ráp trạm cơ khí/điện tử/firmware, chạy già hóa Burn-in và xử lý ca bảo hành", prefixes: ["device.", "rd.view", "rd.project.", "rd.transfer.manage", "intake.order.view", "intake.shipment.post"], isHead: false },
+  { code: "IT_HEAD", name: "Trưởng phòng IT", desc: "Điều hành Phòng IT: dự án phần mềm, duyệt cổng Stage-Gate, thẩm định CSV và ký phát hành phần mềm (IEC 62304)", prefixes: ["it.", "rd.view", "rd.project.", "rd.gate.", "rd.transfer.manage", "rd.software.", "intake.order.view"], isHead: true },
+  { code: "IT_STAFF", name: "Nhân viên IT / Nghiên cứu phần mềm", desc: "Phát triển phần mềm, lập yêu cầu – test case – kết quả chạy, báo cáo lỗi và lập bản phát hành nháp", prefixes: ["it.", "rd.view", "rd.project.", "rd.transfer.manage", "intake.order.view"], isHead: false },
   { code: "QA_HEAD", name: "Trưởng phòng QA/QC (ISO 13485)", desc: "Toàn quyền thẩm định QC, giải phóng lô, cấp COA, phê duyệt tài liệu SOP và đóng NCR/CAPA", prefixes: ["qms.", ...QA_CROSS_DEPT_PERMS], isHead: true },
   { code: "QA_STAFF", name: "Chuyên viên Kiểm nghiệm QC/QA", desc: "Lấy mẫu kiểm nghiệm IQC/IPQC/OQC, ghi nhận kết quả QC và lập báo cáo sự cố NCR", prefixes: ["qms.", "kit.view", "kit.ebr.check", "kit.quality.manage", "oligo.view", "device.view", "rd.view", "inv.lot.sample"], isHead: false },
   { code: "WH_HEAD", name: "Trưởng bộ phận Kho & Cung ứng Nhà máy", desc: "Toàn quyền điều phối kho nhà máy, duyệt cấp phát FEFO, kiểm kê và duyệt PR/PO nội bộ", prefixes: ["inv.", "master.", "purchase.", "intake."], isHead: true },
@@ -160,6 +182,7 @@ export async function ensureFactoryRolesAndSyncAllUsers(tx?: Tx): Promise<void> 
          status = EXCLUDED.status`,
       [userId, u.full_name || u.username, targetOrgId, u.is_active === false ? "INACTIVE" : "ACTIVE"]
     );
+    if (modKey === "IT" && targetOrgId) await moveUserOutOfDeviceToIt(db, userId, targetOrgId);
 
     const fRoleCode = inferFactoryRoleCode(modKey, u.role, u.position);
     const roleId = fRoleCode ? roleIdByCode[fRoleCode] : null;
@@ -227,6 +250,7 @@ export async function syncSinglePortalUserToFactory(opts: {
        updated_at = now()`,
     [Number(userRow.id), userRow.full_name || userRow.username, orgUnitId, userRow.is_active === false ? "INACTIVE" : "ACTIVE"]
   );
+  if (modKey === "IT" && orgUnitId) await moveUserOutOfDeviceToIt(pool, Number(userRow.id), orgUnitId);
 
   const fRoleCode = inferFactoryRoleCode(modKey, role, opts.position);
   if (fRoleCode) {

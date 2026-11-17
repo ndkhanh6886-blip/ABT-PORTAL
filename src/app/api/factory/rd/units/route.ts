@@ -10,22 +10,23 @@ export const GET = factoryRoute(async (tx, { actor, url }) => {
   if (!/^(rd|work|plan|asset|prep)\.[a-z.]+$/.test(perm)) throw invalid("Quyền không hợp lệ.");
   const allUnits = (
     await tx.query(
-      "SELECT id, code, name, module_key FROM core.org_unit WHERE status = 'ACTIVE' AND module_key IN ('RD', 'DEVICE', 'KIT', 'OLIGO') ORDER BY CASE module_key WHEN 'RD' THEN 0 WHEN 'DEVICE' THEN 1 ELSE 2 END, code"
+      "SELECT id, code, name, module_key FROM core.org_unit WHERE status = 'ACTIVE' AND module_key IN ('RD', 'DEVICE', 'IT', 'KIT', 'OLIGO') ORDER BY CASE module_key WHEN 'RD' THEN 0 WHEN 'DEVICE' THEN 1 WHEN 'IT' THEN 2 ELSE 3 END, code"
     )
   ).rows;
   const units = [];
   for (const u of allUnits) {
-    if (["RD", "DEVICE"].includes(u.module_key) && (await hasFactoryPermission(tx, actor, perm, u.id))) {
+    if (["RD", "DEVICE", "IT"].includes(u.module_key) && (await hasFactoryPermission(tx, actor, perm, u.id))) {
       units.push(u);
     }
   }
-  const targetUnits = allUnits.filter((u) => ["KIT", "OLIGO", "DEVICE", "RD"].includes(u.module_key));
+  const targetUnits = allUnits.filter((u) => ["KIT", "OLIGO", "DEVICE", "IT", "RD"].includes(u.module_key));
   const goals = await listStrategicGoals(tx, actor);
   const criteria = await listEvaluationCriteria(tx, actor);
   const templates = await listGateTemplates(tx, actor);
   const rd_staff = await listRdStaffRoster(tx, "RD");
-  // KTCN runs its own software / device projects: its pickers list KTCN staff
+  // KTCN runs its own device projects and Phòng IT its software projects: their pickers list their own staff
   const device_staff = await listRdStaffRoster(tx, "DEVICE");
+  const it_staff = await listRdStaffRoster(tx, "IT");
   const warehouses = (
     await tx.query(
       "SELECT id, code, name, owner_org_unit_id, purpose FROM master.warehouse WHERE status = 'ACTIVE' ORDER BY CASE purpose WHEN 'RD' THEN 0 ELSE 1 END, code"
@@ -37,7 +38,7 @@ export const GET = factoryRoute(async (tx, { actor, url }) => {
   const items = (
     await tx.query("SELECT id, code, name, item_type, base_uom FROM master.item WHERE status = 'ACTIVE' ORDER BY code LIMIT 500")
   ).rows;
-  return { units, targetUnits, goals, criteria, templates, warehouses, locations, items, rd_staff, device_staff };
+  return { units, targetUnits, goals, criteria, templates, warehouses, locations, items, rd_staff, device_staff, it_staff };
 });
 
 export const POST = factoryRoute(async (tx, ctx) => {

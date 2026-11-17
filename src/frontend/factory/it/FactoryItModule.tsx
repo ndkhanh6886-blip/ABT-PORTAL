@@ -17,8 +17,8 @@ export function FactoryItModule() {
   const perms = new Set(me.data?.permissions ?? []);
 
   if (me.isLoading) return <div className="text-sm text-slate-400 p-6">Đang tải…</div>;
-  if (!perms.has("device.view")) {
-    return <Empty>Bạn chưa có quyền trong phân hệ Phòng IT (Phát triển phần mềm).</Empty>;
+  if (!perms.has("it.view")) {
+    return <Empty>Bạn chưa có quyền trong Phòng IT (Phát triển phần mềm). Liên hệ quản trị viên để được cấp quyền.</Empty>;
   }
 
   return (
@@ -29,7 +29,7 @@ export function FactoryItModule() {
       <SoftwareLifecycleView />
       <ProjectsView
         domainLock="SOFTWARE"
-        ownerModule="DEVICE"
+        ownerModule="IT"
         canManage={perms.has("rd.project.manage")}
         canReviewGate={perms.has("rd.gate.review")}
         canEdit={Boolean(me.data?.is_root || perms.has("rd.project.edit"))}

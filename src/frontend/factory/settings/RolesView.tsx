@@ -32,6 +32,7 @@ const MODULE_LABEL: Record<string, string> = {
   oligo: "Tổng hợp Oligo",
   kit: "Sản xuất Kit IVD",
   device: "Kỹ thuật – Thiết bị & Bảo hành",
+  it: "Phòng IT – Phần mềm",
   rd: "Nghiên cứu & Phát triển (R&D / ELN)",
   prep: "Pha chế Hóa chất / Dung dịch",
   asset: "Thiết bị Phòng Lab & Hiệu chuẩn",

@@ -4,7 +4,7 @@ import { authorize, getPermission, grantablePermissions, hasFactoryPermission, i
 import { invalid } from "./errors";
 import { insertRecord, parseInput } from "./records";
 
-export const MODULE_KEYS = ["RD", "KIT", "OLIGO", "DEVICE", "QA", "WH", "SALES", "PURCHASE", "HR", "BOD"] as const;
+export const MODULE_KEYS = ["RD", "KIT", "OLIGO", "DEVICE", "IT", "QA", "WH", "SALES", "PURCHASE", "HR", "BOD"] as const;
 
 const createOrgUnitSchema = z.object({
   code: z
@@ -35,6 +35,7 @@ const STRICT_DEPT_MODULE: Record<string, string> = {
   kit: "KIT",
   oligo: "OLIGO",
   device: "DEVICE",
+  it: "IT",
   rd: "RD",
   qms: "QA",
 };
@@ -69,7 +70,7 @@ export async function heldPermissions(tx: Tx, actor: AuthzActor): Promise<string
       isGlobal ||
       !ownerMod ||
       r.module_key === ownerMod ||
-      (mod === "rd" && r.module_key === "DEVICE") ||
+      (mod === "rd" && (r.module_key === "DEVICE" || r.module_key === "IT")) ||
       (r.module_key === "QA" && isQaCrossDeptPermission(code));
     if (isAllowedInScope) codes.add(code);
   }

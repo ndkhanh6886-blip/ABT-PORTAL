@@ -115,6 +115,7 @@ export async function ensureFactoryBootstrapped(tx: Tx, actor: AuthzActor): Prom
     { code: "P-KIT", name: "Phòng Sản xuất Kit Chẩn đoán", module_key: "KIT" },
     { code: "P-OLIGO", name: "Phòng Tổng hợp Oligo", module_key: "OLIGO" },
     { code: "P-DEVICE", name: "Phòng Kỹ thuật – Thiết bị", module_key: "DEVICE" },
+    { code: "P-IT", name: "Phòng IT – Phát triển phần mềm", module_key: "IT" },
     { code: "P-QA", name: "Phòng Đảm bảo & Kiểm soát Chất lượng (QA/QC)", module_key: "QA" },
     { code: "P-KHO", name: "Kho Vật tư & Thành phẩm Nhà máy", module_key: "WH" },
   ];

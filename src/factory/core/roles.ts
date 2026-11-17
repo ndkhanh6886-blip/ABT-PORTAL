@@ -213,6 +213,7 @@ const STRICT_DEPT_MODULE_MAP: Record<string, string> = {
   kit: "KIT",
   oligo: "OLIGO",
   device: "DEVICE",
+  it: "IT",
   rd: "RD",
   qms: "QA",
   inv: "WH",
@@ -344,7 +345,7 @@ export async function setUserCustomPermission(
       if (g.module_key === "QA" && isQaCrossDeptPermission(c)) return true;
       if ((g.module_key === "WH" || g.module_key === "PURCHASE") && isWhCrossDeptPermission(c)) return true;
       if (ownerMod) {
-        return g.module_key === ownerMod || (mod === "rd" && g.module_key === "DEVICE");
+        return g.module_key === ownerMod || (mod === "rd" && (g.module_key === "DEVICE" || g.module_key === "IT"));
       }
       return false;
     });

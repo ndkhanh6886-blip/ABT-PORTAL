@@ -80,7 +80,7 @@ export interface RdStaffMember {
  * department is that unit or one of its sub-units, or who hold an active role scoped there. (The former query had
  * `OR display_name IS NOT NULL`, true for everyone, so the whole company appeared — cut at 30 names.)
  */
-export async function listRdStaffRoster(tx: Tx, moduleKey: "RD" | "DEVICE" = "RD"): Promise<RdStaffMember[]> {
+export async function listRdStaffRoster(tx: Tx, moduleKey: "RD" | "DEVICE" | "IT" = "RD"): Promise<RdStaffMember[]> {
   await ensureRdProjectOpsSchema(tx);
   const roster: RdStaffMember[] = [];
 
@@ -367,8 +367,8 @@ export async function getProjectOpsOverview(tx: Tx, actor: AuthzActor, projectId
 }
 
 const quickProjectSchema = z.object({
-  // department running the project: R&D by default, KTCN (module DEVICE) for its software and device projects
-  owner_module: z.enum(["RD", "DEVICE"]).default("RD"),
+  // department running the project: R&D by default, KTCN (module DEVICE) for its device projects, Phòng IT (module IT) for software projects
+  owner_module: z.enum(["RD", "DEVICE", "IT"]).default("RD"),
   project_type: z.enum(["NEW_PRODUCT", "IMPROVEMENT", "PROCESS", "RESEARCH"]).default("NEW_PRODUCT"),
   target_domain: z.enum(["KIT", "OLIGO", "DEVICE", "SOFTWARE", "OTHER"]).default("KIT"),
   ivd_class: z.enum(["CLASS_A", "CLASS_B", "CLASS_C", "CLASS_D", "RUO", "NA"]).default("CLASS_B"),
@@ -393,7 +393,15 @@ export async function createQuickRdProject(tx: Tx, actor: AuthzActor, input: unk
   const rdUnit = (
     await tx.query("SELECT id FROM core.org_unit WHERE module_key = $1 AND status = 'ACTIVE' LIMIT 1", [data.owner_module])
   ).rows[0];
-  if (!rdUnit) throw invalid(data.owner_module === "DEVICE" ? "Chưa cấu hình Phòng Kỹ thuật Công nghệ (KTCN)." : "Chưa cấu hình Phòng Nghiên cứu & Phát triển (R&D).");
+  if (!rdUnit) {
+    throw invalid(
+      data.owner_module === "IT"
+        ? "Chưa cấu hình Phòng IT."
+        : data.owner_module === "DEVICE"
+          ? "Chưa cấu hình Phòng Kỹ thuật Công nghệ (KTCN)."
+          : "Chưa cấu hình Phòng Nghiên cứu & Phát triển (R&D)."
+    );
+  }
 
   const project = await createProject(tx, actor, {
     name: data.name,
@@ -994,7 +1002,7 @@ export async function createTransferFromProjectBom(tx: Tx, actor: AuthzActor, in
   const targetDomain = ["KIT", "OLIGO", "DEVICE", "SOFTWARE"].includes(p.target_domain) ? p.target_domain : "KIT";
   const targetDept = (
     await tx.query("SELECT id FROM core.org_unit WHERE module_key = $1 AND status = 'ACTIVE' LIMIT 1", [
-      targetDomain === "SOFTWARE" ? "DEVICE" : targetDomain,
+      targetDomain === "SOFTWARE" ? "IT" : targetDomain,
     ])
   ).rows[0];
   if (!targetDept) throw invalid(`Không tìm thấy phòng ban nhận chuyển giao cho mảng ${targetDomain}.`);

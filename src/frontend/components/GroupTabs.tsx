@@ -100,7 +100,7 @@ export function BusinessTabs({ active, onChange }: { active: MainTab; onChange: 
         { tab: "warehouse", label: "Quản Lý Kho", icon: Package, show: can("warehouse.view") },
         { tab: "application", label: "Application", icon: FlaskConical, show: can("application.view") },
         { tab: "procurement", label: "Cung Ứng", icon: ShoppingCart, show: can("procurement.view") },
-        { tab: "factory-it", label: "Phòng IT", icon: Code2, show: hasAny(me.data, ["device"]) },
+        { tab: "factory-it", label: "Phòng IT", icon: Code2, show: hasAny(me.data, ["it"]) },
       ]}
     />
   );
@@ -120,7 +120,7 @@ export function TechnicalTabs({ active, onChange }: { active: MainTab; onChange:
         { tab: "factory-rd", label: "Nghiên Cứu R&D", icon: Microscope, show: hasAny(me.data, ["rd", "work.plan"]) },
         { tab: "factory-kit", label: "Sản Xuất Kit", icon: Package, show: hasAny(me.data, ["kit"]) },
         { tab: "factory-oligo", label: "Tổng Hợp Oligo", icon: FlaskConical, show: hasAny(me.data, ["oligo"]) },
-        { tab: "factory-device", label: "Kỹ Thuật – Thiết Bị", icon: Cpu, show: hasAny(me.data, ["device"]) },
+        { tab: "factory-device", label: "Kỹ Thuật – Thiết Bị", icon: Cpu, show: hasAny(me.data, ["it"]) },
         { tab: "factory-qa", label: "QA/QC", icon: ShieldCheck, show: hasAny(me.data, ["qms.qc.view"]) },
         { tab: "factory-purchase", label: "Cung Ứng NVL", icon: PackageCheck, show: hasAny(me.data, ["purchase"]) },
         { tab: "factory-warehouse", label: "Kho Nhà Máy", icon: Warehouse, show: hasAny(me.data, ["inv", "master"]) },

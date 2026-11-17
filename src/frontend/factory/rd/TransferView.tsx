@@ -170,7 +170,7 @@ export function TransferView({ canManage, canAccept, section = "all" }: { canMan
   const targetUnits = ctx.data?.targetUnits ?? [];
 
   const findUnitForDomain = (domain: string): string => {
-    const modKey = domain === "SOFTWARE" ? "DEVICE" : domain;
+    const modKey = domain === "SOFTWARE" ? "IT" : domain;
     return targetUnits.find((u) => u.module_key === modKey)?.id ?? targetUnits[0]?.id ?? "";
   };
 

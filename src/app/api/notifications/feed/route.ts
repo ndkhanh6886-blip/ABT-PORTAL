@@ -374,7 +374,7 @@ export async function GET(req: NextRequest) {
         recipientDept: p.dept_name || (isSw ? "Kỹ thuật – Thiết bị" : "Nghiên cứu R&D"),
         targetRoles: ["admin", isSw ? "factory_device" : "factory_rd"],
         targetId: p.code,
-        link: { tab: isSw ? "factory-device" : "factory-rd", itemId: p.id },
+        link: { tab: isSw ? "factory-it" : "factory-rd", itemId: p.id },
       });
     }
 

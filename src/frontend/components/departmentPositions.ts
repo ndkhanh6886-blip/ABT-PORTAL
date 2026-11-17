@@ -160,9 +160,9 @@ export const DEPARTMENT_POSITIONS: Record<string, DepartmentPositionGroup> = {
     badgeColor: "bg-cyan-100 text-cyan-800 border-cyan-200 dark:bg-cyan-950/50 dark:text-cyan-300 dark:border-cyan-800",
     borderTheme: "border-cyan-500",
     positions: [
-      { title: "Trưởng phòng IT", defaultRole: "device_head", level: "Manager", desc: "Điều hành phòng IT; duyệt cổng dự án và ký phát hành phần mềm (chưa bố trí: Ban Giám Đốc duyệt thay)" },
-      { title: "Nhân viên nghiên cứu phần mềm", defaultRole: "device_staff", level: "Staff", desc: "Phát triển phần mềm phân tích và điều khiển thiết bị, phần mềm nội bộ (hồ sơ thiết kế IEC 62304)" },
-      { title: "Nhân viên IT", defaultRole: "staff", level: "Staff", desc: "IT chung toàn công ty: máy tính, mạng, máy chủ, tài khoản, sao lưu" }
+      { title: "Trưởng phòng IT", defaultRole: "it_head", level: "Manager", desc: "Điều hành phòng IT; duyệt cổng dự án và ký phát hành phần mềm (chưa bố trí: Ban Giám Đốc duyệt thay)" },
+      { title: "Nhân viên nghiên cứu phần mềm", defaultRole: "it_staff", level: "Staff", desc: "Phát triển phần mềm phân tích và điều khiển thiết bị, phần mềm nội bộ (hồ sơ thiết kế IEC 62304)" },
+      { title: "Nhân viên IT", defaultRole: "it_staff", level: "Staff", desc: "IT chung toàn công ty: máy tính, mạng, máy chủ, tài khoản, sao lưu" }
     ]
   },
   "QC/QA": {

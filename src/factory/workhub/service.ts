@@ -118,6 +118,7 @@ const MODULE_KEY_TO_META: Record<string, OrgMeta> = {
   KIT: { dept: "Sản Xuất Kit", targetTab: "factory-kit", defaultLocation: "Phòng sạch Sản xuất Kit", moduleKey: "KIT" },
   OLIGO: { dept: "Tổng Hợp Oligo", targetTab: "factory-oligo", defaultLocation: "Trạm Tổng hợp Oligo", moduleKey: "OLIGO" },
   DEVICE: { dept: "Kỹ Thuật – Thiết Bị", targetTab: "factory-device", defaultLocation: "Xưởng Kỹ thuật – Thiết bị", moduleKey: "DEVICE" },
+  IT: { dept: "Phòng IT", targetTab: "factory-it", defaultLocation: "Phòng IT", moduleKey: "IT" },
   QA: { dept: "QA/QC", targetTab: "factory-qa", defaultLocation: "Phòng Kiểm nghiệm QA/QC", moduleKey: "QA" },
   WH: { dept: "Kho Nhà Máy", targetTab: "factory-warehouse", defaultLocation: "Kho Nhà Máy", moduleKey: "WH" },
   PURCHASE: { dept: "Cung Ứng Kỹ Thuật", targetTab: "factory-purchase", defaultLocation: "Phòng Cung ứng Kỹ thuật", moduleKey: "PURCHASE" },
@@ -398,7 +399,7 @@ export async function getFactoryWorkhubData(tx: Tx, currentUserId?: number): Pro
   );
 
   for (const w of wbsRows) {
-    const om = resolveOrgMeta(w.owner_org_unit_id, orgMap, String(w.target_domain || "").toUpperCase() === "DEVICE" || String(w.target_domain || "").toUpperCase() === "SOFTWARE" ? "DEVICE" : "RD");
+    const om = resolveOrgMeta(w.owner_org_unit_id, orgMap, String(w.target_domain || "").toUpperCase() === "SOFTWARE" ? "IT" : String(w.target_domain || "").toUpperCase() === "DEVICE" ? "DEVICE" : "RD");
     const isDeviceProj = om.dept === "Kỹ Thuật – Thiết Bị";
     const stUpper = String(w.status || "TODO").toUpperCase();
     const isDone = stUpper === "DONE" || stUpper === "COMPLETED";
@@ -466,7 +467,7 @@ export async function getFactoryWorkhubData(tx: Tx, currentUserId?: number): Pro
     const om = resolveOrgMeta(
       p.owner_org_unit_id,
       orgMap,
-      String(p.target_domain || "").toUpperCase() === "DEVICE" || String(p.target_domain || "").toUpperCase() === "SOFTWARE" ? "DEVICE" : "RD"
+      String(p.target_domain || "").toUpperCase() === "SOFTWARE" ? "IT" : String(p.target_domain || "").toUpperCase() === "DEVICE" ? "DEVICE" : "RD"
     );
     const isDeviceProj = om.dept === "Kỹ Thuật – Thiết Bị";
     const mem = projectMemberMap.get(String(p.id)) || { names: [], ids: [] };
@@ -568,7 +569,7 @@ export async function getFactoryWorkhubData(tx: Tx, currentUserId?: number): Pro
       LIMIT 150`
   );
   for (const e of elnRows) {
-    const om = resolveOrgMeta(e.org_unit_id || e.project_org_unit_id, orgMap, String(e.target_domain || "").toUpperCase() === "DEVICE" || String(e.target_domain || "").toUpperCase() === "SOFTWARE" ? "DEVICE" : "RD");
+    const om = resolveOrgMeta(e.org_unit_id || e.project_org_unit_id, orgMap, String(e.target_domain || "").toUpperCase() === "SOFTWARE" ? "IT" : String(e.target_domain || "").toUpperCase() === "DEVICE" ? "DEVICE" : "RD");
     const st = String(e.status || "PLANNED").toUpperCase();
     const isDone = st === "APPROVED";
     const kanbanStatus: "TODO" | "IN_PROGRESS" | "DONE" = isDone

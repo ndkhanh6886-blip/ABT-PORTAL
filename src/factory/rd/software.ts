@@ -447,7 +447,7 @@ const validationSchema = z.object({
 export async function createValidation(tx: Tx, actor: AuthzActor, input: unknown) {
   const d = parseInput(validationSchema, input);
   const unit =
-    d.org_unit_id ?? (await tx.query("SELECT id FROM core.org_unit WHERE module_key = 'DEVICE' AND status = 'ACTIVE' LIMIT 1")).rows[0]?.id;
+    d.org_unit_id ?? (await tx.query("SELECT id FROM core.org_unit WHERE module_key = 'IT' AND status = 'ACTIVE' LIMIT 1")).rows[0]?.id;
   if (!unit) throw invalid("Chưa cấu hình Phòng Kỹ thuật Công nghệ (KTCN).");
   await authorize(tx, actor, "rd.project.manage", unit);
   return insertRecord<SwValidationRow>(tx, actor, "rd.sw_validation", "rd_sw_validation", {

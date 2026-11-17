@@ -95,9 +95,9 @@ describe("org structure, commercial vs factory separation & migration", () => {
     expect(businessBlock?.keys).toContain("IT");
     expect(canonicalDepartment("IT")).toBe("IT");
     expect(canonicalDepartment("Phòng IT")).toBe("IT");
-    expect(inferFactoryModuleFromDept("IT", "device_staff")).toBe("DEVICE");
-    expect(inferSystemRoleFromPosition("IT", "Nhân viên IT")).toBe("staff");
-    expect(inferSystemRoleFromPosition("IT", "Nhân viên nghiên cứu phần mềm")).toBe("device_staff");
+    expect(inferFactoryModuleFromDept("IT", "it_staff")).toBe("IT");
+    expect(inferSystemRoleFromPosition("IT", "Nhân viên IT")).toBe("it_staff");
+    expect(inferSystemRoleFromPosition("IT", "Nhân viên nghiên cứu phần mềm")).toBe("it_staff");
     expect(DEPT_KEYS_BY_BLOCK.map((b) => b.block)).toEqual([
       "Điều Hành",
       "Khối Văn Phòng",

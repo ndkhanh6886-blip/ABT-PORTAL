@@ -17,4 +17,5 @@ import "./prep/service";
 import "./plan/service";
 import "./rd/permissions";
 import "./device/permissions";
+import "./it/permissions";
 import "./kit/permissions";

@@ -20,6 +20,7 @@ const MODULE_LABEL: Record<string, string> = {
   KIT: "Sản xuất Kit",
   OLIGO: "Tổng hợp Oligo",
   DEVICE: "Kỹ thuật-Công nghệ (thiết bị)",
+  IT: "Phòng IT (phần mềm)",
   QA: "QA/QC",
   WH: "Kho",
   PURCHASE: "Cung ứng NVL",

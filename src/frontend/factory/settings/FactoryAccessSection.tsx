@@ -101,12 +101,12 @@ function grantAppliesToDept(grant: Grant, permCode: string, deptUnitKey: string 
   if ((grant.scope_module_key === "WH" || grant.scope_module_key === "PURCHASE") && WH_CROSS_DEPT_SET.has(permCode)) {
     return true;
   }
-  if (grant.scope_module_key === "DEVICE" && permCode.startsWith("rd.")) {
+  if ((grant.scope_module_key === "DEVICE" || grant.scope_module_key === "IT") && permCode.startsWith("rd.")) {
     return true;
   }
   if (
     grant.scope_module_key &&
-    ["RD", "KIT", "OLIGO", "DEVICE", "QA", "WH", "PURCHASE"].includes(grant.scope_module_key) &&
+    ["RD", "KIT", "OLIGO", "DEVICE", "IT", "QA", "WH", "PURCHASE"].includes(grant.scope_module_key) &&
     (permCode.startsWith("prep.") ||
       permCode.startsWith("plan.") ||
       permCode.startsWith("asset.") ||
@@ -142,6 +142,7 @@ export const FACTORY_DEPTS: { key: string; short: string; name: string; modules:
   { key: "kit", short: "Sản xuất Kit", name: "Phòng Sản xuất Kit IVD (P-KIT)", modules: ["kit"], unit: "KIT" },
   { key: "oligo", short: "Tổng hợp Oligo", name: "Phòng Tổng hợp Oligo (P-OLIGO)", modules: ["oligo", "prep", "plan"], unit: "OLIGO" },
   { key: "device", short: "KTCN – Thiết bị", name: "Phòng Kỹ thuật Công nghệ & Thiết bị (P-DEVICE)", modules: ["device", "asset"], unit: "DEVICE" },
+  { key: "it", short: "Phòng IT", name: "Phòng IT – Phát triển phần mềm (P-IT, Khối Kinh doanh)", modules: ["it"], unit: "IT" },
   { key: "qa", short: "QC/QA Nhà máy", name: "Phòng Đảm bảo & Kiểm soát Chất lượng ISO 13485 (P-QA)", modules: ["qms"], unit: "QA" },
   { key: "wh", short: "Kho Nhà máy (P-KHO)", name: "Kho NVL, Hóa chất, BTP & Thành phẩm SX (Khối Kỹ thuật)", modules: ["inv", "master"], unit: "WH" },
   { key: "purchase", short: "Cung ứng Kỹ thuật (P-KHO)", name: "Mua sắm NVL / Hóa chất Sản xuất & NCC Kỹ thuật", modules: ["purchase"], unit: null },
@@ -229,6 +230,7 @@ const DEFAULT_DEPT_ENTRY_PERMS: Record<string, string[]> = {
   kit: ["kit.view"],
   oligo: ["oligo.view"],
   device: ["device.view"],
+  it: ["it.view"],
   qa: ["qms.qc.view"],
   wh: ["inv.stock.view", "master.data.view"],
   purchase: ["purchase.pr.view", "purchase.po.view"],
@@ -744,7 +746,7 @@ export function FactoryFeatureGroups({
         if (!allDeptPerms.length) return null;
         const deptSearchContext = `${d.short} ${d.name}`;
         const visiblePerms = isFiltering ? allDeptPerms.filter((p) => matchesFilter(p, deptSearchContext)) : allDeptPerms;
-        const allSharedKtcn = d.key === "device" ? catalogue.filter((p) => KTCN_SHARED_RD_PERM_CODES.includes(p.code)) : [];
+        const allSharedKtcn = d.key === "it" ? catalogue.filter((p) => KTCN_SHARED_RD_PERM_CODES.includes(p.code)) : [];
         const visibleSharedKtcn = isFiltering
           ? allSharedKtcn.filter((p) => matchesFilter(p, `${deptSearchContext} Dự án Stage-Gate KTCN Phần mềm R&D`))
           : allSharedKtcn;

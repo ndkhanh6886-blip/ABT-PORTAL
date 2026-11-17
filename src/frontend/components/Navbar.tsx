@@ -66,7 +66,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
   const canFactorySettings = Boolean(factoryMe.data?.permissions.length);
 
   // Khối Kinh Doanh groups the Kinh doanh modules and Phòng IT; the Navbar shows one entry for them
-  const canFactoryIt = hasAny(factoryMe.data, ["device"]);
+  const canFactoryIt = hasAny(factoryMe.data, ["it"]);
   const businessTabs = ([
     ...(["sales", "warehouse", "application", "procurement"] as const).filter((t) => can(`${t}.view`)),
     ...(canFactoryIt ? (["factory-it"] as const) : []),

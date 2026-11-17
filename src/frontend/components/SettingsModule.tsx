@@ -128,6 +128,8 @@ const ROLE_LABELS: Record<string, { label: string; color: string; desc: string }
   oligo_head: { label: "Trưởng Phòng Tổng Hợp Oligo", color: "bg-violet-100 dark:bg-violet-950/60 text-violet-800 dark:text-violet-300 border-violet-300 dark:border-violet-700", desc: "Tiếp nhận đơn Oligo, lập mẻ tổng hợp cột CPG, phê duyệt QC OD/HPLC/PAGE & xuất giao hàng" },
   oligo_staff: { label: "Kỹ Thuật Viên Tổng Hợp Oligo & HPLC", color: "bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-400 border-violet-200 dark:border-violet-800", desc: "Vận hành máy tổng hợp CPG, cắt khử bảo vệ, tinh sạch HPLC/PAGE/OPC, đo OD & chia lọ" },
   device_head: { label: "Trưởng Phòng Kỹ Thuật – Thiết Bị", color: "bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-700", desc: "Quản lý dòng máy xét nghiệm, hồ sơ DMR, phát hành lệnh lắp ráp DHR, nghiệm thu FQC & bảo hành RMA" },
+  it_head: { label: "Trưởng Phòng IT", color: "bg-cyan-100 dark:bg-cyan-950/60 text-cyan-800 dark:text-cyan-300 border-cyan-300 dark:border-cyan-700", desc: "Điều hành Phòng IT (Khối Kinh Doanh): dự án phần mềm, duyệt cổng, thẩm định CSV và ký phát hành phần mềm" },
+  it_staff: { label: "Nhân Viên IT / Nghiên Cứu Phần Mềm", color: "bg-cyan-50 dark:bg-cyan-950/40 text-cyan-700 dark:text-cyan-400 border-cyan-200 dark:border-cyan-800", desc: "IT chung và phát triển phần mềm (yêu cầu, test case, kết quả chạy, lỗi, bản phát hành nháp)" },
   device_staff: { label: "Kỹ Sư Cơ Điện Tử / Lắp Ráp DHR & FSE", color: "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800", desc: "Lắp ráp cơ khí CNC, mạch điện tử PCB, nạp Firmware, chạy già hóa Burn-in & bảo hành thiết bị" },
   marketing: { label: "Nhân Viên Marketing", color: "bg-pink-50 dark:bg-pink-950/40 text-pink-700 dark:text-pink-400 border-pink-200 dark:border-pink-800", desc: "Xem danh mục và đơn hàng kinh doanh, nội dung truyền thông sản phẩm" },
   sales_admin: { label: "Sales Admin (Đơn hàng, Kho & Cung ứng KD)", color: "bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border-blue-300 dark:border-blue-700", desc: "Đơn hàng kinh doanh, nhập / xuất Kho hàng kinh doanh, đề nghị mua và theo dõi hàng về; không có quyền phê duyệt" },
@@ -3557,6 +3559,8 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                       <option value="oligo_head">Trưởng Phòng Tổng Hợp Oligo (oligo_head)</option>
                       <option value="oligo_staff">Kỹ Thuật Viên Tổng Hợp Oligo (oligo_staff)</option>
                       <option value="device_head">Trưởng Phòng Kỹ Thuật Công Nghệ – Thiết Bị (device_head)</option>
+                      <option value="it_head">Trưởng Phòng IT (it_head)</option>
+                      <option value="it_staff">Nhân Viên IT / Nghiên Cứu Phần Mềm (it_staff)</option>
                       <option value="device_staff">Kỹ Sư Thiết Bị / Phần Mềm KTCN (device_staff)</option>
                       <option value="qa_qc_lead">Trưởng Bộ Phận QA/QC Nhà Máy (qa_qc_lead)</option>
                       <option value="qa_qc">Chuyên Viên QA/QC &amp; ISO 13485 (qa_qc)</option>
@@ -3973,6 +3977,8 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                       <option value="oligo_head">oligo_head (Trưởng phòng Tổng hợp Oligo)</option>
                       <option value="oligo_staff">oligo_staff (Nhân viên Tổng hợp Oligo)</option>
                       <option value="device_head">device_head (Trưởng phòng KTCN)</option>
+                      <option value="it_head">it_head (Trưởng phòng IT)</option>
+                      <option value="it_staff">it_staff (Nhân viên IT / Nghiên cứu phần mềm)</option>
                       <option value="device_staff">device_staff (Kỹ sư Thiết bị / Phần mềm KTCN)</option>
                       <option value="qa_qc_lead">qa_qc_lead (Quản lý QC/QA Nhà máy)</option>
                       <option value="qa_qc">qa_qc (Nhân viên QC / ISO)</option>

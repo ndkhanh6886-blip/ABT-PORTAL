@@ -22,6 +22,7 @@ export interface RdContextData {
   items: { id: string; code: string; name: string; item_type: string; base_uom: string }[];
   rd_staff?: { name: string; role: string; specialty: string; user_id?: number | null }[];
   device_staff?: { name: string; role: string; specialty: string; user_id?: number | null }[];
+  it_staff?: { name: string; role: string; specialty: string; user_id?: number | null }[];
 }
 
 export function useRdContext(perm = "rd.view") {
@@ -48,9 +49,10 @@ export const IVD_CLASS_LABEL: Record<string, string> = {
   NA: "Không áp dụng",
 };
 
-/** Staff of the department running a project: KTCN staff for a KTCN (DEVICE) unit, else R&D staff. */
+/** Staff of the department running a project: KTCN staff for a KTCN (DEVICE) unit, Phòng IT staff for an IT unit, else R&D staff. */
 export function staffOfUnit(ctx: RdContextData | undefined, unitId?: string | null) {
   const moduleKey = [...(ctx?.units ?? []), ...(ctx?.targetUnits ?? [])].find((u) => u.id === unitId)?.module_key;
+  if (moduleKey === "IT") return ctx?.it_staff ?? [];
   return (moduleKey === "DEVICE" ? ctx?.device_staff : ctx?.rd_staff) ?? [];
 }
 

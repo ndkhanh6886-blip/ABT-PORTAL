@@ -3318,7 +3318,7 @@ export function ProjectsView({
   canEdit?: boolean;
   canDelete?: boolean;
   domainLock?: string;
-  ownerModule?: "RD" | "DEVICE";
+  ownerModule?: "RD" | "DEVICE" | "IT";
 }) {
   const qc = useQueryClient();
   const ctx = useRdContext("rd.view");
@@ -3482,7 +3482,7 @@ export function ProjectsView({
   // Build unique R&D staff list from roster + project leaders + WBS assignees
   const staffOptions = Array.from(
     new Set([
-      ...((ownerModule === "DEVICE" ? ctx.data?.device_staff : ctx.data?.rd_staff)?.map((s) => s.name) ?? []),
+      ...((ownerModule === "IT" ? ctx.data?.it_staff : ownerModule === "DEVICE" ? ctx.data?.device_staff : ctx.data?.rd_staff)?.map((s) => s.name) ?? []),
       ...allProjects.map((r) => r.leader_name).filter(Boolean),
       ...allProjects.flatMap((r) => (Array.isArray(r.assignees) ? r.assignees : [])).filter(Boolean),
     ])
@@ -3626,7 +3626,7 @@ export function ProjectsView({
         {/* Quick R&D Researcher Workload Filter Bar */}
         {staffOptions.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5 mb-3 pb-2.5 border-b border-slate-100 dark:border-slate-800 text-xs">
-            <span className="font-semibold text-slate-500 mr-1">👥 Lọc nhanh theo Nhân sự {ownerModule === "DEVICE" ? "Phòng KTCN" : "Phòng R&D"}:</span>
+            <span className="font-semibold text-slate-500 mr-1">👥 Lọc nhanh theo Nhân sự {ownerModule === "IT" ? "Phòng IT" : ownerModule === "DEVICE" ? "Phòng KTCN" : "Phòng R&D"}:</span>
             <button
               type="button"
               onClick={() => setStaffFilter("")}
@@ -3712,7 +3712,7 @@ export function ProjectsView({
                 {Object.entries(IVD_CLASS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </select>
             </Field>
-            <Field label={`Chủ nhiệm đề tài / Phụ trách chính (${ownerModule === "DEVICE" ? "Phòng KTCN" : "Phòng R&D"})`}>
+            <Field label={`Chủ nhiệm đề tài / Phụ trách chính (${ownerModule === "IT" ? "Phòng IT" : ownerModule === "DEVICE" ? "Phòng KTCN" : "Phòng R&D"})`}>
               <select className={inputClass} value={leaderName} onChange={(e) => setLeaderName(e.target.value)}>
                 <option value="">-- Mặc định theo tài khoản hoặc chọn nhân sự --</option>
                 {staffOptions.map((st) => (

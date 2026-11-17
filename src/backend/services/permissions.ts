@@ -855,9 +855,9 @@ export const COMPANY_DEPARTMENTS: { key: string; code: string; block: (typeof CO
   { key: "Kinh Doanh", code: "SALES", block: "Khối Kinh Doanh", headRole: "sales_head", staffRole: "sales_rep" },
   { key: "Marketing", code: "MKT", block: "Khối Kinh Doanh", headRole: "sales_head", staffRole: "marketing" },
   { key: "APP", code: "APP", block: "Khối Kinh Doanh", headRole: "app_head", staffRole: "app_rep" },
-  // Phòng IT (thuộc Khối Kinh doanh): IT chung + nghiên cứu phần mềm. Giữ phân hệ nhà máy DEVICE để các nhân sự này vẫn
-  // dùng các dự án / hồ sơ phần mềm (IEC 62304) đã cấp quyền qua vai trò nhà máy Kỹ thuật – Thiết bị.
-  { key: "IT", code: "IT", block: "Khối Kinh Doanh", headRole: "device_head", staffRole: "device_staff", factory: "DEVICE" },
+  // Phòng IT (thuộc Khối Kinh doanh, tách riêng khỏi KTCN): IT chung + nghiên cứu phần mềm. Có phòng nhà máy riêng (IT / P-IT)
+  // để cấp quyền dự án và hồ sơ phần mềm (IEC 62304) qua vai trò nhà máy IT_HEAD / IT_STAFF.
+  { key: "IT", code: "IT", block: "Khối Kinh Doanh", headRole: "it_head", staffRole: "it_staff", factory: "IT" },
   { key: "R&D", code: "P-RD", block: "Khối Kỹ Thuật – Nhà Máy", headRole: "rd_head", staffRole: "rd_staff", factory: "RD" },
   { key: "Sản xuất", code: "P-KIT", block: "Khối Kỹ Thuật – Nhà Máy", headRole: "kit_head", staffRole: "kit_staff", factory: "KIT" },
   { key: "Tổng hợp Oligo", code: "P-OLIGO", block: "Khối Kỹ Thuật – Nhà Máy", headRole: "oligo_head", staffRole: "oligo_staff", factory: "OLIGO" },
@@ -944,6 +944,8 @@ export function inferSystemRoleFromPosition(deptStr?: string, posStr?: string, e
     "oligo_staff",
     "device_head",
     "device_staff",
+    "it_head",
+    "it_staff",
   ]);
 
   if (canonicalRoles.has(rawRole)) {
@@ -1007,7 +1009,7 @@ export function inferSystemRoleFromPosition(deptStr?: string, posStr?: string, e
   // Phòng ban thực tế của công ty: vai trò mặc định theo phòng, trừ các vị trí làm việc khác chuyên môn của phòng
   const deptDef = COMPANY_DEPARTMENTS.find((d) => d.key === canonicalDepartment(deptStr));
   if (deptDef) {
-    if (pos.includes("lái xe") || /(^|\s)it(\s|$)/.test(pos)) return "staff";
+    if (pos.includes("lái xe") || (deptDef.key !== "IT" && /(^|\s)it(\s|$)/.test(pos))) return "staff";
     // Khối Kỹ thuật – Nhà máy: the department's own role; its warehouse / purchasing work is in the factory modules
     if (deptDef.factory) return isLeaderPos ? deptDef.headRole : deptDef.staffRole;
     // Sales Admin phụ trách đơn hàng, Kho và Cung ứng hàng kinh doanh
