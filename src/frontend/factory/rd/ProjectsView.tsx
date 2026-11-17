@@ -6,7 +6,6 @@ import { ActionBar, type AllowedAction } from "../actions";
 import { api, fmtDate, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { DOMAIN_LABEL, isProjectForPerson, IVD_CLASS_LABEL, staffOfUnit, useRdContext } from "./shared";
-import { RdPermissionPanel } from "./RdPermissionPanel";
 
 const PROJ_STATUS: Record<string, [string, string]> = {
   ACTIVE: ["PENDING_QC", "Đang triển khai"],
@@ -3231,7 +3230,6 @@ export function ProjectsView({
   canReviewGate,
   canEdit = false,
   canDelete = false,
-  canManagePermissions = false,
   domainLock,
   ownerModule = "RD",
 }: {
@@ -3239,7 +3237,6 @@ export function ProjectsView({
   canReviewGate: boolean;
   canEdit?: boolean;
   canDelete?: boolean;
-  canManagePermissions?: boolean;
   domainLock?: string;
   ownerModule?: "RD" | "DEVICE";
 }) {
@@ -3251,7 +3248,6 @@ export function ProjectsView({
   const [searchQuery, setSearchQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [addingMode, setAddingMode] = useState<"NEW_PRODUCT" | "IMPROVEMENT" | null>(null);
-  const [showPermissions, setShowPermissions] = useState(false);
   const [showGateTemplateManager, setShowGateTemplateManager] = useState(false);
 
   const [name, setName] = useState("");
@@ -3447,17 +3443,6 @@ export function ProjectsView({
         })}
       </div>
 
-      {showPermissions && canManagePermissions && (
-        <RdPermissionPanel
-          title="Cài đặt Phân quyền Chỉnh sửa & Xóa Dự án R&D"
-          editPerm="rd.project.edit"
-          deletePerm="rd.project.delete"
-          editLabel="Cho phép Sửa dự án"
-          deleteLabel="Cho phép Xóa dự án"
-          onClose={() => setShowPermissions(false)}
-        />
-      )}
-
       {showGateTemplateManager && (
         <GateTemplateManagerModal
           templates={ctx.data?.templates ?? []}
@@ -3510,14 +3495,6 @@ export function ProjectsView({
             {(canManage || canEdit || canReviewGate) && (
               <Button variant="ghost" onClick={() => setShowGateTemplateManager(true)}>
                 ⚙️ Cài đặt Mẫu Gate chuẩn
-              </Button>
-            )}
-            {canManagePermissions && (
-              <Button
-                variant={showPermissions ? "primary" : "ghost"}
-                onClick={() => setShowPermissions(!showPermissions)}
-              >
-                🛡️ Phân quyền Sửa/Xóa
               </Button>
             )}
             {canManage && (

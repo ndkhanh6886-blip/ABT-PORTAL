@@ -36,7 +36,6 @@ export function FactoryRdModule() {
   const me = useFactoryMe();
   const perms = new Set(me.data?.permissions ?? []);
   const isRoot = Boolean(me.data?.is_root);
-  const canManageRoles = isRoot || perms.has("core.role.manage");
   const [tab, setTab] = useState<SubTab>("projects");
 
   const tabs: { key: SubTab; label: string; icon: React.ElementType }[] = [
@@ -93,7 +92,6 @@ export function FactoryRdModule() {
           canReviewGate={perms.has("rd.gate.review")}
           canEdit={isRoot || perms.has("rd.project.edit")}
           canDelete={isRoot || perms.has("rd.project.delete")}
-          canManagePermissions={canManageRoles}
         />
       )}
       {tab === "eln" && (
@@ -101,7 +99,6 @@ export function FactoryRdModule() {
           canWrite={perms.has("rd.eln.write")}
           canEdit={isRoot || perms.has("rd.eln.edit")}
           canDelete={isRoot || perms.has("rd.eln.delete")}
-          canManagePermissions={canManageRoles}
         />
       )}
       {tab === "samples" && (

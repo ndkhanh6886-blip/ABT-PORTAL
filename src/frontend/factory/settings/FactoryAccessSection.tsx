@@ -74,12 +74,49 @@ const WH_CROSS_DEPT_SET = new Set([
   "intake.shipment.post",
 ]);
 
+export function classifyEditDeletePermission(code: string, text: string): { isEdit: boolean; isDelete: boolean } {
+  const c = String(code || "").toLowerCase();
+  const t = String(text || "").toLowerCase();
+  if (c === "settings.view_audit" || c === "core.audit.view") {
+    return { isEdit: false, isDelete: false };
+  }
+  const isDelete =
+    c.endsWith(".delete") ||
+    c.includes(".delete_") ||
+    /(?:^|[\s(/,])(xóa|hủy báo giá|hủy phiếu)(?=$|[\s),./])/i.test(t);
+  const isEdit =
+    c.endsWith(".edit") ||
+    c.includes(".edit_") ||
+    c.startsWith("sales.edit") ||
+    c.startsWith("warehouse.edit") ||
+    /(?:^|[\s(/,])(chỉnh sửa|soạn\s*\/\s*sửa|tạo\s*\/\s*sửa)(?=$|[\s),./])/i.test(t);
+  return { isEdit, isDelete };
+}
+
 function grantAppliesToDept(grant: Grant, permCode: string, deptUnitKey: string | null, allUnits: OrgUnit[]): boolean {
   if (!grant.scope_org_unit_id || grant.scope_unit_type === "COMPANY") return true;
   if (grant.scope_module_key === "QA" && (permCode.startsWith("qms.") || QA_CROSS_DEPT_SET.has(permCode))) {
     return true;
   }
   if ((grant.scope_module_key === "WH" || grant.scope_module_key === "PURCHASE") && WH_CROSS_DEPT_SET.has(permCode)) {
+    return true;
+  }
+  if (grant.scope_module_key === "DEVICE" && permCode.startsWith("rd.")) {
+    return true;
+  }
+  if (
+    grant.scope_module_key &&
+    ["RD", "KIT", "OLIGO", "DEVICE", "QA", "WH", "PURCHASE"].includes(grant.scope_module_key) &&
+    (permCode.startsWith("prep.") ||
+      permCode.startsWith("plan.") ||
+      permCode.startsWith("asset.") ||
+      permCode.startsWith("purchase.pr.") ||
+      permCode === "qms.qc.view" ||
+      permCode === "qms.deviation.report" ||
+      permCode === "qms.ncr.propose" ||
+      permCode === "inv.stock.view" ||
+      permCode === "master.data.view")
+  ) {
     return true;
   }
   if (!deptUnitKey) {
@@ -502,22 +539,34 @@ export function FactoryAccessSection({ userId, username, isRootAdmin }: { userId
   );
 }
 
+const KTCN_SHARED_RD_PERM_CODES = [
+  "rd.project.manage",
+  "rd.project.edit",
+  "rd.project.delete",
+  "rd.gate.review",
+  "rd.software.release",
+];
+
 /**
  * Interactive feature list of Khối Kỹ thuật – Nhà máy in "Phân Quyền Tính Năng Chi Tiết Trong Từng Phân Hệ".
  * Respects role scope isolation and allows admins to grant, revoke (even for role-inherited permissions),
- * bulk-toggle a department, or reset overrides per user — applied immediately and audited.
+ * bulk-toggle a department, filter Sửa/Xóa permissions, or reset overrides per user — applied immediately and audited.
  */
 export function FactoryFeatureGroups({
   userId,
   username,
   isRootAdmin,
   startIndex,
+  searchQuery = "",
+  onlyEditDelete = false,
   onSummaryChange,
 }: {
   userId: number;
   username: string;
   isRootAdmin: boolean;
   startIndex: number;
+  searchQuery?: string;
+  onlyEditDelete?: boolean;
   onSummaryChange?: (summary: { active: number; total: number }) => void;
 }) {
   const qc = useQueryClient();
@@ -566,6 +615,111 @@ export function FactoryFeatureGroups({
   if (error) return <ErrorNote error={error} />;
   if (!ready || !catalogue || !roles) return <div className="text-xs text-slate-400">Đang tải tính năng Khối Kỹ thuật – Nhà máy…</div>;
 
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const isFiltering = onlyEditDelete || Boolean(normalizedQuery);
+  const matchesFilter = (p: Permission, deptText: string): boolean => {
+    const { isEdit, isDelete } = classifyEditDeletePermission(p.code, p.description);
+    if (onlyEditDelete && !isEdit && !isDelete) return false;
+    if (normalizedQuery) {
+      const hay = `${p.code} ${p.description} ${deptText}`.toLowerCase();
+      if (!hay.includes(normalizedQuery)) return false;
+    }
+    return true;
+  };
+
+  const renderPermCard = (p: Permission, deptUnitKey: string | null) => {
+    const inheritedRoles = inheritedRolesFor(p.code, deptUnitKey);
+    const isExcluded = excludedSet.has(p.code);
+    const isInheritedActive = inheritedRoles.length > 0 && !isExcluded;
+    const isCustomActive = customPermSet.has(p.code) && !isExcluded;
+    const checked = isPermActiveInDept(p.code, deptUnitKey, isRootAdmin);
+    const interactive = canEditCustom;
+    const { isEdit, isDelete } = classifyEditDeletePermission(p.code, p.description);
+    const carriers = roles
+      .filter((r) => r.status === "ACTIVE" && !r.code.startsWith("USER_CUSTOM_") && r.permissions.includes(p.code))
+      .map((r) => r.name);
+
+    return (
+      <label
+        key={`${deptUnitKey ?? "global"}-${p.code}`}
+        title={
+          isRootAdmin
+            ? "Tài khoản Root Admin mặc định có toàn quyền"
+            : !interactive
+              ? "Không thể tự chỉnh sửa quyền cho chính mình"
+              : isInheritedActive
+                ? `Đang bật theo vai trò (${inheritedRoles.join(", ")}). Bấm để tắt riêng cho cá nhân này.`
+                : isExcluded && inheritedRoles.length > 0
+                  ? `Đã tắt riêng cá nhân (mặc dù vai trò ${inheritedRoles.join(", ")} có). Bấm để bật lại.`
+                  : isCustomActive
+                    ? "Đang bật cấp riêng cho cá nhân này. Bấm để thu hồi."
+                    : "Chưa cấp quyền. Bấm để cấp riêng quyền này cho cá nhân."
+        }
+        className={`p-3 rounded-xl border-2 flex items-start gap-3 transition-colors ${
+          interactive ? "cursor-pointer" : ""
+        } ${
+          checked
+            ? "bg-emerald-50/50 dark:bg-emerald-950/25 border-emerald-400 dark:border-emerald-700 shadow-xs"
+            : isExcluded && inheritedRoles.length > 0
+              ? "bg-rose-50/40 dark:bg-rose-950/15 border-rose-200 dark:border-rose-900/70"
+              : "bg-white/70 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700/60 hover:border-teal-300"
+        }`}
+      >
+        {interactive ? (
+          <input
+            type="checkbox"
+            checked={checked}
+            disabled={togglePermMut.isPending}
+            onChange={() => togglePermMut.mutate({ code: p.code, enabled: !checked })}
+            className="mt-0.5 rounded accent-emerald-600 w-4 h-4 shrink-0 cursor-pointer"
+            aria-label={p.description}
+          />
+        ) : (
+          <span
+            aria-label={checked ? "Đang được cấp quyền" : "Chưa cấp quyền"}
+            className={`mt-0.5 w-4 h-4 rounded flex items-center justify-center text-[10px] font-extrabold shrink-0 ${
+              checked
+                ? "bg-emerald-600 text-white"
+                : "bg-slate-200 dark:bg-slate-700 text-slate-400"
+            }`}
+          >
+            {checked ? "✓" : ""}
+          </span>
+        )}
+        <div className="space-y-0.5 flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-2">
+            <span className={`text-xs font-bold ${checked ? "text-slate-900 dark:text-white" : "text-slate-600 dark:text-slate-400"}`}>{p.description}</span>
+            <span className="text-[9px] font-mono text-slate-400 shrink-0">{p.code}</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
+            {isEdit && (
+              <span className="px-1.5 rounded bg-sky-100 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 font-bold">
+                ✏️ Quyền Sửa
+              </span>
+            )}
+            {isDelete && (
+              <span className="px-1.5 rounded bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-bold">
+                🗑️ Quyền Xóa
+              </span>
+            )}
+            {p.is_gxp_critical && <span className="px-1.5 rounded bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-bold">GxP · ký điện tử</span>}
+            {isRootAdmin ? (
+              <span className="text-emerald-700 dark:text-emerald-400 font-semibold">✓ Đang cấp · Admin gốc (toàn quyền)</span>
+            ) : isInheritedActive ? (
+              <span className="text-emerald-700 dark:text-emerald-400 font-semibold">✓ Đang cấp · Theo vai trò ({inheritedRoles.join(", ")})</span>
+            ) : isCustomActive ? (
+              <span className="text-teal-700 dark:text-teal-300 font-semibold">✓ Đang cấp · Cấp riêng cá nhân</span>
+            ) : isExcluded && inheritedRoles.length > 0 ? (
+              <span className="text-rose-700 dark:text-rose-400 font-semibold">✕ Đã tắt riêng cá nhân (vai trò gốc: {inheritedRoles.join(", ")})</span>
+            ) : (
+              <span>Chưa cấp quyền · Vai trò chuẩn: {carriers.length ? carriers.join(", ") : "—"}</span>
+            )}
+          </div>
+        </div>
+      </label>
+    );
+  };
+
   return (
     <>
       {togglePermMut.error && <ErrorNote error={togglePermMut.error} />}
@@ -586,9 +740,19 @@ export function FactoryFeatureGroups({
       </div>
 
       {FACTORY_DEPTS.map((d, i) => {
-        const perms = catalogue.filter((p) => d.modules.includes(p.module));
-        if (!perms.length) return null;
-        const activeCount = perms.filter((p) => isPermActiveInDept(p.code, d.unit, isRootAdmin)).length;
+        const allDeptPerms = catalogue.filter((p) => d.modules.includes(p.module));
+        if (!allDeptPerms.length) return null;
+        const deptSearchContext = `${d.short} ${d.name}`;
+        const visiblePerms = isFiltering ? allDeptPerms.filter((p) => matchesFilter(p, deptSearchContext)) : allDeptPerms;
+        const allSharedKtcn = d.key === "device" ? catalogue.filter((p) => KTCN_SHARED_RD_PERM_CODES.includes(p.code)) : [];
+        const visibleSharedKtcn = isFiltering
+          ? allSharedKtcn.filter((p) => matchesFilter(p, `${deptSearchContext} Dự án Stage-Gate KTCN Phần mềm R&D`))
+          : allSharedKtcn;
+        if (isFiltering && visiblePerms.length === 0 && visibleSharedKtcn.length === 0) return null;
+
+        const activeCount = allDeptPerms.filter((p) => isPermActiveInDept(p.code, d.unit, isRootAdmin)).length;
+        const bulkTargetCodes = [...visiblePerms, ...visibleSharedKtcn].map((p) => p.code);
+
         return (
           <div key={d.key} className="bg-teal-50/30 dark:bg-slate-800/30 rounded-2xl border border-teal-200/70 dark:border-teal-900/60 p-4 space-y-3">
             <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-200 dark:border-slate-700/60 flex-wrap">
@@ -598,34 +762,34 @@ export function FactoryFeatureGroups({
                 </span>
                 <span
                   className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                    activeCount === perms.length
+                    activeCount === allDeptPerms.length
                       ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
                       : activeCount > 0
                         ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
                         : "bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-400"
                   }`}
                 >
-                  {activeCount}/{perms.length} quyền kích hoạt
+                  {activeCount}/{allDeptPerms.length} quyền kích hoạt
                 </span>
               </div>
               {canEditCustom ? (
                 <div className="flex items-center gap-2 text-xs">
                   <button
                     type="button"
-                    disabled={togglePermMut.isPending}
-                    onClick={() => togglePermMut.mutate({ codes: perms.map((p) => p.code), enabled: true })}
+                    disabled={togglePermMut.isPending || bulkTargetCodes.length === 0}
+                    onClick={() => togglePermMut.mutate({ codes: bulkTargetCodes, enabled: true })}
                     className="text-[11px] text-teal-700 dark:text-teal-300 font-bold hover:underline cursor-pointer disabled:opacity-50"
                   >
-                    Chọn nhóm này
+                    {isFiltering ? "Chọn các quyền đang lọc" : "Chọn nhóm này"}
                   </button>
                   <span className="text-slate-300 dark:text-slate-600">|</span>
                   <button
                     type="button"
-                    disabled={togglePermMut.isPending}
-                    onClick={() => togglePermMut.mutate({ codes: perms.map((p) => p.code), enabled: false })}
+                    disabled={togglePermMut.isPending || bulkTargetCodes.length === 0}
+                    onClick={() => togglePermMut.mutate({ codes: bulkTargetCodes, enabled: false })}
                     className="text-[11px] text-slate-500 font-bold hover:underline cursor-pointer disabled:opacity-50"
                   >
-                    Bỏ chọn nhóm
+                    {isFiltering ? "Bỏ chọn đang lọc" : "Bỏ chọn nhóm"}
                   </button>
                 </div>
               ) : (
@@ -634,88 +798,21 @@ export function FactoryFeatureGroups({
                 </span>
               )}
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-              {perms.map((p) => {
-                const inheritedRoles = inheritedRolesFor(p.code, d.unit);
-                const isExcluded = excludedSet.has(p.code);
-                const isInheritedActive = inheritedRoles.length > 0 && !isExcluded;
-                const isCustomActive = customPermSet.has(p.code) && !isExcluded;
-                const checked = isPermActiveInDept(p.code, d.unit, isRootAdmin);
-                const interactive = canEditCustom;
-                const carriers = roles
-                  .filter((r) => r.status === "ACTIVE" && !r.code.startsWith("USER_CUSTOM_") && r.permissions.includes(p.code))
-                  .map((r) => r.name);
-                return (
-                  <label
-                    key={p.code}
-                    title={
-                      isRootAdmin
-                        ? "Tài khoản Root Admin mặc định có toàn quyền"
-                        : !interactive
-                          ? "Không thể tự chỉnh sửa quyền cho chính mình"
-                          : isInheritedActive
-                            ? `Đang bật theo vai trò (${inheritedRoles.join(", ")}). Bấm để tắt riêng cho cá nhân này.`
-                            : isExcluded && inheritedRoles.length > 0
-                              ? `Đã tắt riêng cá nhân (mặc dù vai trò ${inheritedRoles.join(", ")} có). Bấm để bật lại.`
-                              : isCustomActive
-                                ? "Đang bật cấp riêng cho cá nhân này. Bấm để thu hồi."
-                                : "Chưa cấp quyền. Bấm để cấp riêng quyền này cho cá nhân."
-                    }
-                    className={`p-3 rounded-xl border-2 flex items-start gap-3 transition-colors ${
-                      interactive ? "cursor-pointer" : ""
-                    } ${
-                      checked
-                        ? "bg-emerald-50/50 dark:bg-emerald-950/25 border-emerald-400 dark:border-emerald-700 shadow-xs"
-                        : isExcluded && inheritedRoles.length > 0
-                          ? "bg-rose-50/40 dark:bg-rose-950/15 border-rose-200 dark:border-rose-900/70"
-                          : "bg-white/70 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700/60 hover:border-teal-300"
-                    }`}
-                  >
-                    {interactive ? (
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        disabled={togglePermMut.isPending}
-                        onChange={() => togglePermMut.mutate({ code: p.code, enabled: !checked })}
-                        className="mt-0.5 rounded accent-emerald-600 w-4 h-4 shrink-0 cursor-pointer"
-                        aria-label={p.description}
-                      />
-                    ) : (
-                      <span
-                        aria-label={checked ? "Đang được cấp quyền" : "Chưa cấp quyền"}
-                        className={`mt-0.5 w-4 h-4 rounded flex items-center justify-center text-[10px] font-extrabold shrink-0 ${
-                          checked
-                            ? "bg-emerald-600 text-white"
-                            : "bg-slate-200 dark:bg-slate-700 text-slate-400"
-                        }`}
-                      >
-                        {checked ? "✓" : ""}
-                      </span>
-                    )}
-                    <div className="space-y-0.5 flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-2">
-                        <span className={`text-xs font-bold ${checked ? "text-slate-900 dark:text-white" : "text-slate-600 dark:text-slate-400"}`}>{p.description}</span>
-                        <span className="text-[9px] font-mono text-slate-400 shrink-0">{p.code}</span>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
-                        {p.is_gxp_critical && <span className="px-1.5 rounded bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-bold">GxP · ký điện tử</span>}
-                        {isRootAdmin ? (
-                          <span className="text-emerald-700 dark:text-emerald-400 font-semibold">✓ Đang cấp · Admin gốc (toàn quyền)</span>
-                        ) : isInheritedActive ? (
-                          <span className="text-emerald-700 dark:text-emerald-400 font-semibold">✓ Đang cấp · Theo vai trò ({inheritedRoles.join(", ")})</span>
-                        ) : isCustomActive ? (
-                          <span className="text-teal-700 dark:text-teal-300 font-semibold">✓ Đang cấp · Cấp riêng cá nhân</span>
-                        ) : isExcluded && inheritedRoles.length > 0 ? (
-                          <span className="text-rose-700 dark:text-rose-400 font-semibold">✕ Đã tắt riêng cá nhân (vai trò gốc: {inheritedRoles.join(", ")})</span>
-                        ) : (
-                          <span>Chưa cấp quyền · Vai trò chuẩn: {carriers.length ? carriers.join(", ") : "—"}</span>
-                        )}
-                      </div>
-                    </div>
-                  </label>
-                );
-              })}
-            </div>
+            {visiblePerms.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                {visiblePerms.map((p) => renderPermCard(p, d.unit))}
+              </div>
+            )}
+            {visibleSharedKtcn.length > 0 && (
+              <div className="pt-3 mt-1 border-t border-dashed border-teal-200 dark:border-teal-800/70 space-y-2">
+                <div className="text-[11px] font-bold text-teal-800 dark:text-teal-300 flex items-center gap-1.5">
+                  <span>🔗 Quyền Dự án Stage-Gate &amp; Phần mềm KTCN (Dùng chung hạ tầng R&amp;D / KTCN)</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                  {visibleSharedKtcn.map((p) => renderPermCard(p, d.unit))}
+                </div>
+              </div>
+            )}
           </div>
         );
       })}

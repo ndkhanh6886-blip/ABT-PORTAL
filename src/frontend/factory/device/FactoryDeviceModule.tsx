@@ -133,7 +133,6 @@ export function FactoryDeviceModule() {
             canReviewGate={perms.has("rd.gate.review")}
             canEdit={Boolean(me.data?.is_root || perms.has("rd.project.edit"))}
             canDelete={Boolean(me.data?.is_root || perms.has("rd.project.delete"))}
-            canManagePermissions={Boolean(me.data?.is_root || perms.has("core.role.manage"))}
           />
           <TransferView section="software" canManage={perms.has("rd.transfer.manage")} canAccept={false} />
         </div>

@@ -6,7 +6,6 @@ import { ActionBar, type AllowedAction } from "../actions";
 import { api, fmtDate, fmtQty, useFactoryMe } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { isProjectEligibleForEln, isProjectForPerson, normRdPersonName, useRdContext } from "./shared";
-import { RdPermissionPanel } from "./RdPermissionPanel";
 
 const EXP_STATUS: Record<string, [string, string]> = {
   PLANNED: ["QUARANTINE", "Kế hoạch"],
@@ -588,12 +587,10 @@ export function ElnView({
   canWrite,
   canEdit = false,
   canDelete = false,
-  canManagePermissions = false,
 }: {
   canWrite: boolean;
   canEdit?: boolean;
   canDelete?: boolean;
-  canManagePermissions?: boolean;
 }) {
   const qc = useQueryClient();
   const me = useFactoryMe();
@@ -604,7 +601,6 @@ export function ElnView({
   const [searchQuery, setSearchQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  const [showPermissions, setShowPermissions] = useState(false);
 
   const [newProjId, setNewProjId] = useState("");
   const [newUnitId, setNewUnitId] = useState("");
@@ -774,17 +770,6 @@ export function ElnView({
 
   return (
     <div className="flex flex-col gap-3">
-      {showPermissions && canManagePermissions && (
-        <RdPermissionPanel
-          title="Cài đặt Phân quyền Chỉnh sửa & Xóa Sổ thí nghiệm (ELN)"
-          editPerm="rd.eln.edit"
-          deletePerm="rd.eln.delete"
-          editLabel="Cho phép Sửa ELN"
-          deleteLabel="Cho phép Xóa ELN"
-          onClose={() => setShowPermissions(false)}
-        />
-      )}
-
       {selected && (
         <ExperimentPanel
           key={selected}
@@ -878,15 +863,6 @@ export function ElnView({
                 }}
               >
                 ✕
-              </Button>
-            )}
-            {canManagePermissions && (
-              <Button
-                variant={showPermissions ? "primary" : "ghost"}
-                className="!min-h-8 !py-1 !px-2.5 whitespace-nowrap"
-                onClick={() => setShowPermissions(!showPermissions)}
-              >
-                🛡️ Phân quyền Sửa/Xóa
               </Button>
             )}
             {canWrite && (

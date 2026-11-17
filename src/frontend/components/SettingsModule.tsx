@@ -62,7 +62,7 @@ import {
   Factory
 } from "lucide-react";
 import { employeeCodeVariants, formatDate, normalizePersonText, personNameKey } from "@/backend/services/utils";
-import { FactoryAccessSection, FactoryFeatureGroups } from "@/frontend/factory/settings/FactoryAccessSection";
+import { classifyEditDeletePermission, FactoryAccessSection, FactoryFeatureGroups } from "@/frontend/factory/settings/FactoryAccessSection";
 import { FactorySettingsModule } from "@/frontend/factory/settings/FactorySettingsModule";
 import { PERMISSION_GROUPS, ROLE_PRESETS, DEPARTMENT_MODULES, DepartmentModule, resolveRolePreset, getDefaultDepartmentPermissions, getEffectivePermissions, hasPermission, inferSystemRoleFromPosition, COMPANY_DEPARTMENTS } from "@/backend/services/permissions";
 import { useNotification, NotificationMatrixEvent } from "@/frontend/contexts/NotificationContext";
@@ -617,9 +617,14 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
   const [currentEditingPermissions, setCurrentEditingPermissions] = useState<Record<string, boolean>>({});
   const [isSavingPermissions, setIsSavingPermissions] = useState(false);
   const [factoryPermSummary, setFactoryPermSummary] = useState<{ active: number; total: number } | null>(null);
+  const [permSearchQuery, setPermSearchQuery] = useState("");
+  const [permOnlyEditDelete, setPermOnlyEditDelete] = useState(false);
+  const isFilteringPerms = permOnlyEditDelete || Boolean(permSearchQuery.trim());
 
   const handleOpenPermissionsModal = (u: any) => {
     setFactoryPermSummary(null);
+    setPermSearchQuery("");
+    setPermOnlyEditDelete(false);
     setPermissionsModalUser(u);
     const eff = getEffectivePermissions(u);
     setCurrentEditingPermissions(eff);
@@ -1853,10 +1858,11 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                           <div className="flex items-center justify-end gap-1">
                             <button
                               onClick={() => handleOpenPermissionsModal(u)}
-                              className="p-1.5 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/60 rounded-lg transition-all cursor-pointer"
-                              title="Cài đặt phân quyền chi tiết cho nhân sự này"
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/70 border border-indigo-200 dark:border-indigo-800 rounded-lg transition-all cursor-pointer"
+                              title="Cài đặt phân quyền chi tiết (Xem / Tạo / Sửa / Xóa / Duyệt) cho tài khoản cá nhân này"
                             >
-                              <ShieldCheck className="w-4 h-4" />
+                              <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                              <span>Phân quyền</span>
                             </button>
                             <button
                               onClick={() => handleOpenResetPassword(u)}
@@ -4167,7 +4173,12 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
               </div>
 
               <button
-                onClick={() => { setPermissionsModalUser(null); setFactoryPermSummary(null); }}
+                onClick={() => {
+                  setPermissionsModalUser(null);
+                  setFactoryPermSummary(null);
+                  setPermSearchQuery("");
+                  setPermOnlyEditDelete(false);
+                }}
                 className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
@@ -4175,41 +4186,107 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
             </div>
 
             {/* Quick Action Toolbar */}
-            <div className="px-6 py-2.5 bg-slate-100/60 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs gap-2 flex-wrap">
-              <span className="text-slate-500 font-medium">
-                Tích chọn từng tính năng cho phép cán bộ thực hiện trên hệ thống:
-              </span>
-              <div className="flex items-center gap-2">
+            <div className="px-6 py-2.5 bg-slate-100/60 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 space-y-2 text-xs">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <span className="text-slate-500 font-medium">
+                  Tích chọn từng tính năng cho phép cán bộ thực hiện trên hệ thống:
+                </span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleResetToPreset}
+                    className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-700 hover:bg-slate-50 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 font-bold transition-all cursor-pointer flex items-center gap-1 shadow-2xs"
+                    title="Khôi phục các quyền theo vai trò chuẩn"
+                  >
+                    <RefreshCw className="w-3 h-3 text-slate-400" />
+                    <span>Khôi Phục Theo Chức Danh</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectAllPermissions(true)}
+                    className="px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 font-bold transition-all cursor-pointer"
+                  >
+                    Bật Tất Cả
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectAllPermissions(false)}
+                    className="px-2.5 py-1 rounded-lg bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 font-bold transition-all cursor-pointer"
+                  >
+                    Tắt Tất Cả
+                  </button>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="relative flex-1 min-w-[220px]">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={permSearchQuery}
+                    onChange={(e) => setPermSearchQuery(e.target.value)}
+                    placeholder="Tìm nhanh quyền: ELN, dự án, sửa, xóa, BOM, báo giá..."
+                    className="w-full pl-8 pr-7 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400"
+                  />
+                  {permSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setPermSearchQuery("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                      title="Xóa từ khóa tìm kiếm"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
                 <button
                   type="button"
-                  onClick={handleResetToPreset}
-                  className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-700 hover:bg-slate-50 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 font-bold transition-all cursor-pointer flex items-center gap-1 shadow-2xs"
-                  title="Khôi phục các quyền theo vai trò chuẩn"
+                  onClick={() => setPermOnlyEditDelete((v) => !v)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                    permOnlyEditDelete
+                      ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
+                      : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:border-indigo-300"
+                  }`}
+                  title="Lọc nhanh toàn bộ quyền Chỉnh sửa & Xóa dữ liệu (ELN, Dự án Stage-Gate, Công thức, Hóa đơn, Báo giá...)"
                 >
-                  <RefreshCw className="w-3 h-3 text-slate-400" />
-                  <span>Khôi Phục Theo Chức Danh</span>
+                  <span>🛡️ Quyền Sửa / Xóa</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => handleSelectAllPermissions(true)}
-                  className="px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 font-bold transition-all cursor-pointer"
-                >
-                  Bật Tất Cả
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSelectAllPermissions(false)}
-                  className="px-2.5 py-1 rounded-lg bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 font-bold transition-all cursor-pointer"
-                >
-                  Tắt Tất Cả
-                </button>
+                {isFilteringPerms && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPermSearchQuery("");
+                      setPermOnlyEditDelete(false);
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-slate-200/80 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 cursor-pointer shrink-0"
+                  >
+                    Hiện đầy đủ
+                  </button>
+                )}
               </div>
             </div>
 
             {/* Permission Groups List (Scrollable Area) */}
             <div className="p-6 overflow-y-auto flex-1 space-y-6">
-              {/* SECTION 1: CÀI ĐẶT PHÒNG BAN / PHÂN HỆ ĐƯỢC PHÉP TRUY CẬP (TAB MENU CHÍNH) */}
-              <div className="bg-gradient-to-br from-indigo-50/80 via-white to-slate-50 dark:from-slate-800/80 dark:via-slate-850/60 dark:to-slate-900 rounded-2xl border-2 border-indigo-500/40 p-5 space-y-4 shadow-sm">
+              {isFilteringPerms ? (
+                <div className="flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/80 text-xs text-indigo-800 dark:text-indigo-200 flex-wrap">
+                  <span>
+                    🔍 Đang lọc nhanh quyền chi tiết{permOnlyEditDelete ? " (chỉ Quyền Sửa / Xóa)" : ""}{permSearchQuery.trim() ? ` cho "${permSearchQuery.trim()}"` : ""}. Bấm <strong>&ldquo;Hiện đầy đủ&rdquo;</strong> để xem lại các thẻ mở/khóa Tab phòng ban.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPermSearchQuery("");
+                      setPermOnlyEditDelete(false);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-indigo-300 dark:border-indigo-700 font-bold hover:bg-indigo-100/60 cursor-pointer shrink-0"
+                  >
+                    Hiện đầy đủ
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {/* SECTION 1: CÀI ĐẶT PHÒNG BAN / PHÂN HỆ ĐƯỢC PHÉP TRUY CẬP (TAB MENU CHÍNH) */}
+                  <div className="bg-gradient-to-br from-indigo-50/80 via-white to-slate-50 dark:from-slate-800/80 dark:via-slate-850/60 dark:to-slate-900 rounded-2xl border-2 border-indigo-500/40 p-5 space-y-4 shadow-sm">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-indigo-200/60 dark:border-indigo-900/60">
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold shadow-md shadow-indigo-500/20 shrink-0">
@@ -4322,13 +4399,15 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                 ))}
               </div>
 
-              {/* Khối Kỹ thuật – Nhà máy: role-based factory permissions (separate, audited) */}
-              <FactoryAccessSection
-                key={permissionsModalUser.id}
-                userId={Number(permissionsModalUser.id)}
-                username={permissionsModalUser.username}
-                isRootAdmin={String(permissionsModalUser.role || "").toLowerCase() === "admin" || String(permissionsModalUser.username || "").toLowerCase() === "admin"}
-              />
+                  {/* Khối Kỹ thuật – Nhà máy: role-based factory permissions (separate, audited) */}
+                  <FactoryAccessSection
+                    key={permissionsModalUser.id}
+                    userId={Number(permissionsModalUser.id)}
+                    username={permissionsModalUser.username}
+                    isRootAdmin={String(permissionsModalUser.role || "").toLowerCase() === "admin" || String(permissionsModalUser.username || "").toLowerCase() === "admin"}
+                  />
+                </>
+              )}
 
               {/* Divider between Departments and Granular Features */}
               <div className="flex items-center gap-2 pt-2">
@@ -4342,6 +4421,18 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
               {PERMISSION_GROUPS.map((group) => {
                 const groupKeys = group.permissions.map(p => p.key);
                 const activeCount = groupKeys.filter(k => currentEditingPermissions[k]).length;
+                const q = permSearchQuery.trim().toLowerCase();
+                const visiblePermissions = group.permissions.filter((p) => {
+                  const { isEdit, isDelete } = classifyEditDeletePermission(p.key, `${p.label} ${p.desc}`);
+                  if (permOnlyEditDelete && !isEdit && !isDelete) return false;
+                  if (q) {
+                    const hay = `${p.key} ${p.label} ${p.desc} ${group.title}`.toLowerCase();
+                    if (!hay.includes(q)) return false;
+                  }
+                  return true;
+                });
+                if (isFilteringPerms && visiblePermissions.length === 0) return null;
+                const targetToggleKeys = (isFilteringPerms ? visiblePermissions : group.permissions).map((p) => p.key);
 
                 return (
                   <div key={group.module} className="bg-slate-50/50 dark:bg-slate-800/30 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 space-y-3">
@@ -4366,32 +4457,33 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                           type="button"
                           onClick={() => {
                             const newPerms = { ...currentEditingPermissions };
-                            groupKeys.forEach(k => newPerms[k] = true);
+                            targetToggleKeys.forEach(k => newPerms[k] = true);
                             setCurrentEditingPermissions(newPerms);
                           }}
                           className="text-[11px] text-indigo-600 dark:text-indigo-400 font-bold hover:underline cursor-pointer"
                         >
-                          Chọn nhóm này
+                          {isFilteringPerms ? "Chọn các quyền đang lọc" : "Chọn nhóm này"}
                         </button>
                         <span className="text-slate-300 dark:text-slate-600">|</span>
                         <button
                           type="button"
                           onClick={() => {
                             const newPerms = { ...currentEditingPermissions };
-                            groupKeys.forEach(k => newPerms[k] = false);
+                            targetToggleKeys.forEach(k => newPerms[k] = false);
                             setCurrentEditingPermissions(newPerms);
                           }}
                           className="text-[11px] text-slate-500 font-bold hover:underline cursor-pointer"
                         >
-                          Bỏ chọn nhóm
+                          {isFilteringPerms ? "Bỏ chọn đang lọc" : "Bỏ chọn nhóm"}
                         </button>
                       </div>
                     </div>
 
                     {/* Permissions Grid */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                      {group.permissions.map((p) => {
+                      {visiblePermissions.map((p) => {
                         const isGranted = Boolean(currentEditingPermissions[p.key]);
+                        const { isEdit, isDelete } = classifyEditDeletePermission(p.key, `${p.label} ${p.desc}`);
 
                         return (
                           <div
@@ -4410,14 +4502,28 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                               className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer shrink-0"
                             />
                             <div className="space-y-0.5 flex-1">
-                              <div className="flex items-center justify-between">
+                              <div className="flex items-center justify-between gap-2">
                                 <span className={`text-xs font-bold ${isGranted ? "text-slate-900 dark:text-white" : "text-slate-600 dark:text-slate-400"}`}>
                                   {p.label}
                                 </span>
-                                <span className="text-[9px] font-mono text-slate-400">
+                                <span className="text-[9px] font-mono text-slate-400 shrink-0">
                                   {p.key}
                                 </span>
                               </div>
+                              {(isEdit || isDelete) && (
+                                <div className="flex items-center gap-1 flex-wrap pt-0.5">
+                                  {isEdit && (
+                                    <span className="px-1.5 rounded text-[10px] bg-sky-100 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 font-bold">
+                                      ✏️ Quyền Sửa
+                                    </span>
+                                  )}
+                                  {isDelete && (
+                                    <span className="px-1.5 rounded text-[10px] bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-bold">
+                                      🗑️ Quyền Xóa
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                               <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
                                 {p.desc}
                               </p>
@@ -4437,6 +4543,8 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                 username={permissionsModalUser.username}
                 isRootAdmin={String(permissionsModalUser.role || "").toLowerCase() === "admin" || String(permissionsModalUser.username || "").toLowerCase() === "admin"}
                 startIndex={PERMISSION_GROUPS.length + 1}
+                searchQuery={permSearchQuery}
+                onlyEditDelete={permOnlyEditDelete}
                 onSummaryChange={setFactoryPermSummary}
               />
             </div>
@@ -4463,7 +4571,12 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => { setPermissionsModalUser(null); setFactoryPermSummary(null); }}
+                  onClick={() => {
+                    setPermissionsModalUser(null);
+                    setFactoryPermSummary(null);
+                    setPermSearchQuery("");
+                    setPermOnlyEditDelete(false);
+                  }}
                   className="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold rounded-xl text-xs transition-colors cursor-pointer"
                 >
                   Hủy Bỏ
