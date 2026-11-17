@@ -98,6 +98,9 @@ export async function listRdStaffRoster(tx: Tx, moduleKey: "RD" | "DEVICE" | "IT
                            WHERE ur.user_id = up.user_id AND ur.scope_org_unit_id = d.id AND ur.revoked_at IS NULL
                              AND (ur.valid_to IS NULL OR ur.valid_to > now()))
         WHERE up.status = 'ACTIVE' AND up.display_name IS NOT NULL
+          AND ($1 = 'IT' OR NOT EXISTS (
+                SELECT 1 FROM core.org_unit itu
+                 WHERE itu.module_key = 'IT' AND itu.id = up.org_unit_id))
         ORDER BY up.display_name LIMIT 300`,
       [moduleKey]
     )
