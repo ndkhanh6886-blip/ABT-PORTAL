@@ -4542,7 +4542,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
       </tbody>
       ${slipPrintWithPrice ? `<tfoot>
         <tr>
-          <td colspan="8" class="r">TỔNG TIỀN HÀNG (CHƯA VAT):</td>
+          <td colspan="8" class="r">TỔNG TIỀN HÀNG (ĐÃ BAO GỒM VAT):</td>
           <td class="r">${totalMoney.toLocaleString("vi-VN", { maximumFractionDigits: 0 })}</td>
           <td></td>
         </tr>
@@ -35212,7 +35212,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     {slipPrintWithPrice && (
                                         <tfoot>
                                             <tr className="bg-slate-50 font-bold border-t border-slate-300">
-                                                <td colSpan={8} className="p-2 text-right uppercase">Tổng tiền hàng (chưa VAT):</td>
+                                                <td colSpan={8} className="p-2 text-right uppercase">Tổng tiền hàng (đã bao gồm VAT):</td>
                                                 <td className="p-2 text-right font-mono">
                                                     {(selectedViewDeliverySlip.items || []).reduce((s: number, it: any) => s + slipLinePrice(it) * (Number(it.quantity) || 0), 0).toLocaleString("vi-VN", { maximumFractionDigits: 0 })}
                                                 </td>
