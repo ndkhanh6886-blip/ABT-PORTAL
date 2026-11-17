@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, fmtDate } from "../api";
+import { api, fmtDate, useFactoryMe } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { EQUIPMENT_CATEGORY_PRESETS, WORK_CENTER_PRESETS } from "../kit/shared";
 
@@ -63,8 +63,24 @@ export function DepartmentEquipmentView({
   isEngineeringHub = false,
 }: DepartmentEquipmentViewProps) {
   const qc = useQueryClient();
+  const me = useFactoryMe();
+  const canManageAsset = Boolean(me.data?.is_root || me.data?.permissions?.includes("asset.manage"));
   const [filterDept, setFilterDept] = useState<string>(deptCode ?? "");
   const [showAddAsset, setShowAddAsset] = useState(false);
+  const [editingAsset, setEditingAsset] = useState<any | null>(null);
+  const [editAssetForm, setEditAssetForm] = useState({
+    code: "",
+    name: "",
+    asset_type: "OTHER",
+    equipment_category: "",
+    location: "",
+    manufacturer: "",
+    model: "",
+    serial_no: "",
+    next_calibration_due: "",
+    status: "IN_SERVICE",
+    reason: "Cập nhật thông số thiết bị",
+  });
   const [showDueList, setShowDueList] = useState(false);
   const [requestAsset, setRequestAsset] = useState<any | null>(null);
   const [completeEvent, setCompleteEvent] = useState<any | null>(null);
@@ -149,6 +165,42 @@ export function DepartmentEquipmentView({
     onSuccess: () => {
       setShowAddAsset(false);
       setNewAssetForm((p) => ({ ...p, name: "", model: "", serial_no: "", equipment_category: "", location: "" }));
+      refreshAll();
+    },
+  });
+
+  const updateAssetMut = useMutation({
+    mutationFn: () =>
+      api(`/api/factory/assets/${editingAsset.id}`, {
+        method: "PATCH",
+        json: {
+          code: editAssetForm.code.trim(),
+          name: editAssetForm.name.trim(),
+          asset_type: editAssetForm.asset_type,
+          equipment_category: editAssetForm.equipment_category.trim() || null,
+          location: editAssetForm.location.trim() || null,
+          manufacturer: editAssetForm.manufacturer.trim() || null,
+          model: editAssetForm.model.trim() || null,
+          serial_no: editAssetForm.serial_no.trim() || null,
+          next_calibration_due: editAssetForm.next_calibration_due || null,
+          status: editAssetForm.status,
+          reason: editAssetForm.reason.trim() || "Cập nhật thông tin thiết bị",
+        },
+      }),
+    onSuccess: () => {
+      setEditingAsset(null);
+      refreshAll();
+    },
+  });
+
+  const deleteAssetMut = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      api(`/api/factory/assets/${id}`, {
+        method: "DELETE",
+        json: { reason },
+      }),
+    onSuccess: () => {
+      setEditingAsset(null);
       refreshAll();
     },
   });
@@ -737,6 +789,153 @@ export function DepartmentEquipmentView({
           </form>
         )}
 
+        {canManageAsset && editingAsset && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              updateAssetMut.mutate();
+            }}
+            className="mb-3 p-3 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 space-y-2.5"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                ✏️ Sửa thông tin thiết bị: <span className="font-mono">{editingAsset.code}</span> — {editingAsset.name}
+              </span>
+              <Button type="button" variant="ghost" onClick={() => setEditingAsset(null)}>
+                Đóng
+              </Button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2 items-end">
+              <Field label="Mã thiết bị *">
+                <input
+                  className={`${inputClass} font-mono`}
+                  value={editAssetForm.code}
+                  onChange={(e) => setEditAssetForm({ ...editAssetForm, code: e.target.value })}
+                  required
+                />
+              </Field>
+              <div className="sm:col-span-2">
+                <Field label="Tên thiết bị *">
+                  <input
+                    className={inputClass}
+                    value={editAssetForm.name}
+                    onChange={(e) => setEditAssetForm({ ...editAssetForm, name: e.target.value })}
+                    required
+                  />
+                </Field>
+              </div>
+              <Field label="Nhóm thiết bị *">
+                <select
+                  className={inputClass}
+                  value={editAssetForm.asset_type}
+                  onChange={(e) => setEditAssetForm({ ...editAssetForm, asset_type: e.target.value })}
+                >
+                  {Object.entries(ASSET_TYPE_LABELS).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Phân nhóm chi tiết">
+                <input
+                  list="asset-category-presets-list"
+                  className={inputClass}
+                  value={editAssetForm.equipment_category}
+                  onChange={(e) => setEditAssetForm({ ...editAssetForm, equipment_category: e.target.value })}
+                />
+              </Field>
+              <Field label="Vị trí phòng">
+                <input
+                  list="asset-location-presets-list"
+                  className={inputClass}
+                  value={editAssetForm.location}
+                  onChange={(e) => setEditAssetForm({ ...editAssetForm, location: e.target.value })}
+                />
+              </Field>
+              <Field label="Hãng sản xuất">
+                <input
+                  className={inputClass}
+                  value={editAssetForm.manufacturer}
+                  onChange={(e) => setEditAssetForm({ ...editAssetForm, manufacturer: e.target.value })}
+                />
+              </Field>
+              <Field label="Model">
+                <input
+                  className={inputClass}
+                  value={editAssetForm.model}
+                  onChange={(e) => setEditAssetForm({ ...editAssetForm, model: e.target.value })}
+                />
+              </Field>
+              <Field label="Số Serial">
+                <input
+                  className={inputClass}
+                  value={editAssetForm.serial_no}
+                  onChange={(e) => setEditAssetForm({ ...editAssetForm, serial_no: e.target.value })}
+                />
+              </Field>
+              <Field label="Hạn HC kế tiếp">
+                <input
+                  type="date"
+                  className={inputClass}
+                  value={editAssetForm.next_calibration_due}
+                  onChange={(e) => setEditAssetForm({ ...editAssetForm, next_calibration_due: e.target.value })}
+                />
+              </Field>
+              <Field label="Trạng thái">
+                <select
+                  className={inputClass}
+                  value={editAssetForm.status}
+                  onChange={(e) => setEditAssetForm({ ...editAssetForm, status: e.target.value })}
+                >
+                  {Object.entries(ASSET_STATUS_BADGE).map(([k, [, label]]) => (
+                    <option key={k} value={k}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Lý do chỉnh sửa *">
+                <input
+                  className={inputClass}
+                  value={editAssetForm.reason}
+                  onChange={(e) => setEditAssetForm({ ...editAssetForm, reason: e.target.value })}
+                  required
+                />
+              </Field>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+              <div className="flex items-center gap-2">
+                <Button type="submit" disabled={updateAssetMut.isPending || deleteAssetMut.isPending}>
+                  {updateAssetMut.isPending ? "Đang lưu..." : "💾 Lưu thay đổi thiết bị"}
+                </Button>
+                <Button type="button" variant="ghost" onClick={() => setEditingAsset(null)}>
+                  Hủy
+                </Button>
+              </div>
+              <Button
+                type="button"
+                variant="danger"
+                disabled={deleteAssetMut.isPending || updateAssetMut.isPending}
+                onClick={() => {
+                  const reason = window.prompt(
+                    `Nhập lý do xóa thiết bị ${editingAsset.code} (${editingAsset.name}):`,
+                    "Khai báo nhầm / loại bỏ thiết bị chưa phát sinh hồ sơ"
+                  );
+                  if (reason && reason.trim().length >= 3) {
+                    deleteAssetMut.mutate({ id: editingAsset.id, reason: reason.trim() });
+                  }
+                }}
+              >
+                🗑️ Xóa thiết bị
+              </Button>
+            </div>
+            <ErrorNote error={updateAssetMut.error ?? deleteAssetMut.error} />
+          </form>
+        )}
+
+        <ErrorNote error={deleteAssetMut.error} />
+
         {assets.length === 0 ? (
           <Empty>Chưa có thiết bị nào trong danh mục.</Empty>
         ) : (
@@ -916,6 +1115,49 @@ export function DepartmentEquipmentView({
                         </td>
                         <td className="py-2 text-right">
                           <div className="flex flex-wrap justify-end gap-1.5">
+                            {canManageAsset && (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  onClick={() => {
+                                    updateAssetMut.reset();
+                                    deleteAssetMut.reset();
+                                    setEditingAsset(a);
+                                    setEditAssetForm({
+                                      code: a.code || "",
+                                      name: a.name || "",
+                                      asset_type: a.asset_type || "OTHER",
+                                      equipment_category: a.equipment_category || "",
+                                      location: a.location || "",
+                                      manufacturer: a.manufacturer || "",
+                                      model: a.model || "",
+                                      serial_no: a.serial_no || "",
+                                      next_calibration_due: a.next_calibration_due ? String(a.next_calibration_due).slice(0, 10) : "",
+                                      status: a.status || "IN_SERVICE",
+                                      reason: "Cập nhật thông số thiết bị",
+                                    });
+                                  }}
+                                >
+                                  ✏️ Sửa
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  className="text-rose-600 dark:text-rose-400"
+                                  disabled={deleteAssetMut.isPending}
+                                  onClick={() => {
+                                    const reason = window.prompt(
+                                      `Nhập lý do xóa thiết bị ${a.code} (${a.name}):`,
+                                      "Khai báo nhầm / loại bỏ thiết bị chưa phát sinh hồ sơ"
+                                    );
+                                    if (reason && reason.trim().length >= 3) {
+                                      deleteAssetMut.mutate({ id: a.id, reason: reason.trim() });
+                                    }
+                                  }}
+                                >
+                                  🗑️ Xóa
+                                </Button>
+                              </>
+                            )}
                             <Button
                               variant="ghost"
                               onClick={() => {

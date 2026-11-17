@@ -91,6 +91,8 @@ export const NotificationDropdown: React.FC = () => {
             list = list.filter(n => n.category === "plan" || n.category === "daily");
         } else if (selectedCategory === "order_stock") {
             list = list.filter(n => n.category === "delivery" || n.category === "order" || n.category === "warehouse");
+        } else if (selectedCategory === "technical") {
+            list = list.filter(n => (n.category || "").startsWith("factory_") || n.category === "quality");
         } else if (selectedCategory === "application") {
             list = list.filter(n => n.category === "application");
         }
@@ -131,7 +133,16 @@ export const NotificationDropdown: React.FC = () => {
             case "order":
                 return <Package className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />;
             case "application":
-                return <FlaskConical className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />;
+            case "factory_rd":
+            case "factory_kit":
+            case "factory_oligo":
+                return <FlaskConical className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />;
+            case "quality":
+            case "factory_device":
+            case "factory_warehouse":
+            case "factory_procurement":
+            case "factory_intake":
+                return <FileCheck2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />;
             default:
                 return <Bell className="w-3.5 h-3.5 text-slate-600 dark:text-slate-400" />;
         }
@@ -146,8 +157,19 @@ export const NotificationDropdown: React.FC = () => {
         const quoteMatch = combinedText.match(/"([^"]{3,120})"/) || combinedText.match(/\[([^\]]{3,120})\]/);
         const extractedTitle = quoteMatch ? quoteMatch[1] : "";
 
-        const rawTab = item.link?.tab || "";
+        let linkUrlTab = "";
+        let linkUrlItemId = "";
+        if (item.linkUrl && typeof window !== "undefined") {
+            try {
+                const parsed = new URL(item.linkUrl, window.location.origin);
+                linkUrlTab = parsed.searchParams.get("tab") || "";
+                linkUrlItemId = parsed.searchParams.get("id") || parsed.searchParams.get("lot") || parsed.searchParams.get("code") || "";
+            } catch {}
+        }
+
+        const rawTab = item.link?.tab || linkUrlTab || "";
         const titleLower = combinedText.toLowerCase();
+        const isFactoryDirectTab = /^(?:factory-|internal-orders)/i.test(rawTab);
         const isProposalNotif =
             rawTab === "proposals" ||
             item.link?.subTab === "proposals" ||
@@ -169,7 +191,9 @@ export const NotificationDropdown: React.FC = () => {
         let targetTab = rawTab;
         let targetSubTab = item.link?.subTab || (isProposalNotif ? "proposals" : undefined);
 
-        if (!targetTab || targetTab === "tasks" || targetTab === "workflows" || targetTab === "proposals") {
+        if (isFactoryDirectTab) {
+            targetTab = rawTab;
+        } else if (!targetTab || targetTab === "tasks" || targetTab === "workflows" || targetTab === "proposals") {
             if (targetTab === "tasks" || targetTab === "workflows" || targetTab === "proposals") {
                 targetSubTab = targetTab;
                 targetTab = "workspace";
@@ -199,6 +223,7 @@ export const NotificationDropdown: React.FC = () => {
             item.targetId ||
             item.orderCode ||
             item.link?.itemId ||
+            linkUrlItemId ||
             extractedCode ||
             "";
 
@@ -397,6 +422,16 @@ export const NotificationDropdown: React.FC = () => {
                             }`}
                         >
                             🚚 Giao hàng & Kho
+                        </button>
+                        <button
+                            onClick={() => setSelectedCategory("technical")}
+                            className={`px-2.5 py-1 rounded-lg shrink-0 transition-colors cursor-pointer flex items-center gap-1 ${
+                                selectedCategory === "technical"
+                                    ? "bg-sky-600 text-white font-bold"
+                                    : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                            }`}
+                        >
+                            🏭 Kỹ thuật &amp; R&amp;D
                         </button>
                         <button
                             onClick={() => setSelectedCategory("application")}

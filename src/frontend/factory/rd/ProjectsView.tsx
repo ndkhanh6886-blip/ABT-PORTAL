@@ -57,13 +57,24 @@ const DOC_TYPE_SUGGESTIONS = [
   "CAD_DFMEA",
   "DVP_IEC61010",
   "DMR",
-  "SRS_RISK",
-  "SDS",
-  "VERIFICATION_REPORT",
-  "RELEASE_VAL",
   "SOP",
   "DHF_DOC",
 ];
+
+const SW_DOC_TYPE_SUGGESTIONS = [
+  "SRS_SPEC",
+  "SW_SAFETY_CLASS",
+  "ARCH_DESIGN",
+  "CYBER_RISK",
+  "SOUP_LIST",
+  "UNIT_TEST",
+  "INTEGRATION_TEST",
+  "VERIFICATION_REPORT",
+  "TRACE_MATRIX",
+  "RELEASE_VAL",
+];
+
+const RD_DOMAIN_ENTRIES = Object.entries(DOMAIN_LABEL).filter(([k]) => k !== "SOFTWARE");
 
 const ENTRY_TYPE_BADGE: Record<string, { status: string; label: string }> = {
   ELN_EXPERIMENT: { status: "PENDING_QC", label: "Xuất từ bài ELN" },
@@ -1132,10 +1143,15 @@ function ProjectPanel({
             const gateMutationErr =
               addGateCritMut.error ?? saveGateMetaMut.error ?? deleteGateMut.error ?? reapplyTemplateMut.error;
 
+            const scopedProjTemplates = (ctx.data?.templates ?? []).filter((t) =>
+              p.target_domain === "SOFTWARE" ? t.domain === "SOFTWARE" : t.domain !== "SOFTWARE"
+            );
+            const docSuggestions = p.target_domain === "SOFTWARE" ? SW_DOC_TYPE_SUGGESTIONS : DOC_TYPE_SUGGESTIONS;
+
             return (
               <div className="flex flex-col gap-3">
                 <datalist id="rd-doc-type-datalist">
-                  {DOC_TYPE_SUGGESTIONS.map((dt) => (
+                  {docSuggestions.map((dt) => (
                     <option key={dt} value={dt} />
                   ))}
                 </datalist>
@@ -1150,7 +1166,9 @@ function ProjectPanel({
                     </div>
                     {canCustomizeGates && (
                       <div className="text-[11px] text-slate-500">
-                        Có thể thêm, sửa hoặc bỏ bớt tiêu chí Checklist DHF trực tiếp trên mọi cổng chưa duyệt qua cổng (PASSED).
+                        {p.target_domain === "SOFTWARE"
+                          ? "Có thể thêm, sửa hoặc bỏ bớt tiêu chí Checklist IEC 62304 trực tiếp trên mọi cổng chưa duyệt qua cổng (PASSED)."
+                          : "Có thể thêm, sửa hoặc bỏ bớt tiêu chí Checklist DHF trực tiếp trên mọi cổng chưa duyệt qua cổng (PASSED)."}
                       </div>
                     )}
                   </div>
@@ -1173,14 +1191,18 @@ function ProjectPanel({
                       >
                         {showAddGateForm ? "Đóng form thêm cổng" : "➕ Thêm Cổng Gate"}
                       </Button>
-                      {canReapplyTemplate && (ctx.data?.templates?.length ?? 0) > 0 && (
+                      {canReapplyTemplate && scopedProjTemplates.length > 0 && (
                         <Button
                           type="button"
                           variant="ghost"
                           className="!px-2.5 !py-1 !text-[11px]"
                           onClick={() => {
                             reapplyTemplateMut.reset();
-                            setReapplyTemplateId(p.gate_template_id || ctx.data?.templates?.[0]?.id || "");
+                            setReapplyTemplateId(
+                              scopedProjTemplates.some((t) => t.id === p.gate_template_id)
+                                ? (p.gate_template_id as string)
+                                : scopedProjTemplates[0]?.id || ""
+                            );
                             setShowReapplyTemplate((v) => !v);
                           }}
                         >
@@ -1269,15 +1291,17 @@ function ProjectPanel({
                           onChange={(e) => setReapplyTemplateId(e.target.value)}
                           required
                         >
-                          <option value="">-- Chọn bộ mẫu Stage-Gate --</option>
-                          {(ctx.data?.templates ?? []).map((t) => {
-                            const gateCount = new Set(t.items.map((x) => x.gate_no)).size;
-                            return (
-                              <option key={t.id} value={t.id}>
-                                {t.name} ({t.code} · {gateCount} cổng · {t.items.length} tiêu chí)
-                              </option>
-                            );
-                          })}
+                          <option value="">-- Chọn bộ mẫu Gate --</option>
+                          {(ctx.data?.templates ?? [])
+                            .filter((t) => (p.target_domain === "SOFTWARE" ? t.domain === "SOFTWARE" : t.domain !== "SOFTWARE"))
+                            .map((t) => {
+                              const gateCount = new Set(t.items.map((x) => x.gate_no)).size;
+                              return (
+                                <option key={t.id} value={t.id}>
+                                  {t.name} ({t.code} · {gateCount} cổng · {t.items.length} tiêu chí)
+                                </option>
+                              );
+                            })}
                         </select>
                       </Field>
                     </div>
@@ -2741,7 +2765,10 @@ type GateDraft = {
   items: { item_name: string; doc_type: string; is_required: boolean }[];
 };
 
-function groupTemplateToGates(tpl?: { items?: { gate_no: number; gate_name: string; stage_after: string; item_name: string; doc_type: string; is_required: boolean }[] } | null): GateDraft[] {
+function groupTemplateToGates(
+  tpl?: { items?: { gate_no: number; gate_name: string; stage_after: string; item_name: string; doc_type: string; is_required: boolean }[] } | null,
+  mode: "RD" | "SOFTWARE" = "RD"
+): GateDraft[] {
   const byGate = new Map<number, GateDraft>();
   for (const it of tpl?.items ?? []) {
     const no = Number(it.gate_no);
@@ -2755,12 +2782,28 @@ function groupTemplateToGates(tpl?: { items?: { gate_no: number; gate_name: stri
     }
     byGate.get(no)!.items.push({
       item_name: it.item_name,
-      doc_type: it.doc_type || "DHF_DOC",
+      doc_type: it.doc_type || (mode === "SOFTWARE" ? "SRS_SPEC" : "DHF_DOC"),
       is_required: Boolean(it.is_required),
     });
   }
   const sorted = [...byGate.values()].sort((a, b) => a.gate_no - b.gate_no);
   if (sorted.length > 0) return sorted;
+  if (mode === "SOFTWARE") {
+    return [
+      {
+        gate_no: 0,
+        gate_name: "Gate 0: Khởi tạo & Đặc tả Yêu cầu SRS",
+        stage_after: "G1_ARCHITECTURE",
+        items: [
+          {
+            item_name: "Tài liệu đặc tả yêu cầu phần mềm (SRS) & Phân cấp an toàn IEC 62304",
+            doc_type: "SRS_SPEC",
+            is_required: true,
+          },
+        ],
+      },
+    ];
+  }
   return [
     {
       gate_no: 0,
@@ -2773,6 +2816,7 @@ function groupTemplateToGates(tpl?: { items?: { gate_no: number; gate_name: stri
 
 function GateTemplateManagerModal({
   templates,
+  mode = "RD",
   onSaved,
   onClose,
 }: {
@@ -2785,15 +2829,20 @@ function GateTemplateManagerModal({
     project_count?: number;
     items: { id: string; gate_no: number; gate_name: string; stage_after: string; seq: number; item_name: string; doc_type: string; is_required: boolean }[];
   }[];
+  mode?: "RD" | "SOFTWARE";
   onSaved: () => void;
   onClose: () => void;
 }) {
+  const isSw = mode === "SOFTWARE";
+  const defaultDomain = isSw ? "SOFTWARE" : "KIT";
   const [selectedId, setSelectedId] = useState<string>(templates[0]?.id ?? "__NEW__");
   const [tplCode, setTplCode] = useState<string>(templates[0]?.code ?? "");
-  const [tplName, setTplName] = useState<string>(templates[0]?.name ?? "");
-  const [tplDomain, setTplDomain] = useState<string>(templates[0]?.domain ?? "KIT");
+  const [tplName, setTplName] = useState<string>(
+    templates[0]?.name ?? (isSw ? "Mẫu Cổng Phát triển Phần mềm Tùy chỉnh" : "Mẫu Stage-Gate R&D Tùy chỉnh")
+  );
+  const [tplDomain, setTplDomain] = useState<string>(templates[0]?.domain ?? defaultDomain);
   const [tplDesc, setTplDesc] = useState<string>(templates[0]?.description ?? "");
-  const [gates, setGates] = useState<GateDraft[]>(() => groupTemplateToGates(templates[0]));
+  const [gates, setGates] = useState<GateDraft[]>(() => groupTemplateToGates(templates[0], mode));
   const [notice, setNotice] = useState<string | null>(null);
 
   const loadIntoDraft = (idOrNew: string) => {
@@ -2803,19 +2852,19 @@ function GateTemplateManagerModal({
     setSelectedId(idOrNew);
     if (idOrNew === "__NEW__") {
       setTplCode("");
-      setTplName("Mẫu Stage-Gate Tùy chỉnh");
-      setTplDomain("KIT");
+      setTplName(isSw ? "Mẫu Cổng Phần mềm Tùy chỉnh (IEC 62304)" : "Mẫu Stage-Gate R&D Tùy chỉnh");
+      setTplDomain(defaultDomain);
       setTplDesc("");
-      setGates(groupTemplateToGates(null));
+      setGates(groupTemplateToGates(null, mode));
       return;
     }
     const found = templates.find((t) => t.id === idOrNew);
     if (found) {
       setTplCode(found.code || "");
       setTplName(found.name || "");
-      setTplDomain(found.domain || "KIT");
+      setTplDomain(found.domain || defaultDomain);
       setTplDesc(found.description || "");
-      setGates(groupTemplateToGates(found));
+      setGates(groupTemplateToGates(found, mode));
     }
   };
 
@@ -2876,7 +2925,7 @@ function GateTemplateManagerModal({
         onClick={(e) => e.stopPropagation()}
       >
         <datalist id="rd-doc-type-datalist">
-          {DOC_TYPE_SUGGESTIONS.map((dt) => (
+          {(isSw ? SW_DOC_TYPE_SUGGESTIONS : DOC_TYPE_SUGGESTIONS).map((dt) => (
             <option key={dt} value={dt} />
           ))}
         </datalist>
@@ -2884,10 +2933,14 @@ function GateTemplateManagerModal({
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
           <div>
             <div className="text-sm font-bold text-slate-900 dark:text-white">
-              ⚙️ Cài đặt Bộ mẫu Cổng Stage-Gate &amp; Checklist DHF (ISO 13485)
+              {isSw
+                ? "⚙️ Cài đặt Bộ mẫu Cổng Phát triển Phần mềm (IEC 62304)"
+                : "⚙️ Cài đặt Bộ mẫu Cổng Stage-Gate Nghiên cứu R&D (ISO 13485)"}
             </div>
             <div className="text-[11px] text-slate-500">
-              Thiết lập các bộ tiêu chí chuẩn dùng chung khi tạo dự án mới (các dự án đang chạy giữ nguyên snapshot cũ trừ khi bấm Áp dụng lại).
+              {isSw
+                ? "Quản lý các cổng kiểm soát vòng đời phần mềm độc lập hoàn toàn với Stage-Gate Nghiên cứu R&D."
+                : "Quản lý các cổng kiểm soát đề tài R&D (Kit, Oligo, Thiết bị), tách biệt với Phát triển phần mềm."}
             </div>
           </div>
           <Button type="button" variant="ghost" onClick={onClose}>
@@ -2961,12 +3014,21 @@ function GateTemplateManagerModal({
               />
             </Field>
             <Field label="Lĩnh vực mặc định *">
-              <select className={inputClass} value={tplDomain} onChange={(e) => setTplDomain(e.target.value)}>
-                {Object.entries(DOMAIN_LABEL).map(([k, v]) => (
-                  <option key={k} value={k}>
-                    {v}
-                  </option>
-                ))}
+              <select
+                className={inputClass}
+                value={isSw ? "SOFTWARE" : tplDomain === "SOFTWARE" ? "KIT" : tplDomain}
+                disabled={isSw}
+                onChange={(e) => setTplDomain(e.target.value)}
+              >
+                {isSw ? (
+                  <option value="SOFTWARE">Phần mềm &amp; Thuật toán (IEC 62304)</option>
+                ) : (
+                  RD_DOMAIN_ENTRIES.map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
+                  ))
+                )}
               </select>
             </Field>
             <div className="sm:col-span-4">
@@ -3035,7 +3097,10 @@ function GateTemplateManagerModal({
                             i === gIdx
                               ? {
                                   ...x,
-                                  items: [...x.items, { item_name: "", doc_type: "DHF_DOC", is_required: true }],
+                                  items: [
+                                    ...x.items,
+                                    { item_name: "", doc_type: isSw ? "SRS_SPEC" : "DHF_DOC", is_required: true },
+                                  ],
                                 }
                               : x
                           )
@@ -3160,8 +3225,14 @@ function GateTemplateManagerModal({
                   {
                     gate_no: nextNo,
                     gate_name: `Gate ${nextNo}: Cổng mới`,
-                    stage_after: nextNo >= 4 ? "TRANSFERRED" : `G${Math.min(10, nextNo + 1)}_STAGE`,
-                    items: [{ item_name: "Hồ sơ đánh giá cổng", doc_type: "DHF_DOC", is_required: true }],
+                    stage_after: nextNo >= 4 ? (isSw ? "G4_RELEASED" : "TRANSFERRED") : `G${Math.min(10, nextNo + 1)}_STAGE`,
+                    items: [
+                      {
+                        item_name: isSw ? "Hồ sơ đánh giá cổng phần mềm" : "Hồ sơ đánh giá cổng",
+                        doc_type: isSw ? "SRS_SPEC" : "DHF_DOC",
+                        is_required: true,
+                      },
+                    ],
                   },
                 ]);
               }}
@@ -3213,11 +3284,20 @@ const PIPELINE_STAGES = [
   { key: "G4", label: "5. Chuyển giao SX (G4 / Transferred)", sub: "Bàn giao BOM & QC Spec" },
 ];
 
+const SOFTWARE_PIPELINE_STAGES = [
+  { key: "G0", label: "1. Yêu cầu & Phân loại (G0)", sub: "Đặc tả SRS & Phân cấp an toàn IEC 62304" },
+  { key: "G1", label: "2. Kiến trúc & Thiết kế (G1)", sub: "Thiết kế kiến trúc, CSDL & Giao diện" },
+  { key: "G2", label: "3. Hiện thực & Unit Test (G2)", sub: "Lập trình, Code Review & Kiểm thử đơn vị" },
+  { key: "G3", label: "4. Kiểm thử hệ thống & V&V (G3)", sub: "System Test, Bảo mật & Ma trận truy vết" },
+  { key: "G4", label: "5. Phát hành Release (G4)", sub: "Đóng gói bản dựng, Checksum & Triển khai" },
+];
+
 function matchStageKey(stage: string, status: string, passedGates: number): string {
-  if (status === "TRANSFERRED" || stage.includes("TRANSFER") || passedGates >= 4) return "G4";
-  if (stage.includes("G3") || stage.includes("VALID") || passedGates === 3) return "G3";
-  if (stage.includes("G2") || stage.includes("OPTIM") || passedGates === 2) return "G2";
-  if (stage.includes("G1") || stage.includes("FEAS") || passedGates === 1) return "G1";
+  const s = (stage || "").toUpperCase();
+  if (status === "TRANSFERRED" || s.includes("TRANSFER") || s.includes("REL") || passedGates >= 4) return "G4";
+  if (s.includes("G3") || s.includes("VALID") || s.includes("VERIF") || s.includes("VV") || s.includes("SYS_TEST") || passedGates === 3) return "G3";
+  if (s.includes("G2") || s.includes("OPTIM") || s.includes("IMPL") || s.includes("CODE") || s.includes("UNIT") || passedGates === 2) return "G2";
+  if (s.includes("G1") || s.includes("FEAS") || s.includes("ARCH") || s.includes("DESIGN") || passedGates === 1) return "G1";
   return "G0";
 }
 
@@ -3242,6 +3322,7 @@ export function ProjectsView({
 }) {
   const qc = useQueryClient();
   const ctx = useRdContext("rd.view");
+  const isSoftwareMode = domainLock === "SOFTWARE";
   const [domain, setDomain] = useState(domainLock ?? "");
   const [stageFilter, setStageFilter] = useState("");
   const [staffFilter, setStaffFilter] = useState("");
@@ -3251,9 +3332,9 @@ export function ProjectsView({
   const [showGateTemplateManager, setShowGateTemplateManager] = useState(false);
 
   const [name, setName] = useState("");
-  const [targetDomain, setTargetDomain] = useState("KIT");
+  const [targetDomain, setTargetDomain] = useState(isSoftwareMode ? "SOFTWARE" : "KIT");
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
-  const [ivdClass, setIvdClass] = useState("CLASS_B");
+  const [ivdClass, setIvdClass] = useState(isSoftwareMode ? "NA" : "CLASS_B");
   const [leaderName, setLeaderName] = useState("");
   const [budgetAmount, setBudgetAmount] = useState("60000000");
   const [plannedEnd, setPlannedEnd] = useState("");
@@ -3299,9 +3380,23 @@ export function ProjectsView({
   };
 
   const list = useQuery({
-    queryKey: ["factory", "rd", "projects", domain],
-    queryFn: () => api<any[]>(`/api/factory/rd/projects${domain ? `?domain=${domain}` : ""}`),
+    queryKey: ["factory", "rd", "projects", domain, isSoftwareMode ? "SW" : "RD"],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (isSoftwareMode) {
+        params.set("domain", "SOFTWARE");
+      } else if (domain) {
+        params.set("domain", domain);
+      } else {
+        params.set("exclude_domain", "SOFTWARE");
+      }
+      return api<any[]>(`/api/factory/rd/projects?${params.toString()}`);
+    },
   });
+
+  const scopedTemplates = (ctx.data?.templates ?? []).filter((t) =>
+    isSoftwareMode ? t.domain === "SOFTWARE" : t.domain !== "SOFTWARE"
+  );
 
   const createMut = useMutation({
     mutationFn: () =>
@@ -3413,9 +3508,9 @@ export function ProjectsView({
 
   return (
     <div className="flex flex-col gap-3">
-      {/* 5-Stage Visual R&D Pipeline Bar */}
+      {/* 5-Stage Visual Pipeline Bar (Independent Software vs R&D) */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-        {PIPELINE_STAGES.map((st) => {
+        {(isSoftwareMode ? SOFTWARE_PIPELINE_STAGES : PIPELINE_STAGES).map((st) => {
           const count = allProjects.filter(
             (r) => matchStageKey(r.current_stage || "", r.status || "", Number(r.passed_gates || 0)) === st.key
           ).length;
@@ -3445,7 +3540,8 @@ export function ProjectsView({
 
       {showGateTemplateManager && (
         <GateTemplateManagerModal
-          templates={ctx.data?.templates ?? []}
+          templates={scopedTemplates}
+          mode={isSoftwareMode ? "SOFTWARE" : "RD"}
           onSaved={() => qc.invalidateQueries({ queryKey: ["factory", "rd", "context"] })}
           onClose={() => setShowGateTemplateManager(false)}
         />
@@ -3466,17 +3562,23 @@ export function ProjectsView({
       )}
 
       <Card
-        title="Trung tâm Điều hành Dự án R&D theo Stage-Gate & Quản lý Vật tư Dự án (ISO 13485)"
+        title={
+          isSoftwareMode
+            ? "Trung tâm Quản lý Dự án Phát triển Phần mềm & Cổng Kiểm soát IEC 62304"
+            : "Trung tâm Điều hành Dự án R&D theo Stage-Gate & Quản lý Vật tư Dự án (ISO 13485)"
+        }
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <input
               className={`${inputClass} w-48`}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="🔍 Tìm mã, tên dự án, NCV..."
+              placeholder={isSoftwareMode ? "🔍 Tìm mã, tên dự án PM, kỹ sư..." : "🔍 Tìm mã, tên dự án, NCV..."}
             />
             <select className={`${inputClass} w-60`} value={staffFilter} onChange={(e) => setStaffFilter(e.target.value)}>
-              <option value="">👤 Mọi nhân sự phụ trách Phòng R&D</option>
+              <option value="">
+                {isSoftwareMode ? "👤 Mọi kỹ sư phụ trách Phát triển phần mềm" : "👤 Mọi nhân sự phụ trách Phòng R&D"}
+              </option>
               {staffOptions.map((st) => (
                 <option key={st} value={st}>
                   {st}
@@ -3485,8 +3587,12 @@ export function ProjectsView({
             </select>
             {!domainLock && (
               <select className={`${inputClass} w-40`} value={domain} onChange={(e) => setDomain(e.target.value)}>
-                <option value="">Mọi lĩnh vực</option>
-                {Object.entries(DOMAIN_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                <option value="">Mọi lĩnh vực R&amp;D</option>
+                {RD_DOMAIN_ENTRIES.map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {v}
+                  </option>
+                ))}
               </select>
             )}
             <a href="/api/factory/rd/roadmap/ics" className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold">
@@ -3494,7 +3600,7 @@ export function ProjectsView({
             </a>
             {(canManage || canEdit || canReviewGate) && (
               <Button variant="ghost" onClick={() => setShowGateTemplateManager(true)}>
-                ⚙️ Cài đặt Mẫu Gate chuẩn
+                {isSoftwareMode ? "⚙️ Cài đặt Mẫu Gate Phần mềm" : "⚙️ Cài đặt Mẫu Gate R&D"}
               </Button>
             )}
             {canManage && (
@@ -3503,12 +3609,12 @@ export function ProjectsView({
                   variant="ghost"
                   onClick={() => setAddingMode(addingMode === "IMPROVEMENT" ? null : "IMPROVEMENT")}
                 >
-                  ✨ + Dự án Cải tiến SP Cũ
+                  {isSoftwareMode ? "✨ + Dự án Nâng cấp / Bảo trì PM" : "✨ + Dự án Cải tiến SP Cũ"}
                 </Button>
                 <Button
                   onClick={() => setAddingMode(addingMode === "NEW_PRODUCT" ? null : "NEW_PRODUCT")}
                 >
-                  🚀 + Dự án Nghiên cứu SP Mới
+                  {isSoftwareMode ? "🚀 + Dự án Phần mềm Mới" : "🚀 + Dự án Nghiên cứu SP Mới"}
                 </Button>
               </>
             )}
@@ -3562,9 +3668,13 @@ export function ProjectsView({
             }}
           >
             <div className="sm:col-span-3 font-bold text-sky-800 dark:text-sky-300 text-xs">
-              {addingMode === "NEW_PRODUCT"
-                ? "🚀 Khởi tạo Dự án Nghiên cứu & Phát triển Sản phẩm Mới (5 Cổng Stage-Gate G0 -> G4 + Sổ cái Vật tư)"
-                : "✨ Khởi tạo Dự án Cải tiến / Tối ưu hóa Sản phẩm Hiện hữu (Design Change / Bridging Study)"}
+              {isSoftwareMode
+                ? addingMode === "NEW_PRODUCT"
+                  ? "🚀 Khởi tạo Dự án Phần mềm Y sinh Mới (Vòng đời Cổng Kiểm soát IEC 62304 & Bảng việc WBS)"
+                  : "✨ Khởi tạo Dự án Nâng cấp / Bảo trì Phần mềm (IEC 62304 Design Change)"
+                : addingMode === "NEW_PRODUCT"
+                  ? "🚀 Khởi tạo Dự án Nghiên cứu & Phát triển Sản phẩm Mới (5 Cổng Stage-Gate G0 -> G4 + Sổ cái Vật tư)"
+                  : "✨ Khởi tạo Dự án Cải tiến / Tối ưu hóa Sản phẩm Hiện hữu (Design Change / Bridging Study)"}
             </div>
             {!domainLock && (
               <Field label="Lĩnh vực sản phẩm đích *">
@@ -3576,14 +3686,18 @@ export function ProjectsView({
                     setSelectedTemplateId("");
                   }}
                 >
-                  {Object.entries(DOMAIN_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  {RD_DOMAIN_ENTRIES.map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
+                  ))}
                 </select>
               </Field>
             )}
-            <Field label="Bộ mẫu cổng Stage-Gate & Checklist DHF">
+            <Field label={isSoftwareMode ? "Bộ mẫu cổng kiểm soát IEC 62304" : "Bộ mẫu cổng Stage-Gate & Checklist DHF"}>
               <select className={inputClass} value={selectedTemplateId} onChange={(e) => setSelectedTemplateId(e.target.value)}>
-                <option value="">-- Tự động theo lĩnh vực (Khuyến nghị) --</option>
-                {(ctx.data?.templates ?? []).map((t) => {
+                <option value="">{isSoftwareMode ? "-- Mặc định IEC 62304 (Khuyến nghị) --" : "-- Tự động theo lĩnh vực (Khuyến nghị) --"}</option>
+                {scopedTemplates.map((t) => {
                   const gateCount = new Set(t.items.map((x) => x.gate_no)).size;
                   return (
                     <option key={t.id} value={t.id}>
@@ -3600,7 +3714,7 @@ export function ProjectsView({
             </Field>
             <Field label={`Chủ nhiệm đề tài / Phụ trách chính (${ownerModule === "DEVICE" ? "Phòng KTCN" : "Phòng R&D"})`}>
               <select className={inputClass} value={leaderName} onChange={(e) => setLeaderName(e.target.value)}>
-                <option value="">-- Mặc định theo tài khoản hoặc chọn NCV --</option>
+                <option value="">-- Mặc định theo tài khoản hoặc chọn nhân sự --</option>
                 {staffOptions.map((st) => (
                   <option key={st} value={st}>
                     {st}
@@ -3609,21 +3723,23 @@ export function ProjectsView({
               </select>
             </Field>
             <div className="sm:col-span-2">
-              <Field label="Tên dự án R&D *">
+              <Field label={isSoftwareMode ? "Tên dự án Phần mềm *" : "Tên dự án R&D *"}>
                 <input
                   className={inputClass}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder={
-                    addingMode === "NEW_PRODUCT"
-                      ? "VD: Nghiên cứu Kit Real-time PCR đa mồi phát hiện Dengue 1-4 đạt chuẩn CE-IVD"
-                      : "VD: Cải tiến đệm MasterMix đông khô tăng độ ổn định nhiệt ở 2-8°C"
+                    isSoftwareMode
+                      ? "VD: Phát triển Phần mềm Phân tích Tín hiệu Quang học Đa kênh v2.0"
+                      : addingMode === "NEW_PRODUCT"
+                        ? "VD: Nghiên cứu Bộ Kit Real-time PCR Đa kênh Chuẩn CE-IVD"
+                        : "VD: Cải tiến đệm MasterMix đông khô tăng độ ổn định nhiệt ở 2-8°C"
                   }
                   required
                 />
               </Field>
             </div>
-            <Field label="Ngân sách Vật tư R&D dự kiến (VNĐ)">
+            <Field label={isSoftwareMode ? "Ngân sách phát triển dự kiến (VNĐ)" : "Ngân sách Vật tư R&D dự kiến (VNĐ)"}>
               <input type="number" step="1000000" className={inputClass} value={budgetAmount} onChange={(e) => setBudgetAmount(e.target.value)} />
             </Field>
             <Field label="Dự kiến hoàn tất chuyển giao">
@@ -3763,8 +3879,13 @@ export function ProjectsView({
               </Field>
               <Field label="Lĩnh vực sản phẩm đích">
                 <select className={inputClass} value={editDomain} disabled={Boolean(domainLock)} onChange={(ev) => setEditDomain(ev.target.value)}>
-                  {Object.entries(DOMAIN_LABEL).map(([k, v]) => (
-                    <option key={k} value={k}>{v}</option>
+                  {(isSoftwareMode
+                    ? Object.entries(DOMAIN_LABEL)
+                    : RD_DOMAIN_ENTRIES
+                  ).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
                   ))}
                 </select>
               </Field>

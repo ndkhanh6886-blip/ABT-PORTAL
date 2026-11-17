@@ -7,7 +7,7 @@ import { setHrPersonnelProvider } from "./core/hrDirectory";
 import { setKdGateway } from "./intake/gateway";
 import { applyFactoryEvent } from "@/backend/services/factoryBridge";
 import { setNoticePolicy } from "./core/notifications";
-import { factoryNoticeKey, TECHNICAL_MATRIX_ROLES } from "./noticeMatrix";
+import { FACTORY_NOTICE_EVENTS, factoryNoticeKey, TECHNICAL_MATRIX_ROLES } from "./noticeMatrix";
 
 /**
  * The only place the factory reads ABT Portal accounts (shared login, Q3). Kept behind small
@@ -60,6 +60,18 @@ setKdGateway({ deliver: (event) => applyFactoryEvent(event) });
 
 // Factory notices follow the portal "Ma trận thông báo" (Khối Kỹ thuật events): read at most every 30 s.
 let matrixCache: { at: number; data: Record<string, any> } | null = null;
+const DEPT_DEFAULT_ROLE: Record<string, string> = {
+  "Đơn Nội Bộ": "factory_intake",
+  "Nghiên cứu R&D": "factory_rd",
+  "Sản xuất Kit": "factory_kit",
+  "Tổng hợp Oligo": "factory_oligo",
+  "Kỹ thuật – Thiết bị": "factory_device",
+  "QA/QC": "factory_qa",
+  "Kho Nhà máy": "factory_wh",
+  "Mua hàng Nhà máy": "factory_purchase",
+};
+const ADMIN_ESCALATION_RE = /GATE|HOLD|KILL|APPROVE|FAIL_QC|COMPLETE_PQ|ECO_SUBMIT|CONCESSION|DEVIATION|NCR|RECONCILE|ESCALATE|BOD/;
+
 setNoticePolicy({
   async ruleFor(type) {
     if (!matrixCache || Date.now() - matrixCache.at > 30_000) {
@@ -67,9 +79,19 @@ setNoticePolicy({
       matrixCache = { at: Date.now(), data: data && typeof data === "object" ? data : {} };
     }
     const ev = matrixCache.data[factoryNoticeKey(type)];
-    if (!ev) return null;
-    const roles: string[] = Array.isArray(ev.targetRoles) ? ev.targetRoles : [];
-    const names: string[] = Array.isArray(ev.targetEmployeeNames) ? ev.targetEmployeeNames : [];
+    const def = !ev ? FACTORY_NOTICE_EVENTS.find((x) => x.type === type) : undefined;
+    if (!ev && !def) return null;
+
+    let roles: string[];
+    if (ev) {
+      roles = Array.isArray(ev.targetRoles) ? ev.targetRoles : [];
+    } else {
+      const builtRoles = new Set<string>(def!.defaultRoles ?? (DEPT_DEFAULT_ROLE[def!.dept] ? [DEPT_DEFAULT_ROLE[def!.dept]] : []));
+      if (ADMIN_ESCALATION_RE.test(type.toUpperCase())) builtRoles.add("admin");
+      roles = Array.from(builtRoles);
+    }
+
+    const names: string[] = ev && Array.isArray(ev.targetEmployeeNames) ? ev.targetEmployeeNames : [];
     const userIds = roles.includes("admin") || names.length
       ? (
           await query(
@@ -79,7 +101,7 @@ setNoticePolicy({
         ).rows.map((r: any) => Number(r.id))
       : [];
     return {
-      enabled: ev.enabled !== false,
+      enabled: ev ? ev.enabled !== false : true,
       permissions: TECHNICAL_MATRIX_ROLES.filter((r) => roles.includes(r.code)).map((r) => r.permission),
       userIds,
     };

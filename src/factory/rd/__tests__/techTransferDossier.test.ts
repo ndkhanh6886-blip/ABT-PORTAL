@@ -81,12 +81,14 @@ describe("Tech Transfer Dossier & Templates (ISO 13485 §7.3.8)", () => {
     const sectionCodes = new Set(pcrTpl!.items.map((i: any) => i.section_code));
     expect(sectionCodes.size).toBe(8);
 
-    // Confirm all 4 PCR IFU variants are represented in the seeded PCR template
+    // Confirm all 4 PCR IFU variants & core dossier doc_codes are represented in the seeded PCR template
     const pcrDocCodes = new Set(pcrTpl!.items.map((i: any) => i.doc_code));
-    expect(pcrDocCodes.has("IFU_NON_ALIQ_NO_IC")).toBe(true);
-    expect(pcrDocCodes.has("IFU_NON_ALIQ_WITH_IC")).toBe(true);
-    expect(pcrDocCodes.has("IFU_ALIQ_NO_IC")).toBe(true);
-    expect(pcrDocCodes.has("IFU_ALIQ_WITH_IC")).toBe(true);
+    expect(pcrDocCodes.has("IFU_MSDS_PACKAGE")).toBe(true);
+    expect(pcrDocCodes.has("BOM_ASL_IQC_SPEC")).toBe(true);
+    expect(pcrDocCodes.has("QC_RELEASE_TCCS")).toBe(true);
+    const ifuItem = pcrTpl!.items.find((i: any) => i.doc_code === "IFU_MSDS_PACKAGE");
+    expect(ifuItem?.guidance).toContain("Không chia sẵn");
+    expect(ifuItem?.guidance).toContain("Chia sẵn");
 
     expect(oligoTpl).toBeDefined();
     expect(oligoTpl!.items).toHaveLength(6);
@@ -261,13 +263,13 @@ describe("Tech Transfer Dossier & Templates (ISO 13485 §7.3.8)", () => {
     );
 
     expect(pkg.status).toBe("DRAFT");
-    expect(pkg.code).toMatch(/^TTP\d{2}-/);
+    expect(pkg.code).toMatch(/^TTP?\d{2}-/);
 
     // Verify list formatting has zero 'undefined' artifacts and accurate checklist counters
     const listRows = await withTransaction((tx) => listTechTransfers(tx, researcher, project.id));
     expect(listRows).toHaveLength(1);
-    expect(listRows[0].bom_count).toBe(4);
-    expect(listRows[0].checklist_total).toBe(15);
+    expect(listRows[0].bom_specification).toHaveLength(4);
+    expect(listRows[0].dossier_total).toBe(15);
 
     // Update draft stability summary
     await withTransaction((tx) =>
@@ -298,8 +300,10 @@ describe("Tech Transfer Dossier & Templates (ISO 13485 §7.3.8)", () => {
     await expect(act(techTransferMachine, researcher, pkg.id, "submit")).rejects.toThrow(/hồ sơ/i);
 
     // Upload real PDF and CSV buffers to items via attachTechTransferFile
-    const pdfItem = detail.items.find((i: any) => i.doc_code === "BOM_MASTER")!;
-    const csvItem = detail.items.find((i: any) => i.doc_code === "QC_RELEASE_SPEC")!;
+    const pdfItem = detail.items.find((i: any) => i.doc_code === "BOM_ASL_IQC_SPEC")!;
+    const csvItem = detail.items.find((i: any) => i.doc_code === "QC_RELEASE_TCCS")!;
+    expect(pdfItem).toBeDefined();
+    expect(csvItem).toBeDefined();
     const pdfBytes = Buffer.from(
       "%PDF-1.4\n%ABT-TT-Test\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n",
       "utf8"
@@ -339,14 +343,14 @@ describe("Tech Transfer Dossier & Templates (ISO 13485 §7.3.8)", () => {
     // Satisfy all remaining required items (either SUBMITTED with doc_ref_code or WAIVED with notes)
     for (const item of detail.items) {
       if (!item.is_required || item.status !== "MISSING") continue;
-      if (item.doc_code === "IFU_ALIQ_NO_IC" || item.doc_code === "IFU_ALIQ_WITH_IC") {
-        // Test WAIVED path for non-applicable variant
+      if (item.doc_code === "CLINICAL_EVAL_REPORT") {
+        // Test WAIVED path for clinical evaluation exempted under RUO / bridging waiver
         await withTransaction((tx) =>
           saveTechTransferChecklistItem(tx, researcher, pkg.id, {
             action: "upsert",
             id: item.id,
             status: "WAIVED",
-            notes: "Sản phẩm đợt chuyển giao 1 chỉ đóng gói dạng không chia sẵn.",
+            notes: "Miễn trừ thử nghiệm lâm sàng bổ sung theo quyết định hội đồng chuyển giao.",
           })
         );
       } else {
@@ -417,8 +421,10 @@ describe("Tech Transfer Dossier & Templates (ISO 13485 §7.3.8)", () => {
     expect(routingSteps).toHaveLength(3);
     expect(routingSteps[0].step_name).toContain("Mastermix");
 
-    // Complete transition
-    const completed = await act(techTransferMachine, rdHead, pkg.id, "complete");
+    // Complete transition (receiving dept signs off completion with verified pilot lot)
+    const completed = await act(techTransferMachine, kitHead, pkg.id, "complete", {
+      payload: { pilot_lot_ref: "PILOT-K2026-01" },
+    });
     expect(completed.status).toBe("COMPLETED");
   });
 });

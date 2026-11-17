@@ -569,45 +569,59 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             .catch(() => {});
     }, [user]);
 
-    // Save helper
-    const saveNotifications = useCallback((list: Notification[]) => {
-        setAllNotifications(list);
-        if (typeof window !== "undefined") {
-            localStorage.setItem("tbr_activity_notifications", JSON.stringify(list));
-            fetch("/api/storage", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ key: "tbr_activity_notifications", data: list })
-            }).catch(() => {});
-        }
-    }, []);
-
-    // Load initial from API storage if available (only when authenticated)
-    useEffect(() => {
-        if (!user) return;
-        if (typeof window !== "undefined") {
-            fetch("/api/storage?key=tbr_activity_notifications")
-                .then(res => res.json())
-                .then(data => {
-                    if (data && Array.isArray(data.data)) {
-                        setAllNotifications(data.data);
-                        localStorage.setItem("tbr_activity_notifications", JSON.stringify(data.data));
-                    }
-                })
-                .catch(() => {});
-
-            fetch("/api/storage?key=system_notification_matrix")
-                .then(res => res.json())
-                .then(data => {
-                    const merged = mergeNotificationMatrixWithDefaults(
-                        data && data.data && typeof data.data === "object" ? data.data : undefined
-                    );
-                    setMatrixSettings(merged);
-                    localStorage.setItem("system_notification_matrix", JSON.stringify(merged));
-                })
-                .catch(() => {});
-        }
+    // Refresh unified live activity notifications from server feed (tasks + workflows + proposals + daily + factory notices + R&D)
+    const refreshNotifications = useCallback(async () => {
+        if (!user || typeof window === "undefined") return;
+        try {
+            const res = await fetch("/api/notifications/feed", { cache: "no-store" });
+            if (!res.ok) return;
+            const data = await res.json();
+            if (data && Array.isArray(data.notifications)) {
+                setAllNotifications(data.notifications);
+                try {
+                    localStorage.setItem("tbr_activity_notifications", JSON.stringify(data.notifications));
+                } catch {}
+            }
+        } catch {}
     }, [user]);
+
+    // Load initial + periodic background refresh + window focus / visibility sync
+    useEffect(() => {
+        if (!user || typeof window === "undefined") return;
+        refreshNotifications();
+
+        fetch("/api/storage?key=system_notification_matrix")
+            .then(res => res.json())
+            .then(data => {
+                const merged = mergeNotificationMatrixWithDefaults(
+                    data && data.data && typeof data.data === "object" ? data.data : undefined
+                );
+                setMatrixSettings(merged);
+                localStorage.setItem("system_notification_matrix", JSON.stringify(merged));
+            })
+            .catch(() => {});
+
+        const intervalId = window.setInterval(() => {
+            if (document.visibilityState === "visible") {
+                refreshNotifications();
+            }
+        }, 25_000);
+
+        const handleFocus = () => {
+            refreshNotifications();
+        };
+        const handleVisibility = () => {
+            if (document.visibilityState === "visible") refreshNotifications();
+        };
+
+        window.addEventListener("focus", handleFocus);
+        document.addEventListener("visibilitychange", handleVisibility);
+        return () => {
+            window.clearInterval(intervalId);
+            window.removeEventListener("focus", handleFocus);
+            document.removeEventListener("visibilitychange", handleVisibility);
+        };
+    }, [user, refreshNotifications]);
 
     // Notification Matrix Settings (Configurable by Admin)
     const [matrixSettings, setMatrixSettings] = useState<Record<string, NotificationMatrixEvent>>(() => {
@@ -848,14 +862,19 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
         };
 
         setAllNotifications(prev => {
-            // Giữ tối đa 300 thông báo gần nhất (khối dữ liệu dùng chung không tăng mãi, không làm đầy bộ nhớ trình duyệt)
+            // Giữ tối đa 300 thông báo hiển thị; chỉ gửi patch atomic phần tử mới lên server (không ghi đè dữ liệu người khác)
             const updated = [newNotif, ...prev].slice(0, 300);
             if (typeof window !== "undefined") {
-                localStorage.setItem("tbr_activity_notifications", JSON.stringify(updated));
+                try {
+                    localStorage.setItem("tbr_activity_notifications", JSON.stringify(updated));
+                } catch {}
                 fetch("/api/storage", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ key: "tbr_activity_notifications", data: updated })
+                    body: JSON.stringify({
+                        key: "tbr_activity_notifications",
+                        patch: { kind: "array", upserts: [newNotif], deletes: [], order: [`id:${newNotif.id}`] }
+                    })
                 }).catch(() => {});
             }
             return updated;
@@ -932,17 +951,24 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             return keysA.some(ka => keysB.some(kb => ka === kb || ka.includes(kb) || kb.includes(ka)));
         };
 
-        const matchRoleAgainstPerson = (allTargetRoles: string[], deptStr: string, posStr: string, userRoleStr?: string) => {
+        const matchRoleAgainstPerson = (allTargetRoles: string[], deptStr: string, posStr: string, userRoleStr?: string, userNameStr?: string) => {
             const deptLower = (deptStr || "").toLowerCase();
             const posLower = (posStr || "").toLowerCase();
             const uRoleLower = (userRoleStr || "").toLowerCase();
+            const uNameLower = (userNameStr || "").toLowerCase();
             const isFactoryWhDept = deptLower.includes("kho nhà máy") || deptLower.includes("kho kỹ thuật") || deptLower.includes("kho tổng nhà máy");
             const isFactoryProcurementDept = deptLower.includes("mua hàng nhà máy") || deptLower.includes("cung ứng nhà máy") || deptLower.includes("cung ứng kỹ thuật") || deptLower.includes("cung ứng nvl");
 
             for (const r of allTargetRoles) {
                 const rLower = (r || "").toLowerCase();
                 if (rLower === "admin" || rLower === "director") {
-                    if (deptLower.includes("giám đốc") || deptLower.includes("bod") || uRoleLower === "admin" || uRoleLower === "director") return true;
+                    if (
+                        deptLower.includes("giám đốc") ||
+                        deptLower.includes("bod") ||
+                        uRoleLower === "admin" ||
+                        uRoleLower === "director" ||
+                        uNameLower.includes("quản trị viên")
+                    ) return true;
                 } else if (rLower === "sales_head") {
                     if (deptLower.includes("kinh doanh") && (posLower.includes("trưởng") || posLower.includes("phó") || posLower.includes("head") || posLower.includes("quản lý"))) return true;
                 } else if (rLower === "sales_rep" || rLower === "sales") {
@@ -1053,7 +1079,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
 
                 // 5. Role match against targetRoles / recipientRole
                 const allTargetRoles = [n.recipientRole, ...(n.targetRoles || [])].filter(Boolean) as string[];
-                if (allTargetRoles.length > 0 && matchRoleAgainstPerson(allTargetRoles, effectiveDept, effectivePos, uRole)) {
+                if (allTargetRoles.length > 0 && matchRoleAgainstPerson(allTargetRoles, effectiveDept, effectivePos, uRole, uName)) {
                     return true;
                 }
 
@@ -1126,56 +1152,41 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
 
     const markAsRead = useCallback((id: string, readerId?: string) => {
         const effectiveReader = getEffectiveReaderId(readerId);
+        const readerKeys = Array.from(
+            new Set([effectiveReader, "current_viewer", user?.email || "", user?.username || "", user?.name || ""].filter(Boolean))
+        );
         setAllNotifications(prev => {
             const updated = prev.map(n => {
                 if (n.id === id) {
                     const readSet = new Set(n.readBy || []);
-                    readSet.add(effectiveReader);
-                    readSet.add("current_viewer");
+                    readerKeys.forEach(k => readSet.add(k));
                     return { ...n, readBy: Array.from(readSet) };
                 }
                 return n;
             });
-            saveNotifications(updated);
+            try {
+                localStorage.setItem("tbr_activity_notifications", JSON.stringify(updated));
+            } catch {}
             return updated;
         });
-    }, [getEffectiveReaderId, saveNotifications]);
+        if (typeof window !== "undefined") {
+            fetch("/api/notifications/feed", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "mark_read", ids: [id], readerKeys })
+            }).catch(() => {});
+        }
+    }, [getEffectiveReaderId, user]);
 
     const markAllAsRead = useCallback((readerId?: string) => {
         const effectiveReader = getEffectiveReaderId(readerId);
+        const readerKeys = Array.from(
+            new Set([effectiveReader, "current_viewer", user?.email || "", user?.username || "", user?.name || ""].filter(Boolean))
+        );
+        const targetIdsList = filteredNotifications.map(n => n.id);
+        if (targetIdsList.length === 0) return;
+        const targetIds = new Set(targetIdsList);
         setAllNotifications(prev => {
-            const targetIds = new Set(filteredNotifications.map(n => n.id));
-            const updated = prev.map(n => {
-                if (targetIds.has(n.id)) {
-                    const readSet = new Set(n.readBy || []);
-                    readSet.add(effectiveReader);
-                    readSet.add("current_viewer");
-                    return { ...n, readBy: Array.from(readSet) };
-                }
-                return n;
-            });
-            saveNotifications(updated);
-            return updated;
-        });
-    }, [filteredNotifications, getEffectiveReaderId, saveNotifications]);
-
-    const deleteNotification = useCallback((id: string) => {
-        setAllNotifications(prev => {
-            const updated = prev.filter(n => n.id !== id);
-            saveNotifications(updated);
-            return updated;
-        });
-    }, [saveNotifications]);
-
-    const clearAllNotifications = useCallback(() => {
-        const readerKeys = [
-            user?.id ? String(user.id) : "",
-            user?.username || "",
-            user?.name || "",
-            selectedEmployeeFilter === "all" ? "current_viewer" : selectedEmployeeFilter
-        ].filter(Boolean);
-        setAllNotifications(prev => {
-            const targetIds = new Set(filteredNotifications.map(n => n.id));
             const updated = prev.map(n => {
                 if (targetIds.has(n.id)) {
                     const readSet = new Set(n.readBy || []);
@@ -1184,10 +1195,84 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                 }
                 return n;
             });
-            saveNotifications(updated);
+            try {
+                localStorage.setItem("tbr_activity_notifications", JSON.stringify(updated));
+            } catch {}
             return updated;
         });
-    }, [user, filteredNotifications, selectedEmployeeFilter, saveNotifications]);
+        if (typeof window !== "undefined") {
+            fetch("/api/notifications/feed", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "mark_read", ids: targetIdsList, readerKeys })
+            }).catch(() => {});
+        }
+    }, [filteredNotifications, getEffectiveReaderId, user]);
+
+    const deleteNotification = useCallback((id: string) => {
+        const readerKeys = Array.from(
+            new Set(["current_viewer", user?.email || "", user?.username || "", user?.name || ""].filter(Boolean))
+        );
+        setAllNotifications(prev => {
+            const updated = prev.filter(n => n.id !== id);
+            try {
+                localStorage.setItem("tbr_activity_notifications", JSON.stringify(updated));
+            } catch {}
+            return updated;
+        });
+        if (typeof window !== "undefined") {
+            fetch("/api/storage", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    key: "tbr_activity_notifications",
+                    patch: { kind: "array", upserts: [], deletes: [`id:${id}`], order: [] }
+                })
+            }).catch(() => {});
+            fetch("/api/notifications/feed", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "mark_read", ids: [id], readerKeys })
+            }).catch(() => {});
+        }
+    }, [user]);
+
+    const clearAllNotifications = useCallback(() => {
+        const readerKeys = Array.from(
+            new Set([
+                user?.id ? String(user.id) : "",
+                user?.email || "",
+                user?.username || "",
+                user?.name || "",
+                "current_viewer",
+                selectedEmployeeFilter === "all" ? "current_viewer" : selectedEmployeeFilter
+            ].filter(Boolean))
+        );
+        const targetIdsList = filteredNotifications.map(n => n.id);
+        if (targetIdsList.length === 0) return;
+        const targetIds = new Set(targetIdsList);
+        setAllNotifications(prev => {
+            const updated = prev.map(n => {
+                if (targetIds.has(n.id)) {
+                    const readSet = new Set(n.readBy || []);
+                    readerKeys.forEach(k => readSet.add(k));
+                    return { ...n, readBy: Array.from(readSet) };
+                }
+                return n;
+            });
+            try {
+                localStorage.setItem("tbr_activity_notifications", JSON.stringify(updated));
+            } catch {}
+            return updated;
+        });
+        if (typeof window !== "undefined") {
+            fetch("/api/notifications/feed", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "mark_read", ids: targetIdsList, readerKeys })
+            }).catch(() => {});
+        }
+    }, [user, filteredNotifications, selectedEmployeeFilter]);
 
     return (
         <NotificationContext.Provider

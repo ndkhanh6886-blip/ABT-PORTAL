@@ -82,6 +82,7 @@ function EditSynthesizerPanel({ asset, onClose }: { asset: Asset; onClose: () =>
   const qc = useQueryClient();
   const scales = useScales();
   const [f, setF] = useState({
+    code: asset.code,
     name: asset.name,
     model: asset.model ?? "",
     serial_no: asset.serial_no ?? "",
@@ -96,6 +97,7 @@ function EditSynthesizerPanel({ asset, onClose }: { asset: Asset; onClose: () =>
       api(`/api/factory/assets/${asset.id}`, {
         method: "PATCH",
         json: {
+          code: f.code.trim(),
           name: f.name,
           model: f.model || null,
           serial_no: f.serial_no || null,
@@ -114,13 +116,26 @@ function EditSynthesizerPanel({ asset, onClose }: { asset: Asset; onClose: () =>
       onClose();
     },
   });
+  const remove = useMutation({
+    mutationFn: (reason: string) =>
+      api(`/api/factory/assets/${asset.id}`, {
+        method: "DELETE",
+        json: { reason },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["factory", "assets"] });
+      qc.invalidateQueries({ queryKey: ["factory", "oligo-batch-candidates"] });
+      onClose();
+    },
+  });
   return (
     <form className="flex flex-col gap-3 mb-4 p-3.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
       <div className="flex items-center justify-between">
-        <div className="text-xs font-bold text-amber-900 dark:text-amber-300">⚙ Cài đặt máy tổng hợp: {asset.code} · {asset.name}</div>
+        <div className="text-xs font-bold text-amber-900 dark:text-amber-300">✏️ Sửa / Cài đặt máy tổng hợp: {asset.code} · {asset.name}</div>
         <Button type="button" variant="ghost" onClick={onClose}>Đóng</Button>
       </div>
-      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6 items-end">
+      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-7 items-end">
+        <Field label="Mã máy *"><input className={`${inputClass} font-mono`} value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} required /></Field>
         <Field label="Tên máy *"><input className={inputClass} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required /></Field>
         <Field label="Model"><input className={inputClass} value={f.model} onChange={(e) => setF({ ...f, model: e.target.value })} /></Field>
         <Field label="Số serial"><input className={inputClass} value={f.serial_no} onChange={(e) => setF({ ...f, serial_no: e.target.value })} /></Field>
@@ -141,12 +156,25 @@ function EditSynthesizerPanel({ asset, onClose }: { asset: Asset; onClose: () =>
           </label>
         ))}
       </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <input className={`${inputClass} w-72`} placeholder="Ghi chú / lý do cập nhật cấu hình máy" value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} />
-        <Button type="submit" disabled={save.isPending}>Lưu cài đặt máy</Button>
-        <Button type="button" variant="ghost" onClick={onClose}>Hủy</Button>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <input className={`${inputClass} w-72`} placeholder="Ghi chú / lý do cập nhật cấu hình máy" value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} />
+          <Button type="submit" disabled={save.isPending || remove.isPending}>Lưu cài đặt máy</Button>
+          <Button type="button" variant="ghost" onClick={onClose}>Hủy</Button>
+        </div>
+        <Button
+          type="button"
+          variant="danger"
+          disabled={remove.isPending || save.isPending}
+          onClick={() => {
+            const reason = window.prompt(`Nhập lý do xóa máy ${asset.code} (${asset.name}):`, "Khai báo nhầm / loại bỏ thiết bị chưa phát sinh lô");
+            if (reason && reason.trim().length >= 3) remove.mutate(reason.trim());
+          }}
+        >
+          🗑️ Xóa máy
+        </Button>
       </div>
-      <ErrorNote error={save.error} />
+      <ErrorNote error={save.error ?? remove.error} />
     </form>
   );
 }
@@ -295,6 +323,16 @@ export function EquipmentView({
   const [editingSynth, setEditingSynth] = useState<Asset | null>(null);
   const [showAddSynth, setShowAddSynth] = useState(false);
   const [showAddRule, setShowAddRule] = useState(false);
+  const qc = useQueryClient();
+  const deleteSynth = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      api(`/api/factory/assets/${id}`, { method: "DELETE", json: { reason } }),
+    onSuccess: () => {
+      setEditingSynth(null);
+      qc.invalidateQueries({ queryKey: ["factory", "assets"] });
+      qc.invalidateQueries({ queryKey: ["factory", "oligo-batch-candidates"] });
+    },
+  });
   const mods = useQuery({ queryKey: ["factory", "oligo-catalog"], queryFn: () => api<Mod[]>("/api/factory/oligo/modifications") });
   const modItems = useQuery({
     queryKey: ["factory", "items-by-id", mods.data?.map((m) => m.amidite_item_id).filter(Boolean).join(",")],
@@ -330,7 +368,7 @@ export function EquipmentView({
         {canManageAssets && editingSynth && (
           <EditSynthesizerPanel key={editingSynth.id} asset={editingSynth} onClose={() => setEditingSynth(null)} />
         )}
-        <ErrorNote error={assets.error} />
+        <ErrorNote error={assets.error ?? deleteSynth.error} />
         {assets.data?.length === 0 && <Empty>Chưa khai báo máy tổng hợp.</Empty>}
         {assets.data && assets.data.length > 0 && (
           <Table head={["Mã máy", "Tên máy tổng hợp", "Phòng", "Model / Serial", "Số cột CPG", "Thang hỗ trợ", "Hạn hiệu chuẩn", "Trạng thái", "Thao tác"]}>
@@ -351,9 +389,24 @@ export function EquipmentView({
                 <td className="py-1.5 pr-3 text-right whitespace-nowrap">
                   <div className="inline-flex items-center gap-1">
                     {canManageAssets && (
-                      <Button variant="ghost" onClick={() => { setEditingSynth(a); setShowAddSynth(false); }}>
-                        ⚙ Cài đặt máy
-                      </Button>
+                      <>
+                        <Button variant="ghost" onClick={() => { setEditingSynth(a); setShowAddSynth(false); }}>
+                          ✏️ Sửa / Cài đặt
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          className="text-rose-600 dark:text-rose-400"
+                          disabled={deleteSynth.isPending}
+                          onClick={() => {
+                            const reason = window.prompt(`Nhập lý do xóa máy ${a.code} (${a.name}):`, "Khai báo nhầm / loại bỏ thiết bị chưa phát sinh lô");
+                            if (reason && reason.trim().length >= 3) {
+                              deleteSynth.mutate({ id: a.id, reason: reason.trim() });
+                            }
+                          }}
+                        >
+                          🗑️ Xóa
+                        </Button>
+                      </>
                     )}
                     <Button variant="ghost" onClick={() => setPortsOf(a.id)}>
                       🧪 Cổng hóa chất

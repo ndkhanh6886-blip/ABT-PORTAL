@@ -15,6 +15,7 @@ interface Asset {
   status: string;
   owner_code?: string;
   owner_name: string;
+  location?: string | null;
   next_calibration_due: string | null;
   model: string | null;
   serial_no: string | null;
@@ -1522,7 +1523,10 @@ const ASSET_STATUS_LABELS: Record<string, string> = {
 
 function EditInstrumentPanel({ asset, onDone }: { asset: Asset; onDone: () => void }) {
   const qc = useQueryClient();
+  const [code, setCode] = useState(asset.code);
   const [name, setName] = useState(asset.name);
+  const [assetType, setAssetType] = useState(asset.asset_type || "OTHER");
+  const [location, setLocation] = useState(asset.location ?? "");
   const [model, setModel] = useState(asset.model ?? "");
   const [serialNo, setSerialNo] = useState(asset.serial_no ?? "");
   const [status, setStatus] = useState(asset.status || "IN_SERVICE");
@@ -1534,13 +1538,29 @@ function EditInstrumentPanel({ asset, onDone }: { asset: Asset; onDone: () => vo
       api(`/api/factory/assets/${asset.id}`, {
         method: "PATCH",
         json: {
+          code: code.trim(),
           name: name.trim(),
+          asset_type: assetType,
+          location: location.trim() || null,
           model: model.trim() || null,
           serial_no: serialNo.trim() || null,
           status,
           next_calibration_due: due || null,
           reason: reason.trim() || "Cập nhật cấu hình thiết bị",
         },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["factory", "assets"] });
+      qc.invalidateQueries({ queryKey: ["factory", "asset-slots", asset.id] });
+      onDone();
+    },
+  });
+
+  const remove = useMutation({
+    mutationFn: (delReason: string) =>
+      api(`/api/factory/assets/${asset.id}`, {
+        method: "DELETE",
+        json: { reason: delReason },
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["factory", "assets"] });
@@ -1559,15 +1579,30 @@ function EditInstrumentPanel({ asset, onDone }: { asset: Asset; onDone: () => vo
     >
       <div className="flex items-center justify-between mb-2">
         <div className="text-xs font-bold text-slate-700 dark:text-slate-200">
-          ⚙ Cài đặt thiết bị: <span className="font-mono">{asset.code}</span>
+          ✏️ Sửa / Cài đặt thiết bị: <span className="font-mono">{asset.code}</span>
         </div>
         <button type="button" onClick={onDone} className="text-xs text-slate-500 hover:underline">
           Đóng
         </button>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-2">
+        <Field label="Mã thiết bị *">
+          <input className={`${inputClass} font-mono`} value={code} onChange={(e) => setCode(e.target.value)} required />
+        </Field>
         <Field label="Tên thiết bị *">
           <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} required />
+        </Field>
+        <Field label="Loại thiết bị">
+          <select className={inputClass} value={assetType} onChange={(e) => setAssetType(e.target.value)}>
+            {Object.entries(TYPES).map(([k, v]) => (
+              <option key={k} value={k}>
+                {v}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Vị trí phòng">
+          <input className={inputClass} value={location} onChange={(e) => setLocation(e.target.value)} placeholder="VD: Phòng hậu tổng hợp" />
         </Field>
         <Field label="Model">
           <input className={inputClass} value={model} onChange={(e) => setModel(e.target.value)} />
@@ -1587,19 +1622,37 @@ function EditInstrumentPanel({ asset, onDone }: { asset: Asset; onDone: () => vo
         <Field label="Hạn hiệu chuẩn tiếp theo">
           <input className={inputClass} type="date" value={due} onChange={(e) => setDue(e.target.value)} />
         </Field>
-        <Field label="Lý do chỉnh sửa">
-          <input className={inputClass} value={reason} onChange={(e) => setReason(e.target.value)} required />
-        </Field>
+        <div className="md:col-span-3 lg:col-span-4">
+          <Field label="Lý do chỉnh sửa">
+            <input className={inputClass} value={reason} onChange={(e) => setReason(e.target.value)} required />
+          </Field>
+        </div>
       </div>
-      <div className="mt-2 flex items-center gap-2">
-        <Button type="submit" disabled={save.isPending}>
-          {save.isPending ? "Đang lưu..." : "Lưu thông số"}
-        </Button>
-        <Button type="button" variant="ghost" onClick={onDone}>
-          Hủy
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Button type="submit" disabled={save.isPending || remove.isPending}>
+            {save.isPending ? "Đang lưu..." : "Lưu thông số"}
+          </Button>
+          <Button type="button" variant="ghost" onClick={onDone}>
+            Hủy
+          </Button>
+        </div>
+        <Button
+          type="button"
+          variant="danger"
+          disabled={remove.isPending || save.isPending}
+          onClick={() => {
+            const delReason = window.prompt(
+              `Nhập lý do xóa thiết bị ${asset.code} (${asset.name}):`,
+              "Khai báo nhầm / loại bỏ thiết bị chưa phát sinh hồ sơ"
+            );
+            if (delReason && delReason.trim().length >= 3) remove.mutate(delReason.trim());
+          }}
+        >
+          🗑️ Xóa thiết bị
         </Button>
       </div>
-      <ErrorNote error={save.error} />
+      <ErrorNote error={save.error ?? remove.error} />
     </form>
   );
 }
@@ -1616,6 +1669,7 @@ export function InstrumentsView({
   mode?: "assets" | "reagents" | "all";
   onNavigateToRules?: () => void;
 }) {
+  const qc = useQueryClient();
   const assets = useQuery({
     queryKey: ["factory", "assets", "P-OLIGO"],
     queryFn: () => api<Asset[]>("/api/factory/assets?dept=P-OLIGO"),
@@ -1624,6 +1678,16 @@ export function InstrumentsView({
   const [dismissed, setDismissed] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [editAssetId, setEditAssetId] = useState<string | null>(null);
+  const removeAsset = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      api(`/api/factory/assets/${id}`, { method: "DELETE", json: { reason } }),
+    onSuccess: (_res, vars) => {
+      if (editAssetId === vars.id) setEditAssetId(null);
+      if (open === vars.id) setOpen(null);
+      qc.invalidateQueries({ queryKey: ["factory", "assets"] });
+      qc.invalidateQueries({ queryKey: ["factory", "asset-slots", vars.id] });
+    },
+  });
   const list = useMemo(() => {
     const nonSynth = (assets.data ?? []).filter(
       (a) => a.asset_type !== "SYNTHESIZER" && (!a.owner_code || a.owner_code === "P-OLIGO")
@@ -1725,7 +1789,7 @@ export function InstrumentsView({
         {canManage && editAsset && (
           <EditInstrumentPanel key={editAsset.id} asset={editAsset} onDone={() => setEditAssetId(null)} />
         )}
-        <ErrorNote error={assets.error} />
+        <ErrorNote error={assets.error ?? removeAsset.error} />
         {assets.data && list.length === 0 && <Empty>Chưa khai báo thiết bị.</Empty>}
         {list.length > 0 && (
           <Table head={["Mã thiết bị", "Tên thiết bị", "Loại", "Trạng thái", "Phòng", "Model / Serial", "Hạn hiệu chuẩn", "Thao tác"]}>
@@ -1745,13 +1809,32 @@ export function InstrumentsView({
                 <td className="py-1.5 pr-3 text-right">
                   <div className="flex flex-wrap justify-end gap-1.5">
                     {canManage && (
-                      <Button
-                        type="button"
-                        variant={editAssetId === a.id ? "primary" : "ghost"}
-                        onClick={() => setEditAssetId(editAssetId === a.id ? null : a.id)}
-                      >
-                        ⚙ Cài đặt máy
-                      </Button>
+                      <>
+                        <Button
+                          type="button"
+                          variant={editAssetId === a.id ? "primary" : "ghost"}
+                          onClick={() => setEditAssetId(editAssetId === a.id ? null : a.id)}
+                        >
+                          ✏️ Sửa / Cài đặt
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="text-rose-600 dark:text-rose-400"
+                          disabled={removeAsset.isPending}
+                          onClick={() => {
+                            const reason = window.prompt(
+                              `Nhập lý do xóa thiết bị ${a.code} (${a.name}):`,
+                              "Khai báo nhầm / loại bỏ thiết bị chưa phát sinh hồ sơ"
+                            );
+                            if (reason && reason.trim().length >= 3) {
+                              removeAsset.mutate({ id: a.id, reason: reason.trim() });
+                            }
+                          }}
+                        >
+                          🗑️ Xóa
+                        </Button>
+                      </>
                     )}
                     {onNavigateToRules ? (
                       <Button type="button" variant="ghost" onClick={onNavigateToRules}>

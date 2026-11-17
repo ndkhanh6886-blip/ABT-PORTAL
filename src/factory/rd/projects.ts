@@ -1436,6 +1436,7 @@ export async function exportRoadmapIcs(tx: Tx, actor: AuthzActor, projectId?: st
 
 export interface ListProjectsFilter {
   domain?: string | null;
+  excludeDomain?: string | null;
   activeOnly?: boolean;
   performer?: string | null;
 }
@@ -1447,6 +1448,7 @@ export async function listProjects(tx: Tx, actor: AuthzActor, domainOrFilter?: s
   const filter: ListProjectsFilter =
     typeof domainOrFilter === "string" ? { domain: domainOrFilter } : domainOrFilter ?? {};
   const domain = filter.domain || null;
+  const excludeDomain = filter.excludeDomain || null;
   const rows = (
     await tx.query(
       `SELECT p.*,
@@ -1477,8 +1479,9 @@ export async function listProjects(tx: Tx, actor: AuthzActor, domainOrFilter?: s
          LEFT JOIN core.user_profile l ON l.user_id = p.leader_id
          LEFT JOIN rd.gate_template t ON t.id = p.gate_template_id
         WHERE ($1::text IS NULL OR p.target_domain = $1)
+          AND ($2::text IS NULL OR p.target_domain <> $2)
         ORDER BY p.created_at DESC LIMIT 200`,
-      [domain]
+      [domain, excludeDomain]
     )
   ).rows;
 

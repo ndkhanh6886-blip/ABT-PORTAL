@@ -3,7 +3,7 @@ import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
 import { authorize, hasFactoryPermission, registerPermissions, type AuthzActor } from "../core/authz";
 import { vnToday } from "../core/dates";
-import { invalid, notFound } from "../core/errors";
+import { invalid, notFound, conflict } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { insertRecord, parseInput } from "../core/records";
 import { ensureHplcReagentSlotsAndColumnsSeed } from "./slots";
@@ -41,11 +41,21 @@ export async function ensureAssetExtraColumnsSchema(tx: Tx): Promise<void> {
 }
 
 const updateAssetSchema = z.object({
+  code: z.string().trim().min(1, "Mã thiết bị không được trống").max(60).optional(),
   name: z.string().trim().min(1, "bắt buộc").max(200).optional(),
+  asset_type: z.enum(["SYNTHESIZER", "HPLC", "PCR", "CENTRIFUGE", "FREEZER", "BALANCE", "SPECTROPHOTOMETER", "MASS_SPEC", "OTHER"]).optional(),
+  owner_org_unit_id: z.string().uuid().optional().nullable(),
+  dept_code: z.string().trim().max(40).optional().nullable(),
+  location: z.string().trim().max(150).optional().nullable(),
+  equipment_category: z.string().trim().max(80).optional().nullable(),
+  manufacturer: z.string().trim().max(100).optional().nullable(),
   model: z.string().trim().max(100).optional().nullable(),
   serial_no: z.string().trim().max(100).optional().nullable(),
   status: z.enum(["IN_SERVICE", "UNDER_MAINTENANCE", "OUT_OF_CALIBRATION", "RETIRED"]).optional(),
+  calibration_interval_days: z.coerce.number().int().positive().optional().nullable(),
+  last_calibration_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
   next_calibration_due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+  notes: z.string().trim().max(500).optional().nullable(),
   synthesizer: z
     .object({ column_positions: z.coerce.number().int().min(1).max(384), supported_scales: z.array(z.string()).max(30).default([]) })
     .optional()
@@ -94,11 +104,36 @@ export async function updateAsset(tx: Tx, actor: AuthzActor, assetId: string, in
   if (!cur) throw notFound("thiết bị");
   await authorize(tx, actor, "asset.manage", cur.owner_org_unit_id);
 
+  let nextCode = cur.code as string;
+  if (data.code && data.code.toUpperCase() !== String(cur.code).toUpperCase()) {
+    const dup = await tx.query("SELECT 1 FROM asset.asset WHERE upper(code) = upper($1) AND id <> $2", [data.code, assetId]);
+    if (dup.rowCount) throw conflict("Mã thiết bị đã tồn tại.");
+    nextCode = data.code;
+  }
+
+  let nextOwnerId = data.owner_org_unit_id ?? cur.owner_org_unit_id;
+  if (!data.owner_org_unit_id && data.dept_code) {
+    const u = (await tx.query("SELECT id FROM core.org_unit WHERE code = $1 LIMIT 1", [data.dept_code])).rows[0];
+    if (!u) throw notFound("phòng quản lý thiết bị");
+    nextOwnerId = u.id;
+  }
+  if (nextOwnerId !== cur.owner_org_unit_id) {
+    await authorize(tx, actor, "asset.manage", nextOwnerId);
+  }
+
   const nextName = data.name ?? cur.name;
+  const nextType = data.asset_type ?? cur.asset_type;
+  const nextLocation = data.location === undefined ? cur.location : data.location;
+  const nextCategory = data.equipment_category === undefined ? cur.equipment_category : data.equipment_category;
+  const nextManufacturer = data.manufacturer === undefined ? cur.manufacturer : data.manufacturer;
   const nextModel = data.model === undefined ? cur.model : data.model;
   const nextSerial = data.serial_no === undefined ? cur.serial_no : data.serial_no;
   const nextStatus = data.status ?? cur.status;
+  const nextCalInterval =
+    data.calibration_interval_days === undefined ? cur.calibration_interval_days : data.calibration_interval_days;
+  const nextLastCal = data.last_calibration_date === undefined ? cur.last_calibration_date : data.last_calibration_date;
   const nextCal = data.next_calibration_due === undefined ? cur.next_calibration_due : data.next_calibration_due;
+  const nextNotes = data.notes === undefined ? cur.notes : data.notes;
 
   const curCalStr = cur.next_calibration_due ? String(cur.next_calibration_due).slice(0, 10) : null;
   const nextCalStr = nextCal ? String(nextCal).slice(0, 10) : null;
@@ -110,13 +145,33 @@ export async function updateAsset(tx: Tx, actor: AuthzActor, assetId: string, in
 
   await tx.query(
     `UPDATE asset.asset
-        SET name = $2, model = $3, serial_no = $4, status = $5, next_calibration_due = $6,
-            version = version + 1, updated_at = now(), updated_by = $7
+        SET code = $2, name = $3, asset_type = $4, owner_org_unit_id = $5,
+            location = $6, equipment_category = $7, manufacturer = $8,
+            model = $9, serial_no = $10, status = $11,
+            calibration_interval_days = $12, last_calibration_date = $13, next_calibration_due = $14,
+            notes = $15, version = version + 1, updated_at = now(), updated_by = $16
       WHERE id = $1`,
-    [assetId, nextName, nextModel, nextSerial, nextStatus, nextCal, actor.userId]
+    [
+      assetId,
+      nextCode,
+      nextName,
+      nextType,
+      nextOwnerId,
+      nextLocation,
+      nextCategory,
+      nextManufacturer,
+      nextModel,
+      nextSerial,
+      nextStatus,
+      nextCalInterval,
+      nextLastCal,
+      nextCal,
+      nextNotes,
+      actor.userId,
+    ]
   );
 
-  if (cur.asset_type === "SYNTHESIZER" && data.synthesizer) {
+  if (nextType === "SYNTHESIZER" && data.synthesizer) {
     await tx.query(
       `INSERT INTO oligo.synthesizer (asset_id, column_positions, supported_scales)
        VALUES ($1, $2, $3)
@@ -130,11 +185,20 @@ export async function updateAsset(tx: Tx, actor: AuthzActor, assetId: string, in
     entityId: assetId,
     action: "update",
     changes: {
+      code: [cur.code, nextCode],
       name: [cur.name, nextName],
+      asset_type: [cur.asset_type, nextType],
+      owner_org_unit_id: [cur.owner_org_unit_id, nextOwnerId],
+      location: [cur.location, nextLocation],
+      equipment_category: [cur.equipment_category, nextCategory],
+      manufacturer: [cur.manufacturer, nextManufacturer],
       model: [cur.model, nextModel],
       serial_no: [cur.serial_no, nextSerial],
       status: [cur.status, nextStatus],
+      calibration_interval_days: [cur.calibration_interval_days, nextCalInterval],
+      last_calibration_date: [cur.last_calibration_date, nextLastCal],
       next_calibration_due: [cur.next_calibration_due, nextCal],
+      notes: [cur.notes, nextNotes],
       ...(data.synthesizer
         ? {
             column_positions: [cur.column_positions, data.synthesizer.column_positions],
@@ -146,6 +210,56 @@ export async function updateAsset(tx: Tx, actor: AuthzActor, assetId: string, in
   });
 
   return { id: assetId };
+}
+
+const deleteAssetSchema = z.object({
+  reason: z.string().trim().min(3, "Vui lòng nhập lý do xóa thiết bị (tối thiểu 3 ký tự).").max(500),
+});
+
+export async function deleteAsset(tx: Tx, actor: AuthzActor, assetId: string, input: unknown) {
+  const d = parseInput(deleteAssetSchema, input);
+  const cur = (await tx.query("SELECT * FROM asset.asset WHERE id = $1 FOR UPDATE", [assetId])).rows[0];
+  if (!cur) throw notFound("thiết bị");
+  await authorize(tx, actor, "asset.manage", cur.owner_org_unit_id);
+
+  // Guard immutable ISO 13485 / GMP historical records (single query on tx)
+  const histRes = await tx.query(
+    `SELECT (
+       EXISTS (SELECT 1 FROM oligo.synthesis_batch WHERE synthesizer_id = $1)
+       OR EXISTS (SELECT 1 FROM rd.experiment_asset WHERE asset_id = $1)
+       OR EXISTS (SELECT 1 FROM kit.production_step WHERE asset_id = $1 OR required_asset_id = $1)
+       OR EXISTS (SELECT 1 FROM qms.qc_result WHERE instrument_asset_id = $1)
+       OR EXISTS (SELECT 1 FROM asset.event WHERE asset_id = $1 AND status = 'DONE')
+     ) AS has_history`,
+    [assetId]
+  );
+  if (histRes.rows[0]?.has_history) {
+    throw conflict(
+      "Thiết bị đã phát sinh hồ sơ sản xuất / thí nghiệm / QC / hiệu chuẩn (ISO 13485). Không thể xóa vĩnh viễn — vui lòng chuyển trạng thái sang 'Ngừng sử dụng (RETIRED)'."
+    );
+  }
+
+  // Clean up unreferenced config / planned records before deleting asset
+  await tx.query("UPDATE kit.routing_step SET required_asset_id = NULL WHERE required_asset_id = $1", [assetId]);
+  await tx.query("UPDATE asset.lc_column SET asset_id = NULL WHERE asset_id = $1", [assetId]);
+  await tx.query("DELETE FROM oligo.bottle_calibration WHERE synthesizer_id = $1", [assetId]);
+  await tx.query("DELETE FROM oligo.bottle_event WHERE synthesizer_id = $1", [assetId]);
+  await tx.query("DELETE FROM oligo.synth_port WHERE synthesizer_id = $1", [assetId]);
+  await tx.query("DELETE FROM oligo.synthesizer WHERE asset_id = $1", [assetId]);
+  await tx.query("DELETE FROM asset.slot_event WHERE asset_id = $1", [assetId]);
+  await tx.query("DELETE FROM asset.reagent_slot WHERE asset_id = $1", [assetId]);
+  await tx.query("DELETE FROM asset.event WHERE asset_id = $1", [assetId]);
+  await tx.query("DELETE FROM asset.asset WHERE id = $1", [assetId]);
+
+  await writeAudit(tx, actor, {
+    entityType: "asset",
+    entityId: assetId,
+    action: "delete",
+    changes: { code: [cur.code, null], name: [cur.name, null] },
+    reason: d.reason,
+  });
+
+  return { deleted: true, id: assetId, code: cur.code };
 }
 
 /** Auto-marks any IN_SERVICE / ACTIVE assets with next_calibration_due < CURRENT_DATE as OUT_OF_CALIBRATION. */
