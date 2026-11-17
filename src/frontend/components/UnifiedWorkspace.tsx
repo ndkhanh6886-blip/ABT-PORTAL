@@ -2160,6 +2160,7 @@ export const UnifiedWorkspace: React.FC = () => {
     customNotifyMessage?: string;
     chatChannelId?: number;
     lastRemindedAt?: string;
+    isPublic?: boolean;
     attachments?: Array<{ name: string; url: string; size?: number; type?: string; uploaded_at?: string }>;
   }>({
     day: "Thứ 2",
@@ -2185,6 +2186,7 @@ export const UnifiedWorkspace: React.FC = () => {
     sendBellNotify: true,
     reminderMinutes: 30,
     customNotifyMessage: "",
+    isPublic: false,
     attachments: []
   });
   const [attendeeSearchQuery, setAttendeeSearchQuery] = useState("");
@@ -2361,6 +2363,7 @@ export const UnifiedWorkspace: React.FC = () => {
         customNotifyMessage: item.customNotifyMessage || "",
         chatChannelId: item.chatChannelId,
         lastRemindedAt: item.lastRemindedAt,
+        isPublic: Boolean(item.isPublic),
         attachments: item.attachments || []
       });
     } else {
@@ -2390,6 +2393,7 @@ export const UnifiedWorkspace: React.FC = () => {
         sendBellNotify: true,
         reminderMinutes: 30,
         customNotifyMessage: "",
+        isPublic: false,
         attachments: []
       });
     }
@@ -3373,6 +3377,8 @@ export const UnifiedWorkspace: React.FC = () => {
   const filteredSchedules = useMemo(() => {
     return weeklySchedule.filter((s) => {
       if (rolePerspective === "staff") {
+        // Lịch công khai: mọi người đều xem được; không công khai: chỉ người phụ trách / phối hợp (quản lý xem ở chế độ quản lý)
+        if (s.isPublic) return true;
         return Boolean(s.actor) && sameStaffName(s.actor, currentStaffName);
       }
       if (effectiveSelectedDept !== "all") {
@@ -6762,6 +6768,7 @@ export const UnifiedWorkspace: React.FC = () => {
       customNotifyMessage: scheduleForm.customNotifyMessage || "",
       chatChannelId: scheduleForm.chatChannelId,
       lastRemindedAt: scheduleForm.lastRemindedAt,
+      isPublic: Boolean(scheduleForm.isPublic),
       attachments: scheduleForm.attachments || []
     }));
 
@@ -16489,6 +16496,21 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     </select>
                   </div>
                 </div>
+
+                <label className="flex items-start gap-2 p-2.5 rounded-xl bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-900/60 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(scheduleForm.isPublic)}
+                    onChange={(e) => setScheduleForm({ ...scheduleForm, isPublic: e.target.checked })}
+                    className="mt-0.5 w-4 h-4 accent-sky-600 cursor-pointer"
+                  />
+                  <span className="text-xs">
+                    <span className="font-bold text-sky-800 dark:text-sky-200">🌐 Hiển thị công khai cho tất cả mọi người xem</span>
+                    <span className="block text-[11px] text-slate-500 dark:text-slate-400">
+                      Bỏ chọn: chỉ cá nhân phụ trách / người tham dự và quản lý xem được lịch này.
+                    </span>
+                  </span>
+                </label>
 
                 {/* BẢNG CHỌN THÀNH VIÊN THAM DỰ HỌP (CHUYÊN BIỆT KHI TẠO LỊCH HỌP HOẶC CHỌN NGƯỜI PHỐI HỢP) */}
                 {isMeetingMode ? (
