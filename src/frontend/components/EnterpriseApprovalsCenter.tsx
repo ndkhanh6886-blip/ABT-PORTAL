@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import {
   CheckCircle2,
   Clock,
@@ -838,7 +839,7 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
       )
       .join("");
 
-    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Tờ Trình Phê Duyệt — ${escHtml(
+    writeSafePrintDocument(w, `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Tờ Trình Phê Duyệt — ${escHtml(
       reqItem.request_code
     )}</title>
       <style>body{font-family:'Segoe UI',Arial,sans-serif;padding:24px;color:#0f172a;font-size:12px}table{width:100%;border-collapse:collapse;margin-top:8px}</style>
@@ -894,9 +895,7 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
 
       <h4 style="margin:16px 0 8px;">IV. XÁC NHẬN &amp; CHỮ KÝ SỐ CỦA CÁC CẤP PHÊ DUYỆT</h4>
       <div style="display:flex;gap:10px;flex-wrap:wrap;">${stagesHtml}</div>
-      <script>window.onload=()=>window.print();</script>
     </body></html>`);
-    w.document.close();
   };
 
   const filteredRequests = useMemo(() => {

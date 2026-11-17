@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { Tx } from "../core/db";
 import { authorizeAnywhere, SYSTEM_ACTOR, type AuthzActor } from "../core/authz";
 import { vnToday } from "../core/dates";

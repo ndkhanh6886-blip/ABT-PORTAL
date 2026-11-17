@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
 import { authorize, hasFactoryPermission, registerPermissions, type AuthzActor } from "../core/authz";

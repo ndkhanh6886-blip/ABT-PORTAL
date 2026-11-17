@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { withTransaction, type Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
 import { SYSTEM_ACTOR } from "../core/authz";

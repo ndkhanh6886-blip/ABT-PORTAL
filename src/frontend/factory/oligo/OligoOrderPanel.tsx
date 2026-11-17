@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as XLSX from "xlsx";
 import { api, ApiError, fmtDate } from "../api";
@@ -285,8 +286,7 @@ function printOligoInvoiceSchedule(
     return;
   }
   w.document.open();
-  w.document.write(html);
-  w.document.close();
+  writeSafePrintDocument(w, html);
 }
 
 export interface ParsedOligoExcelRow {

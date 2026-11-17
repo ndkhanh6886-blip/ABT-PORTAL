@@ -9,7 +9,7 @@ import { FactoryError, notFound } from "./core/errors";
 import { parseInput } from "./core/records";
 import { listAllowedActions, preAuthenticate, runTransition, type MachineDef, type TransitionRequest } from "./core/stateMachine";
 import { verifyPortalPassword } from "./portalBridge";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { withIdempotency } from "./core/idempotency";
 import { processOutbox } from "./core/worker";
 import "./modules";
@@ -41,6 +41,9 @@ async function ensureFactoryMigrated(): Promise<void> {
   await startupMigrationPromise;
 }
 
+/** JSON bodies of the factory API are small records; files go through /api/upload. */
+const MAX_JSON_BODY_BYTES = 20 * 1024 * 1024;
+
 export function factoryRoute(
   handler: (tx: Tx, ctx: RouteContext) => Promise<unknown>,
   opts: { before?: (ctx: RouteContext) => Promise<void> } = {}
@@ -59,6 +62,10 @@ export function factoryRoute(
     };
     try {
       await ensureFactoryMigrated();
+      const declaredSize = Number(req.headers.get("content-length") || 0);
+      if (declaredSize > MAX_JSON_BODY_BYTES) {
+        return NextResponse.json({ error: "Nội dung gửi lên quá lớn.", code: "PAYLOAD_TOO_LARGE" }, { status: 413 });
+      }
       const params = (await segment?.params) ?? {};
       const body = req.method === "GET" || req.method === "HEAD" ? {} : await req.json().catch(() => ({}));
       // Own statement, outside the business transaction: never holds the profile row lock

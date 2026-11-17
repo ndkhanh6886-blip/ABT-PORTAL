@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { query } from "@/backend/db/db";
 import { canAccessDocument, documentAccessDeniedResponse } from "@/backend/services/documentLinks";
 import { escapeDeep, escapeHtml } from "@/backend/services/html";
+import { printablePageResponse, printableErrorResponse } from "@/backend/services/printPage";
 
 export async function GET(req: NextRequest) {
   try {
@@ -112,7 +113,7 @@ export async function GET(req: NextRequest) {
 </head>
 <body>
   <div class="no-print" style="margin-bottom: 20px; display: flex; gap: 10px;">
-    <button onclick="window.print()" style="padding: 10px 20px; background: #2563eb; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer;">🖨 In Báo Giá / Lưu PDF</button>
+    <button data-print style="padding: 10px 20px; background: #2563eb; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer;">🖨 In Báo Giá / Lưu PDF</button>
   </div>
 
   <div class="header">
@@ -198,11 +199,8 @@ export async function GET(req: NextRequest) {
 </html>
     `;
 
-    return new NextResponse(html, {
-      status: 200,
-      headers: { "Content-Type": "text/html; charset=utf-8" }
-    });
+    return printablePageResponse(html);
   } catch (error: any) {
-    return new NextResponse(`Lỗi kết xuất báo giá: ${escapeHtml(error.message)}`, { status: 500 });
+    return printableErrorResponse(error, "zalo/quotation-pdf");
   }
 }

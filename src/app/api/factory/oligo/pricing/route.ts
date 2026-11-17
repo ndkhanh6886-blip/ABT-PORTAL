@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { factoryRoute } from "@/factory/http";
 import { parseInput } from "@/factory/core/records";
 import {

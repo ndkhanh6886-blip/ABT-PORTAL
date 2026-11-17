@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { Tx } from "../core/db";
 import { authorize, authorizeAnywhere, type AuthzActor } from "../core/authz";
 import { writeAudit } from "../core/audit";

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, escHtml, fmtDate, fmtDateTime, fmtQty } from "../api";
 import { Button, Card, ErrorNote, inputClass } from "../ui";
@@ -47,7 +48,7 @@ function printSlip(slip: IssueSlip) {
       }</div></div>`
     )
     .join("");
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>${escHtml(slip.form.code)} — ${escHtml(slip.order.code)}</title>
+  writeSafePrintDocument(win, `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>${escHtml(slip.form.code)} — ${escHtml(slip.order.code)}</title>
     <style>
       body{font-family:"Times New Roman",serif;padding:20px;color:#000;font-size:14px}
       table{width:100%;border-collapse:collapse}td,th{border:1px solid #000;padding:4px 6px;vertical-align:top}
@@ -65,9 +66,7 @@ function printSlip(slip: IssueSlip) {
     <h4>II. Thông tin NVL</h4>
     <table><thead><tr><th>STT</th><th>Tên chi tiết</th><th>Mã chi tiết</th><th>ĐVT</th><th>Số lượng</th><th>Số lượng lô</th><th>Số lượng xuất</th><th>Số lot<br/><i>(Ngày nhận hàng NVL)</i></th><th>Ghi chú</th></tr></thead>
       <tbody>${rows}</tbody></table>
-    <div class="sigs">${sign}</div>
-    <script>window.onload=()=>window.print();</script></body></html>`);
-  win.document.close();
+    <div class="sigs">${sign}</div></body></html>`);
 }
 
 /** BM 21-01 of an assembly order: issued lots, the three e-signature boxes, print. */

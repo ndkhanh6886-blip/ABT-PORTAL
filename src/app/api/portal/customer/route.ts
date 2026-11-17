@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiErrorResponse } from "@/backend/services/apiErrors";
 import { query, logAudit } from "@/backend/db/db";
 import { createSessionToken, verifySessionToken, sessionCookieOptions } from "@/backend/services/session";
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse } from "@/backend/services/authz";
@@ -137,7 +138,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Hành động GET không hợp lệ" }, { status: 400 });
   } catch (error: any) {
     console.error("Customer Portal API GET error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiErrorResponse(error);
   }
 }
 
@@ -473,6 +474,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Hành động POST không hợp lệ" }, { status: 400 });
   } catch (error: any) {
     console.error("Customer Portal API POST error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiErrorResponse(error);
   }
 }

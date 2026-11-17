@@ -1,4 +1,4 @@
-import type { z } from "zod";
+import type { z } from "zod/v3";
 import type { Tx } from "./db";
 import { diffChanges, writeAudit, type Actor } from "./audit";
 import { conflict, FactoryError, notFound } from "./errors";

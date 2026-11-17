@@ -6,7 +6,7 @@ import { authenticateSigner } from "@/factory/core/signature";
 import { verifyPortalPassword } from "@/factory/portalBridge";
 import "@/factory/master/permissions";
 import "@/factory/inv/permissions";
-import { z } from "zod";
+import { z } from "zod/v3";
 import {
   addSpcControlPoint,
   adjustBomScrapFromAnalytics,

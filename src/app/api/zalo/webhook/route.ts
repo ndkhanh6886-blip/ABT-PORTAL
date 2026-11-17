@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiErrorResponse } from "@/backend/services/apiErrors";
 import { processZaloInboundMessage } from "@/backend/services/zaloEngine";
 import { initZaloDatabase } from "@/backend/db/zaloDb";
 import { sendZaloCustomerServiceMessage, getZaloConfig } from "@/backend/services/zaloTokenService";
@@ -202,6 +203,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, eventName, deliveryStatus });
   } catch (error: any) {
     console.error("Zalo Webhook Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiErrorResponse(error);
   }
 }

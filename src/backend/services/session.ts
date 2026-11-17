@@ -132,7 +132,7 @@ export function sessionCookieOptions(req: Request) {
   const proto = req.headers.get("x-forwarded-proto") || new URL(req.url).protocol.replace(":", "");
   return {
     httpOnly: true,
-    sameSite: "lax" as const,
+    sameSite: "strict" as const,
     secure: proto === "https",
     path: "/",
     maxAge: SESSION_MAX_AGE_SECONDS,

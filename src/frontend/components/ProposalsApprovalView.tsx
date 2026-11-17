@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
+import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import { needsLeaveDates } from "@/frontend/utils/recoveredProposals";
 import { isSameWorkspaceDept, defaultConcreteDeptForScope } from "@/frontend/utils/workspaceScope";
 import {
@@ -1944,7 +1945,7 @@ export function ProposalsApprovalView({
       )
       .join("");
 
-    win.document.write(`<!DOCTYPE html>
+    writeSafePrintDocument(win, `<!DOCTYPE html>
       <html>
       <head>
         <meta charset="utf-8"/>
@@ -2015,7 +2016,6 @@ export function ProposalsApprovalView({
         </div>
       </body>
       </html>`);
-    win.document.close();
   };
 
   // Thống kê & Lọc danh sách Đề xuất theo phân quyền và phân khu

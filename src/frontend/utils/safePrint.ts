@@ -12,7 +12,13 @@
 export function writeSafePrintDocument(
   win: Window,
   html: string,
-  opts: { autoPrint?: boolean; title?: string; orientation?: "portrait" | "landscape" } = {}
+  opts: {
+    autoPrint?: boolean;
+    title?: string;
+    orientation?: "portrait" | "landscape";
+    /** Other versions of the same document (e.g. languages): one toolbar button each swaps the shown document. */
+    alternates?: { label: string; html: string }[];
+  } = {}
 ) {
   const autoPrint = opts.autoPrint !== false;
   const doc = win.document;
@@ -53,7 +59,8 @@ export function writeSafePrintDocument(
         fd.head.appendChild(st);
       }
       // last @page rule wins over the size declared by the document itself
-      st.textContent = `@page { size: A4 ${orientation}; }`;
+      // the document's own print / close buttons cannot work without scripts: the toolbar replaces them
+      st.textContent = `@page { size: A4 ${orientation}; } .no-print { display: none !important; }`;
     } catch {}
   };
   applyOrientation();
@@ -76,6 +83,18 @@ export function writeSafePrintDocument(
   if (closeBtn) closeBtn.addEventListener("click", () => win.close());
   const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") win.close(); };
   doc.addEventListener("keydown", onKey);
+  let firstLoad = true;
+  const bar = doc.querySelector(".bar");
+  if (bar && opts.alternates?.length) {
+    for (const alt of opts.alternates) {
+      const b = doc.createElement("button");
+      b.type = "button";
+      b.className = "secondary";
+      b.textContent = alt.label;
+      b.addEventListener("click", () => { frame.srcdoc = alt.html; });
+      bar.insertBefore(b, bar.firstChild);
+    }
+  }
   frame.addEventListener("load", () => {
     try {
       const innerTitle = frame.contentDocument?.title;
@@ -83,7 +102,8 @@ export function writeSafePrintDocument(
       frame.contentDocument?.addEventListener("keydown", onKey);
     } catch {}
     applyOrientation();
-    if (autoPrint) setTimeout(printFrame, 400);
+    if (autoPrint && firstLoad) setTimeout(printFrame, 400);
+    firstLoad = false;
   });
   win.focus();
 }

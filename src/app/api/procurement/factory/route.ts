@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiErrorResponse } from "@/backend/services/apiErrors";
 import { httpErrorStatus } from "@/backend/db/db";
 import { getAuthorizedUser, setAuditActor, unauthorizedResponse } from "@/backend/services/authz";
 import {
@@ -18,7 +19,7 @@ export async function GET(req: NextRequest) {
     void dispatchKdOutbox().catch(() => {});
     return NextResponse.json(await bridgeOverview(me));
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: httpErrorStatus(error) });
+    return apiErrorResponse(error);
   }
 }
 
@@ -44,6 +45,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Thao tác không hợp lệ" }, { status: 400 });
     }
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: httpErrorStatus(error) });
+    return apiErrorResponse(error);
   }
 }

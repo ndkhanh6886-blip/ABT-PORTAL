@@ -5,7 +5,7 @@ import { preAuthenticate, runTransition, type TransitionRequest } from "@/factor
 import { factoryRoute } from "@/factory/http";
 import { retainSampleMachine, stabilityStudyMachine } from "@/factory/kit/qualityTrace";
 import { verifyPortalPassword } from "@/factory/portalBridge";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 const actionBody = z.object({
   action: z.string().min(1).max(40),

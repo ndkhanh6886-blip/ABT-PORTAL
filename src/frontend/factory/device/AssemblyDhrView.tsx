@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActionBar, type AllowedAction } from "../actions";
 import { api, escHtml, fmtDate, fmtDateTime, fmtQty } from "../api";
@@ -223,7 +224,7 @@ export function AssemblyDhrView() {
         </tr>`
       )
       .join("");
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Phiếu Soạn Linh Kiện — ${escHtml(order.code)}</title>
+    writeSafePrintDocument(win, `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Phiếu Soạn Linh Kiện — ${escHtml(order.code)}</title>
       <style>body{font-family:Arial,sans-serif;padding:24px;color:#0f172a}table{width:100%;border-collapse:collapse;margin-top:14px;font-size:12px}th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:left}th{background:#f1f5f9}</style>
     </head><body>
       <h2 style="margin:0">CÔNG TY TNHH Y SINH ABT — PHIẾU SOẠN LINH KIỆN LẮP RÁP (BOM KITTING SLIP)</h2>
@@ -235,9 +236,7 @@ export function AssemblyDhrView() {
         <div><b>Kỹ thuật viên nhận Kitting</b><br/><br/><br/>(Ký, ghi rõ họ tên)</div>
         <div><b>Phụ trách KT-CN</b><br/><br/><br/>(Ký, ghi rõ họ tên)</div>
       </div>
-      <script>window.onload=()=>window.print();</script>
     </body></html>`);
-    win.document.close();
   }
 
   function openHandoverWindow(unit: UnitDetail) {
@@ -252,7 +251,7 @@ export function AssemblyDhrView() {
     const accHtml = accList
       .map((a, idx) => `<tr><td>${idx + 1}</td><td>${escHtml(typeof a === "string" ? a : JSON.stringify(a))}</td><td>Đạt / Mới 100%</td><td>☑</td></tr>`)
       .join("");
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Biên Bản Bàn Giao Thiết Bị — ${escHtml(unit.serial_no)}</title>
+    writeSafePrintDocument(win, `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Biên Bản Bàn Giao Thiết Bị — ${escHtml(unit.serial_no)}</title>
       <style>body{font-family:Arial,sans-serif;padding:24px;color:#0f172a}table{width:100%;border-collapse:collapse;margin-top:12px;font-size:12px}th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:left}th{background:#f1f5f9}</style>
     </head><body>
       <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #0284c7;padding-bottom:8px;margin-bottom:10px">
@@ -272,9 +271,7 @@ export function AssemblyDhrView() {
         <div><b>Đại diện QA/QC xác nhận</b><br/><br/><br/>(Ký, ghi rõ họ tên)</div>
         <div><b>Đại diện Khách hàng / Đơn vị nhận</b><br/><br/><br/>(Ký, ghi rõ họ tên)</div>
       </div>
-      <script>window.onload=()=>window.print();</script>
     </body></html>`);
-    win.document.close();
   }
 
   function openNameplateWindow(order: OrderDetail) {
@@ -298,14 +295,12 @@ export function AssemblyDhrView() {
         </div>`
       )
       .join("");
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Tem Nhãn Thiết Bị &amp; Tem QC — ${escHtml(order.code)}</title>
+    writeSafePrintDocument(win, `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Tem Nhãn Thiết Bị &amp; Tem QC — ${escHtml(order.code)}</title>
       <style>body{font-family:Arial,sans-serif;padding:20px;color:#0f172a}</style>
     </head><body>
       <h3 style="margin:0 0 12px">TEM NHÃN THIẾT BỊ (NAMEPLATE) &amp; TEM NIÊM PHONG QC PASS — LỆNH ${escHtml(order.code)}</h3>
       <div style="display:flex;flex-wrap:wrap;gap:14px">${cardsHtml}</div>
-      <script>window.onload=()=>window.print();</script>
     </body></html>`);
-    win.document.close();
   }
 
   function openOrderHandoverWindow(order: OrderDetail) {
@@ -324,7 +319,7 @@ export function AssemblyDhrView() {
         </tr>`
       )
       .join("");
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Biên Bản Xuất Kho Giao Hàng — ${escHtml(order.code)}</title>
+    writeSafePrintDocument(win, `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Biên Bản Xuất Kho Giao Hàng — ${escHtml(order.code)}</title>
       <style>body{font-family:Arial,sans-serif;padding:24px;color:#0f172a}table{width:100%;border-collapse:collapse;margin-top:12px;font-size:12px}th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:left}th{background:#f1f5f9}</style>
     </head><body>
       <h2 style="margin:0">CÔNG TY TNHH Y SINH ABT — PHIẾU XUẤT KHO GIAO HÀNG &amp; BIÊN BẢN BÀN GIAO THIẾT BỊ</h2>
@@ -336,9 +331,7 @@ export function AssemblyDhrView() {
         <div><b>QA/QC Giải phóng xuất xưởng</b><br/><br/><br/>(Ký, ghi rõ họ tên)</div>
         <div><b>Đại diện Đơn vị nhận hàng</b><br/><br/><br/>(Ký, ghi rõ họ tên)</div>
       </div>
-      <script>window.onload=()=>window.print();</script>
     </body></html>`);
-    win.document.close();
   }
 
   const orderDetail = useQuery({

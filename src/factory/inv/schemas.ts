@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 const uuid = z.string().uuid();
 const optUuid = uuid.optional().nullable().transform((v) => v ?? null);

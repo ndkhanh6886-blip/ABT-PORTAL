@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { Tx } from "./db";
 import { authorize, getPermission, grantablePermissions, hasFactoryPermission, isQaCrossDeptPermission, type AuthzActor } from "./authz";
 import { invalid } from "./errors";

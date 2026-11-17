@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiErrorResponse } from "@/backend/services/apiErrors";
 import { query, logAudit, withTransaction, HttpError, httpErrorStatus } from "@/backend/db/db";
 import {
   getAuthorizedUser,
@@ -1071,10 +1072,7 @@ export async function GET(req: NextRequest) {
     });
   } catch (error: any) {
     console.error("[GET /api/approvals] error:", error);
-    return NextResponse.json(
-      { error: error?.message || "Không tải được danh sách Đề xuất & Phê duyệt" },
-      { status: httpErrorStatus(error) }
-    );
+    return apiErrorResponse(error);
   }
 }
 
@@ -1656,9 +1654,6 @@ export async function POST(req: NextRequest) {
     });
   } catch (error: any) {
     console.error("[POST /api/approvals] error:", error);
-    return NextResponse.json(
-      { error: error?.message || "Lỗi xử lý yêu cầu Đề xuất & Phê duyệt" },
-      { status: httpErrorStatus(error) }
-    );
+    return apiErrorResponse(error);
   }
 }

@@ -1,5 +1,7 @@
 import type { NextConfig } from "next";
 
+// Headers of static files (/_next/static, /public). Pages and /api get theirs, plus the nonce-based
+// Content-Security-Policy, from src/proxy.ts: keep the values in step with it.
 const SECURITY_HEADERS = [
   {
     key: "Strict-Transport-Security",
@@ -19,7 +21,7 @@ const SECURITY_HEADERS = [
   },
   {
     key: "Permissions-Policy",
-    value: "camera=(self), microphone=(), geolocation=(), browsing-topics=(), payment=(), usb=()",
+    value: "camera=(self), microphone=(), geolocation=(), browsing-topics=(), payment=(), usb=(), interest-cohort=()",
   },
   {
     key: "X-DNS-Prefetch-Control",
@@ -33,25 +35,6 @@ const SECURITY_HEADERS = [
     key: "Cross-Origin-Opener-Policy",
     value: "same-origin",
   },
-  {
-    key: "Content-Security-Policy",
-    value: [
-      "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://static.cloudflareinsights.com",
-      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-      "img-src 'self' data: blob: https:",
-      "font-src 'self' data: https://fonts.gstatic.com",
-      "connect-src 'self' https:",
-      "media-src 'self' data: blob:",
-      "worker-src 'self' blob:",
-      "frame-src 'self' blob: data:",
-      "frame-ancestors 'self'",
-      "base-uri 'self'",
-      "form-action 'self'",
-      "object-src 'none'",
-      "upgrade-insecure-requests",
-    ].join("; "),
-  },
 ];
 
 const nextConfig: NextConfig = {
@@ -64,26 +47,16 @@ const nextConfig: NextConfig = {
   experimental: {
     cpus: 1,
     workerThreads: false,
+    // request bodies the proxy buffers: file uploads (/api/upload, up to 250 MB). The app has no Server Actions.
     proxyClientMaxBodySize: "250mb",
-    serverActions: {
-      bodySizeLimit: "250mb",
-    },
   },
+  // no next/image anywhere: switch the image optimizer endpoint (/_next/image) off instead of exposing it
+  images: { unoptimized: true },
   async headers() {
     return [
       {
         source: "/:path*",
         headers: SECURITY_HEADERS,
-      },
-      {
-        source: "/api/:path*",
-        headers: [
-          ...SECURITY_HEADERS,
-          {
-            key: "Cache-Control",
-            value: "no-store, no-cache, must-revalidate",
-          },
-        ],
       },
     ];
   },

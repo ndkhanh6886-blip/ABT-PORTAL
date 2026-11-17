@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { query } from "@/backend/db/db";
 import { canAccessDocument, documentAccessDeniedResponse } from "@/backend/services/documentLinks";
 import { escapeDeep, escapeHtml } from "@/backend/services/html";
+import { printablePageResponse, printableErrorResponse } from "@/backend/services/printPage";
 
 function numberToVietnameseWords(num: number): string {
   if (!num || isNaN(num) || num <= 0) return "Không đồng";
@@ -368,7 +369,7 @@ export async function GET(req: NextRequest) {
 <body>
 
   <div class="no-print">
-    <button class="print-btn" onclick="window.print()">🖨 In Hợp Đồng / Lưu Bản PDF</button>
+    <button class="print-btn" data-print>🖨 In Hợp Đồng / Lưu Bản PDF</button>
   </div>
 
   <div class="header-national">
@@ -502,11 +503,8 @@ export async function GET(req: NextRequest) {
 </html>
     `;
 
-    return new NextResponse(html, {
-      status: 200,
-      headers: { "Content-Type": "text/html; charset=utf-8" }
-    });
+    return printablePageResponse(html);
   } catch (error: any) {
-    return new NextResponse(`<h1 style='color: red;'>Lỗi kết xuất hợp đồng: ${escapeHtml(error.message)}</h1>`, { status: 500 });
+    return printableErrorResponse(error, "zalo/contract-pdf");
   }
 }

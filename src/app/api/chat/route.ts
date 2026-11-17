@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiErrorResponse } from "@/backend/services/apiErrors";
 import { query, logAudit, withTransaction, HttpError, httpErrorStatus } from "@/backend/db/db";
 import { getAuthorizedUser, unauthorizedResponse, setAuditActor } from "@/backend/services/authz";
 import { normalizePersonText, personNameKey } from "@/backend/services/utils";
@@ -597,7 +598,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Hành động GET không hợp lệ" }, { status: 400 });
   } catch (error: any) {
     console.error("Chat API GET Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiErrorResponse(error);
   }
 }
 
@@ -1285,6 +1286,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Hành động POST không hợp lệ" }, { status: 400 });
   } catch (error: any) {
     console.error("Chat API POST Error:", error);
-    return NextResponse.json({ error: error.message || String(error) }, { status: httpErrorStatus(error) });
+    return apiErrorResponse(error);
   }
 }

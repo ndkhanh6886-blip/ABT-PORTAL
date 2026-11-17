@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { Tx } from "../core/db";
 import type { AuthzActor } from "../core/authz";
 import { forbidden, invalid, notFound } from "../core/errors";
