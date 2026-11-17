@@ -547,6 +547,7 @@ function scheduleMirror(key: string, value: string) {
 }
 
 const quotaWarned = new Set<string>();
+let lastEvictFailAt = 0;
 
 /**
  * Giải phóng chỗ khi localStorage đầy (~5MB): xoá bộ nhớ đệm đã có bản trên máy chủ (key đồng bộ đã migrate)
@@ -580,17 +581,29 @@ function installLocalStorageGuards() {
       originalSetItem.call(this, key, value);
     } catch (err) {
       let saved = false;
-      if (this === window.localStorage) {
+      if (this === window.localStorage && Date.now() - lastEvictFailAt > 30000) {
         try {
           if (evictLocalStorageSpace(this, key, String(value).length * 2)) {
             originalSetItem.call(this, key, value);
             saved = true;
+          } else {
+            lastEvictFailAt = Date.now(); // không còn gì để dọn: đừng quét lại localStorage ở mỗi lần ghi (gây chậm)
           }
-        } catch { /* vẫn đầy */ }
+        } catch { lastEvictFailAt = Date.now(); }
       }
       if (!saved && !quotaWarned.has(key)) {
         quotaWarned.add(key);
-        console.warn(`[storageSync] localStorage đầy, không lưu được bộ nhớ đệm "${key}" (dữ liệu máy chủ không bị ảnh hưởng).`, err);
+        let top = "";
+        try {
+          const sizes: Array<[string, number]> = [];
+          for (let i = 0; i < this.length; i++) {
+            const k = this.key(i);
+            if (k) sizes.push([k, Math.round(((this.getItem(k) || "").length * 2) / 1024)]);
+          }
+          sizes.sort((a, b) => b[1] - a[1]);
+          top = ` Mục chiếm nhiều nhất (KB): ${sizes.slice(0, 5).map(([k, s]) => `${k}=${s}`).join(", ")}; cần ghi "${key}"=${Math.round((String(value).length * 2) / 1024)}KB.`;
+        } catch { /* bỏ qua */ }
+        console.warn(`[storageSync] localStorage đầy, không lưu được bộ nhớ đệm "${key}" (dữ liệu máy chủ không bị ảnh hưởng).${top}`, err);
       }
     }
     if (this === window.localStorage && SERVER_BACKED_SET.has(key) && !suppressMirror) {
