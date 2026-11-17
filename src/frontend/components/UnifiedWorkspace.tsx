@@ -2510,6 +2510,11 @@ export const UnifiedWorkspace: React.FC = () => {
     result: "",
     attachments: [] as any[]
   });
+  // Trạng thái của công việc lúc mở form sửa: để không ghi đè tiến độ người khác vừa cập nhật khi người sửa không đổi trạng thái
+  const taskBaseStatusRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (isTaskModalOpen) taskBaseStatusRef.current = (taskForm as any)?.id ? String((taskForm as any).status || "") : null;
+  }, [isTaskModalOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openEditTask = (t: any) => {
     const atts = Array.isArray(t.attachments)
@@ -4759,6 +4764,7 @@ export const UnifiedWorkspace: React.FC = () => {
       payload = { ...payload, logs: existingLogs };
       setTaskReplyText("");
     }
+    if (payload.id && taskBaseStatusRef.current) payload = { ...payload, base_status: taskBaseStatusRef.current };
     try {
       const res = await fetch("/api/workflows?action=task", {
         method: "POST",
@@ -4842,11 +4848,18 @@ export const UnifiedWorkspace: React.FC = () => {
     const target = tasks.find((t) => t.id === taskId);
     if (!target) return;
     try {
-      await fetch("/api/workflows?action=task", {
+      const res = await fetch("/api/workflows?action=task", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...target, status: newStatus })
       });
+      const saved: any = await res.json().catch(() => ({}));
+      // Chỉ báo "đã cập nhật" khi máy chủ thật sự lưu được; nếu không, giữ nguyên trạng thái cũ và báo lỗi rõ ràng
+      if (!res.ok || saved?.error || saved?.success === false) {
+        showToast(saved?.error || `Không lưu được trạng thái công việc (mã lỗi ${res.status}). Trạng thái chưa thay đổi.`, "error");
+        fetchData();
+        return;
+      }
       setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: newStatus } : t)));
       showToast(`Đã chuyển trạng thái: ${newStatus}`, "info");
 

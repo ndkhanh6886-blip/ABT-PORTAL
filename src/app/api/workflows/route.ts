@@ -480,6 +480,14 @@ export async function POST(req: NextRequest) {
           }
         }
       }
+      // Người sửa không đổi trạng thái (vẫn là trạng thái lúc mở form) mà việc đã được người khác cập nhật tiến độ trong lúc đó:
+      // giữ trạng thái mới trong CSDL, không ghi đè bằng bản form cũ.
+      if (body.id && body.base_status) {
+        const cur = (await query("SELECT status FROM company_tasks WHERE id = $1", [body.id])).rows[0];
+        if (cur && String(cur.status) !== String(body.base_status) && String(body.status || "") === String(body.base_status)) {
+          body.status = cur.status;
+        }
+      }
       if (body.status && !TASK_STATUS_IDS.has(String(body.status))) {
         return NextResponse.json({ error: `Trạng thái công việc không hợp lệ: ${body.status}` }, { status: 400 });
       }
