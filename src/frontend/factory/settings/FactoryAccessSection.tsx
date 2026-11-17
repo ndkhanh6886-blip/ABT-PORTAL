@@ -136,19 +136,28 @@ function grantAppliesToDept(grant: Grant, permCode: string, deptUnitKey: string 
   return false;
 }
 
-/** Khối Kỹ thuật – Nhà máy: each department / function and the permission modules that open its tab. */
-export const FACTORY_DEPTS: { key: string; short: string; name: string; modules: string[]; unit: string | null }[] = [
-  { key: "rd", short: "Nghiên cứu R&D", name: "Phòng Nghiên cứu & Phát triển (P-RD)", modules: ["rd", "work"], unit: "RD" },
-  { key: "kit", short: "Sản xuất Kit", name: "Phòng Sản xuất Kit IVD (P-KIT)", modules: ["kit"], unit: "KIT" },
-  { key: "oligo", short: "Tổng hợp Oligo", name: "Phòng Tổng hợp Oligo (P-OLIGO)", modules: ["oligo", "prep", "plan"], unit: "OLIGO" },
-  { key: "device", short: "KTCN – Thiết bị", name: "Phòng Kỹ thuật Công nghệ & Thiết bị (P-DEVICE)", modules: ["device", "asset"], unit: "DEVICE" },
-  { key: "it", short: "Phòng IT", name: "Phòng IT – Phát triển phần mềm (P-IT, Khối Kinh doanh)", modules: ["it"], unit: "IT" },
-  { key: "qa", short: "QC/QA Nhà máy", name: "Phòng Đảm bảo & Kiểm soát Chất lượng ISO 13485 (P-QA)", modules: ["qms"], unit: "QA" },
-  { key: "wh", short: "Kho Nhà máy (P-KHO)", name: "Kho NVL, Hóa chất, BTP & Thành phẩm SX (Khối Kỹ thuật)", modules: ["inv", "master"], unit: "WH" },
-  { key: "purchase", short: "Cung ứng Kỹ thuật (P-KHO)", name: "Mua sắm NVL / Hóa chất Sản xuất & NCC Kỹ thuật", modules: ["purchase"], unit: null },
-  { key: "intake", short: "Đơn Nội Bộ (KD ↔ NM)", name: "Tiếp nhận & Điều phối Đơn đặt hàng nội bộ", modules: ["intake"], unit: null },
-  { key: "core", short: "Quản trị Nhà máy", name: "Vai trò 21 CFR Part 11, Ủy quyền & Nhật ký kiểm toán", modules: ["core"], unit: null },
+/**
+ * Khối a role-based (factory) department belongs to in "Phân Quyền Chi Tiết Cá Nhân". Phòng IT is held through the
+ * factory role system (unit P-IT) but belongs to Khối Kinh doanh, so it is shown with that block.
+ */
+export type FactoryBlock = "business" | "technical";
+
+/** Role-based departments / functions and the permission modules that open their tab. */
+export const FACTORY_DEPTS: { key: string; short: string; name: string; modules: string[]; unit: string | null; block: FactoryBlock }[] = [
+  { key: "rd", short: "Nghiên cứu R&D", name: "Phòng Nghiên cứu & Phát triển (P-RD)", modules: ["rd", "work"], unit: "RD", block: "technical" },
+  { key: "kit", short: "Sản xuất Kit", name: "Phòng Sản xuất Kit IVD (P-KIT)", modules: ["kit"], unit: "KIT", block: "technical" },
+  { key: "oligo", short: "Tổng hợp Oligo", name: "Phòng Tổng hợp Oligo (P-OLIGO)", modules: ["oligo", "prep", "plan"], unit: "OLIGO", block: "technical" },
+  { key: "device", short: "KTCN – Thiết bị", name: "Phòng Kỹ thuật Công nghệ & Thiết bị (P-DEVICE)", modules: ["device", "asset"], unit: "DEVICE", block: "technical" },
+  { key: "it", short: "Phòng IT", name: "Phòng IT – Phát triển phần mềm (P-IT, Khối Kinh doanh)", modules: ["it"], unit: "IT", block: "business" },
+  { key: "qa", short: "QC/QA Nhà máy", name: "Phòng Đảm bảo & Kiểm soát Chất lượng ISO 13485 (P-QA)", modules: ["qms"], unit: "QA", block: "technical" },
+  { key: "wh", short: "Kho Nhà máy (P-KHO)", name: "Kho NVL, Hóa chất, BTP & Thành phẩm SX (Khối Kỹ thuật)", modules: ["inv", "master"], unit: "WH", block: "technical" },
+  { key: "purchase", short: "Cung ứng Kỹ thuật (P-KHO)", name: "Mua sắm NVL / Hóa chất Sản xuất & NCC Kỹ thuật", modules: ["purchase"], unit: null, block: "technical" },
+  { key: "intake", short: "Đơn Nội Bộ (KD ↔ NM)", name: "Tiếp nhận & Điều phối Đơn đặt hàng nội bộ", modules: ["intake"], unit: null, block: "technical" },
+  { key: "core", short: "Quản trị Nhà máy", name: "Vai trò 21 CFR Part 11, Ủy quyền & Nhật ký kiểm toán", modules: ["core"], unit: null, block: "technical" },
 ];
+
+const BLOCK_LABEL: Record<FactoryBlock, string> = { business: "Khối Kinh doanh", technical: "Khối Kỹ thuật" };
+const deptsOf = (block: FactoryBlock) => FACTORY_DEPTS.filter((d) => d.block === block);
 
 const inDept = (d: (typeof FACTORY_DEPTS)[number], code: string) => d.modules.includes(code.split(".")[0]);
 
@@ -243,7 +252,21 @@ const DEFAULT_DEPT_ENTRY_PERMS: Record<string, string[]> = {
  * whole department card on/off in 1 click (per-user enable/exclusion, without stripping their primary role
  * elsewhere) or expand a card to grant/revoke roles.
  */
-export function FactoryAccessSection({ userId, username, isRootAdmin }: { userId: number; username: string; isRootAdmin: boolean }) {
+/**
+ * Department cards of the role-based departments of one block. `technical` renders the full Khối Kỹ thuật – Nhà máy
+ * panel; `business` renders only the cards (Phòng IT), to sit inside the Khối Kinh doanh grid.
+ */
+export function FactoryAccessSection({
+  userId,
+  username,
+  isRootAdmin,
+  block = "technical",
+}: {
+  userId: number;
+  username: string;
+  isRootAdmin: boolean;
+  block?: FactoryBlock;
+}) {
   const qc = useQueryClient();
   const me = useFactoryMe();
   const { user, roles, roleById, allUnits, units, catalogue, excludedSet, customPermSet, inheritedRolesFor, isPermActiveInDept, error, ready } =
@@ -278,9 +301,17 @@ export function FactoryAccessSection({ userId, username, isRootAdmin }: { userId
   });
   const isSelf = me.data?.profile.user_id === userId;
   const canToggleDept = !isRootAdmin && (!isSelf || Boolean(me.data?.is_root));
+  const isBusiness = block === "business";
 
   return (
-    <div className="bg-gradient-to-br from-teal-50/80 via-white to-slate-50 dark:from-slate-800/80 dark:via-slate-850/60 dark:to-slate-900 rounded-2xl border-2 border-teal-500/40 p-5 space-y-4 shadow-sm">
+    <div
+      className={
+        isBusiness
+          ? "contents" // cards join the parent Khối Kinh doanh grid
+          : "bg-gradient-to-br from-teal-50/80 via-white to-slate-50 dark:from-slate-800/80 dark:via-slate-850/60 dark:to-slate-900 rounded-2xl border-2 border-teal-500/40 p-5 space-y-4 shadow-sm"
+      }
+    >
+      {!isBusiness && (
       <div className="flex items-center gap-3 pb-3 border-b border-teal-200/60 dark:border-teal-900/60">
         <div className="w-9 h-9 rounded-xl bg-teal-600 text-white flex items-center justify-center shadow-md shadow-teal-500/20 shrink-0">
           <Factory className="w-5 h-5" />
@@ -297,14 +328,15 @@ export function FactoryAccessSection({ userId, username, isRootAdmin }: { userId
           </p>
         </div>
       </div>
+      )}
 
       {error ? (
         <ErrorNote error={error} />
       ) : !ready || !user || !roles || !catalogue ? (
-        <div className="text-xs text-slate-400">Đang tải quyền nhà máy…</div>
+        <div className="text-xs text-slate-400">{isBusiness ? "Đang tải quyền Phòng IT…" : "Đang tải quyền nhà máy…"}</div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {FACTORY_DEPTS.map((d) => {
+        <div className={isBusiness ? "contents" : "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3"}>
+          {deptsOf(block).map((d) => {
             const perms = catalogue.filter((p) => d.modules.includes(p.module));
             const heldCount = perms.filter((p) => isPermActiveInDept(p.code, d.unit, isRootAdmin)).length;
             const customInDeptCount = perms.filter((p) => customPermSet.has(p.code) && !excludedSet.has(p.code)).length;
@@ -562,6 +594,7 @@ export function FactoryFeatureGroups({
   searchQuery = "",
   onlyEditDelete = false,
   onSummaryChange,
+  block = "technical",
 }: {
   userId: number;
   username: string;
@@ -570,7 +603,10 @@ export function FactoryFeatureGroups({
   searchQuery?: string;
   onlyEditDelete?: boolean;
   onSummaryChange?: (summary: { active: number; total: number }) => void;
+  /** Which block's role-based departments to list (Phòng IT sits in Khối Kinh doanh). */
+  block?: FactoryBlock;
 }) {
+  const depts = deptsOf(block);
   const qc = useQueryClient();
   const me = useFactoryMe();
   const { roles, catalogue, excludedSet, customPermSet, inheritedRolesFor, isPermActiveInDept, error, ready } =
@@ -600,13 +636,13 @@ export function FactoryFeatureGroups({
     if (!ready || !catalogue) return null;
     let total = 0;
     let active = 0;
-    for (const d of FACTORY_DEPTS) {
+    for (const d of depts) {
       const perms = catalogue.filter((p) => d.modules.includes(p.module));
       total += perms.length;
       active += perms.filter((p) => isPermActiveInDept(p.code, d.unit, isRootAdmin)).length;
     }
     return { active, total };
-  }, [ready, catalogue, isPermActiveInDept, isRootAdmin]);
+  }, [ready, catalogue, isPermActiveInDept, isRootAdmin, depts]);
 
   useEffect(() => {
     if (ready && summary) {
@@ -615,7 +651,8 @@ export function FactoryFeatureGroups({
   }, [ready, summary, onSummaryChange]);
 
   if (error) return <ErrorNote error={error} />;
-  if (!ready || !catalogue || !roles) return <div className="text-xs text-slate-400">Đang tải tính năng Khối Kỹ thuật – Nhà máy…</div>;
+  if (!ready || !catalogue || !roles)
+    return <div className="text-xs text-slate-400">{block === "business" ? "Đang tải tính năng Phòng IT…" : "Đang tải tính năng Khối Kỹ thuật – Nhà máy…"}</div>;
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const isFiltering = onlyEditDelete || Boolean(normalizedQuery);
@@ -725,6 +762,7 @@ export function FactoryFeatureGroups({
   return (
     <>
       {togglePermMut.error && <ErrorNote error={togglePermMut.error} />}
+      {block === "technical" && (
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-teal-200/80 dark:border-teal-900/60 bg-teal-50/50 dark:bg-teal-950/20 px-3.5 py-2 text-[11px]">
         <span className="text-teal-900 dark:text-teal-200 font-medium">
           ⚡ Thay đổi ở <strong>Khối Kỹ thuật – Nhà máy</strong> có hiệu lực ngay và tự động lưu <strong>Audit Trail 21 CFR Part 11</strong> (có thể tích/bỏ tích lẻ cả quyền kế thừa từ vai trò).
@@ -740,8 +778,9 @@ export function FactoryFeatureGroups({
           </button>
         )}
       </div>
+      )}
 
-      {FACTORY_DEPTS.map((d, i) => {
+      {depts.map((d, i) => {
         const allDeptPerms = catalogue.filter((p) => d.modules.includes(p.module));
         if (!allDeptPerms.length) return null;
         const deptSearchContext = `${d.short} ${d.name}`;
@@ -760,7 +799,7 @@ export function FactoryFeatureGroups({
             <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-200 dark:border-slate-700/60 flex-wrap">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-extrabold text-sm text-slate-900 dark:text-white">
-                  {startIndex + i}. {d.short} <span className="text-teal-700 dark:text-teal-300">(Khối Kỹ thuật)</span>
+                  {startIndex + i}. {d.short} <span className="text-teal-700 dark:text-teal-300">({BLOCK_LABEL[d.block]})</span>
                 </span>
                 <span
                   className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
