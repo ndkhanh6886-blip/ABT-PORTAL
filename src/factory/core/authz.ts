@@ -137,8 +137,38 @@ export const IT_PERMISSION_FOR: Readonly<Record<string, string>> = {
   "rd.software.release": "it.software.release",
 };
 
-/** True when the org unit is Phòng IT (module IT) or sits under it. */
+// The org tree rarely changes and the answer is asked for every row of the project lists: cache it briefly.
+const IT_UNIT_TTL_MS = 60_000;
+const itUnitCache = new Map<string, { value: boolean; at: number }>();
+
+/** True when the org unit is Phòng IT (module IT) or sits under it. Cached for a minute per unit. */
 export async function isItOrgUnit(tx: Tx, orgUnitId: string): Promise<boolean> {
+  const hit = itUnitCache.get(orgUnitId);
+  if (hit && Date.now() - hit.at < IT_UNIT_TTL_MS) return hit.value;
+  const value = await isItOrgUnitUncached(tx, orgUnitId);
+  if (itUnitCache.size > 2000) itUnitCache.clear();
+  itUnitCache.set(orgUnitId, { value, at: Date.now() });
+  return value;
+}
+
+/**
+ * Answers one permission per org unit for a whole list (rows share a few owner units): avoids one permission
+ * query per row. Use inside a single request only.
+ */
+export function permissionPerUnit(tx: Tx, actor: AuthzActor, permission: string): (orgUnitId: string | null | undefined) => Promise<boolean> {
+  const seen = new Map<string, Promise<boolean>>();
+  return (orgUnitId) => {
+    const key = orgUnitId ?? "";
+    let p = seen.get(key);
+    if (!p) {
+      p = hasFactoryPermission(tx, actor, permission, orgUnitId ?? null);
+      seen.set(key, p);
+    }
+    return p;
+  };
+}
+
+async function isItOrgUnitUncached(tx: Tx, orgUnitId: string): Promise<boolean> {
   const res = await tx.query(
     `WITH RECURSIVE ancestors AS (
        SELECT id, parent_id, module_key FROM core.org_unit WHERE id = $1::uuid

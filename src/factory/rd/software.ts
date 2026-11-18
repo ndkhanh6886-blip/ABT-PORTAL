@@ -1,6 +1,6 @@
 import { z } from "zod/v3";
 import type { Tx } from "../core/db";
-import { authorize, authorizeAnywhere, authorizeAnywhereOneOf, hasFactoryPermission, type AuthzActor } from "../core/authz";
+import { authorize, authorizeAnywhere, authorizeAnywhereOneOf, hasFactoryPermission, permissionPerUnit, type AuthzActor } from "../core/authz";
 import { writeAudit } from "../core/audit";
 import { invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
@@ -472,8 +472,9 @@ export async function listValidations(tx: Tx, actor: AuthzActor) {
     )
   ).rows;
   const visible = [];
+  const canViewRdUnit = permissionPerUnit(tx, actor, "rd.view");
   for (const r of rows) {
-    if (!(await hasFactoryPermission(tx, actor, "rd.view", r.org_unit_id))) continue;
+    if (!(await canViewRdUnit(r.org_unit_id))) continue;
     r.actions = await listAllowedActions(tx, swValidationMachine, actor, r);
     visible.push(r);
   }

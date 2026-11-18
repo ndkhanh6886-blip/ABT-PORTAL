@@ -2,7 +2,7 @@ import path from "path";
 import { z } from "zod/v3";
 import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
-import { authorize, authorizeAnywhere, authorizeAnywhereOneOf, hasFactoryPermission, type AuthzActor } from "../core/authz";
+import { authorize, authorizeAnywhere, authorizeAnywhereOneOf, hasFactoryPermission, permissionPerUnit, type AuthzActor } from "../core/authz";
 import { conflict, invalid, notFound } from "../core/errors";
 import { readAttachment, saveAttachment, sniffMime, type FileCategory } from "../core/files";
 import { nextNumber } from "../core/numbering";
@@ -1189,8 +1189,9 @@ export async function listTechTransfers(tx: Tx, actor: AuthzActor, projectId?: s
     )
   ).rows;
   const visible = [];
+  const canViewRdUnit = permissionPerUnit(tx, actor, "rd.view");
   for (const r of rows) {
-    const canSeeSource = await hasFactoryPermission(tx, actor, "rd.view", r.owner_org_unit_id);
+    const canSeeSource = await canViewRdUnit(r.owner_org_unit_id);
     const canSeeTarget = await hasFactoryPermission(tx, actor, "rd.transfer.accept", r.target_org_unit_id);
     if (canSeeSource || canSeeTarget) {
       r.bom_specification = normalizeBomList(r.bom_specification);
@@ -1848,8 +1849,9 @@ export async function listSoftwareReleases(tx: Tx, actor: AuthzActor, projectId?
     )
   ).rows;
   const visible = [];
+  const canViewRdUnit = permissionPerUnit(tx, actor, "rd.view");
   for (const r of rows) {
-    if (await hasFactoryPermission(tx, actor, "rd.view", r.owner_org_unit_id)) {
+    if (await canViewRdUnit(r.owner_org_unit_id)) {
       r.actions = await listAllowedActions(tx, swReleaseMachine, actor, r);
       visible.push(r);
     }

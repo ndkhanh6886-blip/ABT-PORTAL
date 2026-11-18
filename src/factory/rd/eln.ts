@@ -1,7 +1,7 @@
 import { z } from "zod/v3";
 import type { Tx } from "../core/db";
 import { diffChanges, writeAudit } from "../core/audit";
-import { authorize, authorizeAnywhere, hasFactoryPermission, type AuthzActor } from "../core/authz";
+import { authorize, authorizeAnywhere, hasFactoryPermission, permissionPerUnit, type AuthzActor } from "../core/authz";
 import { conflict, invalid, notFound } from "../core/errors";
 import { readAttachment, saveAttachment } from "../core/files";
 import { nextNumber } from "../core/numbering";
@@ -787,8 +787,9 @@ export async function listExperiments(tx: Tx, actor: AuthzActor, projectFilter?:
     )
   ).rows;
   const visible = [];
+  const canViewRdUnit = permissionPerUnit(tx, actor, "rd.view");
   for (const r of rows) {
-    if (r.owner_org_unit_id && (await hasFactoryPermission(tx, actor, "rd.view", r.owner_org_unit_id))) {
+    if (r.owner_org_unit_id && (await canViewRdUnit(r.owner_org_unit_id))) {
       visible.push(r);
     }
   }

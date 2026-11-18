@@ -1,7 +1,7 @@
 import { z } from "zod/v3";
 import type { Tx } from "../core/db";
 import { diffChanges, writeAudit } from "../core/audit";
-import { authorize, authorizeAnywhere, authorizeAnywhereOneOf, hasFactoryPermission, isItOrgUnit, type AuthzActor } from "../core/authz";
+import { authorize, authorizeAnywhere, authorizeAnywhereOneOf, hasFactoryPermission, isItOrgUnit, permissionPerUnit, type AuthzActor } from "../core/authz";
 import { vnToday } from "../core/dates";
 import { conflict, invalid, notFound } from "../core/errors";
 import { readAttachment, saveAttachment } from "../core/files";
@@ -1416,8 +1416,9 @@ export async function exportRoadmapIcs(tx: Tx, actor: AuthzActor, projectId?: st
     "CALSCALE:GREGORIAN",
     "METHOD:PUBLISH",
   ];
+  const canViewRdUnit = permissionPerUnit(tx, actor, "rd.view");
   for (const r of rows) {
-    if (!(await hasFactoryPermission(tx, actor, "rd.view", r.owner_org_unit_id))) continue;
+    if (!(await canViewRdUnit(r.owner_org_unit_id))) continue;
     const dt = r.due_date.replace(/-/g, "");
     const summary = `[${r.project_code}] ${r.title} (${r.status})`.replace(/[\r\n,;]/g, " ");
     const desc = `${r.project_name}${r.notes ? " - " + r.notes : ""}`.replace(/[\r\n,;]/g, " ");
@@ -1489,8 +1490,9 @@ export async function listProjects(tx: Tx, actor: AuthzActor, domainOrFilter?: s
 
   const targetPerformer = normName(filter.performer);
   const visible = [];
+  const canViewRdUnit = permissionPerUnit(tx, actor, "rd.view");
   for (const r of rows) {
-    if (!(await hasFactoryPermission(tx, actor, "rd.view", r.owner_org_unit_id))) continue;
+    if (!(await canViewRdUnit(r.owner_org_unit_id))) continue;
     if (filter.activeOnly && r.status !== "ACTIVE") continue;
     if (targetPerformer) {
       const assignees: string[] = Array.isArray(r.assignees) ? r.assignees : [];
