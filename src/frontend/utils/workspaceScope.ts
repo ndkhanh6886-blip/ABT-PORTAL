@@ -53,7 +53,30 @@ export function isWorkspaceBlockKey(val: any): val is WorkspaceBlockKey {
   return typeof val === "string" && Object.prototype.hasOwnProperty.call(WORKSPACE_BLOCKS, val);
 }
 
+/**
+ * Bounded memo for pure string functions. The workspace calls the department / name matchers thousands of times per
+ * render (staff × tasks, departments × records) with the same few hundred strings; computing each once keeps filter
+ * clicks responsive. Cleared when full so it cannot grow without limit.
+ */
+export function memoizeString<T>(fn: (key: string) => T, max = 5000): (key: string) => T {
+  const cache = new Map<string, T>();
+  return (key: string) => {
+    const hit = cache.get(key);
+    if (hit !== undefined || cache.has(key)) return hit as T;
+    if (cache.size >= max) cache.clear();
+    const value = fn(key);
+    cache.set(key, value);
+    return value;
+  };
+}
+
+const normalizeWorkspaceDeptCached = memoizeString((s: string) => normalizeWorkspaceDeptUncached(s));
+
 export function normalizeWorkspaceDept(raw: any): string {
+  return normalizeWorkspaceDeptCached(String(raw ?? ""));
+}
+
+function normalizeWorkspaceDeptUncached(raw: string): string {
   const s = String(raw || "").trim();
   if (!s) return "";
   if (s === "all") return "all";
@@ -106,14 +129,17 @@ export function normalizeWorkspaceDept(raw: any): string {
   return s;
 }
 
+/** Normalised department list of a (possibly comma-separated) department field. Read-only: shared through the cache. */
+const splitWorkspaceDepts = memoizeString((raw: string): readonly string[] =>
+  raw
+    .split(/[,;\n]+/)
+    .map((d) => normalizeWorkspaceDept(d.trim()))
+    .filter(Boolean)
+);
+
 export function isSameWorkspaceDept(a: any, b: any): boolean {
-  const splitDepts = (raw: any): string[] =>
-    String(raw || "")
-      .split(/[,;\n]+/)
-      .map((d) => normalizeWorkspaceDept(d.trim()))
-      .filter(Boolean);
-  const listA = splitDepts(a);
-  const listB = splitDepts(b);
+  const listA = splitWorkspaceDepts(String(a || ""));
+  const listB = splitWorkspaceDepts(String(b || ""));
   if (listA.length === 0 || listB.length === 0) return false;
   if (listA.includes("all") || listB.includes("all")) return true;
   return listA.some((da) =>
