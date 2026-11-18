@@ -61,11 +61,19 @@ import {
 } from "@/backend/services/utils";
 import { nowVNDateTime } from "@/backend/services/dates";
 
+const NORMALIZED_USER_CACHE = new Map<string, string>();
+
 export const normalizeUserName = (name?: string): string => {
+  if (!name) return "Nhân viên ABT";
+  const cached = NORMALIZED_USER_CACHE.get(name);
+  if (cached !== undefined) return cached;
   const trimmed = normalizePersonText(name);
-  if (!trimmed) return "Nhân viên ABT";
+  if (!trimmed) {
+    NORMALIZED_USER_CACHE.set(name, "Nhân viên ABT");
+    return "Nhân viên ABT";
+  }
   const lower = personNameKey(trimmed);
-  if (
+  const res =
     lower === "admin" || 
     lower === "quan tri vien" || 
     lower === "quản trị viên" || 
@@ -73,10 +81,11 @@ export const normalizeUserName = (name?: string): string => {
     lower === "quan tri vien he thong" ||
     lower === "tbr-admin" ||
     lower === "via-admin"
-  ) {
-    return "Quản Trị Viên Hệ Thống";
-  }
-  return trimmed;
+      ? "Quản Trị Viên Hệ Thống"
+      : trimmed;
+  if (NORMALIZED_USER_CACHE.size > 2000) NORMALIZED_USER_CACHE.clear();
+  NORMALIZED_USER_CACHE.set(name, res);
+  return res;
 };
 
 interface ChatChannel {
@@ -210,15 +219,22 @@ export const SENDER_PALETTES = [
   }
 ];
 
+const SENDER_PALETTE_CACHE = new Map<string, (typeof SENDER_PALETTES)[0]>();
+
 export const getSenderPalette = (name: string) => {
   if (!name) return SENDER_PALETTES[0];
+  const cached = SENDER_PALETTE_CACHE.get(name);
+  if (cached) return cached;
   let hash = 0;
   for (let i = 0; i < name.length; i++) {
     hash = (hash << 5) - hash + name.charCodeAt(i);
     hash |= 0;
   }
   const idx = Math.abs(hash) % SENDER_PALETTES.length;
-  return SENDER_PALETTES[idx];
+  const pal = SENDER_PALETTES[idx];
+  if (SENDER_PALETTE_CACHE.size > 2000) SENDER_PALETTE_CACHE.clear();
+  SENDER_PALETTE_CACHE.set(name, pal);
+  return pal;
 };
 
 const STANDARD_DEPT_CHANNEL_ORDER = [
@@ -243,9 +259,38 @@ export const EnterpriseChatModule: React.FC = () => {
   const currentUserRole = user?.role || "Thành viên";
   const currentUserDept = (user as any)?.department || "Kinh Doanh";
 
-  // Channels & Active Channel (Primary pane)
-  const [channels, setChannels] = useState<ChatChannel[]>([]);
-  const [activeChannel, setActiveChannel] = useState<ChatChannel | null>(null);
+  // Channels & Active Channel (Primary pane) — initialize from local cache for instant 0ms mount
+  const [channels, setChannels] = useState<ChatChannel[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem("abt_chat_channels_cache_v1");
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch {}
+    }
+    return [];
+  });
+  const [activeChannel, setActiveChannel] = useState<ChatChannel | null>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem("abt_chat_channels_cache_v1");
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return (
+              parsed.find((c: ChatChannel) => c.channel_code === "general" && c.channel_type === "CHANNEL") ||
+              parsed.find((c: ChatChannel) => c.channel_type === "CHANNEL") ||
+              parsed[0] ||
+              null
+            );
+          }
+        }
+      } catch {}
+    }
+    return null;
+  });
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
   // Refs to prevent race conditions and cross-channel message bleed
@@ -301,7 +346,10 @@ export const EnterpriseChatModule: React.FC = () => {
   const [splitChannel, setSplitChannel] = useState<ChatChannel | null>(null);
   const [splitMessages, setSplitMessages] = useState<ChatMessage[]>([]);
   const [splitMessagesLoading, setSplitMessagesLoading] = useState(false);
-  const [splitInputText, setSplitInputText] = useState("");
+  const splitInputTextRef = useRef("");
+  const hasSplitInputTextRef = useRef(false);
+  const [hasSplitInputText, setHasSplitInputText] = useState(false);
+  const splitInputElRef = useRef<HTMLInputElement>(null);
   const [splitInputAttachments, setSplitInputAttachments] = useState<any[]>([]);
   const [openInSplitViewOnCreate, setOpenInSplitViewOnCreate] = useState(true);
 
@@ -310,8 +358,10 @@ export const EnterpriseChatModule: React.FC = () => {
   const [messageSearchQuery, setMessageSearchQuery] = useState("");
   const [isSearchingInChat, setIsSearchingInChat] = useState(false);
 
-  // Message Input (Primary)
-  const [inputText, setInputText] = useState("");
+  // Message Input (Primary) — uncontrolled via ref so typing never re-renders the entire Chat module
+  const inputTextRef = useRef("");
+  const hasInputTextRef = useRef(false);
+  const [hasInputText, setHasInputText] = useState(false);
   const [isInputExpanded, setIsInputExpanded] = useState(false);
   const [inputAttachments, setInputAttachments] = useState<any[]>([]);
   const [selectedRelatedWork, setSelectedRelatedWork] = useState<any | null>(null);
@@ -412,14 +462,30 @@ export const EnterpriseChatModule: React.FC = () => {
     return String(c.name || "Kênh chat");
   };
 
-  // Helper for recipient full profile
-  const getRecipientProfile = (c: ChatChannel) => {
+  const currentUserKey = String((user as any)?.username || currentUserName).trim().toLowerCase();
+
+  // O(1) Personnel lookup map by normalized name, raw name, username, employee_code, and email
+  const personnelLookupMap = useMemo(() => {
+    const map = new Map<string, any>();
+    for (const p of personnelList) {
+      if (!p) continue;
+      const fn = String(p.full_name || "").trim();
+      if (fn) {
+        map.set(fn.toLowerCase(), p);
+        map.set(normalizeUserName(fn).toLowerCase(), p);
+      }
+      if (p.username) map.set(String(p.username).trim().toLowerCase(), p);
+      if (p.employee_code) map.set(String(p.employee_code).trim().toLowerCase(), p);
+      if (p.email) map.set(String(p.email).trim().toLowerCase(), p);
+    }
+    return map;
+  }, [personnelList]);
+
+  // Helper for recipient full profile (O(1) lookup)
+  const getRecipientProfile = useCallback((c: ChatChannel) => {
     const otherName = getChannelDisplayName(c);
-    const p = personnelList.find(item => 
-      normalizeUserName(item.full_name) === normalizeUserName(otherName) ||
-      item.full_name?.trim() === otherName.trim() ||
-      item.username?.toLowerCase() === otherName.toLowerCase()
-    );
+    const key = normalizeUserName(otherName).toLowerCase();
+    const p = personnelLookupMap.get(key) || personnelLookupMap.get(otherName.trim().toLowerCase());
     return {
       name: otherName,
       department: p?.department || c.department || "Nhân viên ABT",
@@ -427,37 +493,46 @@ export const EnterpriseChatModule: React.FC = () => {
       phone: p?.phone || "",
       email: p?.email || ""
     };
-  };
+  }, [personnelLookupMap, currentUserName]);
 
   // Unread messages tracking
   const readCountsRef = useRef<Record<number, number>>({});
   const lastKnownTimestampsRef = useRef<Record<number, string>>({});
 
-  // Mark channel read helper
-  const markChannelAsRead = useCallback(async (channelId: number, messageCount?: number) => {
+  // Mark channel read helper (passes 0 or actual last_message_id so backend sets last_read_message_id = MAX(id))
+  const markChannelAsRead = useCallback(async (channelId: number, lastMessageId?: number) => {
     if (!channelId) return;
-    const count = typeof messageCount === "number" ? messageCount : Number.MAX_SAFE_INTEGER;
-    readCountsRef.current[channelId] = count;
+    readCountsRef.current[channelId] = Number.MAX_SAFE_INTEGER;
     setChannels(prev => prev.map(c => c.id === channelId ? { ...c, unread_count: 0 } : c));
     try {
       if (typeof window !== "undefined") {
         localStorage.setItem(`tbr_chat_read_${currentUserName}_${channelId}`, String(Date.now()));
         localStorage.setItem(`chat_last_read_${channelId}_${currentUserName}`, new Date().toISOString());
+        localStorage.setItem(`chat_last_read_${channelId}_${currentUserKey}`, new Date().toISOString());
+        if (lastMessageId && lastMessageId > 0 && lastMessageId <= 2147483647) {
+          localStorage.setItem(`chat_last_read_id_${channelId}_${currentUserKey}`, String(lastMessageId));
+        }
       }
+      const safeLastId =
+        typeof lastMessageId === "number" && lastMessageId > 0 && lastMessageId <= 2147483647
+          ? lastMessageId
+          : 0;
       await fetch(`/api/chat?action=mark_read&channel_id=${channelId}&user=${encodeURIComponent(currentUserName)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channel_id: channelId, user: currentUserName, last_message_id: count })
+        body: JSON.stringify({ channel_id: channelId, user: currentUserName, last_message_id: safeLastId })
       });
     } catch {}
-  }, [currentUserName]);
+  }, [currentUserName, currentUserKey]);
 
-  // Dynamic unread count resolver
+  // Dynamic unread count resolver (handles both number and string from PostgreSQL COUNT(*))
   const getChannelUnreadCount = useCallback((c?: ChatChannel | null): number => {
     if (!c) return 0;
     if (activeChannel?.id === c.id || splitChannel?.id === c.id) return 0;
-    if (typeof c.unread_count === "number") {
-      return Math.max(0, c.unread_count);
+    if (readCountsRef.current[c.id] === Number.MAX_SAFE_INTEGER) return 0;
+    if (c.unread_count !== undefined && c.unread_count !== null) {
+      const n = Number(c.unread_count);
+      if (!Number.isNaN(n)) return Math.max(0, n);
     }
     const total = Number(c.message_count) || 0;
     const read = readCountsRef.current[c.id];
@@ -466,6 +541,19 @@ export const EnterpriseChatModule: React.FC = () => {
     }
     return 0;
   }, [activeChannel?.id, splitChannel?.id]);
+
+  // Keep Navbar "Chat Nội Bộ" unread badge synchronized in real time
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const totalUnread = channels.reduce((sum, c) => sum + getChannelUnreadCount(c), 0);
+    try {
+      window.dispatchEvent(
+        new CustomEvent("tbr-chat-unread-updated", {
+          detail: { count: totalUnread, userKey: currentUserKey },
+        })
+      );
+    } catch {}
+  }, [channels, getChannelUnreadCount, currentUserKey]);
 
   // Zero-dependency pleasant chime sound synthesizer (Web Audio API)
   const playNotificationChime = () => {
@@ -491,8 +579,8 @@ export const EnterpriseChatModule: React.FC = () => {
     }
   };
 
-  // Real-time User Presence Engine (Online/Away/Offline based on last_seen_at)
-  const getUserPresence = (name: string): { 
+  // Real-time User Presence Engine (O(1) lookup via personnelLookupMap)
+  const getUserPresence = useCallback((name: string): { 
     status: "online" | "away" | "offline"; 
     label: string; 
     dotClass: string;
@@ -516,16 +604,9 @@ export const EnterpriseChatModule: React.FC = () => {
         textClass: "text-emerald-600 dark:text-emerald-400 font-bold"
       };
     }
-    const person = personnelList.find(p => {
-      const pNorm = normalizeUserName(p.full_name);
-      return (
-        pNorm === norm ||
-        p.full_name?.trim() === name.trim() ||
-        p.username?.toLowerCase() === name.toLowerCase() ||
-        p.employee_code?.toLowerCase() === name.toLowerCase() ||
-        p.email?.toLowerCase() === name.toLowerCase()
-      );
-    });
+    const person =
+      personnelLookupMap.get(norm.toLowerCase()) ||
+      personnelLookupMap.get(name.trim().toLowerCase());
     const status = person?.presence_status || "offline";
     if (status === "online") {
       return { 
@@ -552,7 +633,7 @@ export const EnterpriseChatModule: React.FC = () => {
       badgeClass: "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 border border-slate-200 dark:border-slate-700",
       textClass: "text-slate-400"
     };
-  };
+  }, [currentUserName, personnelLookupMap]);
 
   const buildMessagesSignature = (list: ChatMessage[]): string => {
     if (!Array.isArray(list) || list.length === 0) return "empty";
@@ -585,6 +666,11 @@ export const EnterpriseChatModule: React.FC = () => {
       const data = await res.json();
       if (data.channels && Array.isArray(data.channels) && data.channels.length > 0) {
         setChannels(data.channels);
+        if (typeof window !== "undefined") {
+          try {
+            localStorage.setItem("abt_chat_channels_cache_v1", JSON.stringify(data.channels));
+          } catch {}
+        }
         if (Array.isArray(data.personnel)) {
           const deduped = dedupePersonnel(data.personnel);
           setPersonnelList(deduped);
@@ -594,9 +680,9 @@ export const EnterpriseChatModule: React.FC = () => {
             } catch (e) {}
           }
         }
-        setTasksList(data.tasks || []);
-        setWorkflowsList(data.workflows || []);
-        setFactoryWorkList(data.factoryWorkItems || []);
+        if (Array.isArray(data.tasks) && data.tasks.length > 0) setTasksList(data.tasks);
+        if (Array.isArray(data.workflows) && data.workflows.length > 0) setWorkflowsList(data.workflows);
+        if (Array.isArray(data.factoryWorkItems) && data.factoryWorkItems.length > 0) setFactoryWorkList(data.factoryWorkItems);
 
         // Record initial last message times
         data.channels.forEach((c: ChatChannel) => {
@@ -612,7 +698,7 @@ export const EnterpriseChatModule: React.FC = () => {
             activeChannelIdRef.current = found.id;
             activeChannelCodeRef.current = String(found.channel_code || "").trim().toLowerCase();
             setActiveChannel(found);
-            markChannelAsRead(found.id, Number(found.message_count) || 0);
+            markChannelAsRead(found.id, Number((found as any).last_message_id) || 0);
           }
         } else {
           setActiveChannel(current => {
@@ -624,7 +710,7 @@ export const EnterpriseChatModule: React.FC = () => {
                   localStorage.removeItem("tbr_active_chat_channel");
                   activeChannelIdRef.current = foundSaved.id;
                   activeChannelCodeRef.current = String(foundSaved.channel_code || "").trim().toLowerCase();
-                  markChannelAsRead(foundSaved.id, Number(foundSaved.message_count) || 0);
+                  markChannelAsRead(foundSaved.id, Number((foundSaved as any).last_message_id) || 0);
                   return foundSaved;
                 }
               }
@@ -635,7 +721,7 @@ export const EnterpriseChatModule: React.FC = () => {
               if (defaultCh) {
                 activeChannelIdRef.current = defaultCh.id;
                 activeChannelCodeRef.current = String(defaultCh.channel_code || "").trim().toLowerCase();
-                markChannelAsRead(defaultCh.id, Number(defaultCh.message_count) || 0);
+                markChannelAsRead(defaultCh.id, Number((defaultCh as any).last_message_id) || 0);
               }
               return defaultCh;
             }
@@ -702,7 +788,8 @@ export const EnterpriseChatModule: React.FC = () => {
       }
       if (data.messages && Array.isArray(data.messages)) {
         setMessages(data.messages);
-        markChannelAsRead(requestedId, data.messages.length);
+        const lastMsg = data.messages[data.messages.length - 1];
+        markChannelAsRead(requestedId, Number(lastMsg?.id) || 0);
         setTimeout(scrollToBottom, 80);
       } else {
         setMessages([]);
@@ -766,7 +853,8 @@ export const EnterpriseChatModule: React.FC = () => {
       }
       if (data.messages && Array.isArray(data.messages)) {
         setSplitMessages(data.messages);
-        markChannelAsRead(requestedId, data.messages.length);
+        const lastMsg = data.messages[data.messages.length - 1];
+        markChannelAsRead(requestedId, Number(lastMsg?.id) || 0);
         setTimeout(scrollSplitToBottom, 80);
       } else {
         setSplitMessages([]);
@@ -799,8 +887,8 @@ export const EnterpriseChatModule: React.FC = () => {
     const syncInterval = setInterval(async () => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       try {
-        // A. Background silent channel sync
-        const chRes = await fetch(`/api/chat?action=channels&user=${encodeURIComponent(currentUserName)}`);
+        // A. Background silent channel sync (include_meta=0 skips heavy tasks/workflows/factory queries)
+        const chRes = await fetch(`/api/chat?action=channels&include_meta=0&user=${encodeURIComponent(currentUserName)}`);
         if (chRes.ok) {
           const chData = await chRes.json();
           if (chData.channels && Array.isArray(chData.channels)) {
@@ -828,6 +916,11 @@ export const EnterpriseChatModule: React.FC = () => {
             });
 
             setChannels(chData.channels);
+            if (typeof window !== "undefined") {
+              try {
+                localStorage.setItem("abt_chat_channels_cache_v1", JSON.stringify(chData.channels));
+              } catch {}
+            }
             if (Array.isArray(chData.personnel)) {
               const deduped = dedupePersonnel(chData.personnel);
               setPersonnelList(deduped);
@@ -864,14 +957,14 @@ export const EnterpriseChatModule: React.FC = () => {
                 const prevSig = buildMessagesSignature(prev);
                 const nextSig = buildMessagesSignature(mData.messages);
                 if (prevSig !== nextSig) {
+                  const latestMsg = mData.messages[mData.messages.length - 1];
                   if (mData.messages.length > prev.length) {
-                    const latestMsg = mData.messages[mData.messages.length - 1];
                     if (latestMsg && normalizeUserName(latestMsg.sender_name) !== currentUserName) {
                       playNotificationChime();
                     }
                     setTimeout(scrollToBottom, 80);
                   }
-                  markChannelAsRead(polledId, mData.messages.length);
+                  markChannelAsRead(polledId, Number(latestMsg?.id) || 0);
                   return mData.messages;
                 }
                 return prev;
@@ -904,10 +997,11 @@ export const EnterpriseChatModule: React.FC = () => {
                 const prevSig = buildMessagesSignature(prev);
                 const nextSig = buildMessagesSignature(smData.messages);
                 if (prevSig !== nextSig) {
+                  const latestMsg = smData.messages[smData.messages.length - 1];
                   if (smData.messages.length > prev.length) {
                     setTimeout(scrollSplitToBottom, 80);
                   }
-                  markChannelAsRead(polledSplitId, smData.messages.length);
+                  markChannelAsRead(polledSplitId, Number(latestMsg?.id) || 0);
                   return smData.messages;
                 }
                 return prev;
@@ -927,7 +1021,8 @@ export const EnterpriseChatModule: React.FC = () => {
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!activeChannel) return;
-    const cleanedText = inputText.replace(/Đang tải hình ảnh \/ tệp lên\.\.\. Vui lòng đợi/gi, "").trim();
+    const rawInput = textareaRef.current ? textareaRef.current.value : inputTextRef.current;
+    const cleanedText = rawInput.replace(/Đang tải hình ảnh \/ tệp lên\.\.\. Vui lòng đợi/gi, "").trim();
     if (!cleanedText && inputAttachments.length === 0) return;
 
     const payload = {
@@ -947,7 +1042,10 @@ export const EnterpriseChatModule: React.FC = () => {
       } : null
     };
 
-    setInputText("");
+    inputTextRef.current = "";
+    hasInputTextRef.current = false;
+    setHasInputText(false);
+    if (textareaRef.current) textareaRef.current.value = "";
     setInputAttachments([]);
     setReplyingTo(null);
     setSelectedRelatedWork(null);
@@ -976,7 +1074,8 @@ export const EnterpriseChatModule: React.FC = () => {
   const handleSendSplitMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!splitChannel) return;
-    if (!splitInputText.trim() && splitInputAttachments.length === 0) return;
+    const rawSplitInput = splitInputElRef.current ? splitInputElRef.current.value : splitInputTextRef.current;
+    if (!rawSplitInput.trim() && splitInputAttachments.length === 0) return;
 
     const payload = {
       channel_id: splitChannel.id,
@@ -984,7 +1083,7 @@ export const EnterpriseChatModule: React.FC = () => {
       sender_name: currentUserName,
       sender_role: currentUserRole,
       sender_dept: currentUserDept,
-      content: splitInputText.trim(),
+      content: rawSplitInput.trim(),
       attachments: splitInputAttachments,
       reply_to: splitReplyingTo ? {
         id: splitReplyingTo.id,
@@ -994,7 +1093,10 @@ export const EnterpriseChatModule: React.FC = () => {
       } : null
     };
 
-    setSplitInputText("");
+    splitInputTextRef.current = "";
+    hasSplitInputTextRef.current = false;
+    setHasSplitInputText(false);
+    if (splitInputElRef.current) splitInputElRef.current.value = "";
     setSplitInputAttachments([]);
     setSplitReplyingTo(null);
 
@@ -1559,11 +1661,17 @@ export const EnterpriseChatModule: React.FC = () => {
 
     // Map each colleague with existing direct channel (if any) and presence
     const mapped = colleagues.map(p => {
-      const matchingChannel = channels.find(c =>
+      const matchingChannels = channels.filter(c =>
         isDirectChannelForPair(c, currentUserName, p.full_name)
       );
+      matchingChannels.sort((a, b) => {
+        const uDiff = getChannelUnreadCount(b) - getChannelUnreadCount(a);
+        if (uDiff !== 0) return uDiff;
+        return (Number(b.message_count) || 0) - (Number(a.message_count) || 0);
+      });
+      const matchingChannel = matchingChannels[0];
       const presence = getUserPresence(p.full_name);
-      const unreadCount = getChannelUnreadCount(matchingChannel);
+      const unreadCount = matchingChannels.reduce((sum, ch) => sum + getChannelUnreadCount(ch), 0);
 
       return {
         colleague: p,
@@ -1637,6 +1745,13 @@ export const EnterpriseChatModule: React.FC = () => {
   const totalUnreadDMs = useMemo(() => {
     return sidebarColleagues.reduce((sum, item) => sum + (item.unreadCount || 0), 0);
   }, [sidebarColleagues]);
+
+  // All channels (Department, Group, Project, Direct) that currently have unread messages
+  const unreadChannelsList = useMemo(() => {
+    return channels
+      .filter((c) => getChannelUnreadCount(c) > 0)
+      .sort((a, b) => getChannelUnreadCount(b) - getChannelUnreadCount(a));
+  }, [channels, getChannelUnreadCount]);
 
   // Filtered Personnel for DM modal
   const matchDept = (d1?: string, d2?: string): boolean => {
@@ -1830,6 +1945,70 @@ export const EnterpriseChatModule: React.FC = () => {
 
         {/* Channels & DMs Scrollable List */}
         <div className="flex-1 overflow-y-auto p-2 space-y-4 text-xs">
+          {/* UNREAD MESSAGES PINNED BANNER AT TOP OF SIDEBAR */}
+          {unreadChannelsList.length > 0 && (
+            <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/70 space-y-1.5 shadow-2xs">
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-[11px] font-extrabold text-rose-700 dark:text-rose-300 uppercase flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+                  🔴 Tin nhắn chưa đọc ({unreadChannelsList.reduce((s, c) => s + getChannelUnreadCount(c), 0)})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    unreadChannelsList.forEach((c) => {
+                      markChannelAsRead(c.id, Number((c as any).last_message_id) || 0);
+                    });
+                  }}
+                  className="text-[10px] font-bold text-rose-600 dark:text-rose-300 hover:underline cursor-pointer"
+                  title="Đánh dấu tất cả tin nhắn là đã đọc"
+                >
+                  Đọc tất cả ✓
+                </button>
+              </div>
+              <div className="space-y-1">
+                {unreadChannelsList.map((c) => {
+                  const uCount = getChannelUnreadCount(c);
+                  const displayName =
+                    c.channel_type === "DIRECT"
+                      ? `💬 ${getChannelDisplayName(c)}`
+                      : c.channel_type === "CHANNEL"
+                        ? `# ${c.name}`
+                        : `👥 ${c.name}`;
+                  return (
+                    <button
+                      key={`unread-top-${c.id}`}
+                      type="button"
+                      onClick={() => {
+                        activeChannelIdRef.current = c.id;
+                        activeChannelCodeRef.current = String(c.channel_code || "").trim().toLowerCase();
+                        setMessages([]);
+                        setActiveChannel(c);
+                        markChannelAsRead(c.id, Number((c as any).last_message_id) || 0);
+                      }}
+                      className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 hover:bg-rose-100/70 dark:hover:bg-rose-900/40 border border-rose-200/80 dark:border-rose-800/60 text-left transition cursor-pointer"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="font-bold text-xs text-slate-900 dark:text-white truncate">
+                          {displayName}
+                        </div>
+                        {c.last_message_content && (
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                            {c.last_message_sender ? `${c.last_message_sender}: ` : ""}
+                            {c.last_message_content}
+                          </div>
+                        )}
+                      </div>
+                      <span className="px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-500 text-white shrink-0">
+                        {uCount} mới
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* SECTION A: NHÓM PHỐI HỢP & DỰ ÁN */}
           <div>
             <div className="px-2 py-1 flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -2780,8 +2959,16 @@ export const EnterpriseChatModule: React.FC = () => {
                   <textarea
                     ref={textareaRef}
                     rows={isInputExpanded ? 5 : 2}
-                    value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
+                    defaultValue=""
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      inputTextRef.current = val;
+                      const nextHas = val.trim().length > 0;
+                      if (nextHas !== hasInputTextRef.current) {
+                        hasInputTextRef.current = nextHas;
+                        setHasInputText(nextHas);
+                      }
+                    }}
                     onPaste={(e) => handlePaste(e, false)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey) {
@@ -2851,7 +3038,18 @@ export const EnterpriseChatModule: React.FC = () => {
                         <button
                           key={em}
                           type="button"
-                          onClick={() => setInputText(prev => prev + em)}
+                          onClick={() => {
+                            const nextVal = (textareaRef.current ? textareaRef.current.value : inputTextRef.current) + em;
+                            inputTextRef.current = nextVal;
+                            if (textareaRef.current) {
+                              textareaRef.current.value = nextVal;
+                              textareaRef.current.focus();
+                            }
+                            if (!hasInputTextRef.current) {
+                              hasInputTextRef.current = true;
+                              setHasInputText(true);
+                            }
+                          }}
                           className="hover:scale-125 p-0.5 text-xs cursor-pointer"
                         >
                           {em}
@@ -2964,7 +3162,7 @@ export const EnterpriseChatModule: React.FC = () => {
 
                   <button
                     type="submit"
-                    disabled={!inputText.trim() && inputAttachments.length === 0}
+                    disabled={!hasInputText && inputAttachments.length === 0}
                     className="flex items-center gap-1 px-3.5 py-1 rounded-xl font-bold text-xs bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white shadow-xs cursor-pointer transition-all"
                   >
                     <span>Gửi</span>
@@ -3228,9 +3426,18 @@ export const EnterpriseChatModule: React.FC = () => {
 
               <form onSubmit={handleSendSplitMessage} className="flex items-center gap-1.5">
                 <input
+                  ref={splitInputElRef}
                   type="text"
-                  value={splitInputText}
-                  onChange={(e) => setSplitInputText(e.target.value)}
+                  defaultValue=""
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    splitInputTextRef.current = val;
+                    const nextHas = val.trim().length > 0;
+                    if (nextHas !== hasSplitInputTextRef.current) {
+                      hasSplitInputTextRef.current = nextHas;
+                      setHasSplitInputText(nextHas);
+                    }
+                  }}
                   onPaste={(e) => handlePaste(e, true)}
                   placeholder={
                     splitReplyingTo
@@ -3243,7 +3450,7 @@ export const EnterpriseChatModule: React.FC = () => {
                 />
                 <button
                   type="submit"
-                  disabled={!splitInputText.trim() && splitInputAttachments.length === 0}
+                  disabled={!hasSplitInputText && splitInputAttachments.length === 0}
                   className="p-2 rounded-xl bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 cursor-pointer shrink-0"
                 >
                   <Send className="w-3.5 h-3.5" />

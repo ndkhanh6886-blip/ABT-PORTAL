@@ -102,11 +102,12 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
     } catch {}
   }, [totalUnreadCount, currentUserKey]);
 
-  // Fetch Channels & Personnel on mount and poll every 6s even when closed so unread badge stays live
+  // Fetch Channels & Personnel on mount and poll every 6s when not on the full Chat tab so unread badge stays live
   useEffect(() => {
     const loadChannels = () => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      fetch(`/api/chat?action=channels&user=${encodeURIComponent(currentUserName)}`)
+      if (activeTab === "chat" && !isOpen) return;
+      fetch(`/api/chat?action=channels&include_meta=0&user=${encodeURIComponent(currentUserName)}`)
         .then(res => res.json())
         .then(data => {
           if (data.channels && data.channels.length > 0) {
@@ -127,7 +128,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
     loadChannels();
     const interval = setInterval(loadChannels, 6000);
     return () => clearInterval(interval);
-  }, [currentUserName]);
+  }, [currentUserName, activeTab, isOpen]);
 
   // Fetch Messages for active channel
   useEffect(() => {

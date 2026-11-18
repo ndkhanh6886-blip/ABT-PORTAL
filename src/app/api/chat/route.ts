@@ -271,11 +271,13 @@ export async function GET(req: NextRequest) {
         } catch (e) {}
       }
 
-      let unreadSubquery = "0 as unread_count";
+      const includeMeta = searchParams.get("include_meta") !== "0";
+
+      let unreadSubquery = "0::int as unread_count";
       if (cleanUser) {
         unreadSubquery = `
           COALESCE((
-            SELECT COUNT(*) 
+            SELECT COUNT(*)::int 
             FROM chat_messages m
             WHERE m.channel_id = c.id
               AND NOT (LOWER(TRIM(COALESCE(m.sender_name, ''))) = ANY($1::text[]))
@@ -284,34 +286,36 @@ export async function GET(req: NextRequest) {
               AND m.content NOT ILIKE 'Đã tạo nhóm%'
               AND m.content NOT ILIKE 'Chào mừng đến với%'
               AND (
-                m.id > COALESCE((
-                  SELECT MAX(r.last_read_message_id)
-                  FROM chat_channel_reads r
-                  WHERE r.channel_id = c.id
-                    AND LOWER(TRIM(r.user_name)) = ANY($1::text[])
-                ), 0)
+                m.id > COALESCE(ur.last_read_id, 0)
               )
               AND (
-                EXISTS (
-                  SELECT 1 FROM chat_channel_reads r2
-                  WHERE r2.channel_id = c.id
-                    AND LOWER(TRIM(r2.user_name)) = ANY($1::text[])
-                )
+                ur.last_read_id IS NOT NULL
                 OR m.created_at >= NOW() - INTERVAL '14 days'
               )
-          ), 0) as unread_count
+          ), 0)::int as unread_count
         `;
       }
 
       let channelsQuery = `
         SELECT c.*, 
-          (SELECT COUNT(*) FROM chat_messages m WHERE m.channel_id = c.id) as message_count,
+          COALESCE(ms.message_count, 0)::int as message_count,
           ${unreadSubquery},
           lm.last_message_id,
           lm.last_message_content,
           lm.last_message_sender,
           lm.last_message_time
         FROM chat_channels c
+        LEFT JOIN (
+          SELECT channel_id, COUNT(*)::int AS message_count
+          FROM chat_messages
+          GROUP BY channel_id
+        ) ms ON ms.channel_id = c.id
+        LEFT JOIN (
+          SELECT channel_id, MAX(last_read_message_id)::int AS last_read_id
+          FROM chat_channel_reads
+          WHERE LOWER(TRIM(user_name)) = ANY($1::text[])
+          GROUP BY channel_id
+        ) ur ON ur.channel_id = c.id
         LEFT JOIN LATERAL (
           SELECT id AS last_message_id,
                  content AS last_message_content,
@@ -385,8 +389,12 @@ export async function GET(req: NextRequest) {
 
           ORDER BY full_name ASC
         `),
-        query("SELECT id, task_code, title, department, assignee_name, status FROM company_tasks ORDER BY id DESC LIMIT 50"),
-        query("SELECT id, workflow_code, title, requester_dept, target_dept, status FROM workflow_requests ORDER BY id DESC LIMIT 50")
+        includeMeta
+          ? query("SELECT id, task_code, title, department, assignee_name, status FROM company_tasks ORDER BY id DESC LIMIT 50")
+          : Promise.resolve({ rows: [] }),
+        includeMeta
+          ? query("SELECT id, workflow_code, title, requester_dept, target_dept, status FROM workflow_requests ORDER BY id DESC LIMIT 50")
+          : Promise.resolve({ rows: [] })
       ]);
 
       const formattedChannels = (channelsRes.rows || []).map((c: any) => {
@@ -401,36 +409,40 @@ export async function GET(req: NextRequest) {
         if (!Array.isArray(members)) members = [];
         return {
           ...c,
+          unread_count: Number(c.unread_count) || 0,
+          message_count: Number(c.message_count) || 0,
           name: c.name || "Kênh chat",
           members: members.map((m: any) => String(m || "").trim()).filter(Boolean)
         };
       });
 
       let factoryWorkItems: any[] = [];
-      try {
-        const fPool = getFactoryPool();
-        const fwRes = await fPool.query(`
-          SELECT 'KIT_ORDER' AS type, k.code, ('Lệnh SX Kit: ' || COALESCE(i.name, k.code) || ' (' || k.status || ')') AS title, 'Sản Xuất Kit' AS department, 'factory-kit' AS target_tab
-            FROM kit.production_order k LEFT JOIN master.item i ON i.id = k.kit_item_id ORDER BY k.created_at DESC LIMIT 15
-          UNION ALL
-          SELECT 'OLIGO_BATCH' AS type, b.code, ('Mẻ tổng hợp Oligo: ' || b.code || ' (' || b.status || ')') AS title, 'Tổng Hợp Oligo' AS department, 'factory-oligo' AS target_tab
-            FROM oligo.synth_batch b ORDER BY b.created_at DESC LIMIT 15
-          UNION ALL
-          SELECT 'DEVICE_ORDER' AS type, d.code, ('Lệnh lắp ráp Thiết bị: ' || COALESCE(m.name, d.code) || ' (' || d.status || ')') AS title, 'Kỹ Thuật – Thiết Bị' AS department, 'factory-device' AS target_tab
-            FROM device.device_order d LEFT JOIN device.device_model m ON m.id = d.model_id ORDER BY d.created_at DESC LIMIT 15
-          UNION ALL
-          SELECT 'RD_PROJECT' AS type, r.code, ('Đề tài R&D: ' || r.name || ' (' || r.status || ')') AS title, 'Nghiên Cứu R&D' AS department, 'factory-rd' AS target_tab
-            FROM rd.project r ORDER BY r.created_at DESC LIMIT 15
-          UNION ALL
-          SELECT 'QA_NCR' AS type, n.code, ('Báo cáo sự cố NCR: ' || n.title || ' (' || n.status || ')') AS title, 'QA/QC' AS department, 'factory-qa' AS target_tab
-            FROM qms.ncr n ORDER BY n.created_at DESC LIMIT 15
-          UNION ALL
-          SELECT 'INTAKE_ORDER' AS type, o.code, ('Đơn đặt hàng nội bộ: ' || o.code || ' (' || o.status || ')') AS title, 'Đơn Nội Bộ' AS department, 'factory-orders' AS target_tab
-            FROM intake.order_request o ORDER BY o.created_at DESC LIMIT 15
-        `);
-        factoryWorkItems = fwRes.rows || [];
-      } catch (e) {
-        // Bỏ qua nếu bảng nhà máy chưa sẵn sàng
+      if (includeMeta) {
+        try {
+          const fPool = getFactoryPool();
+          const fwRes = await fPool.query(`
+            SELECT 'KIT_ORDER' AS type, k.code, ('Lệnh SX Kit: ' || COALESCE(i.name, k.code) || ' (' || k.status || ')') AS title, 'Sản Xuất Kit' AS department, 'factory-kit' AS target_tab
+              FROM kit.production_order k LEFT JOIN master.item i ON i.id = k.product_item_id ORDER BY k.created_at DESC LIMIT 15
+            UNION ALL
+            SELECT 'OLIGO_BATCH' AS type, b.code, ('Mẻ tổng hợp Oligo: ' || b.code || ' (' || b.status || ')') AS title, 'Tổng Hợp Oligo' AS department, 'factory-oligo' AS target_tab
+              FROM oligo.synth_batch b ORDER BY b.created_at DESC LIMIT 15
+            UNION ALL
+            SELECT 'DEVICE_ORDER' AS type, d.code, ('Lệnh lắp ráp Thiết bị: ' || COALESCE(m.name, d.code) || ' (' || d.status || ')') AS title, 'Kỹ Thuật – Thiết Bị' AS department, 'factory-device' AS target_tab
+              FROM device.device_order d LEFT JOIN device.device_model m ON m.id = d.model_id ORDER BY d.created_at DESC LIMIT 15
+            UNION ALL
+            SELECT 'RD_PROJECT' AS type, r.code, ('Đề tài R&D: ' || r.name || ' (' || r.status || ')') AS title, 'Nghiên Cứu R&D' AS department, 'factory-rd' AS target_tab
+              FROM rd.project r ORDER BY r.created_at DESC LIMIT 15
+            UNION ALL
+            SELECT 'QA_NCR' AS type, n.code, ('Báo cáo sự cố NCR: ' || n.title || ' (' || n.status || ')') AS title, 'QA/QC' AS department, 'factory-qa' AS target_tab
+              FROM qms.ncr n ORDER BY n.created_at DESC LIMIT 15
+            UNION ALL
+            SELECT 'INTAKE_ORDER' AS type, o.code, ('Đơn đặt hàng nội bộ: ' || o.code || ' (' || o.status || ')') AS title, 'Đơn Nội Bộ' AS department, 'factory-orders' AS target_tab
+              FROM intake.order_request o ORDER BY o.created_at DESC LIMIT 15
+          `);
+          factoryWorkItems = fwRes.rows || [];
+        } catch (e) {
+          // Bỏ qua nếu bảng nhà máy chưa sẵn sàng
+        }
       }
 
       const presenceRank = (s?: string) => (s === "online" ? 2 : s === "away" ? 1 : 0);
@@ -560,11 +572,10 @@ export async function GET(req: NextRequest) {
       const lastId = searchParams.get("last_message_id");
 
       if (channelId && user) {
-        let msgId = Number(lastId) || 0;
-        if (!msgId) {
-          const maxRes = await query("SELECT COALESCE(MAX(id), 0) as max_id FROM chat_messages WHERE channel_id = $1", [channelId]);
-          msgId = Number(maxRes.rows[0]?.max_id) || 0;
-        }
+        const maxRes = await query("SELECT COALESCE(MAX(id), 0)::int as max_id FROM chat_messages WHERE channel_id = $1", [channelId]);
+        const maxId = Number(maxRes.rows[0]?.max_id) || 0;
+        const parsedLast = Number(lastId) || 0;
+        const msgId = parsedLast > 0 && parsedLast <= 2147483647 ? Math.max(maxId, parsedLast) : maxId;
         await query(
           `INSERT INTO chat_channel_reads (channel_id, user_name, last_read_message_id, last_read_at)
            VALUES ($1, $2, $3, NOW())
@@ -1265,11 +1276,10 @@ export async function POST(req: NextRequest) {
       const last_id = body?.last_message_id || searchParams.get("last_message_id");
 
       if (channel_id && user) {
-        let msgId = Number(last_id) || 0;
-        if (!msgId) {
-          const maxRes = await query("SELECT COALESCE(MAX(id), 0) as max_id FROM chat_messages WHERE channel_id = $1", [channel_id]);
-          msgId = Number(maxRes.rows[0]?.max_id) || 0;
-        }
+        const maxRes = await query("SELECT COALESCE(MAX(id), 0)::int as max_id FROM chat_messages WHERE channel_id = $1", [channel_id]);
+        const maxId = Number(maxRes.rows[0]?.max_id) || 0;
+        const parsedLast = Number(last_id) || 0;
+        const msgId = parsedLast > 0 && parsedLast <= 2147483647 ? Math.max(maxId, parsedLast) : maxId;
         await query(
           `INSERT INTO chat_channel_reads (channel_id, user_name, last_read_message_id, last_read_at)
            VALUES ($1, $2, $3, NOW())
