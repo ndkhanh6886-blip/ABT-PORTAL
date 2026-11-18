@@ -2806,7 +2806,24 @@ export const UnifiedWorkspace: React.FC = () => {
         setTasks(fetchedTasks);
         setWorkflows(data.workflows || []);
         setDailyLogs(data.daily || []);
-        if (data.personnel) setPersonnelList(data.personnel);
+        if (data.personnel || Array.isArray(data.users)) {
+          const basePersonnel = Array.isArray(data.personnel) ? [...data.personnel] : [];
+          const seenNames = new Set(basePersonnel.map((p: any) => canonStaffName(p.full_name || "")));
+          for (const u of Array.isArray(data.users) ? data.users : []) {
+            const fn = String(u?.full_name || "").trim();
+            if (!fn || u?.username === "admin" || seenNames.has(canonStaffName(fn))) continue;
+            seenNames.add(canonStaffName(fn));
+            basePersonnel.push({
+              id: `usr-${u.id || u.username}`,
+              employee_code: String(u.username || "").toUpperCase().startsWith("NV-") ? String(u.username).toUpperCase() : "",
+              full_name: fn,
+              department: u.department || "",
+              position: u.role || "",
+              email: u.email || "",
+            });
+          }
+          setPersonnelList(basePersonnel);
+        }
         if (Array.isArray(data.users)) setWorkspaceUsersList(data.users);
         if (Array.isArray(data.customers)) setCustomerList(data.customers);
         if (Array.isArray(data.products)) setProductList(data.products);
@@ -16696,7 +16713,19 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
         {(() => {
           const isMeetingMode = scheduleForm.eventType === "MEETING";
           const activeActorName = rolePerspective === "staff" ? currentStaffName : (scheduleForm.actor || currentStaffName);
-          const staffSourceList = departmentStaffList && departmentStaffList.length > 0 ? departmentStaffList : personnelList;
+          const selectedModalDept =
+            !isMeetingMode &&
+            scheduleForm.category &&
+            scheduleForm.category !== "Họp & Giao Ban" &&
+            scheduleForm.category !== "Đơn Nội Bộ"
+              ? scheduleForm.category
+              : "";
+          const modalDeptStaff = selectedModalDept
+            ? (personnelList || []).filter((p: any) => isSameWorkspaceDept(p.department, selectedModalDept))
+            : [];
+          const staffSourceList = selectedModalDept
+            ? modalDeptStaff
+            : (departmentStaffList && departmentStaffList.length > 0 ? departmentStaffList : personnelList);
 
           // Danh sách phòng ban phục vụ chọn nhanh thành viên họp theo phòng
           const allDeptGroups = Array.from(
@@ -17127,6 +17156,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       />
                     ) : (
                       <select
+                        key={`schedule-actor-${scheduleForm.category}`}
                         value={scheduleForm.actor}
                         onChange={(e) => {
                           const nextActor = e.target.value;
@@ -17144,7 +17174,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         }}
                         className="w-full px-3 py-2 rounded-xl border border-indigo-300 dark:border-indigo-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
                       >
-                        <option value="">-- Chọn người chủ trì / phụ trách --</option>
+                        <option value="">
+                          {selectedModalDept
+                            ? `-- Chọn nhân sự thuộc ${selectedModalDept} (${staffSourceList.length} người) --`
+                            : "-- Chọn người chủ trì / phụ trách --"}
+                        </option>
                         {staffSourceList.map((p: any) => {
                           const name = p.full_name || p;
                           const code = p.employee_code ? ` (${p.employee_code})` : "";
@@ -17165,17 +17199,37 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     </label>
                     <select
                       value={scheduleForm.category}
-                      onChange={(e) => setScheduleForm({ ...scheduleForm, category: e.target.value })}
+                      onChange={(e) => {
+                        const nextCategory = e.target.value;
+                        const isConcreteDept = nextCategory !== "Họp & Giao Ban" && nextCategory !== "Đơn Nội Bộ";
+                        const matchingStaff = isConcreteDept
+                          ? (personnelList || []).filter((p: any) => isSameWorkspaceDept(p.department, nextCategory))
+                          : (personnelList || []);
+                        const currentActorStillInDept =
+                          !isConcreteDept ||
+                          matchingStaff.some((p: any) => sameStaffName(p.full_name || p, scheduleForm.actor));
+                        const nextActor = currentActorStillInDept
+                          ? scheduleForm.actor
+                          : (matchingStaff[0]?.full_name || "");
+                        setScheduleForm({
+                          ...scheduleForm,
+                          category: nextCategory,
+                          actor: nextActor,
+                          linkedTaskCodes: currentActorStillInDept ? scheduleForm.linkedTaskCodes : []
+                        });
+                      }}
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
                     >
                       <option value="Họp & Giao Ban">🎥 Họp &amp; Giao Ban: Họp nội bộ / Họp liên khối / Họp Ban Giám Đốc</option>
                       <optgroup label="🏢 Khối Kinh Doanh & Văn Phòng">
                         <option value="Kinh Doanh">💼 Kinh Doanh: Đàm phán KH / Chăm sóc bệnh viện / Triển khai thầu</option>
                         <option value="Application">🔬 Application: Demo máy / Thử mẫu ngoại viện / Hỗ trợ KH</option>
+                        <option value="IT">💻 Phòng IT: Phát triển phần mềm &amp; Hạ tầng CNTT</option>
                         <option value="Kho & Vận Hành">📦 Kho Kinh Doanh &amp; Vận Hành: Soạn xuất đơn SO / Nhập hàng thương mại / Kiểm kê</option>
                         <option value="Cung Ứng">🛒 Cung Ứng Kinh Doanh: Làm việc NCC thương mại / Thủ tục hải quan</option>
                         <option value="Kế Toán">💰 Kế Toán - Tài Chính: Đối soát công nợ / Thanh toán / Báo cáo</option>
                         <option value="Pháp Chế">⚖️ Pháp Chế &amp; Tuân Thủ: Thẩm định hợp đồng / Hồ sơ pháp lý</option>
+                        <option value="Hành Chính Nhân Sự">👥 Hành Chính – Nhân Sự: Tuyển dụng / Hành chính / Nội vụ</option>
                       </optgroup>
                       <optgroup label="🏭 Khối Kỹ Thuật – Nhà Máy">
                         <option value="Đơn Nội Bộ">📑 Điều Phối Đơn Nội Bộ: Lịch sản xuất &amp; Bàn giao KD ↔ Nhà máy</option>
