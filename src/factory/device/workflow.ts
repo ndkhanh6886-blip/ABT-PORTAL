@@ -1517,10 +1517,10 @@ export async function createSubcontractFromPo(
     throw invalid("Đơn PO này không có chi tiết gia công ngoài (SUBCONTRACT) nào trong cấu trúc BOM.");
   }
 
-  const orderLines: { part_id: string; qty_ordered: number; unit_price: number }[] = [];
+  const linesByVendor = new Map<string, { part_id: string; qty_ordered: number; unit_price: number }[]>();
   for (const sub of subItems.values()) {
     let part = (
-      await tx.query("SELECT id FROM device.subcontract_part WHERE item_id = $1 AND status = 'ACTIVE' LIMIT 1", [sub.item_id])
+      await tx.query("SELECT id, vendor_id FROM device.subcontract_part WHERE item_id = $1 AND status = 'ACTIVE' LIMIT 1", [sub.item_id])
     ).rows[0];
     if (!part) {
       part = await createSubcontractPart(tx, actor, {
@@ -1534,29 +1534,38 @@ export async function createSubcontractFromPo(
         drawing_ref: sub.drawing_code ?? `DRW-${sub.item_code}`,
       });
     }
-    orderLines.push({
+    const targetVendorId = String(part.vendor_id || vendorId);
+    const list = linesByVendor.get(targetVendorId) ?? [];
+    list.push({
       part_id: part.id,
       qty_ordered: sub.qty,
       unit_price: 850000,
     });
+    linesByVendor.set(targetVendorId, list);
   }
 
   const linkedWoId = po.lines?.[0]?.work_orders?.[0]?.id ?? null;
-  const subOrder = await createSubcontractOrder(tx, actor, {
-    org_unit_id: po.org_unit_id,
-    vendor_id: vendorId,
-    warehouse_id: devWh.id,
-    device_order_id: linkedWoId,
-    due_date: po.committed_date || po.requested_date || vnToday(),
-    notes: `Đặt gia công chi tiết theo BOM cho Đơn hàng PO ${po.kd_po_code} (${po.code})`,
-    issue_now: true,
-    lines: orderLines,
-  });
+  const createdOrders = [];
+  for (const [targetVendorId, orderLines] of linesByVendor.entries()) {
+    const subOrder = await createSubcontractOrder(tx, actor, {
+      org_unit_id: po.org_unit_id,
+      vendor_id: targetVendorId,
+      warehouse_id: devWh.id,
+      device_order_id: linkedWoId,
+      due_date: po.committed_date || po.requested_date || vnToday(),
+      notes: `Đặt gia công chi tiết theo BOM cho Đơn hàng PO ${po.kd_po_code} (${po.code})`,
+      issue_now: true,
+      lines: orderLines,
+    });
+    createdOrders.push(subOrder);
+  }
+  const firstOrder = createdOrders[0];
 
   return {
-    ...subOrder,
-    subcontract_order_id: subOrder.id,
-    subcontract_order_code: subOrder.code,
+    ...firstOrder,
+    code: createdOrders.map((o) => o.code).join(", "),
+    subcontract_order_id: firstOrder.id,
+    subcontract_order_code: createdOrders.map((o) => o.code).join(", "),
   };
 }
 

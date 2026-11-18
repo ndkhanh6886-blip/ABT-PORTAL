@@ -113,8 +113,19 @@ export function SubcontractView() {
 
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [showPartForm, setShowPartForm] = useState(false);
+  const [editingPartId, setEditingPartId] = useState<string | null>(null);
+  const [showVendorForm, setShowVendorForm] = useState(false);
   const [showOrderForm, setShowOrderForm] = useState(false);
   const [showEvalForm, setShowEvalForm] = useState(false);
+
+  const [vendorForm, setVendorForm] = useState({
+    code: "",
+    name: "",
+    tax_code: "",
+    contact_name: "",
+    phone: "",
+    address: "",
+  });
 
   const [partForm, setPartForm] = useState({
     name: "",
@@ -165,6 +176,7 @@ export function SubcontractView() {
 
   const refreshAll = () => {
     qc.invalidateQueries({ queryKey: ["factory", "device", "subcontracts"] });
+    qc.invalidateQueries({ queryKey: ["factory", "device", "options"] });
     if (selectedOrderId) qc.invalidateQueries({ queryKey: ["factory", "device", "subcontract", selectedOrderId] });
   };
 
@@ -176,6 +188,8 @@ export function SubcontractView() {
       }),
     onSuccess: () => {
       setShowPartForm(false);
+      setEditingPartId(null);
+      setShowVendorForm(false);
       setShowOrderForm(false);
       setShowEvalForm(false);
       refreshAll();
@@ -222,7 +236,15 @@ export function SubcontractView() {
                     <select
                       className={inputClass}
                       value={orderForm.vendor_id}
-                      onChange={(e) => setOrderForm({ ...orderForm, vendor_id: e.target.value })}
+                      onChange={(e) => {
+                        const nextVendorId = e.target.value;
+                        const vendorParts = (sub.data?.parts ?? []).filter((p) => p.vendor_id === nextVendorId);
+                        setOrderForm({
+                          ...orderForm,
+                          vendor_id: nextVendorId,
+                          part_id: vendorParts[0]?.id ?? orderForm.part_id,
+                        });
+                      }}
                     >
                       <option value="">-- Chọn NCC --</option>
                       {(opts.data?.vendors ?? []).map((v) => (
@@ -250,12 +272,20 @@ export function SubcontractView() {
                     <select
                       className={inputClass}
                       value={orderForm.part_id}
-                      onChange={(e) => setOrderForm({ ...orderForm, part_id: e.target.value })}
+                      onChange={(e) => {
+                        const nextPartId = e.target.value;
+                        const matchedPart = (sub.data?.parts ?? []).find((p) => p.id === nextPartId);
+                        setOrderForm({
+                          ...orderForm,
+                          part_id: nextPartId,
+                          vendor_id: matchedPart?.vendor_id || orderForm.vendor_id,
+                        });
+                      }}
                     >
                       <option value="">-- Chọn chi tiết --</option>
                       {(sub.data?.parts ?? []).map((p) => (
                         <option key={p.id} value={p.id}>
-                          {p.code} — {p.name}
+                          {p.code} — {p.name} ({p.vendor_code || p.vendor_name})
                         </option>
                       ))}
                     </select>
@@ -526,23 +556,108 @@ export function SubcontractView() {
         <Card
           title="Danh mục chi tiết bản vẽ gia công (Subcontract Parts)"
           actions={
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setPartForm((s) => ({
-                  ...s,
-                  item_id: opts.data?.items[0]?.id ?? "",
-                  vendor_id: opts.data?.vendors[0]?.id ?? "",
-                }));
-                setShowPartForm((v) => !v);
-              }}
-            >
-              + Khai báo chi tiết
-            </Button>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setVendorForm({
+                    code: `NCC-GC-0${(opts.data?.vendors.length ?? 0) + 1}`,
+                    name: "",
+                    tax_code: "",
+                    contact_name: "",
+                    phone: "",
+                    address: "",
+                  });
+                  setShowVendorForm((v) => !v);
+                }}
+              >
+                + Thêm đơn vị gia công
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setEditingPartId(null);
+                  setPartForm({
+                    name: "",
+                    item_id: opts.data?.items[0]?.id ?? "",
+                    vendor_id: opts.data?.vendors[0]?.id ?? "",
+                    material: "Nhôm hợp kim 6061-T6",
+                    process_type: "CNC",
+                    tolerance_standard: "ISO 2768-mK (±0.02mm)",
+                  });
+                  setShowPartForm((v) => !v);
+                }}
+              >
+                + Khai báo chi tiết
+              </Button>
+            </div>
           }
         >
+          {showVendorForm && (
+            <div className="mb-3 p-3 rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/50 dark:bg-emerald-950/30 flex flex-col gap-2.5">
+              <div className="text-xs font-extrabold text-emerald-900 dark:text-emerald-200">
+                🏭 Khai báo Đơn vị Gia công ngoài mới (CNC / Kim loại tấm / Anodize / PCB)
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <Field label="Mã đơn vị gia công *">
+                  <input
+                    className={`${inputClass} font-mono uppercase`}
+                    value={vendorForm.code}
+                    onChange={(e) => setVendorForm({ ...vendorForm, code: e.target.value })}
+                    placeholder="VD: NCC-CNC-01"
+                  />
+                </Field>
+                <Field label="Tên đơn vị / Xưởng gia công *">
+                  <input
+                    className={inputClass}
+                    value={vendorForm.name}
+                    onChange={(e) => setVendorForm({ ...vendorForm, name: e.target.value })}
+                    placeholder="VD: Công ty Cơ khí Chính xác & CNC..."
+                  />
+                </Field>
+                <Field label="Người liên hệ">
+                  <input
+                    className={inputClass}
+                    value={vendorForm.contact_name}
+                    onChange={(e) => setVendorForm({ ...vendorForm, contact_name: e.target.value })}
+                  />
+                </Field>
+                <Field label="Số điện thoại">
+                  <input
+                    className={inputClass}
+                    value={vendorForm.phone}
+                    onChange={(e) => setVendorForm({ ...vendorForm, phone: e.target.value })}
+                  />
+                </Field>
+              </div>
+              <ErrorNote error={postMut.error} />
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" onClick={() => setShowVendorForm(false)}>
+                  Hủy
+                </Button>
+                <Button
+                  disabled={!vendorForm.code.trim() || !vendorForm.name.trim() || postMut.isPending}
+                  onClick={() =>
+                    postMut.mutate({
+                      kind: "vendor",
+                      org_unit_id: opts.data?.units[0]?.id,
+                      ...vendorForm,
+                    })
+                  }
+                >
+                  Lưu đơn vị gia công
+                </Button>
+              </div>
+            </div>
+          )}
+
           {showPartForm && (
             <div className="mb-3 p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 flex flex-col gap-2.5">
+              <div className="text-xs font-extrabold text-sky-900 dark:text-sky-200">
+                {editingPartId
+                  ? "✏️ Cập nhật Chi tiết Gia công & Đơn vị phụ trách"
+                  : "➕ Khai báo Chi tiết Bản vẽ & Gán Đơn vị Gia công chính"}
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <Field label="Tên chi tiết bản vẽ">
                   <input
@@ -565,11 +680,19 @@ export function SubcontractView() {
                     ))}
                   </select>
                 </Field>
-                <Field label="Vật tư kho liên kết">
+                <Field label="Vật tư kho liên kết (Linh kiện trong BOM)">
                   <select
                     className={inputClass}
                     value={partForm.item_id}
-                    onChange={(e) => setPartForm({ ...partForm, item_id: e.target.value })}
+                    onChange={(e) => {
+                      const nextItemId = e.target.value;
+                      const matchedItem = (opts.data?.items ?? []).find((it) => it.id === nextItemId);
+                      setPartForm({
+                        ...partForm,
+                        item_id: nextItemId,
+                        name: partForm.name || matchedItem?.name || "",
+                      });
+                    }}
                   >
                     <option value="">-- Chọn vật tư --</option>
                     {(opts.data?.items ?? []).map((it) => (
@@ -579,13 +702,13 @@ export function SubcontractView() {
                     ))}
                   </select>
                 </Field>
-                <Field label="Nhà cung cấp chính">
+                <Field label="Đơn vị gia công chính (NCC phụ trách chi tiết này)">
                   <select
                     className={inputClass}
                     value={partForm.vendor_id}
                     onChange={(e) => setPartForm({ ...partForm, vendor_id: e.target.value })}
                   >
-                    <option value="">-- Chọn NCC --</option>
+                    <option value="">-- Chọn đơn vị gia công --</option>
                     {(opts.data?.vendors ?? []).map((v) => (
                       <option key={v.id} value={v.id}>
                         {v.code} — {v.name}
@@ -608,40 +731,85 @@ export function SubcontractView() {
                   />
                 </Field>
               </div>
+              <ErrorNote error={postMut.error} />
               <div className="flex justify-end gap-2">
-                <Button variant="ghost" onClick={() => setShowPartForm(false)}>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setShowPartForm(false);
+                    setEditingPartId(null);
+                  }}
+                >
                   Hủy
                 </Button>
                 <Button
                   disabled={!partForm.name || !partForm.item_id || !partForm.vendor_id || postMut.isPending}
                   onClick={() =>
                     postMut.mutate({
-                      kind: "part",
+                      kind: editingPartId ? "update_part" : "part",
+                      id: editingPartId || undefined,
                       org_unit_id: opts.data?.units[0]?.id,
                       ...partForm,
                     })
                   }
                 >
-                  Lưu chi tiết
+                  {editingPartId ? "Lưu cập nhật" : "Lưu chi tiết"}
                 </Button>
               </div>
             </div>
           )}
 
           {sub.data && sub.data.parts.length > 0 ? (
-            <Table head={["Mã", "Tên chi tiết", "Công nghệ", "Vật tư kho", "Dung sai"]}>
+            <Table head={["Mã", "Tên chi tiết", "Đơn vị gia công (NCC)", "Công nghệ", "Vật tư kho", "Dung sai", "Thao tác"]}>
               {sub.data.parts.map((p) => (
                 <tr key={p.id}>
                   <td className="py-2 pr-3 font-mono font-bold">{p.code}</td>
                   <td className="py-2 pr-3">{p.name}</td>
+                  <td className="py-2 pr-3">
+                    <span className="font-semibold text-sky-700 dark:text-sky-300">{p.vendor_name}</span>
+                    <div className="text-[10px] font-mono text-slate-500">{p.vendor_code}</div>
+                  </td>
                   <td className="py-2 pr-3">{PROCESS_LABELS[p.process_type] ?? p.process_type}</td>
-                  <td className="py-2 pr-3">{p.item_code}</td>
+                  <td className="py-2 pr-3 font-mono">{p.item_code}</td>
                   <td className="py-2 pr-3">{p.tolerance_standard}</td>
+                  <td className="py-2 pr-3 whitespace-nowrap">
+                    <div className="inline-flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        onClick={() => {
+                          setEditingPartId(p.id);
+                          setPartForm({
+                            name: p.name,
+                            item_id: p.item_id,
+                            vendor_id: p.vendor_id,
+                            material: p.material,
+                            process_type: p.process_type,
+                            tolerance_standard: p.tolerance_standard,
+                          });
+                          setShowPartForm(true);
+                        }}
+                      >
+                        Sửa
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        className="text-rose-600 dark:text-rose-400"
+                        disabled={postMut.isPending}
+                        onClick={() => {
+                          if (window.confirm(`Xóa chi tiết bản vẽ gia công ${p.code} (${p.name})?`)) {
+                            postMut.mutate({ kind: "delete_part", id: p.id });
+                          }
+                        }}
+                      >
+                        Xóa
+                      </Button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </Table>
           ) : (
-            <Empty>Chưa có chi tiết bản vẽ gia công nào.</Empty>
+            <Empty>Chưa có chi tiết bản vẽ gia công nào. Bấm &ldquo;+ Thêm đơn vị gia công&rdquo; và &ldquo;+ Khai báo chi tiết&rdquo; ở góc trên để gán đơn vị gia công cho từng linh kiện.</Empty>
           )}
         </Card>
 

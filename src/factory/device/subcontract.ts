@@ -106,6 +106,109 @@ export async function createSubcontractPart(tx: Tx, actor: AuthzActor, input: un
   });
 }
 
+const updatePartSchema = createPartSchema.extend({
+  id: z.string().uuid("chọn chi tiết gia công cần sửa"),
+});
+
+export async function updateSubcontractPart(tx: Tx, actor: AuthzActor, input: unknown) {
+  const d = parseInput(updatePartSchema, input);
+  await authorize(tx, actor, "device.subcontract.manage", d.org_unit_id);
+  const cur = (await tx.query("SELECT * FROM device.subcontract_part WHERE id = $1 FOR UPDATE", [d.id])).rows[0];
+  if (!cur) throw notFound("chi tiết gia công");
+  const updated = (
+    await tx.query(
+      `UPDATE device.subcontract_part
+          SET name = $2, item_id = $3, vendor_id = $4, material = $5,
+              process_type = $6, tolerance_standard = $7, drawing_ref = $8,
+              version = version + 1, updated_at = now(), updated_by = $9
+        WHERE id = $1
+        RETURNING *`,
+      [d.id, d.name, d.item_id, d.vendor_id, d.material, d.process_type, d.tolerance_standard, d.drawing_ref ?? null, actor.userId]
+    )
+  ).rows[0];
+  await writeAudit(tx, actor, {
+    entityType: "device_subcontract_part",
+    entityId: d.id,
+    action: "update",
+    changes: {
+      name: [cur.name, d.name],
+      vendor_id: [cur.vendor_id, d.vendor_id],
+      process_type: [cur.process_type, d.process_type],
+    },
+  });
+  return updated;
+}
+
+export async function deleteSubcontractPart(tx: Tx, actor: AuthzActor, input: unknown) {
+  const raw = (input ?? {}) as Record<string, unknown>;
+  const id = parseInput(z.string().uuid("ID chi tiết không hợp lệ"), raw.id);
+  const cur = (await tx.query("SELECT * FROM device.subcontract_part WHERE id = $1 FOR UPDATE", [id])).rows[0];
+  if (!cur) throw notFound("chi tiết gia công");
+  await authorize(tx, actor, "device.subcontract.manage", cur.org_unit_id);
+  const used = (await tx.query("SELECT 1 FROM device.subcontract_line WHERE part_id = $1 LIMIT 1", [id])).rowCount;
+  if (used) {
+    throw invalid(`Chi tiết ${cur.code} đã phát sinh trong đơn đặt gia công nên không thể xóa.`);
+  }
+  await tx.query("DELETE FROM device.subcontract_part WHERE id = $1", [id]);
+  await writeAudit(tx, actor, {
+    entityType: "device_subcontract_part",
+    entityId: id,
+    action: "delete",
+    changes: { code: [cur.code, null], name: [cur.name, null] },
+  });
+  return { deleted: id };
+}
+
+const createSubVendorSchema = z.object({
+  org_unit_id: z.string().uuid().optional().nullable(),
+  code: z.string().trim().min(2, "nhập mã đơn vị gia công (VD: NCC-CNC-02)").max(50),
+  name: z.string().trim().min(2, "nhập tên đơn vị gia công").max(250),
+  tax_code: z.string().trim().max(50).optional().nullable(),
+  contact_name: z.string().trim().max(150).optional().nullable(),
+  phone: z.string().trim().max(50).optional().nullable(),
+  email: z.string().trim().max(150).optional().nullable(),
+  address: z.string().trim().max(400).optional().nullable(),
+});
+
+export async function createSubcontractVendor(tx: Tx, actor: AuthzActor, input: unknown) {
+  const d = parseInput(createSubVendorSchema, input);
+  await authorizeAnywhere(tx, actor, "device.subcontract.manage");
+  const code = d.code.toUpperCase();
+  const existing = (await tx.query("SELECT id FROM master.partner WHERE upper(code) = $1 LIMIT 1", [code])).rows[0];
+  if (existing) {
+    const updated = (
+      await tx.query(
+        `UPDATE master.partner
+            SET name = $2, is_supplier = true, is_subcontractor = true,
+                tax_code = COALESCE($3, tax_code), contact_name = COALESCE($4, contact_name),
+                phone = COALESCE($5, phone), email = COALESCE($6, email),
+                address = COALESCE($7, address), status = 'ACTIVE',
+                updated_at = now(), updated_by = $8
+          WHERE id = $1
+          RETURNING *`,
+        [existing.id, d.name, d.tax_code || null, d.contact_name || null, d.phone || null, d.email || null, d.address || null, actor.userId]
+      )
+    ).rows[0];
+    return updated;
+  }
+  const inserted = (
+    await tx.query(
+      `INSERT INTO master.partner
+         (code, name, is_supplier, is_subcontractor, tax_code, contact_name, phone, email, address, asl_status, status, created_by, updated_by)
+       VALUES ($1, $2, true, true, $3, $4, $5, $6, $7, 'APPROVED', 'ACTIVE', $8, $8)
+       RETURNING *`,
+      [code, d.name, d.tax_code || null, d.contact_name || null, d.phone || null, d.email || null, d.address || null, actor.userId]
+    )
+  ).rows[0];
+  await writeAudit(tx, actor, {
+    entityType: "partner",
+    entityId: inserted.id,
+    action: "create",
+    changes: { code: [null, code], name: [null, d.name] },
+  });
+  return inserted;
+}
+
 export async function listSubcontractParts(tx: Tx, actor: AuthzActor) {
   await authorizeAnywhere(tx, actor, "device.view");
   return (
