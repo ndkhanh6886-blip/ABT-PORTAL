@@ -501,6 +501,69 @@ export async function GET(req: NextRequest) {
           DELETE FROM inventory_lots WHERE id IN (SELECT old_lot_id FROM orphaned)
         `).catch(() => {});
 
+        // Tự động hoàn trả tồn kho cho các Phiếu giao hàng (PX) đã HỦY có phiếu xuất PXK-<slip_code> nhưng chưa có phiếu nhập hoàn PNK-<slip_code>-HUY
+        try {
+          const unreturnedCancelledSlips = await query(`
+            SELECT s.slip_code, s.order_code, s.customer_name, s.dispatch_location,
+                   out_tx.items AS out_items, out_tx.warehouse_name AS out_warehouse, out_tx.performed_by AS out_actor
+              FROM sales_delivery_slips s
+              JOIN inventory_transactions out_tx
+                ON out_tx.transaction_code = 'PXK-' || regexp_replace(s.slip_code, '[^A-Za-z0-9-]', '', 'g')
+               AND out_tx.transaction_type = 'OUTBOUND'
+             WHERE (UPPER(COALESCE(s.status, '')) = 'CANCELLED'
+                    OR UPPER(COALESCE(s.extra_data->>'deliveryStatus', '')) = 'CANCELLED'
+                    OR COALESCE(s.extra_data->>'cancelledAt', '') <> '')
+               AND NOT EXISTS (
+                 SELECT 1 FROM inventory_transactions in_tx
+                  WHERE in_tx.transaction_type = 'INBOUND'
+                    AND in_tx.transaction_code LIKE 'PNK-' || regexp_replace(s.slip_code, '[^A-Za-z0-9-]', '', 'g') || '%HUY%'
+               )
+          `);
+          for (const sl of unreturnedCancelledSlips.rows) {
+            const cleanId = String(sl.slip_code || "").replace(/[^A-Za-z0-9-]/g, "");
+            if (!cleanId) continue;
+            const returnTxCode = `PNK-${cleanId}-HUY`;
+            let outItems: any[] = [];
+            try {
+              outItems = Array.isArray(sl.out_items) ? sl.out_items : JSON.parse(sl.out_items || "[]");
+            } catch { outItems = []; }
+            if (outItems.length === 0) continue;
+            const whLoc = String(sl.out_warehouse || sl.dispatch_location || "Kho Trung Tâm").trim() || "Kho Trung Tâm";
+            await withTransaction(async (c) => {
+              const ins = await c.query(
+                `INSERT INTO inventory_transactions (transaction_code, transaction_type, reference_code, date, performed_by, warehouse_name, items, notes)
+                 VALUES ($1, 'INBOUND', $2, $3, $4, $5, $6, $7)
+                 ON CONFLICT (transaction_code) DO NOTHING
+                 RETURNING id`,
+                [
+                  returnTxCode,
+                  sl.order_code || sl.slip_code,
+                  todayVN(),
+                  sl.out_actor || "Hệ Thống (Hoàn kho PGH hủy)",
+                  whLoc,
+                  JSON.stringify(outItems),
+                  `Nhập lại kho do hủy Phiếu giao hàng ${sl.slip_code}${sl.customer_name ? ` - Khách hàng: ${sl.customer_name}` : ""}`
+                ]
+              );
+              if (ins.rows.length === 0) return;
+              for (const it of sortByProductCode(outItems, (x: any) => x?.product_code || x?.productCode || "")) {
+                const pCode = String(it?.product_code || it?.productCode || "").trim();
+                const qty = Number(it?.quantity) || 0;
+                if (!pCode || qty <= 0) continue;
+                await addStock(c, {
+                  productCode: pCode,
+                  productName: it?.product_name || it?.productName || pCode,
+                  qty,
+                  lotNumber: it?.lot_number || it?.lotNumber || null,
+                  expiryDate: it?.expiry_date || it?.expiryDate || null,
+                  location: whLoc,
+                  unitCost: Number(it?.cost_price ?? it?.unit_price ?? 0) || 0
+                });
+              }
+            }).catch((e) => console.warn("Auto-return cancelled slip warning:", e?.message));
+          }
+        } catch {}
+
         await query(`
           UPDATE inventory_items i
              SET quantity_on_hand = COALESCE(s.total_qty, 0),
@@ -792,10 +855,13 @@ export async function POST(req: NextRequest) {
     const needed = WRITE_PERMISSIONS[action || ""];
     const isAccountantAllowed = action === "update_inbound" && isAccountantUser(me);
     if (needed && !isAdminUser(me) && !isAccountantAllowed && !needed.some(k => hasPermission(me, k))) {
-      // Phiếu giao hàng lập ở phân hệ Kinh doanh xuất / nhập kho cho đúng một đơn hàng đã có trong CSDL
+      // Phiếu giao hàng lập / sửa / hủy ở phân hệ Kinh doanh xuất / nhập hoàn kho cho đơn hàng hoặc phiếu giao trong CSDL
       const ref = String(body?.reference_code || "").trim();
-      const isOrderMovement = (action === "inbound" || action === "outbound") && ref !== "" && hasPermission(me, "sales.view") &&
-        (await query("SELECT 1 FROM sales_orders WHERE order_code = $1 LIMIT 1", [ref])).rows.length > 0;
+      const txCodeCheck = String(body?.transaction_code || "").trim();
+      const isSlipMovement = /^(PXK|PNK)-PX/i.test(txCodeCheck);
+      const isOrderMovement = (action === "inbound" || action === "outbound") &&
+        (hasPermission(me, "sales.view") || hasPermission(me, "sales.edit_delivery_slips") || hasPermission(me, "sales.delete")) &&
+        (isSlipMovement || (ref !== "" && (await query("SELECT 1 FROM sales_orders WHERE order_code = $1 UNION ALL SELECT 1 FROM sales_delivery_slips WHERE order_code = $1 OR slip_code = $1 LIMIT 1", [ref])).rows.length > 0));
       if (!isOrderMovement) return forbiddenResponse("Bạn không có quyền thực hiện nghiệp vụ kho này.");
     }
     // Người thực hiện được ghi theo phiên đăng nhập khi tạo phiếu mới (không ghi đè người nhập kho gốc khi sửa phiếu update_inbound)
@@ -810,8 +876,12 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "inbound") {
-      const { transaction_code, date, performed_by, reference_code, items, notes, warehouse_name, supplier_name, vat_invoice_no, inbound_reason } = body;
-      if (!String(supplier_name || "").trim()) {
+      const { transaction_code, date, performed_by, reference_code, items, notes, warehouse_name, vat_invoice_no, inbound_reason } = body;
+      const isReturnFromSlip =
+        /^PNK-PX/i.test(String(transaction_code || "").trim()) ||
+        /Nhập lại kho do (hủy|sửa giảm) Phiếu giao|Hoàn kho PGH|điều chuyển nội bộ/i.test(String(notes || ""));
+      const supplier_name = String(body.supplier_name || "").trim() || (isReturnFromSlip ? "Hoàn trả kho từ Phiếu giao hàng" : "");
+      if (!supplier_name) {
         return NextResponse.json({ error: "Vui lòng chọn hoặc nhập Tên Nhà Cung Cấp / Nguồn Hàng (*)." }, { status: 400 });
       }
       if (!String(date || "").trim()) {
@@ -936,8 +1006,10 @@ export async function POST(req: NextRequest) {
           });
         }
         // app_storage row is locked last (global lock order) to avoid deadlocks between concurrent receipts
-        for (const entry of catalogEntries) {
-          await appendCommercialCatalogEntry(c, entry);
+        if (!isReturnFromSlip) {
+          for (const entry of catalogEntries) {
+            await appendCommercialCatalogEntry(c, entry);
+          }
         }
 
         // Nếu phiếu nhập kho gắn với mã PO: chỉ đồng bộ số lượng thực nhận (received_qty) & trạng thái PO (không ghi đè đơn giá PO)
