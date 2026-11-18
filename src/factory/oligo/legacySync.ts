@@ -745,10 +745,24 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
       },
     ];
 
+    const deletedMethodNames = force
+      ? new Set<string>()
+      : new Set<string>(
+          (
+            await tx.query(
+              `SELECT DISTINCT lower(changes->'name'->>0) AS name
+                 FROM core.audit_log
+                WHERE entity_type = 'oligo_ps_method'
+                  AND action = 'delete'
+                  AND changes->'name'->>0 IS NOT NULL`
+            )
+          ).rows.map((r) => String(r.name))
+        );
+
     const methodIdByName = new Map<string, string>();
     for (const m of legacyMethods) {
       let row = (await tx.query("SELECT id FROM oligo.ps_method WHERE lower(name) = lower($1) LIMIT 1", [m.name])).rows[0];
-      if (!row) {
+      if (!row && !deletedMethodNames.has(m.name.toLowerCase())) {
         row = (
           await tx.query(
             `INSERT INTO oligo.ps_method (category, name, kind, target_hours, fields, status)
@@ -759,7 +773,7 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
         ).rows[0];
         counts.methods += 1;
       }
-      methodIdByName.set(m.name, row.id);
+      if (row) methodIdByName.set(m.name, row.id);
     }
 
     const legacyWorkflows = [
@@ -808,7 +822,22 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
       },
     ];
 
+    const deletedWorkflowNames = force
+      ? new Set<string>()
+      : new Set<string>(
+          (
+            await tx.query(
+              `SELECT DISTINCT lower(changes->'name'->>0) AS name
+                 FROM core.audit_log
+                WHERE entity_type = 'oligo_ps_workflow'
+                  AND action = 'delete'
+                  AND changes->'name'->>0 IS NOT NULL`
+            )
+          ).rows.map((r) => String(r.name))
+        );
+
     for (const wf of legacyWorkflows) {
+      if (deletedWorkflowNames.has(wf.name.toLowerCase())) continue;
       const ex = (await tx.query("SELECT id FROM oligo.ps_workflow WHERE lower(name) = lower($1) LIMIT 1", [wf.name])).rows[0];
       if (!ex) {
         const clash = (

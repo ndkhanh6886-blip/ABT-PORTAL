@@ -13,7 +13,11 @@ import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import { getItem, toBaseQty } from "../master/service";
 import { ensureLegacyOligoDataSeeded } from "./legacySync";
 
-registerPermissions([{ code: "oligo.sop.manage", description: "Cấu hình phương pháp và quy trình SOP sau tổng hợp Oligo" }]);
+registerPermissions([
+  { code: "oligo.sop.manage", description: "Cấu hình phương pháp và quy trình SOP sau tổng hợp Oligo" },
+  { code: "oligo.sop.edit", description: "Sửa phương pháp và quy trình SOP sau tổng hợp Oligo (chỉ dành cho Admin)", gxpCritical: true },
+  { code: "oligo.sop.delete", description: "Xóa phương pháp và quy trình SOP sau tổng hợp Oligo (chỉ dành cho Admin)", gxpCritical: true },
+]);
 
 const PURIFICATIONS = ["DESALT", "OPC", "HPLC", "PAGE"] as const;
 
@@ -46,7 +50,14 @@ function checkFields(fields: StepField[]) {
 
 /** Library of step methods: what is recorded at a step (numbers, text, equipment used, reagents consumed). */
 export async function saveMethod(tx: Tx, actor: AuthzActor, id: string | null, input: unknown) {
-  await authorizeAnywhere(tx, actor, "oligo.sop.manage");
+  if (!id) {
+    await authorizeAnywhere(tx, actor, "oligo.sop.manage").catch((err) => {
+      if (err?.code === "FORBIDDEN") return authorizeAnywhere(tx, actor, "oligo.sop.edit");
+      throw err;
+    });
+  } else {
+    await authorizeAnywhere(tx, actor, "oligo.sop.edit");
+  }
   const raw = (input ?? {}) as Record<string, unknown>;
   const data = parseInput(methodSchema, input);
   checkFields(data.fields);
@@ -78,6 +89,53 @@ export async function saveMethod(tx: Tx, actor: AuthzActor, id: string | null, i
   return (await tx.query("SELECT * FROM oligo.ps_method WHERE id = $1", [id])).rows[0];
 }
 
+/** Delete a step method (Admin only). */
+export async function deleteMethod(tx: Tx, actor: AuthzActor, id: string, input: unknown) {
+  await authorizeAnywhere(tx, actor, "oligo.sop.delete");
+  const methodId = parseInput(z.string().uuid("ID phương pháp không hợp lệ."), id);
+  const raw = (input ?? {}) as Record<string, unknown>;
+  const reason = parseInput(
+    z.string().trim().min(3, "Nhập lý do xóa phương pháp (tối thiểu 3 ký tự).").max(500),
+    raw.reason ?? "Quản trị viên xóa phương pháp"
+  );
+
+  const cur = (await tx.query("SELECT * FROM oligo.ps_method WHERE id = $1 FOR UPDATE", [methodId])).rows[0];
+  if (!cur) throw notFound("phương pháp");
+
+  const usedInWf = (
+    await tx.query(
+      `SELECT name FROM oligo.ps_workflow
+        WHERE EXISTS (
+          SELECT 1 FROM jsonb_array_elements(steps) s WHERE s->>'method_id' = $1
+        )
+        LIMIT 1`,
+      [methodId]
+    )
+  ).rows[0];
+  if (usedInWf) {
+    throw conflict(
+      `Phương pháp "${cur.name}" đang được gắn trong quy trình SOP "${usedInWf.name}". Hãy gỡ phương pháp khỏi quy trình hoặc xóa quy trình trước.`,
+      "METHOD_IN_WORKFLOW"
+    );
+  }
+
+  await tx.query("ALTER TABLE oligo.ps_step_log ALTER COLUMN method_id DROP NOT NULL").catch(() => {});
+  await tx.query("UPDATE oligo.ps_step_log SET method_id = NULL WHERE method_id = $1", [methodId]);
+  await tx.query("DELETE FROM oligo.ps_method WHERE id = $1", [methodId]);
+
+  await writeAudit(tx, actor, {
+    entityType: "oligo_ps_method",
+    entityId: methodId,
+    action: "delete",
+    changes: {
+      name: [cur.name, null],
+      category: [cur.category, null],
+    },
+    reason,
+  });
+  return { deleted: methodId, name: cur.name };
+}
+
 const workflowSchema = z.object({
   name: z.string().trim().min(1).max(100),
   description: z.string().trim().max(1000).optional().nullable(),
@@ -91,7 +149,14 @@ const workflowSchema = z.object({
  * OD / nmol from there). A change is a new revision; records already started keep the steps they started with.
  */
 export async function saveWorkflow(tx: Tx, actor: AuthzActor, id: string | null, input: unknown) {
-  await authorizeAnywhere(tx, actor, "oligo.sop.manage");
+  if (!id) {
+    await authorizeAnywhere(tx, actor, "oligo.sop.manage").catch((err) => {
+      if (err?.code === "FORBIDDEN") return authorizeAnywhere(tx, actor, "oligo.sop.edit");
+      throw err;
+    });
+  } else {
+    await authorizeAnywhere(tx, actor, "oligo.sop.edit");
+  }
   const raw = (input ?? {}) as Record<string, unknown>;
   const data = parseInput(workflowSchema, input);
   const methods = (await tx.query("SELECT id, name, kind, status FROM oligo.ps_method WHERE id = ANY($1::uuid[])", [data.steps.map((s) => s.method_id)])).rows;
@@ -134,6 +199,50 @@ export async function saveWorkflow(tx: Tx, actor: AuthzActor, id: string | null,
     reason: typeof raw.reason === "string" ? raw.reason : null,
   });
   return (await tx.query("SELECT * FROM oligo.ps_workflow WHERE id = $1", [id])).rows[0];
+}
+
+/** Delete an SOP workflow (Admin only). */
+export async function deleteWorkflow(tx: Tx, actor: AuthzActor, id: string, input: unknown) {
+  await authorizeAnywhere(tx, actor, "oligo.sop.delete");
+  const workflowId = parseInput(z.string().uuid("ID quy trình không hợp lệ."), id);
+  const raw = (input ?? {}) as Record<string, unknown>;
+  const reason = parseInput(
+    z.string().trim().min(3, "Nhập lý do xóa quy trình SOP (tối thiểu 3 ký tự).").max(500),
+    raw.reason ?? "Quản trị viên xóa quy trình SOP"
+  );
+
+  const cur = (await tx.query("SELECT * FROM oligo.ps_workflow WHERE id = $1 FOR UPDATE", [workflowId])).rows[0];
+  if (!cur) throw notFound("quy trình");
+
+  const openRecCount = Number(
+    (
+      await tx.query(
+        "SELECT count(*)::int AS c FROM oligo.post_process WHERE workflow_id = $1 AND status = 'OPEN'",
+        [workflowId]
+      )
+    ).rows[0]?.c ?? 0
+  );
+  if (openRecCount > 0) {
+    throw conflict(
+      `Quy trình "${cur.name}" đang có ${openRecCount} trình tự đang thực hiện hậu tổng hợp. Hãy hoàn tất trước khi xóa.`,
+      "WORKFLOW_IN_USE"
+    );
+  }
+
+  await tx.query("UPDATE oligo.post_process SET workflow_id = NULL WHERE workflow_id = $1", [workflowId]);
+  await tx.query("DELETE FROM oligo.ps_workflow WHERE id = $1", [workflowId]);
+
+  await writeAudit(tx, actor, {
+    entityType: "oligo_ps_workflow",
+    entityId: workflowId,
+    action: "delete",
+    changes: {
+      name: [cur.name, null],
+      purifications: [Array.isArray(cur.purifications) ? cur.purifications.join(",") : "", null],
+    },
+    reason,
+  });
+  return { deleted: workflowId, name: cur.name };
 }
 
 export async function listSop(tx: Tx, actor: AuthzActor) {

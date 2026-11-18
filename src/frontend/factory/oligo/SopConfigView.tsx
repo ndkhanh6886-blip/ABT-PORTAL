@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as XLSX from "xlsx";
-import { api } from "../api";
+import { api, useFactoryMe } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, Table } from "../ui";
 import { openExcelImportTemplate } from "../import/FactoryExcelImportModule";
 import { ItemPicker } from "./EquipmentView";
@@ -279,15 +279,39 @@ function WorkflowEditor({ base, isClone, methods, onClose }: { base?: Workflow; 
 
 /** "Quy trình SOP" (as OligoFlow's SOP configuration): 1. library of step methods, 2. workflows built from them. */
 export function SopConfigView({ canManage }: { canManage: boolean }) {
+  const qc = useQueryClient();
+  const me = useFactoryMe();
+  const perms = new Set(me.data?.permissions ?? []);
+  const canEditSop = Boolean(me.data?.is_root || perms.has("oligo.sop.edit"));
+  const canDeleteSop = Boolean(me.data?.is_root || perms.has("oligo.sop.delete"));
+  const canCreateOrClone = Boolean(canManage || canEditSop);
+
   const sop = useQuery({ queryKey: ["factory", "oligo-sop"], queryFn: () => api<{ methods: Method[]; workflows: Workflow[] }>("/api/factory/oligo/sop") });
   const [methodState, setMethodState] = useState<{ item?: Method; isClone?: boolean } | null>(null);
   const [workflowState, setWorkflowState] = useState<{ item?: Workflow; isClone?: boolean } | null>(null);
   const methods = sop.data?.methods ?? [];
   const workflows = sop.data?.workflows ?? [];
   const nameOf = (id: string) => methods.find((m) => m.id === id)?.name ?? "?";
+
+  const deleteMethodMut = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      api(`/api/factory/oligo/sop/methods/${id}`, { method: "DELETE", json: { reason } }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["factory", "oligo-sop"] });
+    },
+  });
+
+  const deleteWorkflowMut = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      api(`/api/factory/oligo/sop/workflows/${id}`, { method: "DELETE", json: { reason } }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["factory", "oligo-sop"] });
+    },
+  });
+
   return (
     <div className="flex flex-col gap-3">
-      <ErrorNote error={sop.error} />
+      <ErrorNote error={sop.error ?? deleteMethodMut.error ?? deleteWorkflowMut.error} />
       <Card
         title="1. Thư viện phương pháp cho từng bước (Cắt & khử bảo vệ, Tinh sạch, Đo OD, Đông khô…)"
         actions={
@@ -355,12 +379,32 @@ export function SopConfigView({ canManage }: { canManage: boolean }) {
                 </td>
                 <td className="py-1.5 pr-3 text-xs">{m.status === "ACTIVE" ? "Đang dùng" : "Ngừng"}</td>
                 <td className="py-1.5 pr-3 text-right whitespace-nowrap">
-                  {canManage && (
-                    <>
+                  <div className="inline-flex items-center gap-1">
+                    {canEditSop && (
                       <Button type="button" variant="ghost" onClick={() => setMethodState({ item: m })}>Sửa</Button>
+                    )}
+                    {canCreateOrClone && (
                       <Button type="button" variant="ghost" onClick={() => setMethodState({ item: m, isClone: true })}>Nhân bản</Button>
-                    </>
-                  )}
+                    )}
+                    {canDeleteSop && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50"
+                        disabled={deleteMethodMut.isPending}
+                        onClick={() => {
+                          const reason = window.prompt(
+                            `Nhập lý do xóa phương pháp "${m.name}" (${m.category}):`,
+                            "Xóa phương pháp không còn sử dụng"
+                          );
+                          if (!reason || reason.trim().length < 3) return;
+                          deleteMethodMut.mutate({ id: m.id, reason: reason.trim() });
+                        }}
+                      >
+                        Xóa
+                      </Button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -427,12 +471,32 @@ export function SopConfigView({ canManage }: { canManage: boolean }) {
                 <td className="py-1.5 pr-3 text-xs">rev {w.revision}</td>
                 <td className="py-1.5 pr-3 text-xs">{w.status === "ACTIVE" ? "Đang dùng" : "Ngừng"}</td>
                 <td className="py-1.5 pr-3 text-right whitespace-nowrap">
-                  {canManage && (
-                    <>
+                  <div className="inline-flex items-center gap-1">
+                    {canEditSop && (
                       <Button type="button" variant="ghost" onClick={() => setWorkflowState({ item: w })}>Sửa</Button>
+                    )}
+                    {canCreateOrClone && (
                       <Button type="button" variant="ghost" onClick={() => setWorkflowState({ item: w, isClone: true })}>Nhân bản</Button>
-                    </>
-                  )}
+                    )}
+                    {canDeleteSop && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50"
+                        disabled={deleteWorkflowMut.isPending}
+                        onClick={() => {
+                          const reason = window.prompt(
+                            `Nhập lý do xóa quy trình SOP "${w.name}":`,
+                            "Xóa quy trình SOP không còn sử dụng"
+                          );
+                          if (!reason || reason.trim().length < 3) return;
+                          deleteWorkflowMut.mutate({ id: w.id, reason: reason.trim() });
+                        }}
+                      >
+                        Xóa
+                      </Button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
