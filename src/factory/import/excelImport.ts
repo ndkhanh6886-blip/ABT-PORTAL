@@ -1,6 +1,6 @@
 import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
-import { authorizeAnywhere, registerPermissions, type AuthzActor } from "../core/authz";
+import { authorizeAnywhere, authorizeAnywhereOneOf, registerPermissions, type AuthzActor } from "../core/authz";
 import { nextNumber } from "../core/numbering";
 import { runTransition } from "../core/stateMachine";
 import { createStockDocument, stockDocumentMachine } from "../inv/documents";
@@ -503,16 +503,30 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
   const errors: { row_no: number; code?: string; message: string }[] = [];
 
   if (templateKey === "INVENTORY_STOCK") {
-    await authorizeAnywhere(tx, actor, "master.item.manage");
+    await authorizeAnywhereOneOf(tx, actor, [
+      "master.item.manage",
+      "inv.receipt.manage",
+      "inv.document.post",
+      "device.model.manage",
+      "kit.bom.manage",
+      "oligo.sop.manage",
+      "prep.formula.manage",
+      "rd.project.manage",
+      "qms.spec.manage",
+    ]);
     const hasStockRows = rawRows.some((r) => extractStockQty(r) > 0);
     if (hasStockRows) {
-      await authorizeAnywhere(tx, actor, "inv.receipt.manage").catch(async (err) => {
-        if (err?.code === "FORBIDDEN") {
-          await authorizeAnywhere(tx, actor, "inv.document.post");
-          return;
-        }
-        throw err;
-      });
+      await authorizeAnywhereOneOf(tx, actor, [
+        "inv.receipt.manage",
+        "inv.document.post",
+        "master.item.manage",
+        "device.model.manage",
+        "kit.bom.manage",
+        "oligo.sop.manage",
+        "prep.formula.manage",
+        "rd.project.manage",
+        "qms.spec.manage",
+      ]);
     }
     const canReleaseOpeningLot = Boolean(input.is_audited_opening_balance);
 
@@ -944,7 +958,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       }
     }
   } else if (templateKey === "KIT_BOM_FORMULA") {
-    await authorizeAnywhere(tx, actor, "kit.bom.manage");
+    await authorizeAnywhereOneOf(tx, actor, ["kit.bom.manage", "rd.project.manage", "rd.transfer.manage"]);
     const STAFF_CODE_MAP: Record<string, string> = {
       SX01: "Nguyễn Thị Thùy Trâm (NV-ABT-037)",
       SX02: "Võ Thanh Ngân (NV-ABT-038)",
@@ -1258,7 +1272,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       }
     }
   } else if (templateKey === "PREP_OLIGO_FORMULA") {
-    await authorizeAnywhere(tx, actor, "prep.formula.manage");
+    await authorizeAnywhereOneOf(tx, actor, ["prep.formula.manage", "oligo.sop.manage", "kit.bom.manage", "rd.project.manage"]);
     const formulaDeptScope = normalizePrepDeptScope(targetDeptCode) ?? "OLIGO";
     let lastFCode = "";
     let lastFName = "";
@@ -1425,13 +1439,34 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       }
     }
   } else if (templateKey === "DEVICE_MODEL_BOM") {
-    await authorizeAnywhere(tx, actor, "device.model.manage");
+    await authorizeAnywhereOneOf(tx, actor, [
+      "device.model.manage",
+      "device.order.manage",
+      "device.assembly.execute",
+      "rd.project.manage",
+    ]);
+    let lastMCode = "";
+    let lastMName = "";
     const grouped = new Map<string, Record<string, unknown>[]>();
     for (const r of rawRows) {
-      const mCode = normCode(r.model_code || r["Mã Model Thiết bị"]);
+      const explicitMCode = normCode(r.model_code || r["Mã Model Thiết bị"] || r["Mã thiết bị"] || r["Model"]);
+      const rowMName = normStr(r.model_name || r["Tên thiết bị thương mại"] || r["Tên thiết bị"] || r["Tên máy"]);
+      const hasPart = Boolean(normCode(r.part_code || r["Mã linh kiện"]));
+      let mCode = explicitMCode;
+      if (mCode) {
+        lastMCode = mCode;
+        if (rowMName) lastMName = rowMName;
+      } else if (rowMName) {
+        mCode = normCode(rowMName);
+        lastMCode = mCode;
+        lastMName = rowMName;
+      } else if (hasPart && lastMCode) {
+        mCode = lastMCode;
+      }
       if (!mCode) continue;
+      const hydrated = !explicitMCode && !rowMName && lastMName ? { ...r, model_name: lastMName } : r;
       const arr = grouped.get(mCode) ?? [];
-      arr.push(r);
+      arr.push(hydrated);
       grouped.set(mCode, arr);
     }
     let groupIdx = 0;
@@ -1555,13 +1590,70 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       }
     }
   } else if (templateKey === "ROUTING_SOP") {
-    await authorizeAnywhere(tx, actor, "kit.bom.manage");
+    await authorizeAnywhereOneOf(tx, actor, [
+      "kit.bom.manage",
+      "device.model.manage",
+      "device.order.manage",
+      "device.assembly.execute",
+      "oligo.sop.manage",
+      "prep.formula.manage",
+      "rd.project.manage",
+    ]);
+    let lastRtCode = "";
+    let lastRtName = "";
+    let lastProdCode = "";
+    let lastProdName = "";
     const grouped = new Map<string, Record<string, unknown>[]>();
     for (const r of rawRows) {
-      const rtCode = normCode(r.routing_code || r["Mã quy trình"]);
+      const explicitRtCode = normCode(
+        r.routing_code || r["Mã quy trình"] || r["Mã QTSX"] || r["Mã SOP"] || r["Mã quy trình SX"]
+      );
+      const rowRtName = normStr(
+        r.routing_name || r["Tên quy trình / SOP"] || r["Tên quy trình"] || r["Tên QTSX"] || r["Tên SOP"]
+      );
+      const rowProdCode = normCode(
+        r.product_code || r["Mã sản phẩm"] || r["Mã thiết bị"] || r["Mã Model"] || r["Model"] || r["Mã tủ"]
+      );
+      const rowProdName = normStr(
+        r.product_name || r["Tên sản phẩm"] || r["Tên thiết bị"] || r["Tên Model"] || r["Tên tủ"] || r["Tên máy"]
+      );
+      const hasStepContent = Boolean(
+        normStr(
+          r.step_name ||
+            r["Tên công đoạn"] ||
+            r["Công đoạn"] ||
+            r["Nội dung công đoạn"] ||
+            r["Tên bước"] ||
+            r.instructions ||
+            r["Hướng dẫn thao tác SOP"] ||
+            r["Hướng dẫn"] ||
+            r["Mô tả thao tác"]
+        )
+      );
+
+      let rtCode = explicitRtCode;
+      if (!rtCode && (rowProdCode || rowRtName)) {
+        rtCode = normCode(rowProdCode ? `RT-${rowProdCode}` : rowRtName);
+      }
+      if (rtCode) {
+        lastRtCode = rtCode;
+        if (rowRtName) lastRtName = rowRtName;
+        if (rowProdCode) lastProdCode = rowProdCode;
+        if (rowProdName) lastProdName = rowProdName;
+      } else if (hasStepContent && lastRtCode) {
+        rtCode = lastRtCode;
+      }
       if (!rtCode) continue;
+
+      const hydrated: Record<string, unknown> = {
+        ...r,
+        routing_code: rtCode,
+        ...(rowRtName ? {} : lastRtName ? { routing_name: lastRtName } : {}),
+        ...(rowProdCode ? {} : lastProdCode ? { product_code: lastProdCode } : {}),
+        ...(rowProdName ? {} : lastProdName ? { product_name: lastProdName } : {}),
+      };
       const arr = grouped.get(rtCode) ?? [];
-      arr.push(r);
+      arr.push(hydrated);
       grouped.set(rtCode, arr);
     }
     let groupIdx = 0;
@@ -1571,10 +1663,21 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       await tx.query(`SAVEPOINT ${sp}`);
       try {
         const first = steps[0];
-        const routingName = normStr(first.routing_name || first["Tên quy trình / SOP"], `Quy trình ${routingCode}`);
-        const productCode = normCode(first.product_code || first["Mã sản phẩm"], `${routingCode}-PRD`);
-        const productName = normStr(first.product_name || first["Tên sản phẩm"], routingName);
-        const orgUnitId = await resolveOrgUnitId(tx, normStr(first.dept_code) || targetDeptCode || "P-KIT", orgCache);
+        const routingName = normStr(
+          first.routing_name || first["Tên quy trình / SOP"] || first["Tên quy trình"] || first["Tên QTSX"] || first["Tên SOP"],
+          `Quy trình ${routingCode}`
+        );
+        const productCode = normCode(
+          first.product_code || first["Mã sản phẩm"] || first["Mã thiết bị"] || first["Mã Model"] || first["Model"] || first["Mã tủ"],
+          `${routingCode}-PRD`
+        );
+        const productName = normStr(
+          first.product_name || first["Tên sản phẩm"] || first["Tên thiết bị"] || first["Tên Model"] || first["Tên tủ"] || first["Tên máy"],
+          routingName
+        );
+        const effectiveDeptCode = (normStr(first.dept_code || first["Mã phòng"]) || targetDeptCode || "P-KIT").toUpperCase();
+        const isDeviceRouting = effectiveDeptCode === "P-DEVICE" || effectiveDeptCode === "KTCN";
+        const orgUnitId = await resolveOrgUnitId(tx, isDeviceRouting ? "P-DEVICE" : effectiveDeptCode, orgCache);
 
         const prodItem = await ensureItemByCode(
           tx,
@@ -1582,8 +1685,8 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
           {
             code: productCode,
             name: productName,
-            item_type: "FINISHED_KIT",
-            base_uom: "kit",
+            item_type: isDeviceRouting ? "DEVICE" : "FINISHED_KIT",
+            base_uom: isDeviceRouting ? "pcs" : "kit",
           },
           uomCache
         );
@@ -1592,10 +1695,10 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
         if (routing) {
           await tx.query(
             `UPDATE kit.routing
-                SET name = $2, product_item_id = $3, status = 'DRAFT',
-                    updated_at = now(), updated_by = $4
+                SET name = $2, org_unit_id = $3, product_item_id = $4, status = 'DRAFT',
+                    updated_at = now(), updated_by = $5
               WHERE id = $1`,
-            [routing.id, routingName, prodItem.id, actor.userId]
+            [routing.id, routingName, orgUnitId, prodItem.id, actor.userId]
           );
           await tx.query("DELETE FROM kit.routing_step WHERE routing_id = $1", [routing.id]);
           updatedCount++;
@@ -1616,15 +1719,39 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
           createdCount++;
         }
 
+        const stageLabelsForDevice: string[] = [];
         for (let idx = 0; idx < steps.length; idx++) {
           const s = steps[idx];
-          const stepNo = Math.max(1, Math.round(normNum(s.step_no || s["Thứ tự bước"], (idx + 1) * 10)));
-          const stepCode = normCode(s.step_code || s["Mã công đoạn"], `STEP-${stepNo}`);
-          const stepName = normStr(s.step_name || s["Tên công đoạn"], `Công đoạn ${stepNo}`);
-          const instructions = normStr(s.instructions || s["Hướng dẫn thao tác SOP"], stepName);
-          const stdMinutes = Math.max(1, Math.round(normNum(s.std_minutes || s["Thời gian chuẩn (phút)"], 30)));
-          const qcGate = ["Y", "YES", "TRUE", "1", "CÓ"].includes(normStr(s.ipqc_required || s["Yêu cầu IPQC"], "Y").toUpperCase());
-          const workCenter = normStr(s.work_center || s["Phòng / Khu vực"], "Phòng Sạch Sản Xuất");
+          const stepNo = Math.max(
+            1,
+            Math.round(normNum(s.step_no || s["Thứ tự bước"] || s["STT"] || s["Bước"] || s["Bước số"], (idx + 1) * 10))
+          );
+          const stepCode = normCode(s.step_code || s["Mã công đoạn"] || s["Mã bước"], `STEP-${stepNo}`);
+          const stepName = normStr(
+            s.step_name || s["Tên công đoạn"] || s["Công đoạn"] || s["Nội dung công đoạn"] || s["Tên bước"],
+            `Công đoạn ${stepNo}`
+          );
+          const instructions = normStr(
+            s.instructions || s["Hướng dẫn thao tác SOP"] || s["Hướng dẫn"] || s["Mô tả thao tác"] || s["Nội dung thực hiện"],
+            stepName
+          );
+          const stdMinutes = Math.max(
+            1,
+            Math.round(normNum(s.std_minutes || s["Thời gian chuẩn (phút)"] || s["Thời gian (phút)"] || s["Định mức thời gian"], 30))
+          );
+          const qcGate = ["Y", "YES", "TRUE", "1", "CÓ"].includes(
+            normStr(s.ipqc_required || s["Yêu cầu IPQC"] || s["IPQC"] || s["Kiểm tra QC"], "Y").toUpperCase()
+          );
+          const workCenter = normStr(
+            s.work_center || s["Phòng / Khu vực"] || s["Trạm lắp ráp"] || s["Khu vực"] || s["Tổ / Trạm"],
+            isDeviceRouting ? "Xưởng Lắp Ráp Thiết Bị KTCN" : "Phòng Sạch Sản Xuất"
+          );
+
+          stageLabelsForDevice.push(
+            instructions && instructions !== stepName
+              ? `${idx + 1}. ${stepName} — ${instructions}`
+              : `${idx + 1}. ${stepName}`
+          );
 
           await tx.query(
             `INSERT INTO kit.routing_step (
@@ -1649,6 +1776,30 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
               }),
             ]
           );
+        }
+
+        // Nếu là quy trình sản xuất của Phòng Kỹ thuật – Thiết bị (P-DEVICE), đồng bộ luôn vào device.device_model.production_stages
+        if (isDeviceRouting && stageLabelsForDevice.length > 0) {
+          const existingModel = (
+            await tx.query("SELECT id FROM device.device_model WHERE upper(code) = upper($1) LIMIT 1", [productCode])
+          ).rows[0];
+          if (existingModel) {
+            await tx.query(
+              `UPDATE device.device_model
+                  SET production_stages = $2::jsonb, updated_at = now(), updated_by = $3
+                WHERE id = $1`,
+              [existingModel.id, JSON.stringify(stageLabelsForDevice), actor.userId]
+            );
+          } else {
+            await tx.query(
+              `INSERT INTO device.device_model (
+                 code, name, org_unit_id, item_id, category, warranty_months,
+                 required_burn_in_hours, price, production_stages, status, created_by, updated_by
+               ) VALUES ($1, $2, $3, $4, 'OTHER', 24, 24, 0, $5::jsonb, 'COMMERCIAL', $6, $6)
+               ON CONFLICT DO NOTHING`,
+              [productCode, productName, orgUnitId, prodItem.id, JSON.stringify(stageLabelsForDevice), actor.userId]
+            );
+          }
         }
         await tx.query(`RELEASE SAVEPOINT ${sp}`);
       } catch (e: any) {

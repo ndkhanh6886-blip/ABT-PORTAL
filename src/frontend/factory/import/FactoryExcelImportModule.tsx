@@ -386,17 +386,17 @@ export const EXCEL_TEMPLATES: ExcelTemplateDef[] = [
     depts: ["ALL", "P-KIT", "P-OLIGO", "P-DEVICE"],
     defaultDept: "P-KIT",
     fields: [
-      { key: "routing_code", label: "Mã quy trình", required: true, example: "RT-KIT-DEN-V1", description: "Mã quy trình công đoạn (Các dòng cùng mã sẽ gộp thành các bước của 1 quy trình)" },
-      { key: "routing_name", label: "Tên quy trình / SOP", required: true, example: "Quy trình sản xuất chuẩn Kit Real-time PCR Dengue 1-4 (4 công đoạn)", description: "Tên quy trình sản xuất" },
-      { key: "product_code", label: "Mã sản phẩm", required: true, example: "KIT-DEN-50T", description: "Mã sản phẩm áp dụng quy trình này" },
-      { key: "product_name", label: "Tên sản phẩm", example: "TopSENSI Dengue 1-4 Multiplex qPCR Kit", description: "Tên sản phẩm" },
-      { key: "step_no", label: "Thứ tự bước", required: true, example: "10", description: "Số thứ tự bước công đoạn (10, 20, 30, 40...)" },
-      { key: "step_code", label: "Mã công đoạn", required: true, example: "STEP-10-PREP", description: "Mã viết tắt của bước công đoạn" },
-      { key: "step_name", label: "Tên công đoạn", required: true, example: "Dọn dây chuyền Line Clearance & Pha phối trộn MasterMix gốc", description: "Tên bước công đoạn sản xuất" },
-      { key: "work_center", label: "Phòng / Khu vực", example: "Phòng Sạch Pha Chế Class 10.000", description: "Khu vực / buồng sạch thực hiện" },
-      { key: "std_minutes", label: "Thời gian chuẩn (phút)", example: "45", description: "Thời gian định mức hoàn thành bước công đoạn (phút)" },
-      { key: "ipqc_required", label: "Yêu cầu IPQC", example: "Y", description: "Y (Có dừng chờ QC kiểm tra xen kẽ) | N (Không)" },
-      { key: "instructions", label: "Hướng dẫn thao tác SOP", required: true, example: "Chiếu UV 30 phút, kiểm tra chênh áp ≥ 15 Pa, rã đông hóa chất trên khay lạnh 2-8°C...", description: "Hướng dẫn chi tiết thao tác & thông số môi trường cần ghi trong Hồ sơ lô (EBR)" },
+      { key: "routing_code", label: "Mã quy trình", aliases: ["Mã QTSX", "Mã SOP", "Mã quy trình SX"], required: true, example: "RT-KIT-DEN-V1", description: "Mã quy trình công đoạn (Các dòng cùng mã sẽ gộp thành các bước của 1 quy trình)" },
+      { key: "routing_name", label: "Tên quy trình / SOP", aliases: ["Tên quy trình", "Tên QTSX", "Tên SOP"], required: true, example: "Quy trình sản xuất chuẩn Kit Real-time PCR Dengue 1-4 (4 công đoạn)", description: "Tên quy trình sản xuất" },
+      { key: "product_code", label: "Mã sản phẩm", aliases: ["Mã thiết bị", "Mã Model", "Model", "Mã tủ"], required: true, example: "KIT-DEN-50T", description: "Mã sản phẩm / thiết bị áp dụng quy trình này" },
+      { key: "product_name", label: "Tên sản phẩm", aliases: ["Tên thiết bị", "Tên Model", "Tên tủ", "Tên máy"], example: "TopSENSI Dengue 1-4 Multiplex qPCR Kit", description: "Tên sản phẩm / thiết bị" },
+      { key: "step_no", label: "Thứ tự bước", aliases: ["STT", "Bước", "Bước số", "Thứ tự"], required: true, example: "10", description: "Số thứ tự bước công đoạn (10, 20, 30, 40...)" },
+      { key: "step_code", label: "Mã công đoạn", aliases: ["Mã bước"], required: true, example: "STEP-10-PREP", description: "Mã viết tắt của bước công đoạn" },
+      { key: "step_name", label: "Tên công đoạn", aliases: ["Công đoạn", "Nội dung công đoạn", "Tên bước", "Bước công đoạn"], required: true, example: "Dọn dây chuyền Line Clearance & Pha phối trộn MasterMix gốc", description: "Tên bước công đoạn sản xuất" },
+      { key: "work_center", label: "Phòng / Khu vực", aliases: ["Trạm lắp ráp", "Khu vực", "Tổ / Trạm", "Bộ phận thực hiện"], example: "Phòng Sạch Pha Chế Class 10.000", description: "Khu vực / buồng sạch / trạm thực hiện" },
+      { key: "std_minutes", label: "Thời gian chuẩn (phút)", aliases: ["Thời gian (phút)", "Định mức thời gian", "Thời gian"], example: "45", description: "Thời gian định mức hoàn thành bước công đoạn (phút)" },
+      { key: "ipqc_required", label: "Yêu cầu IPQC", aliases: ["IPQC", "Kiểm tra QC", "QC"], example: "Y", description: "Y (Có dừng chờ QC kiểm tra xen kẽ) | N (Không)" },
+      { key: "instructions", label: "Hướng dẫn thao tác SOP", aliases: ["Hướng dẫn", "Mô tả thao tác", "Nội dung thực hiện", "Mô tả công việc", "Yêu cầu kỹ thuật"], required: true, example: "Chiếu UV 30 phút, kiểm tra chênh áp ≥ 15 Pa, rã đông hóa chất trên khay lạnh 2-8°C...", description: "Hướng dẫn chi tiết thao tác & thông số môi trường cần ghi trong Hồ sơ lô (EBR / DHR)" },
     ],
     sampleRows: [
       {
@@ -870,6 +870,12 @@ export default function FactoryExcelImportModule() {
       let carryCat = "";
       let carryMName = "";
       let carryWfName = "";
+      let carryRtCode = "";
+      let carryRtName = "";
+      let carryProdCode = "";
+      let carryProdName = "";
+      let carryModelCode = "";
+      let carryModelName = "";
 
       for (let rIdx = startRowIdx; rIdx < rawMatrix.length; rIdx++) {
         const arr = rawMatrix[rIdx];
@@ -915,6 +921,29 @@ export default function FactoryExcelImportModule() {
           const wf = String(obj.workflow_name ?? "").trim();
           if (wf) carryWfName = wf;
           else if (carryWfName) obj.workflow_name = carryWfName;
+        } else if (activeTemplate.key === "ROUTING_SOP") {
+          const rtC = String(obj.routing_code ?? "").trim();
+          const rtN = String(obj.routing_name ?? "").trim();
+          const prC = String(obj.product_code ?? "").trim();
+          const prN = String(obj.product_name ?? "").trim();
+          if (rtC) carryRtCode = rtC;
+          else if (prC && !carryRtCode) {
+            carryRtCode = `RT-${prC}`;
+            obj.routing_code = carryRtCode;
+          } else if (carryRtCode) obj.routing_code = carryRtCode;
+          if (rtN) carryRtName = rtN;
+          else if (carryRtName) obj.routing_name = carryRtName;
+          if (prC) carryProdCode = prC;
+          else if (carryProdCode) obj.product_code = carryProdCode;
+          if (prN) carryProdName = prN;
+          else if (carryProdName) obj.product_name = carryProdName;
+        } else if (activeTemplate.key === "DEVICE_MODEL_BOM") {
+          const mC = String(obj.model_code ?? "").trim();
+          const mN = String(obj.model_name ?? "").trim();
+          if (mC) carryModelCode = mC;
+          else if (carryModelCode) obj.model_code = carryModelCode;
+          if (mN) carryModelName = mN;
+          else if (carryModelName) obj.model_name = carryModelName;
         }
 
         parsedRows.push(obj);
@@ -1014,7 +1043,10 @@ export default function FactoryExcelImportModule() {
   });
 
   const CARRY_DOWN_KEYS: Record<string, string[]> = {
+    KIT_BOM_FORMULA: ["bom_code", "bom_name", "bom_type", "product_code", "product_name"],
     PREP_OLIGO_FORMULA: ["formula_code", "formula_name"],
+    DEVICE_MODEL_BOM: ["model_code", "model_name"],
+    ROUTING_SOP: ["routing_code", "routing_name", "product_code", "product_name"],
     OLIGO_POST_METHOD: ["category", "method_name"],
     OLIGO_POST_WORKFLOW: ["workflow_name"],
   };
