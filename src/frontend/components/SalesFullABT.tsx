@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useDeferredValue } from "react";
 import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import { isServiceProduct, isOligoMtoProduct, isLegacyDemoOligoCode, isNonPricedPipelineStatus } from "@/backend/services/catalogRules";
 import {
@@ -2024,11 +2024,13 @@ export function SalesFullABT() {
     useEffect(() => {
         if (!isSalesDataLoaded) return;
         if (typeof window !== "undefined") {
-            localStorage.setItem("sales_factory_orders", JSON.stringify(factoryOrders));
+            const factoryOrdersJson = JSON.stringify(factoryOrders);
+            localStorage.setItem("sales_factory_orders", factoryOrdersJson);
             fetch("/api/storage", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ key: "sales_factory_orders", data: factoryOrders })
+                // Dùng lại chuỗi JSON đã tạo (không stringify danh sách đơn lần thứ hai) — nội dung gửi đi giống hệt trước đây
+                body: `{"key":"sales_factory_orders","data":${factoryOrdersJson}}`
             }).catch(e => console.error("Failed to sync sales_factory_orders:", e));
         }
     }, [factoryOrders, isSalesDataLoaded]);
@@ -2048,11 +2050,12 @@ export function SalesFullABT() {
     useEffect(() => {
         if (!isSalesDataLoaded) return;
         if (typeof window !== "undefined") {
-            localStorage.setItem("sales_delivery_slips", JSON.stringify(deliverySlips));
+            const deliverySlipsJson = JSON.stringify(deliverySlips);
+            localStorage.setItem("sales_delivery_slips", deliverySlipsJson);
             fetch("/api/storage", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ key: "sales_delivery_slips", data: deliverySlips })
+                body: `{"key":"sales_delivery_slips","data":${deliverySlipsJson}}`
             }).catch(e => console.error("Failed to sync sales_delivery_slips:", e));
         }
     }, [deliverySlips, isSalesDataLoaded]);
@@ -14243,7 +14246,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     }, [warehouseLots]);
 
     // HÀM TÍNH TOÁN TỒN KHO KHẢ DỤNG (TRỪ GIỮ CHỖ) & HÀNG SẮP VỀ TỪ PO CHO TỪNG DÒNG HÀNG (Yêu cầu 1 & 2)
-    const computeOrderStockAnalysis = (order: any) => {
+    const computeOrderStockAnalysisUncached = (order: any) => {
         const items = order.items || [];
         if (!items || items.length === 0) {
             return {
@@ -14595,6 +14598,240 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             itemsBreakdown
         };
     };
+
+    // Bộ nhớ đệm kết quả phân tích tồn kho theo từng đơn (chỉ cho đơn nằm trong danh sách factoryOrders hiện tại).
+    // Tự xóa sạch khi bất kỳ dữ liệu đầu vào của phép tính đổi (đơn, phiếu giao, PO, PR, tồn kho, lô, danh mục hàng),
+    // nên mở modal / bấm nút / đổi bộ lọc không phải tính lại hàng trăm đơn.
+    const stockAnalysisFactorySet = useMemo(() => new Set<any>(factoryOrders), [factoryOrders]);
+    const stockAnalysisCache = useMemo(
+        () => new WeakMap<object, any>(),
+        [factoryOrders, deliverySlips, procurementOrders, purchaseRequests, stock13b, warehouseLots, allSalesProducts, unusableLotQtyByCode, precomputedOrderReservationData]
+    );
+    const computeOrderStockAnalysis = (order: any) => {
+        if (!order || typeof order !== "object" || !stockAnalysisFactorySet.has(order)) {
+            return computeOrderStockAnalysisUncached(order);
+        }
+        const hit = stockAnalysisCache.get(order);
+        if (hit) return hit;
+        const result = computeOrderStockAnalysisUncached(order);
+        stockAnalysisCache.set(order, result);
+        return result;
+    };
+
+    // Danh sách đơn tab "Đơn hàng yêu cầu" + thống kê duyệt: tính 1 lần cho mỗi thay đổi dữ liệu / bộ lọc (không tính lại ở mỗi lần bấm nút).
+    // Các giá trị bộ lọc đi qua useDeferredValue: ô lọc / nút bấm phản hồi ngay, danh sách cập nhật ngay sau đó.
+    const deferredOrderFilterRep = useDeferredValue(filterOrderRep);
+    const deferredOrderFilterCustomer = useDeferredValue(filterOrderCustomer);
+    const deferredOrderFilterDateMode = useDeferredValue(filterOrderDateMode);
+    const deferredOrderFilterSingleDate = useDeferredValue(filterOrderSingleDate);
+    const deferredOrderFilterMonth = useDeferredValue(filterOrderMonth);
+    const deferredOrderFilterDateFrom = useDeferredValue(filterOrderDateFrom);
+    const deferredOrderFilterDateTo = useDeferredValue(filterOrderDateTo);
+    const deferredOrderApprovalStatus = useDeferredValue(filterOrderApprovalStatus);
+    const deferredOrderSearchQuery = useDeferredValue(searchFactoryOrderQuery);
+    const orderTabTodayIso = todayVN();
+    // Bộ nhớ đệm PO liên kết theo từng đơn (dòng đơn trong bảng) — xóa khi PO hoặc danh sách đơn đổi
+    const linkedPOsByOrderCache = useMemo(() => new WeakMap<object, any[]>(), [procurementOrders, factoryOrders]);
+    const orderTabModel = useMemo(() => {
+        const todayOrderIso = orderTabTodayIso;
+        const toIsoOrderDate = (raw: any): string => {
+            if (!raw) return "";
+            const s = String(raw).trim();
+            if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+            const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+            if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+            return "";
+        };
+
+        // Phân loại trạng thái duyệt & tiến độ giao hàng từng đơn hàng SO
+        const classifyOrderApproval = (req: any) => {
+            const isPureStock = checkIsPureStock(req) || Boolean(req.isStockOrder);
+            const hasZeroOrGift = !isPureStock && Boolean(req.hasZeroPriceItems || (req.items && req.items.some((it: any) => Number(it.unitPrice ?? it.price ?? 0) === 0)));
+            const isCancelledOrRejected = req.status === "Cancelled" || req.status === "CANCELLED" || req.delivery_status === "CANCELLED" || req.status === "Rejected" || req.priceApprovalStatus === "REJECTED";
+            const isPendingBODApproval = !isCancelledOrRejected && hasZeroOrGift && req.priceApprovalStatus !== "APPROVED";
+            const isPendingCreditApproval = !isCancelledOrRejected && !isPureStock && Boolean(req.isCreditBlocked);
+            const isPendingAny = !isCancelledOrRejected && (isPendingBODApproval || isPendingCreditApproval || req.status === "Pending");
+            const isApproved = !isCancelledOrRejected && !isPendingAny;
+
+            const stockAnalysis = !isCancelledOrRejected ? computeOrderStockAnalysis(req) : null;
+            const isFullyDelivered = Boolean(
+                req.status === "Delivered" ||
+                req.status === "COMPLETED" ||
+                req.delivery_status === "DELIVERED" ||
+                stockAnalysis?.isFullyDelivered
+            );
+            const isReadyToDeliver = Boolean(
+                isApproved &&
+                !isPureStock &&
+                !isFullyDelivered &&
+                (stockAnalysis?.isReadyAll || req.status === "IN_STOCK" || req.status === "ALLOCATED")
+            );
+            const effectiveEstIso = toIsoOrderDate(req.estimatedDeliveryDate || req.requestedDeliveryDate);
+            const isOverdueDelivery = Boolean(
+                !isCancelledOrRejected &&
+                !isPureStock &&
+                !isFullyDelivered &&
+                effectiveEstIso &&
+                effectiveEstIso < todayOrderIso
+            );
+
+            return {
+                isPureStock,
+                hasZeroOrGift,
+                isCancelledOrRejected,
+                isPendingBODApproval,
+                isPendingCreditApproval,
+                isPendingAny,
+                isApproved,
+                isFullyDelivered,
+                isReadyToDeliver,
+                isOverdueDelivery,
+                effectiveEstIso
+            };
+        };
+
+        // Danh sách đơn cơ sở (lọc theo quyền truy cập, NVKD, KH, thời gian, từ khóa — chưa lọc theo trạng thái duyệt để thống kê chính xác)
+        const baseFilteredOrders = factoryOrders.filter(req => {
+            const matchesAccess = (canManageAllOrders || isOrderOfLoggedInStaff(req));
+            const matchesAssignee = (selectedAssigneeFilter === "all" || req.salesRepId === selectedAssigneeFilter);
+            if (!matchesAccess || !matchesAssignee) return false;
+
+            if (deferredOrderFilterRep !== "all") {
+                const repObj = salesPersonnel.find(p => p.employee_id === deferredOrderFilterRep || p.employee_code === deferredOrderFilterRep);
+                const repName = normalizeComparableVN(repObj?.full_name);
+                const matchId = req.salesRepId === deferredOrderFilterRep || (req as any).sales_rep_id === deferredOrderFilterRep;
+                const matchName = repName && req.salesRepName && normalizeComparableVN(req.salesRepName).includes(repName);
+                if (!matchId && !matchName) return false;
+            }
+
+            if (deferredOrderFilterCustomer !== "all") {
+                if ((req.customerName || "").trim() !== deferredOrderFilterCustomer.trim()) return false;
+            }
+
+            if (deferredOrderFilterDateMode !== "all") {
+                const rawDate = String((req as any).order_date || req.date || (req as any).created_at || "").trim();
+                let oIso = "";
+                if (/^\d{4}-\d{2}-\d{2}/.test(rawDate)) oIso = rawDate.slice(0, 10);
+                else {
+                    const m = rawDate.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+                    if (m) oIso = `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+                }
+                if (deferredOrderFilterDateMode === "day" && deferredOrderFilterSingleDate) {
+                    if (oIso !== deferredOrderFilterSingleDate) return false;
+                } else if (deferredOrderFilterDateMode === "month" && deferredOrderFilterMonth) {
+                    if (!oIso.startsWith(deferredOrderFilterMonth)) return false;
+                } else if (deferredOrderFilterDateMode === "range") {
+                    if (deferredOrderFilterDateFrom && (!oIso || oIso < deferredOrderFilterDateFrom)) return false;
+                    if (deferredOrderFilterDateTo && (!oIso || oIso > deferredOrderFilterDateTo)) return false;
+                }
+            }
+
+            if (deferredOrderSearchQuery) {
+                const query = deferredOrderSearchQuery.toLowerCase();
+                const idMatch = (req.id || "").toLowerCase().includes(query);
+                const customerMatch = (req.customerName || "").toLowerCase().includes(query);
+                const itemMatch = (req.items || []).some((it: any) =>
+                    (it?.productCode || "").toLowerCase().includes(query) ||
+                    (it?.productName || "").toLowerCase().includes(query)
+                );
+                const staffMatch = (req.salesRepName || "").toLowerCase().includes(query);
+                return idMatch || customerMatch || itemMatch || staffMatch;
+            }
+            return true;
+        });
+
+        // Phân loại mỗi đơn đúng 1 lần, dùng cho cả thống kê lẫn lọc theo trạng thái
+        const classMap = new Map<any, ReturnType<typeof classifyOrderApproval>>();
+        baseFilteredOrders.forEach(req => classMap.set(req, classifyOrderApproval(req)));
+
+        let pendingAnyCount = 0;
+        let pendingAnyValue = 0;
+        let pendingZeroPriceCount = 0;
+        let pendingZeroPriceValue = 0;
+        let pendingCreditCount = 0;
+        let pendingCreditValue = 0;
+        let hasZeroOrGiftCount = 0;
+        let approvedCount = 0;
+        let approvedValue = 0;
+        let readyToDeliverCount = 0;
+        let readyToDeliverValue = 0;
+        let overdueDeliveryCount = 0;
+        let overdueDeliveryValue = 0;
+        let rejectedCount = 0;
+
+        baseFilteredOrders.forEach(req => {
+            const c = classMap.get(req)!;
+            const val = Number(req.totalAmount) || (req.items || []).reduce((s: number, it: any) => s + ((Number(it.quantity) || 1) * (Number(it.unitPrice ?? it.price) || 0)), 0);
+            if (c.isPendingAny) {
+                pendingAnyCount++;
+                pendingAnyValue += val;
+            }
+            if (c.isPendingBODApproval) {
+                pendingZeroPriceCount++;
+                pendingZeroPriceValue += val;
+            }
+            if (c.isPendingCreditApproval) {
+                pendingCreditCount++;
+                pendingCreditValue += val;
+            }
+            if (c.hasZeroOrGift) hasZeroOrGiftCount++;
+            if (c.isApproved) {
+                approvedCount++;
+                approvedValue += val;
+            }
+            if (c.isReadyToDeliver) {
+                readyToDeliverCount++;
+                readyToDeliverValue += val;
+            }
+            if (c.isOverdueDelivery) {
+                overdueDeliveryCount++;
+                overdueDeliveryValue += val;
+            }
+            if (c.isCancelledOrRejected) rejectedCount++;
+        });
+
+        const orderApprovalStats = {
+            total: baseFilteredOrders.length,
+            pendingAnyCount,
+            pendingAnyValue,
+            pendingZeroPriceCount,
+            pendingZeroPriceValue,
+            pendingCreditCount,
+            pendingCreditValue,
+            hasZeroOrGiftCount,
+            approvedCount,
+            approvedValue,
+            readyToDeliverCount,
+            readyToDeliverValue,
+            overdueDeliveryCount,
+            overdueDeliveryValue,
+            rejectedCount
+        };
+
+        const filteredOrders = deferredOrderApprovalStatus === "all"
+            ? baseFilteredOrders
+            : baseFilteredOrders.filter(req => {
+                const c = classMap.get(req)!;
+                if (deferredOrderApprovalStatus === "pending_any") return c.isPendingAny;
+                if (deferredOrderApprovalStatus === "pending_zero_price") return c.isPendingBODApproval;
+                if (deferredOrderApprovalStatus === "pending_credit") return c.isPendingCreditApproval;
+                if (deferredOrderApprovalStatus === "zero_price") return c.hasZeroOrGift;
+                if (deferredOrderApprovalStatus === "approved") return c.isApproved;
+                if (deferredOrderApprovalStatus === "ready_to_deliver") return c.isReadyToDeliver;
+                if (deferredOrderApprovalStatus === "overdue_delivery") return c.isOverdueDelivery;
+                if (deferredOrderApprovalStatus === "rejected") return c.isCancelledOrRejected;
+                return true;
+            });
+
+        return { baseFilteredOrders, orderApprovalStats, filteredOrders };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [
+        factoryOrders, stockAnalysisCache, orderTabTodayIso,
+        canManageAllOrders, loggedInStaff, user, selectedAssigneeFilter, salesPersonnel,
+        deferredOrderFilterRep, deferredOrderFilterCustomer, deferredOrderFilterDateMode,
+        deferredOrderFilterSingleDate, deferredOrderFilterMonth, deferredOrderFilterDateFrom,
+        deferredOrderFilterDateTo, deferredOrderApprovalStatus, deferredOrderSearchQuery
+    ]);
 
     const getProductLiveStockIntelligence = (productCode: string) => {
         const code = (productCode || "").trim();
@@ -23669,184 +23906,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             return "";
                         };
 
-                        // Helper phân loại trạng thái duyệt & tiến độ giao hàng từng đơn hàng SO
-                        const classifyOrderApproval = (req: any) => {
-                            const isPureStock = checkIsPureStock(req) || Boolean(req.isStockOrder);
-                            const hasZeroOrGift = !isPureStock && Boolean(req.hasZeroPriceItems || (req.items && req.items.some((it: any) => Number(it.unitPrice ?? it.price ?? 0) === 0)));
-                            const isCancelledOrRejected = req.status === "Cancelled" || req.status === "CANCELLED" || req.delivery_status === "CANCELLED" || req.status === "Rejected" || req.priceApprovalStatus === "REJECTED";
-                            const isPendingBODApproval = !isCancelledOrRejected && hasZeroOrGift && req.priceApprovalStatus !== "APPROVED";
-                            const isPendingCreditApproval = !isCancelledOrRejected && !isPureStock && Boolean(req.isCreditBlocked);
-                            const isPendingAny = !isCancelledOrRejected && (isPendingBODApproval || isPendingCreditApproval || req.status === "Pending");
-                            const isApproved = !isCancelledOrRejected && !isPendingAny;
-
-                            const stockAnalysis = !isCancelledOrRejected ? computeOrderStockAnalysis(req) : null;
-                            const isFullyDelivered = Boolean(
-                                req.status === "Delivered" ||
-                                req.status === "COMPLETED" ||
-                                req.delivery_status === "DELIVERED" ||
-                                stockAnalysis?.isFullyDelivered
-                            );
-                            const isReadyToDeliver = Boolean(
-                                isApproved &&
-                                !isPureStock &&
-                                !isFullyDelivered &&
-                                (stockAnalysis?.isReadyAll || req.status === "IN_STOCK" || req.status === "ALLOCATED")
-                            );
-                            const effectiveEstIso = toIsoOrderDate(req.estimatedDeliveryDate || req.requestedDeliveryDate);
-                            const isOverdueDelivery = Boolean(
-                                !isCancelledOrRejected &&
-                                !isPureStock &&
-                                !isFullyDelivered &&
-                                effectiveEstIso &&
-                                effectiveEstIso < todayOrderIso
-                            );
-
-                            return {
-                                isPureStock,
-                                hasZeroOrGift,
-                                isCancelledOrRejected,
-                                isPendingBODApproval,
-                                isPendingCreditApproval,
-                                isPendingAny,
-                                isApproved,
-                                isFullyDelivered,
-                                isReadyToDeliver,
-                                isOverdueDelivery,
-                                effectiveEstIso
-                            };
-                        };
-
-                        // Danh sách đơn hàng cơ sở (lọc theo quyền truy cập, NVKD, KH, thời gian, từ khóa — chưa lọc theo trạng thái duyệt để hiển thị thống kê chính xác)
-                        const baseFilteredOrders = factoryOrders.filter(req => {
-                            const matchesAccess = (canManageAllOrders || isOrderOfLoggedInStaff(req));
-                            const matchesAssignee = (selectedAssigneeFilter === "all" || req.salesRepId === selectedAssigneeFilter);
-                            if (!matchesAccess || !matchesAssignee) return false;
-
-                            if (filterOrderRep !== "all") {
-                                const repObj = salesPersonnel.find(p => p.employee_id === filterOrderRep || p.employee_code === filterOrderRep);
-                                const repName = normalizeComparableVN(repObj?.full_name);
-                                const matchId = req.salesRepId === filterOrderRep || (req as any).sales_rep_id === filterOrderRep;
-                                const matchName = repName && req.salesRepName && normalizeComparableVN(req.salesRepName).includes(repName);
-                                if (!matchId && !matchName) return false;
-                            }
-
-                            if (filterOrderCustomer !== "all") {
-                                if ((req.customerName || "").trim() !== filterOrderCustomer.trim()) return false;
-                            }
-
-                            if (filterOrderDateMode !== "all") {
-                                const rawDate = String((req as any).order_date || req.date || (req as any).created_at || "").trim();
-                                let oIso = "";
-                                if (/^\d{4}-\d{2}-\d{2}/.test(rawDate)) oIso = rawDate.slice(0, 10);
-                                else {
-                                    const m = rawDate.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
-                                    if (m) oIso = `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
-                                }
-                                if (filterOrderDateMode === "day" && filterOrderSingleDate) {
-                                    if (oIso !== filterOrderSingleDate) return false;
-                                } else if (filterOrderDateMode === "month" && filterOrderMonth) {
-                                    if (!oIso.startsWith(filterOrderMonth)) return false;
-                                } else if (filterOrderDateMode === "range") {
-                                    if (filterOrderDateFrom && (!oIso || oIso < filterOrderDateFrom)) return false;
-                                    if (filterOrderDateTo && (!oIso || oIso > filterOrderDateTo)) return false;
-                                }
-                            }
-
-                            if (searchFactoryOrderQuery) {
-                                const query = searchFactoryOrderQuery.toLowerCase();
-                                const idMatch = (req.id || "").toLowerCase().includes(query);
-                                const customerMatch = (req.customerName || "").toLowerCase().includes(query);
-                                const itemMatch = (req.items || []).some((it: any) => 
-                                    (it?.productCode || "").toLowerCase().includes(query) || 
-                                    (it?.productName || "").toLowerCase().includes(query)
-                                );
-                                const staffMatch = (req.salesRepName || "").toLowerCase().includes(query);
-                                return idMatch || customerMatch || itemMatch || staffMatch;
-                            }
-                            return true;
-                        });
-
-                        // Thống kê số lượng & giá trị đơn hàng chờ duyệt + đủ hàng + trễ hạn giao
-                        const orderApprovalStats = (() => {
-                            let pendingAnyCount = 0;
-                            let pendingAnyValue = 0;
-                            let pendingZeroPriceCount = 0;
-                            let pendingZeroPriceValue = 0;
-                            let pendingCreditCount = 0;
-                            let pendingCreditValue = 0;
-                            let hasZeroOrGiftCount = 0;
-                            let approvedCount = 0;
-                            let approvedValue = 0;
-                            let readyToDeliverCount = 0;
-                            let readyToDeliverValue = 0;
-                            let overdueDeliveryCount = 0;
-                            let overdueDeliveryValue = 0;
-                            let rejectedCount = 0;
-
-                            baseFilteredOrders.forEach(req => {
-                                const c = classifyOrderApproval(req);
-                                const val = Number(req.totalAmount) || (req.items || []).reduce((s: number, it: any) => s + ((Number(it.quantity) || 1) * (Number(it.unitPrice ?? it.price) || 0)), 0);
-                                if (c.isPendingAny) {
-                                    pendingAnyCount++;
-                                    pendingAnyValue += val;
-                                }
-                                if (c.isPendingBODApproval) {
-                                    pendingZeroPriceCount++;
-                                    pendingZeroPriceValue += val;
-                                }
-                                if (c.isPendingCreditApproval) {
-                                    pendingCreditCount++;
-                                    pendingCreditValue += val;
-                                }
-                                if (c.hasZeroOrGift) hasZeroOrGiftCount++;
-                                if (c.isApproved) {
-                                    approvedCount++;
-                                    approvedValue += val;
-                                }
-                                if (c.isReadyToDeliver) {
-                                    readyToDeliverCount++;
-                                    readyToDeliverValue += val;
-                                }
-                                if (c.isOverdueDelivery) {
-                                    overdueDeliveryCount++;
-                                    overdueDeliveryValue += val;
-                                }
-                                if (c.isCancelledOrRejected) rejectedCount++;
-                            });
-
-                            return {
-                                total: baseFilteredOrders.length,
-                                pendingAnyCount,
-                                pendingAnyValue,
-                                pendingZeroPriceCount,
-                                pendingZeroPriceValue,
-                                pendingCreditCount,
-                                pendingCreditValue,
-                                hasZeroOrGiftCount,
-                                approvedCount,
-                                approvedValue,
-                                readyToDeliverCount,
-                                readyToDeliverValue,
-                                overdueDeliveryCount,
-                                overdueDeliveryValue,
-                                rejectedCount
-                            };
-                        })();
-
-                        const filteredOrders = filterOrderApprovalStatus === "all"
-                            ? baseFilteredOrders
-                            : baseFilteredOrders.filter(req => {
-                                const c = classifyOrderApproval(req);
-                                if (filterOrderApprovalStatus === "pending_any") return c.isPendingAny;
-                                if (filterOrderApprovalStatus === "pending_zero_price") return c.isPendingBODApproval;
-                                if (filterOrderApprovalStatus === "pending_credit") return c.isPendingCreditApproval;
-                                if (filterOrderApprovalStatus === "zero_price") return c.hasZeroOrGift;
-                                if (filterOrderApprovalStatus === "approved") return c.isApproved;
-                                if (filterOrderApprovalStatus === "ready_to_deliver") return c.isReadyToDeliver;
-                                if (filterOrderApprovalStatus === "overdue_delivery") return c.isOverdueDelivery;
-                                if (filterOrderApprovalStatus === "rejected") return c.isCancelledOrRejected;
-                                return true;
-                            });
+                        // Danh sách đơn + thống kê duyệt đã được tính sẵn (useMemo ở trên): không tính lại ở mỗi lần bấm nút
+                        const { orderApprovalStats, filteredOrders } = orderTabModel;
 
                         return (
                     <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-5 space-y-4">
@@ -24412,7 +24473,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         if (req.prCode && ((Array.isArray(po.pr_ids) && po.pr_ids.includes(req.prCode)) || mentionsCode(po.notes, String(req.prCode)))) return true;
                                                         return soKeys.some((k) => mentionsCode(po.notes, k));
                                                     };
-                                                    const allOrderPOs = (procurementOrders || []).filter(poLinksToOrder);
+                                                    const allOrderPOs = (() => {
+                                                        const cachedPOs = linkedPOsByOrderCache.get(req);
+                                                        if (cachedPOs) return cachedPOs;
+                                                        const computedPOs = (procurementOrders || []).filter(poLinksToOrder);
+                                                        linkedPOsByOrderCache.set(req, computedPOs);
+                                                        return computedPOs;
+                                                    })();
                                                     const linkedPOs = (stockAnalysis.isReadyAll || stockAnalysis.isFullyDelivered)
                                                         ? []
                                                         : allOrderPOs;
