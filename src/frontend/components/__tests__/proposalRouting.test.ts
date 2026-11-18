@@ -8,6 +8,7 @@ import {
   type ProposalItem,
   type ProposalStepInstance
 } from "../ProposalsApprovalView";
+import { getTaskAccess, parseTaskFollowers, taskHasFollower } from "@/backend/services/workspaceTasks";
 
 const SAMPLE_PERSONNEL = [
   { full_name: "Nguyễn Văn Tùng", department: "Ban Giám Đốc", position: "Giám đốc", role: "admin" },
@@ -185,5 +186,100 @@ describe("Proposal approval routing & escalation rules", () => {
 
     const resApp = normalizeProposalStepsForRequester(kdSteps, "Application", "Trần Tài", SAMPLE_PERSONNEL);
     expect(resApp.steps[0].approverName).toBe("Đỗ Ngọc Diễm Trúc");
+  });
+
+  it("does NOT allow PGĐ Kỹ thuật (Nguyễn Duy Khánh) to approve Step 2 (Hành Chính Nhân Sự - Nguyễn Văn Hiếu) after approving Step 1", () => {
+    const proposalAtStep2: ProposalItem = {
+      id: "PROP-DXNP-002",
+      proposalCode: "DXNP-2026-002",
+      templateId: "tmpl_leave_request",
+      templateName: "Đơn xin Nghỉ phép / Nghỉ việc riêng",
+      category: "HR_ADMIN",
+      title: "Xin nghỉ phép — Phan Thị Thảo Trinh (23/11/2026)",
+      priority: "NORMAL",
+      requesterName: "Phan Thị Thảo Trinh",
+      requesterDept: "QA/QC",
+      createdAt: "2026-11-18 09:34",
+      updatedAt: "2026-11-18 11:42",
+      neededByDate: "2026-11-23",
+      totalAmount: 0,
+      currency: "VNĐ",
+      summaryReason: "Xin phép nghỉ 1 ngày",
+      formValues: { fromDate: "2026-11-23", toDate: "2026-11-23", totalDays: "1" },
+      lineItems: [],
+      currentStepIndex: 1,
+      status: "PENDING",
+      followers: ["Đoàn Hồng Sơn"],
+      attachments: [],
+      comments: [],
+      auditLogs: [],
+      steps: [
+        {
+          stepOrder: 1,
+          stepName: "PGĐ Kỹ thuật duyệt & sắp xếp nhân sự",
+          roleType: "DIRECTOR",
+          dept: "Ban Giám Đốc",
+          approverName: "Nguyễn Duy Khánh",
+          status: "APPROVED",
+          decidedAt: "2026-11-18 11:42",
+          decidedBy: "Nguyễn Duy Khánh",
+          slaHours: 4
+        },
+        {
+          stepOrder: 2,
+          stepName: "Hành chính - Nhân sự ghi nhận công phép",
+          roleType: "REVIEWER",
+          dept: "Hành Chính Nhân Sự",
+          approverName: "Nguyễn Văn Hiếu",
+          status: "PENDING_NOW",
+          slaHours: 4
+        }
+      ]
+    };
+
+    // Nguyễn Duy Khánh (isDirector = true) đã duyệt Bước 1 -> ở Bước 2 KHÔNG được hiện bảng duyệt thay cho Hành chính
+    expect(
+      isProposalWaitingForUser(proposalAtStep2, "Nguyễn Duy Khánh", "Ban Giám Đốc", true, false)
+    ).toBe(false);
+
+    // Người theo dõi (Đoàn Hồng Sơn) chỉ xem, KHÔNG có chức năng duyệt
+    expect(
+      isProposalWaitingForUser(proposalAtStep2, "Đoàn Hồng Sơn", "Sản Xuất Kit", false, true)
+    ).toBe(false);
+
+    // Chỉ Nguyễn Văn Hiếu (Hành Chính Nhân Sự) mới là người duyệt Bước 2
+    expect(
+      isProposalWaitingForUser(proposalAtStep2, "Nguyễn Văn Hiếu", "Hành Chính Nhân Sự", false, true)
+    ).toBe(true);
+  });
+
+  it("gives task followers view-only access (no status change or approval authority)", () => {
+    const followers = parseTaskFollowers(["Đoàn Hồng Sơn (Phó trưởng phòng)", "Phan Thị Thảo Trinh", "Đoàn Hồng Sơn"]);
+    expect(followers).toEqual(["Đoàn Hồng Sơn", "Phan Thị Thảo Trinh"]);
+    expect(taskHasFollower(followers, "Đoàn Hồng Sơn")).toBe(true);
+
+    const task = {
+      department: "Nghiên Cứu R&D",
+      assignee_name: "Nguyễn Quốc Bảo",
+      created_by: "ABT002",
+      created_by_name: "Nguyễn Duy Khánh",
+      followers
+    };
+
+    // Người theo dõi (Đoàn Hồng Sơn - Sản Xuất Kit) chỉ có quyền "view" (chỉ xem & bình luận, không đổi trạng thái)
+    expect(
+      getTaskAccess(
+        { username: "ABT012", full_name: "Đoàn Hồng Sơn", role: "kit_head", department: "Sản Xuất Kit", isAdmin: false },
+        task
+      )
+    ).toBe("view");
+
+    // Người phụ trách (Nguyễn Quốc Bảo) có quyền "progress"
+    expect(
+      getTaskAccess(
+        { username: "ABT005", full_name: "Nguyễn Quốc Bảo", role: "rd_head", department: "Nghiên Cứu R&D", isAdmin: false },
+        task
+      )
+    ).toBe("full");
   });
 });

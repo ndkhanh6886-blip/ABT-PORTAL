@@ -201,7 +201,54 @@ export const TASK_RELATED_TYPES: { id: string; label: string }[] = [
 export const TASK_RELATED_TYPE_IDS = new Set(TASK_RELATED_TYPES.map(t => t.id));
 
 export type TaskActor = { username?: string; full_name?: string; role?: string; department?: string; isAdmin?: boolean };
-export type TaskRecord = { department?: string; assignee_name?: string; created_by?: string | null; created_by_name?: string | null };
+export type TaskRecord = {
+  department?: string;
+  assignee_name?: string;
+  created_by?: string | null;
+  created_by_name?: string | null;
+  followers?: any;
+};
+
+/** Chuẩn hóa danh sách Người theo dõi (Followers) của một công việc */
+export function parseTaskFollowers(raw: any): string[] {
+  if (!raw) return [];
+  let arr: any[] = [];
+  if (Array.isArray(raw)) {
+    arr = raw;
+  } else if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+    if (trimmed.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) arr = parsed;
+      } catch {
+        arr = trimmed.split(/[,;\n]+/);
+      }
+    } else {
+      arr = trimmed.split(/[,;\n]+/);
+    }
+  }
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of arr) {
+    const name = String(typeof item === "object" && item ? item.full_name || item.name || "" : item || "")
+      .replace(/\s*\(.*?\)/g, "")
+      .trim();
+    if (!name) continue;
+    const key = canonStaffName(name);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  return out;
+}
+
+export function taskHasFollower(rawFollowers: any, targetName: any): boolean {
+  const target = String(targetName || "").trim();
+  if (!target) return false;
+  return parseTaskFollowers(rawFollowers).some((f) => sameStaffName(f, target));
+}
 
 /** Trưởng / Phó phòng theo vai trò hệ thống (sales_head, app_head, warehouse_lead, rd_head, kit_head, oligo_head, device_head, qa_manager, factory_wh_lead, factory_proc_lead...) */
 export function isDeptManagerRole(role: any): boolean {
@@ -222,7 +269,7 @@ export function isDeptManagerRole(role: any): boolean {
  * Quyền trên một công việc:
  * - "full": sửa mọi nội dung, đổi người phụ trách, xóa — người tạo, Trưởng / Phó phòng của phòng đó, BGĐ / Quản trị viên
  * - "progress": chỉ cập nhật tiến độ (trạng thái, báo cáo kết quả, đính kèm, trao đổi) — người được giao
- * - "view": chỉ xem
+ * - "view": chỉ xem (bao gồm Người theo dõi / Follower: chỉ theo dõi tiến độ và bình luận, không có quyền duyệt hay đổi trạng thái)
  * Công việc cũ chưa ghi người tạo: chỉ Trưởng phòng / BGĐ / Quản trị viên được sửa toàn bộ.
  */
 export function getTaskAccess(actor: TaskActor, task: TaskRecord | null | undefined): "full" | "progress" | "view" {

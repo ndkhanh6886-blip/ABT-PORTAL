@@ -1934,6 +1934,25 @@ export function ProposalsApprovalView({
         ? stepsCopy.findIndex((s) => s.status === "PENDING_NOW")
         : proposal.currentStepIndex || 0;
 
+    // Kiểm tra chặt chẽ: chỉ người có thẩm quyền duyệt đúng bước hiện tại mới được bấm Duyệt / Trả lại / Từ chối
+    if (decision === "APPROVE" || decision === "RETURN" || decision === "REJECT") {
+      const canApproveActiveStep = isProposalWaitingForUser(
+        proposal,
+        currentStaffName,
+        userDept,
+        isDirector,
+        isManager
+      );
+      if (!canApproveActiveStep) {
+        const targetStep = stepsCopy[activeIdx];
+        showToast(
+          `Bước ${activeIdx + 1} đang chờ "${targetStep?.approverName || "bộ phận tiếp theo"}" (${targetStep?.dept || ""}) xử lý. Bạn không duyệt thay bước của bộ phận khác!`,
+          "warning"
+        );
+        return;
+      }
+    }
+
     if (decision === "APPROVE" && stepsCopy[activeIdx]?.requireAttachment && decisionAttachments.length === 0) {
       showToast(
         `Bước "${stepsCopy[activeIdx]?.stepName}" yêu cầu phải tải tệp lên (${stepsCopy[activeIdx]?.attachmentLabel || "Hóa đơn / Chứng từ kết quả"}) trước khi bấm Phê duyệt!`,
@@ -2270,6 +2289,64 @@ export function ProposalsApprovalView({
     setCommentInput("");
     setCommentAttachments([]);
     showToast("Đã gửi thảo luận & tệp đính kèm vào tờ trình!", "success");
+  };
+
+  // Thêm / Bỏ Người theo dõi (Followers — Chỉ theo dõi tiến độ & nhận thông báo, không có chức năng phê duyệt)
+  const handleUpdateProposalFollowers = async (
+    proposal: ProposalItem,
+    nextFollowersRaw: string[],
+    addedPerson?: string
+  ) => {
+    const cleanList = Array.from(
+      new Set(
+        (nextFollowersRaw || [])
+          .map((n) => cleanStaffDisplayName(n))
+          .filter(Boolean)
+      )
+    );
+    const nowStr = nowVNDateTime();
+    const updated: ProposalItem = {
+      ...proposal,
+      followers: cleanList,
+      updatedAt: nowStr,
+      auditLogs: [
+        ...(proposal.auditLogs || []),
+        {
+          time: nowStr,
+          actor: currentStaffName,
+          action: addedPerson
+            ? `Thêm người theo dõi: ${addedPerson}`
+            : "Cập nhật danh sách người theo dõi",
+          detail:
+            cleanList.length > 0
+              ? `Người theo dõi (chỉ xem, không duyệt): ${cleanList.join(", ")}`
+              : "Đã xóa danh sách người theo dõi"
+        }
+      ]
+    };
+    const nextList = proposals.map((p) => (p.id === proposal.id ? updated : p));
+    await onSaveProposals(nextList);
+    if (selectedProposal?.id === proposal.id) {
+      setSelectedProposal(updated);
+    }
+    if (addedPerson && !isSamePerson(addedPerson, currentStaffName)) {
+      notifyActivity({
+        title: `👁️ Mời theo dõi đề xuất [${proposal.proposalCode}]`,
+        message: `${currentStaffName} đã thêm bạn làm Người theo dõi (chỉ xem tiến độ, không cần ký duyệt) cho đề xuất "${proposal.title}" của ${proposal.requesterName}.`,
+        type: "info",
+        category: "task",
+        sender: { name: currentStaffName },
+        targetEmployeeNames: [addedPerson],
+        targetDept: "all",
+        link: { tab: "workspace", subTab: "proposals", itemId: proposal.proposalCode }
+      });
+    }
+    showToast(
+      addedPerson
+        ? `👁️ Đã thêm ${addedPerson} vào danh sách theo dõi (chỉ xem, không duyệt)!`
+        : "👁️ Đã cập nhật danh sách người theo dõi đề xuất!",
+      "info"
+    );
   };
 
   const handleDeleteProposal = async (p: ProposalItem) => {
@@ -3016,8 +3093,9 @@ export function ProposalsApprovalView({
                   ? "bg-indigo-600 text-white shadow-xs"
                   : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200"
               }`}
+              title="Các đề xuất bạn được gắn làm Người theo dõi (chỉ xem, không duyệt) hoặc có liên quan"
             >
-              👁️ Liên quan &amp; Thực thi ({followingOrExecList.length})
+              👁️ Đang theo dõi &amp; Liên quan ({followingOrExecList.length})
             </button>
             <button
               type="button"
@@ -3803,6 +3881,11 @@ export function ProposalsApprovalView({
                           🔔 Đang chờ bạn duyệt!
                         </span>
                       )}
+                      {!waitingMe && (p.followers || []).some((f) => isSamePerson(f, currentStaffName)) && (
+                        <span className="px-2.5 py-0.5 rounded-lg text-[11px] font-extrabold bg-sky-100 text-sky-800 border border-sky-300 dark:bg-sky-950/80 dark:text-sky-300 dark:border-sky-700">
+                          👁️ Đang theo dõi (Chỉ xem, không duyệt)
+                        </span>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -3854,6 +3937,11 @@ export function ProposalsApprovalView({
                           {p.attachments?.length > 0 && (
                             <span className="text-indigo-600 dark:text-indigo-400 font-bold">
                               📎 {p.attachments.length} chứng từ đính kèm
+                            </span>
+                          )}
+                          {Array.isArray(p.followers) && p.followers.length > 0 && (
+                            <span className="text-sky-700 dark:text-sky-300 font-semibold">
+                              👁️ Người theo dõi ({p.followers.length}): <strong>{p.followers.join(", ")}</strong>
                             </span>
                           )}
                         </div>
@@ -4535,6 +4623,79 @@ export function ProposalsApprovalView({
             </div>
           </div>
 
+          {/* Bước 4: Người theo dõi đề xuất (Chỉ xem tiến độ & nhận thông báo — Không có chức năng phê duyệt) */}
+          <div className="p-3.5 rounded-2xl bg-sky-50/70 dark:bg-sky-950/25 border border-sky-200 dark:border-sky-800/80 space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <span className="text-xs font-extrabold text-sky-900 dark:text-sky-200 uppercase flex items-center gap-1.5">
+                  <Eye className="w-3.5 h-3.5 text-sky-600" />
+                  <span>4. Người Theo Dõi Đề Xuất — Chỉ Theo Dõi, Không Phê Duyệt ({formState.followers.length} người):</span>
+                </span>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  Người theo dõi được xem nội dung, nhận thông báo khi tờ trình qua từng bước và tham gia thảo luận, nhưng <strong>không nằm trong luồng ký duyệt và không có nút Phê duyệt</strong>.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const picked = cleanStaffDisplayName(e.target.value);
+                    if (!picked) return;
+                    setFormState((prev) => {
+                      if (prev.followers.some((f) => isSamePerson(f, picked))) return prev;
+                      return { ...prev, followers: [...prev.followers, picked] };
+                    });
+                  }}
+                  className="px-3 py-1.5 rounded-xl text-xs font-bold border border-sky-300 dark:border-sky-700 bg-white dark:bg-slate-900 text-sky-800 dark:text-sky-200 cursor-pointer"
+                >
+                  <option value="">+ Chọn thêm Người theo dõi (Chỉ xem)...</option>
+                  {allStaffNames
+                    .filter((n) => !formState.followers.some((f) => isSamePerson(f, n)))
+                    .map((n) => (
+                      <option key={n} value={n}>
+                        👁️ {n}
+                      </option>
+                    ))}
+                </select>
+              </div>
+            </div>
+
+            {formState.followers.length === 0 ? (
+              <div className="text-[11px] text-slate-500 italic bg-white/70 dark:bg-slate-900/60 px-3 py-2 rounded-xl border border-dashed border-sky-200 dark:border-sky-800/60">
+                Chưa chọn người theo dõi. Chọn nhân sự từ ô bên trên nếu cần gửi thông tin phối hợp (CC) cho đồng nghiệp / quản lý liên quan.
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {formState.followers.map((fName) => (
+                  <span
+                    key={fName}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white dark:bg-slate-900 border border-sky-300 dark:border-sky-700 text-xs font-bold text-sky-800 dark:text-sky-200 shadow-2xs"
+                  >
+                    <Eye className="w-3 h-3 text-sky-600 shrink-0" />
+                    <span>{fName}</span>
+                    <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300">
+                      Chỉ theo dõi
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFormState((prev) => ({
+                          ...prev,
+                          followers: prev.followers.filter((x) => !isSamePerson(x, fName))
+                        }))
+                      }
+                      className="text-slate-400 hover:text-rose-600 font-bold ml-0.5 cursor-pointer"
+                      title="Bỏ người theo dõi này"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Tệp đính kèm (Hóa đơn, Báo giá, Hợp đồng, Biên bản) */}
           <div className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800">
             <AttachmentPicker
@@ -4617,7 +4778,13 @@ export function ProposalsApprovalView({
           const statusMeta = getStatusMeta(p.status);
           const waitingMe = isProposalWaitingForUser(p, currentStaffName, userDept, isDirector, isManager);
           const isRequester = isSamePerson(p.requesterName, currentStaffName);
-          const canApproverAct = waitingMe || (isDirector && p.status === "PENDING");
+          // Chỉ đúng người có trách nhiệm duyệt ở bước đang chờ hiện tại (PENDING_NOW) mới hiển thị Bảng Quyết Định Phê Duyệt.
+          // Các thành viên BGĐ đã duyệt xong bước trước hoặc Người theo dõi (Followers) chỉ ở chế độ Xem & Theo dõi ở bước của phòng ban khác.
+          const canApproverAct = waitingMe;
+          const isCurrentUserFollower = (p.followers || []).some((f) => isSamePerson(f, currentStaffName));
+          const hasCurrentUserApprovedEarlierStep = (p.steps || []).some(
+            (s) => s.status === "APPROVED" && isSamePerson(s.decidedBy || s.approverName, currentStaffName)
+          );
 
           return (
             <div className="space-y-4 max-h-[80vh] overflow-y-auto pr-1">
@@ -4961,6 +5128,155 @@ export function ProposalsApprovalView({
                   })}
                 </div>
               </div>
+
+              {/* DANH SÁCH NGƯỜI THEO DÕI ĐỀ XUẤT (CHỈ THEO DÕI TIẾN ĐỘ & THẢO LUẬN — KHÔNG CÓ CHỨC NĂNG DUYỆT) */}
+              <div className="p-3.5 rounded-2xl bg-sky-50/70 dark:bg-sky-950/25 border border-sky-200 dark:border-sky-800/80 space-y-2.5 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="font-extrabold text-sky-900 dark:text-sky-200 uppercase flex items-center gap-1.5">
+                      <Eye className="w-3.5 h-3.5 text-sky-600" />
+                      <span>👁️ Người Theo Dõi Đề Xuất — Chỉ Theo Dõi, Không Phê Duyệt ({(p.followers || []).length}):</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                      Người theo dõi nắm bắt tiến độ, nhận thông báo tự động và tham gia trao đổi nhưng <strong>không có chức năng ký duyệt</strong>.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const curList = Array.isArray(p.followers) ? p.followers : [];
+                        if (isCurrentUserFollower) {
+                          handleUpdateProposalFollowers(
+                            p,
+                            curList.filter((f) => !isSamePerson(f, currentStaffName))
+                          );
+                        } else {
+                          handleUpdateProposalFollowers(p, [...curList, currentStaffName]);
+                        }
+                      }}
+                      className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold border transition-colors cursor-pointer flex items-center gap-1 ${
+                        isCurrentUserFollower
+                          ? "bg-sky-600 text-white border-sky-600"
+                          : "bg-white dark:bg-slate-900 text-sky-700 dark:text-sky-300 border-sky-300 dark:border-sky-700 hover:bg-sky-100"
+                      }`}
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>{isCurrentUserFollower ? "✓ Đang theo dõi (Bấm để bỏ)" : "+ Tự theo dõi đề xuất này"}</span>
+                    </button>
+
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        const picked = cleanStaffDisplayName(e.target.value);
+                        if (!picked) return;
+                        const curList = Array.isArray(p.followers) ? p.followers : [];
+                        if (curList.some((f) => isSamePerson(f, picked))) return;
+                        handleUpdateProposalFollowers(p, [...curList, picked], picked);
+                      }}
+                      className="px-2.5 py-1.5 rounded-xl text-[11px] font-bold border border-sky-300 dark:border-sky-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 cursor-pointer"
+                    >
+                      <option value="">+ Thêm người theo dõi (Chỉ xem)...</option>
+                      {allStaffNames
+                        .filter((n) => !(p.followers || []).some((f) => isSamePerson(f, n)))
+                        .map((n) => (
+                          <option key={n} value={n}>
+                            👁️ {n}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </div>
+
+                {(p.followers || []).length === 0 ? (
+                  <div className="text-[11px] text-slate-500 italic">
+                    Chưa có người theo dõi nào được gắn vào đề xuất này.
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {(p.followers || []).map((fName) => (
+                      <span
+                        key={fName}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white dark:bg-slate-900 border border-sky-300 dark:border-sky-700 text-xs font-bold text-sky-800 dark:text-sky-200"
+                      >
+                        <Eye className="w-3 h-3 text-sky-600 shrink-0" />
+                        <span>{fName}</span>
+                        <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300">
+                          Chỉ theo dõi
+                        </span>
+                        {(isRequester || isDirector || isManager || isSamePerson(fName, currentStaffName)) && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleUpdateProposalFollowers(
+                                p,
+                                (p.followers || []).filter((x) => !isSamePerson(x, fName))
+                              )
+                            }
+                            className="text-slate-400 hover:text-rose-600 font-bold ml-0.5 cursor-pointer"
+                            title="Bỏ người theo dõi này"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* THÔNG BÁO CHẾ ĐỘ XEM / THEO DÕI KHI BƯỚC HIỆN TẠI THUỘC BỘ PHẬN KHÁC */}
+              {!canApproverAct && p.status === "PENDING" && (() => {
+                const activeIdx =
+                  (p.steps || []).findIndex((s) => s.status === "PENDING_NOW") >= 0
+                    ? (p.steps || []).findIndex((s) => s.status === "PENDING_NOW")
+                    : p.currentStepIndex || 0;
+                const activeStepObj = p.steps?.[activeIdx];
+                if (!activeStepObj) return null;
+                if (hasCurrentUserApprovedEarlierStep) {
+                  return (
+                    <div className="p-3.5 rounded-2xl bg-emerald-50/90 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-800 text-xs text-emerald-900 dark:text-emerald-200 flex items-start gap-2.5">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                      <div>
+                        <div className="font-extrabold uppercase">
+                          ✅ Bạn đã hoàn tất ký duyệt bước trước — Đang chờ bộ phận tiếp theo xử lý
+                        </div>
+                        <p className="mt-0.5 text-emerald-800 dark:text-emerald-300">
+                          Tờ trình hiện đang ở <strong>Bước {activeIdx + 1}/{p.steps.length}: {activeStepObj.stepName}</strong> — chờ{" "}
+                          <strong>{activeStepObj.approverName}</strong> ({activeStepObj.dept}) phê duyệt. Bạn đang ở chế độ <strong>Theo dõi tiến độ</strong> (không duyệt thay bước của phòng ban khác).
+                        </p>
+                      </div>
+                    </div>
+                  );
+                }
+                if (isCurrentUserFollower) {
+                  return (
+                    <div className="p-3.5 rounded-2xl bg-sky-50/90 dark:bg-sky-950/30 border border-sky-300 dark:border-sky-800 text-xs text-sky-900 dark:text-sky-200 flex items-start gap-2.5">
+                      <Eye className="w-4 h-4 text-sky-600 shrink-0 mt-0.5" />
+                      <div>
+                        <div className="font-extrabold uppercase">
+                          👁️ Chế độ Người theo dõi (Chỉ xem tiến độ — Không có chức năng phê duyệt)
+                        </div>
+                        <p className="mt-0.5 text-sky-800 dark:text-sky-300">
+                          Bạn là <strong>Người theo dõi</strong> của đề xuất này. Hiện đề xuất đang ở{" "}
+                          <strong>Bước {activeIdx + 1}/{p.steps.length}: {activeStepObj.stepName}</strong> — chờ{" "}
+                          <strong>{activeStepObj.approverName}</strong> ({activeStepObj.dept}) phê duyệt.
+                        </p>
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="p-3 rounded-2xl bg-slate-100/80 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-amber-500 shrink-0" />
+                    <span>
+                      Hiện tờ trình đang ở <strong>Bước {activeIdx + 1}/{p.steps.length}: {activeStepObj.stepName}</strong> — chờ{" "}
+                      <strong>{activeStepObj.approverName}</strong> ({activeStepObj.dept}) phê duyệt.
+                    </span>
+                  </div>
+                );
+              })()}
 
               {/* BẢNG ĐIỀU KHIỂN QUYẾT ĐỊNH CỦA NGƯỜI PHÊ DUYỆT */}
               {canApproverAct && p.status === "PENDING" && (() => {

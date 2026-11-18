@@ -4,7 +4,7 @@ import { query, logAudit, withTransaction, httpErrorStatus } from "@/backend/db/
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse, setAuditActor, AuthorizedUser } from "@/backend/services/authz";
 import { hasPermission } from "@/backend/services/permissions";
 import { todayVN, nowVNDateTime } from "@/backend/services/dates";
-import { getTaskAccess, sameStaffName, TASK_STATUSES, TASK_RELATED_TYPE_IDS } from "@/backend/services/workspaceTasks";
+import { getTaskAccess, sameStaffName, parseTaskFollowers, TASK_STATUSES, TASK_RELATED_TYPE_IDS } from "@/backend/services/workspaceTasks";
 
 /** Người đang đăng nhập theo dạng getTaskAccess cần (quyền duyệt phòng ban = Trưởng / Phó phòng) */
 function taskActor(me: AuthorizedUser) {
@@ -284,6 +284,7 @@ async function ensureFictionalAssigneesCleaned() {
   if (fictionalCleanupDone) return;
   fictionalCleanupDone = true;
   try {
+    await query(`ALTER TABLE company_tasks ADD COLUMN IF NOT EXISTS followers JSONB DEFAULT '[]'::jsonb;`).catch(() => {});
     await query(`
       DO $$
       DECLARE col record;
@@ -475,9 +476,12 @@ export async function POST(req: NextRequest) {
           return forbiddenResponse("Bạn chỉ được xem công việc này (không phải người tạo, người được giao hoặc quản lý phòng ban).");
         }
         if (access === "progress") {
-          // Người được giao: giữ nguyên nội dung giao việc, chỉ nhận trạng thái / kết quả / đính kèm / trao đổi
+          // Người được giao: giữ nguyên nội dung giao việc, chỉ nhận trạng thái / kết quả / đính kèm / trao đổi / người theo dõi
           for (const k of ["title", "department", "task_category", "assignee_name", "customer_name", "priority", "deadline", "description", "related_type", "related_ref"]) {
             body[k] = existingTask[k];
+          }
+          if (body.followers === undefined) {
+            body.followers = existingTask.followers;
           }
         }
       }
@@ -494,6 +498,7 @@ export async function POST(req: NextRequest) {
       }
       const relatedType = body.related_type && TASK_RELATED_TYPE_IDS.has(String(body.related_type)) ? String(body.related_type) : null;
       const relatedRef = relatedType ? String(body.related_ref || "").trim().slice(0, 255) || null : null;
+      const normalizedFollowers = parseTaskFollowers(body.followers);
       const {
         id,
         task_code,
@@ -513,7 +518,7 @@ export async function POST(req: NextRequest) {
       } = body;
 
       // Báo cáo kết quả của công việc thuộc một phiếu phối hợp: đăng vào "Trao đổi nội bộ" của phiếu để bên yêu cầu thấy
-      const prevTask = id ? (await query("SELECT task_code, title, assignee_name, status, deadline, priority, department, result, attachments, logs, related_workflow_code FROM company_tasks WHERE id = $1", [id])).rows[0] : null;
+      const prevTask = id ? (await query("SELECT task_code, title, assignee_name, status, deadline, priority, department, result, attachments, logs, related_workflow_code, followers FROM company_tasks WHERE id = $1", [id])).rows[0] : null;
       // Lịch sử thay đổi tự động (ai đổi gì, lúc nào): giữ lại để không mất dấu khi việc bị sửa thành việc khác
       let mergedLogs: any[] = Array.isArray(logs) ? logs : [];
       if (prevTask) {
@@ -658,7 +663,7 @@ export async function POST(req: NextRequest) {
           `UPDATE company_tasks
            SET title=$1, department=$2, task_category=$3, assignee_name=$4, customer_name=$5,
                priority=$6, status=$7, deadline=$8, description=$9, related_workflow_code=COALESCE($10, related_workflow_code),
-               logs=$11, result=$12, attachments=$13, related_type=$15, related_ref=$16
+               logs=$11, result=$12, attachments=$13, related_type=$15, related_ref=$16, followers=$17::jsonb
            WHERE id=$14`,
           [
             title,
@@ -676,7 +681,8 @@ export async function POST(req: NextRequest) {
             JSON.stringify(attachments || []),
             id,
             relatedType,
-            relatedRef
+            relatedRef,
+            JSON.stringify(normalizedFollowers)
           ]
         );
         await postReportToWorkflow(prevTask?.task_code || task_code || null);
@@ -688,8 +694,8 @@ export async function POST(req: NextRequest) {
           `INSERT INTO company_tasks (
              task_code, title, department, task_category, assignee_name, customer_name,
              priority, status, deadline, description, related_workflow_code, logs, result, attachments,
-             created_by, created_by_name, related_type, related_ref
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+             created_by, created_by_name, related_type, related_ref, followers
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb)`,
           [
             code,
             title,
@@ -708,7 +714,8 @@ export async function POST(req: NextRequest) {
             me.username,
             me.full_name || me.username,
             relatedType,
-            relatedRef
+            relatedRef,
+            JSON.stringify(normalizedFollowers)
           ]
         );
         await postReportToWorkflow(code);
@@ -716,6 +723,42 @@ export async function POST(req: NextRequest) {
       }
 
       return NextResponse.json({ success: true });
+    }
+
+    // 1a. Cập nhật danh sách Người theo dõi (Followers — Chỉ theo dõi, không duyệt) của Công việc
+    if (action === "task_followers") {
+      const { id, followers } = body;
+      if (!id) {
+        return NextResponse.json({ error: "Thiếu mã định danh công việc" }, { status: 400 });
+      }
+      const taskRes = await query("SELECT * FROM company_tasks WHERE id = $1 LIMIT 1", [id]);
+      if (taskRes.rows.length === 0) {
+        return NextResponse.json({ error: "Không tìm thấy công việc" }, { status: 404 });
+      }
+      const taskRow = taskRes.rows[0];
+      const nextFollowers = parseTaskFollowers(followers);
+      const actorName = me.full_name || me.username || "Nhân viên";
+      const prevLogs: any[] = Array.isArray(taskRow.logs) ? [...taskRow.logs] : [];
+      prevLogs.push({
+        time: nowVNDateTime(),
+        author: actorName,
+        type: "change",
+        text: `Cập nhật Người theo dõi (chỉ xem): ${nextFollowers.length > 0 ? nextFollowers.join(", ") : "Không có"}`
+      });
+      await query(
+        `UPDATE company_tasks SET followers = $1::jsonb, logs = $2 WHERE id = $3`,
+        [JSON.stringify(nextFollowers), JSON.stringify(prevLogs), id]
+      );
+      await logAudit(
+        "UPDATE",
+        "TASKS",
+        `Cập nhật người theo dõi công việc ${taskRow.task_code || id}: ${nextFollowers.join(", ") || "Trống"}`
+      );
+      return NextResponse.json({
+        success: true,
+        followers: nextFollowers,
+        logs: prevLogs
+      });
     }
 
     // 1b. Comment / Directive on Task (Trao đổi & Chỉ đạo trực tiếp trong Công việc)

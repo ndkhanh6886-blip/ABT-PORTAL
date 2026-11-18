@@ -2528,13 +2528,48 @@ export const UnifiedWorkspace: React.FC = () => {
     deadline: todayVN(),
     description: "",
     result: "",
-    attachments: [] as any[]
+    attachments: [] as any[],
+    followers: [] as string[]
   });
   // Trạng thái của công việc lúc mở form sửa: để không ghi đè tiến độ người khác vừa cập nhật khi người sửa không đổi trạng thái
   const taskBaseStatusRef = useRef<string | null>(null);
   useEffect(() => {
     if (isTaskModalOpen) taskBaseStatusRef.current = (taskForm as any)?.id ? String((taskForm as any).status || "") : null;
   }, [isTaskModalOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const parseTaskFollowersList = useCallback((raw: any): string[] => {
+    if (!raw) return [];
+    let arr: any[] = [];
+    if (Array.isArray(raw)) {
+      arr = raw;
+    } else if (typeof raw === "string") {
+      const trimmed = raw.trim();
+      if (!trimmed) return [];
+      if (trimmed.startsWith("[")) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (Array.isArray(parsed)) arr = parsed;
+        } catch {
+          arr = trimmed.split(/[,;\n]+/);
+        }
+      } else {
+        arr = trimmed.split(/[,;\n]+/);
+      }
+    }
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const item of arr) {
+      const name = String(typeof item === "object" && item ? item.full_name || item.name || "" : item || "")
+        .replace(/\s*\(.*?\)/g, "")
+        .trim();
+      if (!name) continue;
+      const key = canonStaffName(name);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(name);
+    }
+    return out;
+  }, []);
 
   const openEditTask = (t: any) => {
     const atts = Array.isArray(t.attachments)
@@ -2545,7 +2580,8 @@ export const UnifiedWorkspace: React.FC = () => {
     setTaskForm({
       ...t,
       result: t.result || "",
-      attachments: atts
+      attachments: atts,
+      followers: parseTaskFollowersList(t.followers)
     });
     setIsTaskModalOpen(true);
   };
@@ -3074,6 +3110,13 @@ export const UnifiedWorkspace: React.FC = () => {
     return list.some((a) => sameStaffName(a, target));
   }, []);
 
+  // Kiểm tra nhân sự có nằm trong danh sách Người theo dõi (Followers — chỉ xem, không duyệt/đổi trạng thái)
+  const taskHasFollower = useCallback((rawFollowers: any, targetName: any): boolean => {
+    const target = String(targetName || "").trim();
+    if (!target) return false;
+    return parseTaskFollowersList(rawFollowers).some((f) => sameStaffName(f, target));
+  }, [parseTaskFollowersList]);
+
   // Tra Phiếu phối hợp theo mã (O(1)) thay cho workflows.find trong vòng lặp nhân sự × công việc
   const workflowByCode = useMemo(() => {
     const m = new Map<string, any>();
@@ -3323,6 +3366,26 @@ export const UnifiedWorkspace: React.FC = () => {
     return false;
   }, [taskHasAssignee, isTaskCreatedByStaff, resolveUserIdForStaffName]);
 
+  // Kiểm tra người dùng hiện tại chỉ có quyền Xem / Theo dõi (Follower) đối với công việc t (không có quyền đổi trạng thái hay sửa nội dung)
+  const isTaskReadOnlyForMe = useCallback((t: any): boolean => {
+    if (!t || !t.id || t.isHubItem) return false;
+    if (isDirector) return false;
+    const myUid = Number((user as any)?.id) || 0;
+    const isAssignee =
+      (myUid > 0 && Array.isArray(t.assigneeUserIds) && t.assigneeUserIds.includes(myUid)) ||
+      taskHasAssignee(t.assignee_name, currentStaffName);
+    if (isAssignee) return false;
+    const isCreator = isTaskCreatedByStaff(t, currentStaffName, (user as any)?.username);
+    if (isCreator) return false;
+    if (isManager && isSameWorkspaceDept(t.department, userDept)) return false;
+    return true;
+  }, [isDirector, isManager, user, currentStaffName, userDept, taskHasAssignee, isTaskCreatedByStaff]);
+
+  const followingTasksCount = useMemo(
+    () => mergedWorkspaceTasks.filter((t: any) => taskHasFollower(t.followers, currentStaffName)).length,
+    [mergedWorkspaceTasks, taskHasFollower, currentStaffName]
+  );
+
   // Số việc theo từng nhân sự cho hàng chip "Xem theo nhân sự": lọc theo phòng ban một lần, đếm một lần cho mỗi
   // thay đổi dữ liệu / bộ lọc (trước đây tính lại 85 nhân sự × toàn bộ công việc ở mỗi lần render).
   const showStaffChips = renderedSubTab === "tasks" && (rolePerspective === "manager" || rolePerspective === "director");
@@ -3350,18 +3413,19 @@ export const UnifiedWorkspace: React.FC = () => {
         (myUid > 0 && Array.isArray(t.assigneeUserIds) && t.assigneeUserIds.includes(myUid)) ||
         taskHasAssignee(t.assignee_name, currentStaffName);
       const isCreatedByMe = isTaskCreatedByStaff(t, currentStaffName, (user as any)?.username);
+      const isFollowedByMe = taskHasFollower(t.followers, currentStaffName);
 
       if (rolePerspective === "staff") {
         const isUnassignedInMyDept = !cleanAssignee && (
           isSameWorkspaceDept(t.department, userDept) ||
           (Array.isArray(t.involvedDepts) && t.involvedDepts.some((d: string) => isSameWorkspaceDept(d, userDept)))
         );
-        if (!isAssignedToMe && !isCreatedByMe && !isUnassignedInMyDept) {
+        if (!isAssignedToMe && !isCreatedByMe && !isFollowedByMe && !isUnassignedInMyDept) {
           return false;
         }
       } else {
         const activeFilterDept = filterDept;
-        if (activeFilterDept !== "all" && !taskInvolvesDept(t, activeFilterDept)) {
+        if (activeFilterDept !== "all" && !isFollowedByMe && !taskInvolvesDept(t, activeFilterDept)) {
           return false;
         }
       }
@@ -3379,25 +3443,32 @@ export const UnifiedWorkspace: React.FC = () => {
       if (selectedAssignee === "__UNASSIGNED__") {
         if (cleanAssignee) return false;
       } else if (selectedAssignee !== "all") {
-        if (!taskBelongsToStaff(t, selectedAssignee)) {
+        if (!taskBelongsToStaff(t, selectedAssignee) && !taskHasFollower(t.followers, selectedAssignee)) {
           return false;
         }
       }
 
-      const matchStatus = statusFilter === "all" || t.status === statusFilter;
+      const matchStatus =
+        statusFilter === "all"
+          ? true
+          : statusFilter === "FOLLOWING"
+          ? isFollowedByMe
+          : t.status === statusFilter;
       const q = searchQuery.trim().toLowerCase();
+      const followersStr = parseTaskFollowersList(t.followers).join(" ").toLowerCase();
       const matchSearch =
         q === "" ||
         (t.title && t.title.toLowerCase().includes(q)) ||
         (t.task_code && t.task_code.toLowerCase().includes(q)) ||
         (cleanAssignee && cleanAssignee.toLowerCase().includes(q)) ||
+        (followersStr && followersStr.includes(q)) ||
         (t.created_by_name && String(t.created_by_name).toLowerCase().includes(q)) ||
         (t.description && String(t.description).toLowerCase().includes(q)) ||
         (t.customer_name && t.customer_name.toLowerCase().includes(q)) ||
         (t.department && String(t.department).toLowerCase().includes(q));
       return matchStatus && matchSearch;
     });
-  }, [mergedWorkspaceTasks, rolePerspective, userDept, filterDept, selectedAssignee, taskSourceFilter, currentStaffName, statusFilter, searchQuery, user, taskHasAssignee, isTaskCreatedByStaff, taskInvolvesDept, taskBelongsToStaff]);
+  }, [mergedWorkspaceTasks, rolePerspective, userDept, filterDept, selectedAssignee, taskSourceFilter, currentStaffName, statusFilter, searchQuery, user, taskHasAssignee, taskHasFollower, parseTaskFollowersList, isTaskCreatedByStaff, taskInvolvesDept, taskBelongsToStaff]);
 
   // RBAC Filtered Technical Weekly Plans (Lịch phân công & Kế hoạch tuần các phòng Kỹ thuật)
   const filteredHubWeeklyPlans = useMemo(() => {
@@ -4879,6 +4950,7 @@ export const UnifiedWorkspace: React.FC = () => {
           new Set(
             [
               ...(taskForm.assignee_name ? taskForm.assignee_name.split(/[,;\n]+/) : []),
+              ...parseTaskFollowersList(taskForm.followers),
               prevTask?.created_by_name,
               linkedWf?.requester_name
             ]
@@ -4909,10 +4981,69 @@ export const UnifiedWorkspace: React.FC = () => {
     }
   };
 
+  // Cập nhật danh sách Người theo dõi (Followers — Chỉ xem, không duyệt/đổi trạng thái) trên Công việc
+  const handleUpdateTaskFollowers = async (taskId: number, nextFollowersRaw: string[], addedPerson?: string) => {
+    const cleanFollowers = parseTaskFollowersList(nextFollowersRaw);
+    if (!taskId) {
+      setTaskForm((prev) => ({ ...prev, followers: cleanFollowers }));
+      return;
+    }
+    try {
+      const res = await fetch("/api/workflows?action=task_followers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: taskId, followers: cleanFollowers })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        showToast(data.error || "Không cập nhật được người theo dõi công việc", "error");
+        return;
+      }
+      setTaskForm((prev) => ({
+        ...prev,
+        followers: data.followers || cleanFollowers,
+        logs: data.logs || (prev as any).logs
+      }));
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === taskId ? { ...t, followers: data.followers || cleanFollowers, logs: data.logs || t.logs } : t
+        )
+      );
+      if (addedPerson && !sameStaffName(addedPerson, currentStaffName)) {
+        notifyActivity({
+          title: `👁️ Mời theo dõi công việc [${(taskForm as any).task_code || taskId}]`,
+          message: `${currentStaffName} đã thêm bạn làm Người theo dõi (chỉ xem tiến độ, không đổi trạng thái) tại công việc "${taskForm.title}".`,
+          type: "info",
+          category: "task",
+          sender: { name: currentStaffName },
+          targetEmployeeNames: [addedPerson],
+          targetDept: taskForm.department || "all",
+          taskId,
+          link: { tab: "workspace", subTab: "tasks", itemId: String(taskId || taskForm.title) }
+        });
+      }
+      showToast(
+        addedPerson
+          ? `👁️ Đã thêm ${addedPerson} làm Người theo dõi (chỉ xem)!`
+          : "👁️ Đã cập nhật danh sách người theo dõi công việc!",
+        "info"
+      );
+    } catch {
+      showToast("Lỗi kết nối khi cập nhật người theo dõi", "error");
+    }
+  };
+
   // Quick Change Task Status
   const handleQuickStatusChange = async (taskId: number, newStatus: string) => {
     const target = tasks.find((t) => t.id === taskId);
     if (!target) return;
+    if (isTaskReadOnlyForMe(target)) {
+      showToast(
+        "👁️ Bạn là Người theo dõi của công việc này (chỉ xem tiến độ & trao đổi, không có chức năng duyệt hoặc đổi trạng thái)!",
+        "warning"
+      );
+      return;
+    }
     try {
       const res = await fetch("/api/workflows?action=task", {
         method: "POST",
@@ -4935,7 +5066,10 @@ export const UnifiedWorkspace: React.FC = () => {
         type: newStatus === "DONE" ? "success" : "info",
         category: "task",
         sender: { name: currentStaffName },
-        targetEmployeeNames: [target.assignee_name].filter(Boolean),
+        targetEmployeeNames: [
+          target.assignee_name,
+          ...parseTaskFollowersList(target.followers)
+        ].filter(Boolean),
         targetDept: target.department,
         taskId: target.id,
         link: { tab: "workspace", subTab: "tasks", itemId: String(target.id || target.task_code || target.title) }
@@ -5951,6 +6085,7 @@ export const UnifiedWorkspace: React.FC = () => {
       const recipients = Array.from(
         new Set([
           ...assignees,
+          ...parseTaskFollowersList(taskForm.followers),
           ...(wf?.requester_name ? [wf.requester_name] : []),
           ...(wf?.assignee_name ? [wf.assignee_name] : [])
         ].filter((n) => n && n !== (user?.name || currentStaffName)))
@@ -7797,7 +7932,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       deadline: prop.neededByDate || todayVN(),
       description: `Thực thi theo Tờ trình / Đề xuất đã phê duyệt [${prop.proposalCode}] "${prop.title}" (Người đề xuất: ${prop.requesterName} - ${prop.requesterDept}).\n\nNội dung: ${prop.summaryReason}`,
       result: "",
-      attachments: Array.isArray(prop.attachments) ? [...prop.attachments] : []
+      attachments: Array.isArray(prop.attachments) ? [...prop.attachments] : [],
+      followers: Array.isArray(prop.followers) ? [...prop.followers] : []
     });
     setActiveSubTab("tasks");
     setIsTaskModalOpen(true);
@@ -8250,7 +8386,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       deadline: todayVN(),
       description: `Triển khai thực hiện theo văn bản [${ann.docCode}] "${ann.title}" do ${ann.issuerName} (${ann.issuerRole}) ban hành (Hiệu lực từ ${formatDayVN(ann.effectiveDate)}).\n\nNội dung trọng tâm:\n${ann.summary || ann.content}`,
       result: "",
-      attachments: Array.isArray(ann.attachments) ? [...ann.attachments] : []
+      attachments: Array.isArray(ann.attachments) ? [...ann.attachments] : [],
+      followers: []
     });
     setSelectedAnnouncementDetail(null);
     setIsTaskModalOpen(true);
@@ -8816,6 +8953,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               <option value="TODO">Cần làm</option>
               <option value="IN_PROGRESS">Đang làm</option>
               <option value="DONE">Hoàn tất</option>
+              <option value="FOLLOWING">👁️ Đang theo dõi ({followingTasksCount})</option>
             </select>
           )}
 
@@ -8902,7 +9040,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     deadline: todayVN(),
                     description: "",
                     result: "",
-                    attachments: []
+                    attachments: [],
+                    followers: []
                   });
                   setIsTaskModalOpen(true);
                 }}
@@ -9191,6 +9330,9 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         onEdit={openEditTask}
                         onScheduleHubItem={openScheduleForHubItem}
                         onNavigateTab={navigateToTargetTab}
+                        isReadOnlyFollower={isTaskReadOnlyForMe(task)}
+                        followersList={parseTaskFollowersList(task.followers)}
+                        isFollowedByMe={taskHasFollower(task.followers, currentStaffName)}
                       />
                     ))}
                   {filteredTasks.filter((t) => t.status === "TODO").length === 0 && (
@@ -9224,6 +9366,9 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         onEdit={openEditTask}
                         onScheduleHubItem={openScheduleForHubItem}
                         onNavigateTab={navigateToTargetTab}
+                        isReadOnlyFollower={isTaskReadOnlyForMe(task)}
+                        followersList={parseTaskFollowersList(task.followers)}
+                        isFollowedByMe={taskHasFollower(task.followers, currentStaffName)}
                       />
                     ))}
                   {filteredTasks.filter((t) => t.status === "IN_PROGRESS").length === 0 && (
@@ -9257,6 +9402,9 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         onEdit={openEditTask}
                         onScheduleHubItem={openScheduleForHubItem}
                         onNavigateTab={navigateToTargetTab}
+                        isReadOnlyFollower={isTaskReadOnlyForMe(task)}
+                        followersList={parseTaskFollowersList(task.followers)}
+                        isFollowedByMe={taskHasFollower(task.followers, currentStaffName)}
                       />
                     ))}
                   {filteredTasks.filter((t) => t.status === "DONE").length === 0 && (
@@ -9318,8 +9466,15 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         <div className="text-[10px] text-slate-500">{t.task_category}</div>
                       </td>
                       <td className="py-2.5 px-3 font-semibold text-slate-700 dark:text-slate-300">
-                        {cleanWorkspaceAssignee(t.assignee_name) || (
-                          <span className="text-amber-600 dark:text-amber-400 font-bold">⏳ Chờ phân công</span>
+                        <div>
+                          {cleanWorkspaceAssignee(t.assignee_name) || (
+                            <span className="text-amber-600 dark:text-amber-400 font-bold">⏳ Chờ phân công</span>
+                          )}
+                        </div>
+                        {parseTaskFollowersList(t.followers).length > 0 && (
+                          <div className="text-[10px] text-sky-600 dark:text-sky-400 font-medium mt-0.5">
+                            👁️ Theo dõi: {parseTaskFollowersList(t.followers).join(", ")}
+                          </div>
                         )}
                       </td>
                       <td className="py-2.5 px-3 text-slate-500">{t.customer_name || "—"}</td>
@@ -9354,6 +9509,13 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               ↗ Phân hệ
                             </button>
                           </div>
+                        ) : isTaskReadOnlyForMe(t) ? (
+                          <button
+                            onClick={() => openEditTask(t)}
+                            className="px-2.5 py-1 rounded-lg bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 font-bold text-[11px] hover:bg-sky-100 cursor-pointer"
+                          >
+                            👁️ Chỉ theo dõi (Xem)
+                          </button>
                         ) : (
                           <button
                             onClick={() => openEditTask(t)}
@@ -13590,10 +13752,29 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       <Modal
         isOpen={isTaskModalOpen}
         onClose={() => setIsTaskModalOpen(false)}
-        title={taskForm.id ? "CẬP NHẬT CÔNG VIỆC" : "TẠO CÔNG VIỆC MỚI"}
+        title={
+          taskForm.id
+            ? isTaskReadOnlyForMe(taskForm)
+              ? `👁️ CHI TIẾT CÔNG VIỆC (CHẾ ĐỘ NGƯỜI THEO DÕI — CHỈ XEM)`
+              : "CẬP NHẬT CÔNG VIỆC"
+            : "TẠO CÔNG VIỆC MỚI"
+        }
         size="md"
       >
         <form onSubmit={handleSaveTask} className="space-y-3 p-1 text-xs">
+          {Boolean(taskForm.id && isTaskReadOnlyForMe(taskForm)) && (
+            <div className="p-3 rounded-xl bg-sky-50 dark:bg-sky-950/40 border border-sky-300 dark:border-sky-800 text-xs text-sky-900 dark:text-sky-200 flex items-start gap-2.5">
+              <Eye className="w-4 h-4 text-sky-600 shrink-0 mt-0.5" />
+              <div>
+                <div className="font-extrabold uppercase">
+                  👁️ Chế độ Người theo dõi (Chỉ theo dõi tiến độ — Không có chức năng duyệt / đổi trạng thái)
+                </div>
+                <p className="text-[11px] text-sky-800 dark:text-sky-300 mt-0.5">
+                  Bạn đang xem công việc với vai trò <strong>Người theo dõi</strong>. Bạn được xem toàn bộ nội dung, kết quả, tài liệu đính kèm và gửi ý kiến trao đổi ở mục Thảo luận bên dưới, nhưng không thay đổi trạng thái hoặc nội dung gốc của công việc.
+                </p>
+              </div>
+            </div>
+          )}
           <div>
             <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Tiêu đề công việc *</label>
             <BufferedField
@@ -13714,6 +13895,118 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 </div>
               );
             })()}
+          </div>
+
+          {/* NGƯỜI THEO DÕI CÔNG VIỆC (CHỈ THEO DÕI TIẾN ĐỘ & THẢO LUẬN — KHÔNG CÓ CHỨC NĂNG DUYỆT / ĐỔI TRẠNG THÁI) */}
+          <div className="p-3 rounded-xl bg-sky-50/70 dark:bg-sky-950/25 border border-sky-200 dark:border-sky-800/80 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <label className="block font-bold text-sky-900 dark:text-sky-200 flex items-center gap-1.5 text-xs">
+                  <Eye className="w-3.5 h-3.5 text-sky-600" />
+                  <span>Người theo dõi công việc — Chỉ theo dõi, không duyệt ({parseTaskFollowersList(taskForm.followers).length} người)</span>
+                </label>
+                <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                  Người theo dõi thấy việc trên bảng việc, nhận thông báo tiến độ &amp; tham gia trao đổi nhưng <strong>không đổi trạng thái / không duyệt</strong>.
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                {(() => {
+                  const curFollowers = parseTaskFollowersList(taskForm.followers);
+                  const iAmFollowing = curFollowers.some((f) => sameStaffName(f, currentStaffName));
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = iAmFollowing
+                          ? curFollowers.filter((f) => !sameStaffName(f, currentStaffName))
+                          : [...curFollowers, currentStaffName];
+                        if (taskForm.id && isTaskReadOnlyForMe(taskForm)) {
+                          handleUpdateTaskFollowers(taskForm.id, next);
+                        } else {
+                          setTaskForm((prev) => ({ ...prev, followers: next }));
+                        }
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-colors cursor-pointer flex items-center gap-1 ${
+                        iAmFollowing
+                          ? "bg-sky-600 text-white border-sky-600"
+                          : "bg-white dark:bg-slate-900 text-sky-700 dark:text-sky-300 border-sky-300 dark:border-sky-700 hover:bg-sky-100"
+                      }`}
+                    >
+                      <Eye className="w-3 h-3" />
+                      <span>{iAmFollowing ? "✓ Đang theo dõi" : "+ Tự theo dõi"}</span>
+                    </button>
+                  );
+                })()}
+
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const picked = String(e.target.value || "").replace(/\s*\(.*?\)/g, "").trim();
+                    if (!picked) return;
+                    const curFollowers = parseTaskFollowersList(taskForm.followers);
+                    if (curFollowers.some((f) => sameStaffName(f, picked))) return;
+                    const next = [...curFollowers, picked];
+                    if (taskForm.id && isTaskReadOnlyForMe(taskForm)) {
+                      handleUpdateTaskFollowers(taskForm.id, next, picked);
+                    } else {
+                      setTaskForm((prev) => ({ ...prev, followers: next }));
+                    }
+                  }}
+                  className="px-2.5 py-1 rounded-lg text-[11px] font-bold border border-sky-300 dark:border-sky-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 cursor-pointer"
+                >
+                  <option value="">+ Thêm người theo dõi (Chỉ xem)...</option>
+                  {(personnelList || [])
+                    .filter((p: any) => {
+                      const n = String(p?.full_name || p || "").replace(/\s*\(.*?\)/g, "").trim();
+                      return n && !parseTaskFollowersList(taskForm.followers).some((f) => sameStaffName(f, n));
+                    })
+                    .map((p: any) => {
+                      const n = String(p?.full_name || p || "").replace(/\s*\(.*?\)/g, "").trim();
+                      const d = p?.department ? ` (${p.department})` : "";
+                      return (
+                        <option key={p?.id || p?.employee_code || n} value={n}>
+                          👁️ {n}{d}
+                        </option>
+                      );
+                    })}
+                </select>
+              </div>
+            </div>
+
+            {parseTaskFollowersList(taskForm.followers).length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                {parseTaskFollowersList(taskForm.followers).map((fName) => (
+                  <span
+                    key={fName}
+                    className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-white dark:bg-slate-900 border border-sky-300 dark:border-sky-700 text-[11px] font-bold text-sky-800 dark:text-sky-200"
+                  >
+                    <Eye className="w-3 h-3 text-sky-600 shrink-0" />
+                    <span>{fName}</span>
+                    <span className="text-[9px] font-semibold px-1 py-0.2 rounded bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300">
+                      Chỉ theo dõi
+                    </span>
+                    {(!isTaskReadOnlyForMe(taskForm) || sameStaffName(fName, currentStaffName)) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = parseTaskFollowersList(taskForm.followers).filter((x) => !sameStaffName(x, fName));
+                          if (taskForm.id && isTaskReadOnlyForMe(taskForm)) {
+                            handleUpdateTaskFollowers(taskForm.id, next);
+                          } else {
+                            setTaskForm((prev) => ({ ...prev, followers: next }));
+                          }
+                        }}
+                        className="text-slate-400 hover:text-rose-600 font-bold ml-0.5 cursor-pointer"
+                        title="Bỏ người theo dõi này"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-3 gap-3">
@@ -14110,7 +14403,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
           <div className="flex items-center justify-between flex-wrap gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
             <div>
-              {taskForm.id && (
+              {taskForm.id && !isTaskReadOnlyForMe(taskForm) && (
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <button
                     type="button"
@@ -14195,7 +14488,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               >
                 Đóng
               </button>
-              {taskForm.id && (
+              {taskForm.id && !isTaskReadOnlyForMe(taskForm) && (
                 <button
                   type="button"
                   onClick={() => {
@@ -14209,12 +14502,14 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   Nhân bản thành việc mới
                 </button>
               )}
-              <button
-                type="submit"
-                className="px-5 py-2 rounded-xl font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-600/30"
-              >
-                {taskForm.id ? "Lưu Cập Nhật" : "Tạo Công Việc"}
-              </button>
+              {(!taskForm.id || !isTaskReadOnlyForMe(taskForm)) && (
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-600/30"
+                >
+                  {taskForm.id ? "Lưu Cập Nhật" : "Tạo Công Việc"}
+                </button>
+              )}
             </div>
           </div>
         </form>
@@ -19072,11 +19367,21 @@ const TaskCard: React.FC<{
   onEdit: (task: any) => void;
   onScheduleHubItem?: (task: any) => void;
   onNavigateTab?: (tab: string) => void;
-}> = ({ task, onStatusChange, onEdit, onScheduleHubItem, onNavigateTab }) => {
+  isReadOnlyFollower?: boolean;
+  followersList?: string[];
+  isFollowedByMe?: boolean;
+}> = ({ task, onStatusChange, onEdit, onScheduleHubItem, onNavigateTab, isReadOnlyFollower, followersList = [], isFollowedByMe }) => {
   return (
     <div className="bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700 rounded-xl p-3.5 shadow-xs hover:shadow-md transition-all space-y-2">
       <div className="flex items-center justify-between gap-1">
-        <span className="text-[10px] font-mono font-bold text-slate-400">{task.task_code}</span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] font-mono font-bold text-slate-400">{task.task_code}</span>
+          {isFollowedByMe && (
+            <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-sky-100 text-sky-800 dark:bg-sky-950/70 dark:text-sky-300 border border-sky-200 dark:border-sky-800">
+              👁️ Đang theo dõi
+            </span>
+          )}
+        </div>
         <PriorityBadge priority={task.priority} />
       </div>
 
@@ -19151,6 +19456,13 @@ const TaskCard: React.FC<{
         </div>
       )}
 
+      {followersList.length > 0 && (
+        <div className="flex items-center gap-1 text-[10px] text-sky-700 dark:text-sky-300 font-medium truncate">
+          <Eye className="w-3 h-3 text-sky-500 shrink-0" />
+          <span className="truncate">Theo dõi: {followersList.join(", ")}</span>
+        </div>
+      )}
+
       <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-100 dark:border-slate-700/60">
         {cleanWorkspaceAssignee(task.assignee_name) ? (
           <span className="font-semibold text-slate-700 dark:text-slate-300 truncate max-w-[140px]">
@@ -19193,6 +19505,15 @@ const TaskCard: React.FC<{
               </button>
             )}
           </>
+        ) : isReadOnlyFollower ? (
+          <button
+            type="button"
+            onClick={() => onEdit(task)}
+            className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-50 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300 border border-sky-200 dark:border-sky-800 hover:bg-sky-100 cursor-pointer"
+            title="Bạn là Người theo dõi (Chỉ xem tiến độ & trao đổi, không đổi trạng thái)"
+          >
+            👁️ Chỉ theo dõi (Xem)
+          </button>
         ) : (
           <>
             {task.status === "TODO" && (

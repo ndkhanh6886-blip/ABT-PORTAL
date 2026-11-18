@@ -781,13 +781,14 @@ async function runIntegrityMigrations() {
       `)
     );
 
-    // Công việc Workspace: ghi người tạo (phân quyền sửa / xóa) và đối tượng "Liên quan tới"
+    // Công việc Workspace: ghi người tạo (phân quyền sửa / xóa), đối tượng "Liên quan tới" và danh sách Người theo dõi (followers)
     await step("company_tasks_owner_related", () =>
       client.query(`
         ALTER TABLE company_tasks ADD COLUMN IF NOT EXISTS created_by VARCHAR(150);
         ALTER TABLE company_tasks ADD COLUMN IF NOT EXISTS created_by_name VARCHAR(150);
         ALTER TABLE company_tasks ADD COLUMN IF NOT EXISTS related_type VARCHAR(30);
         ALTER TABLE company_tasks ADD COLUMN IF NOT EXISTS related_ref VARCHAR(255);
+        ALTER TABLE company_tasks ADD COLUMN IF NOT EXISTS followers JSONB DEFAULT '[]'::jsonb;
       `)
     );
 
