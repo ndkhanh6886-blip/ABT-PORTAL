@@ -1,6 +1,6 @@
 import { z } from "zod/v3";
 import type { Tx } from "../core/db";
-import { authorize, authorizeAnywhere, SYSTEM_ACTOR, type AuthzActor } from "../core/authz";
+import { authorize, authorizeAnywhere, authorizeAnywhereOneOf, SYSTEM_ACTOR, type AuthzActor } from "../core/authz";
 import { writeAudit } from "../core/audit";
 import { vnToday } from "../core/dates";
 import { invalid, notFound } from "../core/errors";
@@ -132,7 +132,7 @@ export async function listRdStaffRoster(tx: Tx, moduleKey: "RD" | "DEVICE" | "IT
  */
 export async function getProjectOpsOverview(tx: Tx, actor: AuthzActor, projectId: string) {
   await ensureRdProjectOpsSchema(tx);
-  await authorizeAnywhere(tx, actor, "rd.view");
+  await authorizeAnywhereOneOf(tx, actor, ["rd.view", "it.view"]);
 
   const proj = (
     await tx.query(
@@ -144,6 +144,8 @@ export async function getProjectOpsOverview(tx: Tx, actor: AuthzActor, projectId
     )
   ).rows[0];
   if (!proj) throw notFound("dự án R&D");
+  // Owner unit decides: an IT project needs it.view, an R&D / KTCN project rd.view (core/authz IT_PERMISSION_FOR)
+  await authorize(tx, actor, "rd.view", proj.owner_org_unit_id);
 
   // 1. DHF Deliverable metrics
   const dhfStats = (

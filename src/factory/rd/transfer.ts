@@ -2,7 +2,7 @@ import path from "path";
 import { z } from "zod/v3";
 import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
-import { authorize, authorizeAnywhere, hasFactoryPermission, type AuthzActor } from "../core/authz";
+import { authorize, authorizeAnywhere, authorizeAnywhereOneOf, hasFactoryPermission, type AuthzActor } from "../core/authz";
 import { conflict, invalid, notFound } from "../core/errors";
 import { readAttachment, saveAttachment, sniffMime, type FileCategory } from "../core/files";
 import { nextNumber } from "../core/numbering";
@@ -853,7 +853,7 @@ const updateTransferSchema = z.object({
 // ============================================================================
 
 export async function listTransferTemplates(tx: Tx, actor: AuthzActor, domain?: string) {
-  await authorizeAnywhere(tx, actor, "rd.view");
+  await authorizeAnywhereOneOf(tx, actor, ["rd.view", "it.view"]);
   const templates = (
     await tx.query(
       `SELECT tt.*,
@@ -1163,7 +1163,7 @@ export async function createTechTransferPackage(tx: Tx, actor: AuthzActor, input
 }
 
 export async function listTechTransfers(tx: Tx, actor: AuthzActor, projectId?: string) {
-  await authorizeAnywhere(tx, actor, "rd.view");
+  await authorizeAnywhereOneOf(tx, actor, ["rd.view", "it.view"]);
   const rows = (
     await tx.query(
       `SELECT tt.*, p.code AS project_code, p.name AS project_name, p.owner_org_unit_id,
@@ -1834,7 +1834,7 @@ export async function updateSoftwareRelease(tx: Tx, actor: AuthzActor, id: strin
 }
 
 export async function listSoftwareReleases(tx: Tx, actor: AuthzActor, projectId?: string) {
-  await authorizeAnywhere(tx, actor, "rd.view");
+  await authorizeAnywhereOneOf(tx, actor, ["rd.view", "it.view"]);
   const rows = (
     await tx.query(
       `SELECT sr.*, p.code AS project_code, p.name AS project_name, p.owner_org_unit_id,

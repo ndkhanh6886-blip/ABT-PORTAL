@@ -864,8 +864,8 @@ export const COMPANY_DEPARTMENTS: { key: string; code: string; block: (typeof CO
   { key: "Kinh Doanh", code: "SALES", block: "Khối Kinh Doanh", headRole: "sales_head", staffRole: "sales_rep" },
   { key: "Marketing", code: "MKT", block: "Khối Kinh Doanh", headRole: "sales_head", staffRole: "marketing" },
   { key: "APP", code: "APP", block: "Khối Kinh Doanh", headRole: "app_head", staffRole: "app_rep" },
-  // Phòng IT (thuộc Khối Kinh doanh, tách riêng khỏi KTCN): IT chung + nghiên cứu phần mềm. Có phòng nhà máy riêng (IT / P-IT)
-  // để cấp quyền dự án và hồ sơ phần mềm (IEC 62304) qua vai trò nhà máy IT_HEAD / IT_STAFF.
+  // Phòng IT (thuộc Khối Kinh doanh, tách hẳn khỏi Khối Kỹ thuật): IT chung + nghiên cứu phần mềm. Có đơn vị nhà máy riêng
+  // (IT / P-IT) để cấp quyền it.* (dự án và hồ sơ phần mềm IEC 62304) qua vai trò IT_HEAD / IT_STAFF; không có quyền rd.*.
   { key: "IT", code: "IT", block: "Khối Kinh Doanh", headRole: "it_head", staffRole: "it_staff", factory: "IT" },
   { key: "R&D", code: "P-RD", block: "Khối Kỹ Thuật – Nhà Máy", headRole: "rd_head", staffRole: "rd_staff", factory: "RD" },
   { key: "Sản xuất", code: "P-KIT", block: "Khối Kỹ Thuật – Nhà Máy", headRole: "kit_head", staffRole: "kit_staff", factory: "KIT" },

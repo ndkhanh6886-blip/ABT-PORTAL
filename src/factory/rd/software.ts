@@ -1,6 +1,6 @@
 import { z } from "zod/v3";
 import type { Tx } from "../core/db";
-import { authorize, authorizeAnywhere, hasFactoryPermission, type AuthzActor } from "../core/authz";
+import { authorize, authorizeAnywhere, authorizeAnywhereOneOf, hasFactoryPermission, type AuthzActor } from "../core/authz";
 import { writeAudit } from "../core/audit";
 import { invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
@@ -463,7 +463,7 @@ export async function createValidation(tx: Tx, actor: AuthzActor, input: unknown
 }
 
 export async function listValidations(tx: Tx, actor: AuthzActor) {
-  await authorizeAnywhere(tx, actor, "rd.view");
+  await authorizeAnywhereOneOf(tx, actor, ["rd.view", "it.view"]);
   const rows = (
     await tx.query(
       `SELECT v.*, a.display_name AS approved_by_name FROM rd.sw_validation v

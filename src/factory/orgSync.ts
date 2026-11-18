@@ -79,7 +79,7 @@ function matchPermRule(code: string, rules: string[]): boolean {
   return rules.some((pf) => (pf.endsWith(".") ? code.startsWith(pf) : code === pf));
 }
 
-function buildRolePermissions(allCodes: string[], prefixes: string[], isHead: boolean): string[] {
+function buildRolePermissions(allCodes: string[], prefixes: string[], isHead: boolean, itOnly = false): string[] {
   const isStaffBlocked = (code: string) =>
     code.endsWith(".approve") ||
     code.endsWith(".release") ||
@@ -94,14 +94,18 @@ function buildRolePermissions(allCodes: string[], prefixes: string[], isHead: bo
 
   return allCodes.filter((code) => {
     const inPrimary = matchPermRule(code, prefixes);
-    const inCommon = matchPermRule(code, SAFE_DEPT_SUPPORT);
+    const inCommon = !itOnly && matchPermRule(code, SAFE_DEPT_SUPPORT);
     if (!inPrimary && !inCommon) return false;
     if (!isHead && isStaffBlocked(code)) return false;
     return true;
   });
 }
 
-const STANDARD_FACTORY_ROLES: { code: string; name: string; desc: string; prefixes: string[]; isHead: boolean }[] = [
+/**
+ * `itOnly`: Phòng IT role. It gets no Khối Kỹ thuật support permissions, and its permission set is enforced on every
+ * sync (roles created before the IT / Kỹ thuật split carried rd.* and factory warehouse / purchasing permissions).
+ */
+const STANDARD_FACTORY_ROLES: { code: string; name: string; desc: string; prefixes: string[]; isHead: boolean; itOnly?: boolean }[] = [
   { code: "RD_HEAD", name: "Trưởng phòng Nghiên cứu R&D", desc: "Toàn quyền quản lý đề tài R&D, DHF, mẫu thử, chuyển giao công nghệ và ký duyệt", prefixes: ["rd.", "work.", "intake.order.view"], isHead: true },
   { code: "RD_STAFF", name: "Chuyên viên Nghiên cứu R&D", desc: "Thực hiện thí nghiệm, ghi nhật ký ELN, pha chế mẫu thử và lập đề nghị lĩnh/mua NVL", prefixes: ["rd.", "work.plan.submit"], isHead: false },
   { code: "KIT_HEAD", name: "Trưởng phòng / Quản đốc Sản xuất Kit", desc: "Toàn quyền định mức BOM, phát hành lệnh sản xuất Kit, duyệt hồ sơ lô eBR và xuất thành phẩm", prefixes: ["kit.", "intake."], isHead: true },
@@ -110,8 +114,9 @@ const STANDARD_FACTORY_ROLES: { code: string; name: string; desc: string; prefix
   { code: "OLIGO_STAFF", name: "Kỹ thuật viên Tổng hợp Oligo", desc: "Vận hành máy tổng hợp CPG, cắt khử bảo vệ, tinh sạch HPLC/PAGE và đo OD", prefixes: ["oligo.", "intake.order.view", "intake.shipment.post"], isHead: false },
   { code: "DEVICE_HEAD", name: "Trưởng phòng Kỹ thuật – Thiết bị", desc: "Toàn quyền quản lý dòng máy, DMR, phát hành lệnh lắp ráp DHR, FQC và bảo hành RMA", prefixes: ["device.", "rd.view", "rd.project.", "rd.eln.", "rd.gate.", "rd.transfer.manage", "intake."], isHead: true },
   { code: "DEVICE_STAFF", name: "Kỹ sư Lắp ráp Thiết bị & FSE", desc: "Thực hiện lắp ráp trạm cơ khí/điện tử/firmware, chạy già hóa Burn-in và xử lý ca bảo hành", prefixes: ["device.", "rd.view", "rd.project.", "rd.transfer.manage", "intake.order.view", "intake.shipment.post"], isHead: false },
-  { code: "IT_HEAD", name: "Trưởng phòng IT", desc: "Điều hành Phòng IT: dự án phần mềm, duyệt cổng Stage-Gate, thẩm định CSV và ký phát hành phần mềm (IEC 62304)", prefixes: ["it.", "rd.view", "rd.project.", "rd.gate.", "rd.transfer.manage", "rd.software.", "intake.order.view"], isHead: true },
-  { code: "IT_STAFF", name: "Nhân viên IT / Nghiên cứu phần mềm", desc: "Phát triển phần mềm, lập yêu cầu – test case – kết quả chạy, báo cáo lỗi và lập bản phát hành nháp", prefixes: ["it.", "rd.view", "rd.project.", "rd.transfer.manage", "intake.order.view"], isHead: false },
+  // Phòng IT thuộc Khối Kinh doanh, tách hẳn khỏi Khối Kỹ thuật: chỉ giữ quyền it.* (không rd.*, không kho / mua hàng / đơn nội bộ nhà máy)
+  { code: "IT_HEAD", name: "Trưởng phòng IT", desc: "Điều hành Phòng IT: dự án phần mềm, duyệt cổng Stage-Gate, thẩm định CSV và ký phát hành phần mềm (IEC 62304)", prefixes: ["it."], isHead: true, itOnly: true },
+  { code: "IT_STAFF", name: "Nhân viên IT / Nghiên cứu phần mềm", desc: "Phát triển phần mềm, lập yêu cầu – test case – kết quả chạy, báo cáo lỗi và lập bản phát hành nháp", prefixes: ["it.view", "it.project.manage", "it.transfer.manage"], isHead: false, itOnly: true },
   { code: "QA_HEAD", name: "Trưởng phòng QA/QC (ISO 13485)", desc: "Toàn quyền thẩm định QC, giải phóng lô, cấp COA, phê duyệt tài liệu SOP và đóng NCR/CAPA", prefixes: ["qms.", ...QA_CROSS_DEPT_PERMS], isHead: true },
   { code: "QA_STAFF", name: "Chuyên viên Kiểm nghiệm QC/QA", desc: "Lấy mẫu kiểm nghiệm IQC/IPQC/OQC, ghi nhận kết quả QC và lập báo cáo sự cố NCR", prefixes: ["qms.", "kit.view", "kit.ebr.check", "kit.quality.manage", "oligo.view", "device.view", "rd.view", "inv.lot.sample"], isHead: false },
   { code: "WH_HEAD", name: "Trưởng bộ phận Kho & Cung ứng Nhà máy", desc: "Toàn quyền điều phối kho nhà máy, duyệt cấp phát FEFO, kiểm kê và duyệt PR/PO nội bộ", prefixes: ["inv.", "master.", "purchase.", "intake."], isHead: true },
@@ -127,7 +132,7 @@ export async function ensureFactoryRolesAndSyncAllUsers(tx?: Tx): Promise<void> 
   // 1. Ensure standard factory roles exist in core.role
   const roleIdByCode: Record<string, string> = {};
   for (const r of STANDARD_FACTORY_ROLES) {
-    const perms = buildRolePermissions(allGrantable, r.prefixes, r.isHead);
+    const perms = buildRolePermissions(allGrantable, r.prefixes, r.isHead, r.itOnly);
     const up = await db.query(
       `INSERT INTO core.role (code, name, description, status, created_by)
        VALUES ($1, $2, $3, 'ACTIVE', 1)
@@ -142,6 +147,13 @@ export async function ensureFactoryRolesAndSyncAllUsers(tx?: Tx): Promise<void> 
       (await db.query("SELECT count(*)::int AS c FROM core.role_permission WHERE role_id = $1", [roleId])).rows[0]?.c ?? 0
     );
     if (existingPermsCount === 0 && perms.length > 0) {
+      await db.query(
+        "INSERT INTO core.role_permission (role_id, permission_code) SELECT $1, unnest($2::text[]) ON CONFLICT DO NOTHING",
+        [roleId, perms]
+      );
+    } else if (r.itOnly) {
+      // Phòng IT tách khỏi Khối Kỹ thuật: drop every non-IT permission, add the IT ones the role is missing
+      await db.query("DELETE FROM core.role_permission WHERE role_id = $1 AND NOT (permission_code = ANY($2::text[]))", [roleId, perms]);
       await db.query(
         "INSERT INTO core.role_permission (role_id, permission_code) SELECT $1, unnest($2::text[]) ON CONFLICT DO NOTHING",
         [roleId, perms]

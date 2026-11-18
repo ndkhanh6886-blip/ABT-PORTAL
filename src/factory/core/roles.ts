@@ -345,7 +345,8 @@ export async function setUserCustomPermission(
       if (g.module_key === "QA" && isQaCrossDeptPermission(c)) return true;
       if ((g.module_key === "WH" || g.module_key === "PURCHASE") && isWhCrossDeptPermission(c)) return true;
       if (ownerMod) {
-        return g.module_key === ownerMod || (mod === "rd" && (g.module_key === "DEVICE" || g.module_key === "IT"));
+        // KTCN works on R&D projects; Phòng IT uses its own it.* permissions, never rd.*
+        return g.module_key === ownerMod || (mod === "rd" && g.module_key === "DEVICE");
       }
       return false;
     });

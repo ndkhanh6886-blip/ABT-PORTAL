@@ -120,11 +120,46 @@ export function isWhCrossDeptPermission(permission: string): boolean {
   return WH_CROSS_DEPT_PERMS.has(permission);
 }
 
+/**
+ * Phòng IT (Khối Kinh doanh) is separate from Khối Kỹ thuật. Its software projects / releases live in the shared
+ * project tables, so the code asks for `rd.*` permissions; on a record owned by P-IT (or a unit under it) that
+ * check is answered with the `it.*` permission below instead. An `rd.*` permission without an IT counterpart
+ * (ideas, samples, ELN, accepting a transfer…) is never granted on a P-IT record. So R&D / KTCN roles never open
+ * an IT record, and IT roles (which hold only `it.*`) never open an R&D / KTCN one.
+ */
+export const IT_PERMISSION_FOR: Readonly<Record<string, string>> = {
+  "rd.view": "it.view",
+  "rd.project.manage": "it.project.manage",
+  "rd.project.edit": "it.project.edit",
+  "rd.project.delete": "it.project.delete",
+  "rd.gate.review": "it.gate.review",
+  "rd.transfer.manage": "it.transfer.manage",
+  "rd.software.release": "it.software.release",
+};
+
+/** True when the org unit is Phòng IT (module IT) or sits under it. */
+export async function isItOrgUnit(tx: Tx, orgUnitId: string): Promise<boolean> {
+  const res = await tx.query(
+    `WITH RECURSIVE ancestors AS (
+       SELECT id, parent_id, module_key FROM core.org_unit WHERE id = $1::uuid
+       UNION ALL
+       SELECT o.id, o.parent_id, o.module_key FROM core.org_unit o JOIN ancestors a ON o.id = a.parent_id
+     )
+     SELECT 1 FROM ancestors WHERE module_key = 'IT' LIMIT 1`,
+    [orgUnitId]
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
 export async function hasFactoryPermission(tx: Tx, actor: AuthzActor, permission: string, orgUnitId?: string | null): Promise<boolean> {
   const def = registry.get(permission);
   if (!def) throw new Error(`Quyền chưa được khai báo: ${permission}`);
   if (def.systemOnly || actor.isSystem) return Boolean(def.systemOnly && actor.isSystem);
   if (actor.isRootAdmin) return true;
+  if (orgUnitId && permission.startsWith("rd.") && (await isItOrgUnit(tx, orgUnitId))) {
+    const itPermission = IT_PERMISSION_FOR[permission];
+    return itPermission ? hasFactoryPermission(tx, actor, itPermission, orgUnitId) : false;
+  }
   if (def.bootstrapAdmin && actor.isPortalAdmin) {
     const excl = await tx.query(
       "SELECT 1 FROM core.user_permission_exclusion WHERE user_id = $1 AND permission_code = $2 LIMIT 1",
@@ -183,9 +218,26 @@ export async function authorize(tx: Tx, actor: AuthzActor, permission: string, o
 export async function authorizeAnywhere(tx: Tx, actor: AuthzActor, permission: string): Promise<void> {
   const def = registry.get(permission);
   if (!def) throw new Error(`Quyền chưa được khai báo: ${permission}`);
-  if (await hasFactoryPermission(tx, actor, permission)) return;
+  if (await holdsAnywhere(tx, actor, permission)) return;
+  throw forbidden(`Bạn chưa có quyền "${def.description}". Liên hệ trưởng phòng hoặc quản trị viên để được cấp.`);
+}
+
+/**
+ * Like `authorizeAnywhere`, for the shared project screens that both Khối Kỹ thuật (`rd.*`) and Phòng IT (`it.*`)
+ * open: passes when the user holds any of the permissions somewhere. The caller must still filter each record by its
+ * owner unit (`hasFactoryPermission(…, "rd.view", owner)`), which keeps IT and R&D / KTCN records apart.
+ */
+export async function authorizeAnywhereOneOf(tx: Tx, actor: AuthzActor, permissions: string[]): Promise<void> {
+  for (const p of permissions) {
+    if (!registry.get(p)) throw new Error(`Quyền chưa được khai báo: ${p}`);
+    if (await holdsAnywhere(tx, actor, p)) return;
+  }
+  throw forbidden(`Bạn chưa có quyền "${registry.get(permissions[0])?.description ?? permissions[0]}". Liên hệ trưởng phòng hoặc quản trị viên để được cấp.`);
+}
+
+async function holdsAnywhere(tx: Tx, actor: AuthzActor, permission: string): Promise<boolean> {
+  if (await hasFactoryPermission(tx, actor, permission)) return true;
   const units = (await tx.query("SELECT DISTINCT scope_org_unit_id AS id FROM core.user_role WHERE user_id = $1 AND revoked_at IS NULL AND scope_org_unit_id IS NOT NULL", [actor.userId])).rows;
-  for (const u of units) if (await hasFactoryPermission(tx, actor, permission, u.id)) return;
   const delegated = (
     await tx.query(
       `SELECT DISTINCT ur.scope_org_unit_id AS id FROM core.delegation d JOIN core.user_role ur ON ur.user_id = d.from_user_id AND ur.role_id = d.role_id
@@ -193,6 +245,11 @@ export async function authorizeAnywhere(tx: Tx, actor: AuthzActor, permission: s
       [actor.userId]
     )
   ).rows;
-  for (const u of delegated) if (await hasFactoryPermission(tx, actor, permission, u.id)) return;
-  throw forbidden(`Bạn chưa có quyền "${def.description}". Liên hệ trưởng phòng hoặc quản trị viên để được cấp.`);
+  for (const u of [...units, ...delegated]) {
+    // An IT-scoped role answers rd.* through it.* (see IT_PERMISSION_FOR): it must not count as holding the
+    // R&D permission "somewhere", or an IT user would pass every R&D screen guarded by authorizeAnywhere.
+    if (permission.startsWith("rd.") && (await isItOrgUnit(tx, u.id))) continue;
+    if (await hasFactoryPermission(tx, actor, permission, u.id)) return true;
+  }
+  return false;
 }
