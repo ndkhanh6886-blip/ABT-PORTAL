@@ -1627,8 +1627,19 @@ export const EnterpriseChatModule: React.FC = () => {
   }, [channels, searchChannelQuery]);
 
   const projectAndGroupChannels = useMemo(() => {
-    return channels.filter(c => (c.channel_type === "PROJECT" || c.channel_type === "GROUP") && c.name.toLowerCase().includes(searchChannelQuery.toLowerCase()));
-  }, [channels, searchChannelQuery]);
+    return channels
+      .filter(c => (c.channel_type === "PROJECT" || c.channel_type === "GROUP") && c.name.toLowerCase().includes(searchChannelQuery.toLowerCase()))
+      .sort((a, b) => {
+        const uA = getChannelUnreadCount(a);
+        const uB = getChannelUnreadCount(b);
+        if (uA > 0 && uB === 0) return -1;
+        if (uB > 0 && uA === 0) return 1;
+        const tA = new Date(a.last_message_time || a.last_message_at || 0).getTime() || 0;
+        const tB = new Date(b.last_message_time || b.last_message_at || 0).getTime() || 0;
+        if (tB !== tA) return tB - tA;
+        return b.id - a.id;
+      });
+  }, [channels, searchChannelQuery, getChannelUnreadCount]);
 
   const directChannels = useMemo(() => {
     return channels.filter(c => {
@@ -1745,6 +1756,14 @@ export const EnterpriseChatModule: React.FC = () => {
   const totalUnreadDMs = useMemo(() => {
     return sidebarColleagues.reduce((sum, item) => sum + (item.unreadCount || 0), 0);
   }, [sidebarColleagues]);
+
+  const totalUnreadGroups = useMemo(() => {
+    return projectAndGroupChannels.reduce((sum, c) => sum + getChannelUnreadCount(c), 0);
+  }, [projectAndGroupChannels, getChannelUnreadCount]);
+
+  const totalUnreadDeptChannels = useMemo(() => {
+    return departmentChannels.reduce((sum, c) => sum + getChannelUnreadCount(c), 0);
+  }, [departmentChannels, getChannelUnreadCount]);
 
   // All channels (Department, Group, Project, Direct) that currently have unread messages
   const unreadChannelsList = useMemo(() => {
@@ -2012,7 +2031,14 @@ export const EnterpriseChatModule: React.FC = () => {
           {/* SECTION A: NHÓM PHỐI HỢP & DỰ ÁN */}
           <div>
             <div className="px-2 py-1 flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              <span>Nhóm Phối Hợp &amp; Dự Án ({projectAndGroupChannels.length})</span>
+              <div className="flex items-center gap-1.5">
+                <span>Nhóm Phối Hợp &amp; Dự Án ({projectAndGroupChannels.length})</span>
+                {totalUnreadGroups > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full font-bold bg-rose-500 text-white shadow-xs normal-case" title={`${totalUnreadGroups} tin nhắn mới trong nhóm`}>
+                    {totalUnreadGroups} mới
+                  </span>
+                )}
+              </div>
               <button
                 type="button"
                 onClick={() => {
@@ -2030,6 +2056,7 @@ export const EnterpriseChatModule: React.FC = () => {
                 const isActive = activeChannel?.id === c.id;
                 const isSplitActive = splitChannel?.id === c.id;
                 const isGroup = c.channel_type === "GROUP";
+                const unreadCount = getChannelUnreadCount(c);
                 return (
                   <div key={c.id} className="group/item flex items-center gap-1">
                     <button
@@ -2040,27 +2067,36 @@ export const EnterpriseChatModule: React.FC = () => {
                           setMessages([]);
                           setActiveChannel(c);
                         }
-                        markChannelAsRead(c.id, Number(c.message_count) || 0);
+                        markChannelAsRead(c.id, Number((c as any).last_message_id) || 0);
                       }}
                       className={`flex-1 flex items-center justify-between px-2.5 py-1.5 rounded-xl text-left font-semibold transition-all cursor-pointer ${
                         isActive
                           ? "bg-indigo-600 text-white shadow-xs"
                           : isSplitActive
                           ? "bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-700"
+                          : unreadCount > 0
+                          ? "bg-rose-50/95 hover:bg-rose-100/90 border-2 border-rose-400 dark:bg-rose-950/50 dark:hover:bg-rose-900/60 dark:border-rose-600 text-slate-900 dark:text-white shadow-xs"
                           : "bg-slate-100/90 hover:bg-slate-200/80 border border-slate-200/80 text-slate-800 dark:bg-slate-900/40 dark:hover:bg-slate-800/60 dark:border-slate-800 dark:text-slate-300"
                       }`}
                     >
-                      <div className="flex items-center gap-2 truncate">
-                        <span className="text-xs">{isGroup ? "👥" : "🎯"}</span>
-                        <span className="truncate">{c.name}</span>
+                      <div className="truncate min-w-0 flex-1 pr-1.5">
+                        <div className="flex items-center gap-2 truncate">
+                          <span className="text-xs shrink-0">{isGroup ? "👥" : "🎯"}</span>
+                          <span className={`truncate ${unreadCount > 0 && !isActive ? "font-extrabold text-rose-700 dark:text-rose-200" : ""}`}>{c.name}</span>
+                        </div>
+                        {unreadCount > 0 && !isActive && c.last_message_content && (
+                          <div className="text-[10px] text-rose-600 dark:text-rose-300 truncate mt-0.5 font-medium">
+                            {c.last_message_sender ? `${c.last_message_sender}: ` : ""}{c.last_message_content}
+                          </div>
+                        )}
                       </div>
                       {isSplitActive ? (
-                        <span className="text-[9px] px-1.5 py-0.2 rounded-full font-bold bg-purple-600 text-white">
+                        <span className="text-[9px] px-1.5 py-0.2 rounded-full font-bold bg-purple-600 text-white shrink-0">
                           Song song
                         </span>
-                      ) : !isActive && getChannelUnreadCount(c) > 0 ? (
-                        <span className="text-[10px] px-1.5 py-0.2 rounded-full font-bold bg-rose-500 text-white shadow-xs">
-                          {getChannelUnreadCount(c)}
+                      ) : !isActive && unreadCount > 0 ? (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full font-extrabold bg-rose-600 text-white shadow-xs shrink-0 animate-pulse">
+                          +{unreadCount} mới
                         </span>
                       ) : null}
                     </button>
@@ -2093,8 +2129,8 @@ export const EnterpriseChatModule: React.FC = () => {
                 <span>Tin Nhắn Riêng (1-1)</span>
               </div>
               {totalUnreadDMs > 0 && (
-                <span className="text-[10px] px-1.5 py-0.2 rounded-full font-bold bg-rose-500 text-white shadow-xs" title={`${totalUnreadDMs} tin nhắn mới chưa đọc`}>
-                  {totalUnreadDMs}
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full font-bold bg-rose-500 text-white shadow-xs normal-case" title={`${totalUnreadDMs} tin nhắn mới chưa đọc`}>
+                  {totalUnreadDMs} mới
                 </span>
               )}
             </div>
@@ -2125,7 +2161,7 @@ export const EnterpriseChatModule: React.FC = () => {
                             setMessages([]);
                             setActiveChannel(item.channel);
                           }
-                          markChannelAsRead(item.channel.id, Number(item.channel.message_count) || 0);
+                          markChannelAsRead(item.channel.id, Number((item.channel as any).last_message_id) || 0);
                         } else {
                           handleOpenDirectMessage(colleagueName);
                         }
@@ -2135,6 +2171,8 @@ export const EnterpriseChatModule: React.FC = () => {
                           ? "bg-indigo-600 text-white shadow-xs"
                           : isSplitActive
                           ? "bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-700"
+                          : unreadCount > 0
+                          ? "bg-rose-50/95 hover:bg-rose-100/90 border-2 border-rose-400 dark:bg-rose-950/50 dark:hover:bg-rose-900/60 dark:border-rose-600 text-slate-900 dark:text-white shadow-xs"
                           : colleaguePalette.sidebarCard
                       }`}
                       title={`Nhấp để chat riêng với ${colleagueName}`}
@@ -2156,30 +2194,36 @@ export const EnterpriseChatModule: React.FC = () => {
                           />
                         </div>
                         <div className="truncate min-w-0">
-                          <div className="truncate font-semibold text-xs leading-tight">{colleagueName}</div>
-                          <div className="flex items-center gap-1 text-[10px] mt-0.5 leading-none">
-                            {presence.status === "online" ? (
-                              <span className={`font-bold flex items-center gap-1 ${isActive ? "text-emerald-200" : "text-emerald-600 dark:text-emerald-400"}`}>
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
-                                Online
-                              </span>
-                            ) : presence.status === "away" ? (
-                              <span className={isActive ? "text-amber-200" : "text-amber-600 dark:text-amber-400 font-medium"}>
-                                Vắng mặt
-                              </span>
-                            ) : (
-                              <span className={`truncate ${isActive ? "text-indigo-200" : "text-slate-600 dark:text-slate-400 font-medium"}`}>
-                                {item.colleague.department || "Ngoại tuyến"}
-                              </span>
-                            )}
-                          </div>
+                          <div className={`truncate text-xs leading-tight ${unreadCount > 0 && !isActive ? "font-extrabold text-rose-700 dark:text-rose-200" : "font-semibold"}`}>{colleagueName}</div>
+                          {unreadCount > 0 && !isActive && item.channel?.last_message_content ? (
+                            <div className="text-[10px] text-rose-600 dark:text-rose-300 truncate mt-0.5 font-medium">
+                              💬 {item.channel.last_message_content}
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1 text-[10px] mt-0.5 leading-none">
+                              {presence.status === "online" ? (
+                                <span className={`font-bold flex items-center gap-1 ${isActive ? "text-emerald-200" : "text-emerald-600 dark:text-emerald-400"}`}>
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+                                  Online
+                                </span>
+                              ) : presence.status === "away" ? (
+                                <span className={isActive ? "text-amber-200" : "text-amber-600 dark:text-amber-400 font-medium"}>
+                                  Vắng mặt
+                                </span>
+                              ) : (
+                                <span className={`truncate ${isActive ? "text-indigo-200" : "text-slate-600 dark:text-slate-400 font-medium"}`}>
+                                  {item.colleague.department || "Ngoại tuyến"}
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
 
                       <div className="flex items-center gap-1.5 shrink-0">
-                        {unreadCount > 0 ? (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded-full font-bold bg-rose-500 text-white shadow-xs">
-                            {unreadCount}
+                        {unreadCount > 0 && !isActive ? (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-extrabold bg-rose-600 text-white shadow-xs animate-pulse">
+                            +{unreadCount} mới
                           </span>
                         ) : null}
                       </div>
@@ -2215,10 +2259,16 @@ export const EnterpriseChatModule: React.FC = () => {
           <div>
             <div className="px-2 py-1 flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               <span>Kênh Phòng Ban ({departmentChannels.length})</span>
+              {totalUnreadDeptChannels > 0 && (
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full font-bold bg-rose-500 text-white shadow-xs normal-case" title={`${totalUnreadDeptChannels} tin nhắn mới trong kênh phòng ban`}>
+                  {totalUnreadDeptChannels} mới
+                </span>
+              )}
             </div>
             <div className="space-y-1 mt-1">
               {departmentChannels.map((c) => {
                 const isActive = activeChannel?.id === c.id;
+                const unreadCount = getChannelUnreadCount(c);
                 return (
                   <div key={c.id} className="group/ch flex items-center gap-1">
                     <button
@@ -2229,21 +2279,30 @@ export const EnterpriseChatModule: React.FC = () => {
                           setMessages([]);
                           setActiveChannel(c);
                         }
-                        markChannelAsRead(c.id, Number(c.message_count) || 0);
+                        markChannelAsRead(c.id, Number((c as any).last_message_id) || 0);
                       }}
                       className={`flex-1 flex items-center justify-between px-2.5 py-1.5 rounded-xl text-left font-semibold transition-all cursor-pointer ${
                         isActive
                           ? "bg-indigo-600 text-white shadow-xs"
+                          : unreadCount > 0
+                          ? "bg-rose-50/95 hover:bg-rose-100/90 border-2 border-rose-400 dark:bg-rose-950/50 dark:hover:bg-rose-900/60 dark:border-rose-600 text-slate-900 dark:text-white shadow-xs"
                           : "bg-slate-100/90 hover:bg-slate-200/80 border border-slate-200/80 text-slate-800 dark:bg-slate-900/40 dark:hover:bg-slate-800/60 dark:border-slate-800 dark:text-slate-300"
                       }`}
                     >
-                      <div className="flex items-center gap-2 truncate">
-                        <Hash className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-white" : "text-slate-400"}`} />
-                        <span className="truncate">{c.name}</span>
+                      <div className="truncate min-w-0 flex-1 pr-1.5">
+                        <div className="flex items-center gap-2 truncate">
+                          <Hash className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-white" : unreadCount > 0 ? "text-rose-600 dark:text-rose-400" : "text-slate-400"}`} />
+                          <span className={`truncate ${unreadCount > 0 && !isActive ? "font-extrabold text-rose-700 dark:text-rose-200" : ""}`}>{c.name}</span>
+                        </div>
+                        {unreadCount > 0 && !isActive && c.last_message_content && (
+                          <div className="text-[10px] text-rose-600 dark:text-rose-300 truncate mt-0.5 font-medium">
+                            {c.last_message_sender ? `${c.last_message_sender}: ` : ""}{c.last_message_content}
+                          </div>
+                        )}
                       </div>
-                      {!isActive && getChannelUnreadCount(c) > 0 ? (
-                        <span className="text-[10px] px-1.5 py-0.2 rounded-full font-bold bg-rose-500 text-white shadow-xs">
-                          {getChannelUnreadCount(c)}
+                      {!isActive && unreadCount > 0 ? (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full font-extrabold bg-rose-600 text-white shadow-xs shrink-0 animate-pulse">
+                          +{unreadCount} mới
                         </span>
                       ) : null}
                     </button>

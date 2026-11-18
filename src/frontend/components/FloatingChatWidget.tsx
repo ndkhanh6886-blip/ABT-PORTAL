@@ -374,15 +374,23 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
     return `#${c.name}`;
   };
 
-  const filteredChannels = channels.filter(c => {
-    if (filterType === "DIRECT" && c.channel_type !== "DIRECT") return false;
-    if (filterType === "GROUP" && (c.channel_type === "DIRECT" || c.channel_type === "CHANNEL")) return false;
-    if (quickSearch.trim()) {
-      const name = getChannelDisplayName(c).toLowerCase();
-      return name.includes(quickSearch.toLowerCase());
-    }
-    return true;
-  });
+  const filteredChannels = [...channels]
+    .filter(c => {
+      if (filterType === "DIRECT" && c.channel_type !== "DIRECT") return false;
+      if (filterType === "GROUP" && (c.channel_type === "DIRECT" || c.channel_type === "CHANNEL")) return false;
+      if (quickSearch.trim()) {
+        const name = getChannelDisplayName(c).toLowerCase();
+        return name.includes(quickSearch.toLowerCase());
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      const uA = getChannelUnreadCount(a);
+      const uB = getChannelUnreadCount(b);
+      if (uA > 0 && uB === 0) return -1;
+      if (uB > 0 && uA === 0) return 1;
+      return 0;
+    });
 
   return (
     <div className="fixed bottom-20 right-3.5 lg:bottom-5 lg:right-5 z-40">
@@ -547,7 +555,16 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
               {/* Channel Switcher Tabs in Compact mode */}
               {!isExpanded && (
                 <div className="px-2 py-1.5 bg-slate-50 dark:bg-slate-950/60 border-b border-slate-200 dark:border-slate-800 flex gap-1 overflow-x-auto text-[11px] shrink-0">
-                  {channels.slice(0, 6).map(c => {
+                  {[...channels]
+                    .sort((a, b) => {
+                      const uA = getChannelUnreadCount(a);
+                      const uB = getChannelUnreadCount(b);
+                      if (uA > 0 && uB === 0) return -1;
+                      if (uB > 0 && uA === 0) return 1;
+                      return 0;
+                    })
+                    .slice(0, 8)
+                    .map(c => {
                     const chUnread = getChannelUnreadCount(c);
                     return (
                       <button
