@@ -1,7 +1,7 @@
 import { z } from "zod/v3";
 import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
-import { authorize, authorizeAnywhere, hasFactoryPermission, type AuthzActor } from "../core/authz";
+import { authorize, authorizeAnywhere, hasFactoryPermission, permissionPerUnit, type AuthzActor } from "../core/authz";
 import { conflict, invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { insertRecord, parseInput } from "../core/records";
@@ -349,11 +349,12 @@ export async function listWorkPlans(tx: Tx, actor: AuthzActor, orgUnitId?: strin
     )
   ).rows;
   const visible = [];
+  const canViewRdUnit = permissionPerUnit(tx, actor, "rd.view");
   for (const r of rows) {
     const canSee =
       r.user_id === actor.userId ||
       (await hasFactoryPermission(tx, actor, "work.plan.approve", r.org_unit_id)) ||
-      (await hasFactoryPermission(tx, actor, "rd.view", r.org_unit_id));
+      (await canViewRdUnit(r.org_unit_id));
     if (canSee) visible.push(r);
   }
   return visible;
