@@ -380,10 +380,10 @@ export const EXCEL_TEMPLATES: ExcelTemplateDef[] = [
   },
   {
     key: "ROUTING_SOP",
-    badge: "Quy trình Công đoạn & SOP",
-    title: "6. Nhập Quy trình Công đoạn Sản xuất (Routing) & Hướng dẫn Thao tác SOP",
-    subtitle: "Thiết lập các bước công đoạn sản xuất chuẩn, thời gian định mức và điểm kiểm soát IPQC xen kẽ",
-    depts: ["ALL", "P-KIT", "P-OLIGO", "P-DEVICE"],
+    badge: "Quy trình Công đoạn Kit (eBR)",
+    title: "6. Nhập Quy trình Công đoạn Sản xuất Kit (Routing) & Hướng dẫn Thao tác SOP",
+    subtitle: "Dành cho Phòng Sản xuất Kit: Thiết lập các bước công đoạn sản xuất chuẩn (eBR), thời gian định mức và điểm kiểm soát IPQC xen kẽ",
+    depts: ["ALL", "P-KIT"],
     defaultDept: "P-KIT",
     fields: [
       { key: "routing_code", label: "Mã quy trình", aliases: ["Mã QTSX", "Mã SOP", "Mã quy trình SX"], required: true, example: "RT-KIT-DEN-V1", description: "Mã quy trình công đoạn (Các dòng cùng mã sẽ gộp thành các bước của 1 quy trình)" },
