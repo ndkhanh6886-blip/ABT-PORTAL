@@ -212,6 +212,11 @@ function mapItemType(raw: string): string {
   return "RAW_MATERIAL";
 }
 
+const CONSUMABLE_FIELD_TYPES = ["VAT TU", "VATTU", "VAT TU TIEU HAO", "CONSUMABLE", "MATERIAL", "NVL", "VT"];
+function isConsumableFieldType(rawType: string): boolean {
+  return CONSUMABLE_FIELD_TYPES.includes(stripViAccents(rawType).toUpperCase().trim());
+}
+
 function mapMethodFieldType(rawType: string, hasReagentCode: boolean): StepField["type"] {
   const t = stripViAccents(rawType).toUpperCase().trim();
   if (!t && hasReagentCode) return "REAGENT";
@@ -219,6 +224,8 @@ function mapMethodFieldType(rawType: string, hasReagentCode: boolean): StepField
   if (["TEXT", "CHU", "STRING", "NOTE", "GHI CHU"].includes(t)) return "TEXT";
   if (["EQUIPMENT", "THIET BI", "MAY", "ASSET"].includes(t)) return "EQUIPMENT";
   if (["REAGENT", "HOA CHAT", "CHEMICAL", "DUNG DICH", "DUNG MOI"].includes(t)) return "REAGENT";
+  // Vật tư tiêu hao (tube, đầu côn, màng lọc, cột desalt dùng 1 lần...): trừ kho giống hóa chất
+  if (isConsumableFieldType(t)) return "REAGENT";
   if (["COLUMN", "COT", "HPLC COLUMN", "COT HPLC"].includes(t)) return "COLUMN";
   return hasReagentCode ? "REAGENT" : "NUMBER";
 }
@@ -1889,7 +1896,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
               {
                 code: rawItemCode,
                 name: label || rawItemCode,
-                item_type: "REAGENT",
+                item_type: isConsumableFieldType(normStr(row.field_type || row["Loại thông số"] || row["Kiểu"])) ? "CONSUMABLE" : "REAGENT",
                 base_uom: rawUom,
               },
               uomCache

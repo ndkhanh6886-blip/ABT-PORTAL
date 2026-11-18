@@ -540,7 +540,7 @@ export const EXCEL_TEMPLATES: ExcelTemplateDef[] = [
       { key: "kind", label: "Loại bước", aliases: ["Vai trò"], example: "STANDARD", description: "STANDARD (Thao tác chuẩn) | QUANTIFICATION (Đo OD định lượng)" },
       { key: "target_hours", label: "Định mức giờ", aliases: ["Thời gian chuẩn (giờ)"], example: "1.0", description: "Thời gian chuẩn dự kiến (giờ)" },
       { key: "field_label", label: "Tên thông số / Hóa chất", aliases: ["Thông số", "Hóa chất / Thông số", "Tên thông số"], example: "Dung dịch Acetonitrile", description: "Tên thông số cần thu thập hoặc tên hóa chất tiêu hao" },
-      { key: "field_type", label: "Loại thông số", aliases: ["Kiểu"], example: "REAGENT", description: "REAGENT (Hóa chất kho) | EQUIPMENT (Thiết bị) | NUMBER (Số) | TEXT (Chữ) | COLUMN (Cột HPLC)" },
+      { key: "field_type", label: "Loại thông số", aliases: ["Kiểu"], example: "REAGENT", description: "REAGENT (Hóa chất kho) | VAT TU (Vật tư tiêu hao kho: tube, đầu côn, màng lọc… — cần Mã vật tư, trừ kho như hóa chất) | EQUIPMENT (Thiết bị) | NUMBER (Số) | TEXT (Chữ) | COLUMN (Cột HPLC)" },
       { key: "item_code", label: "Mã hóa chất", aliases: ["reagent_code", "Mã vật tư"], example: "LC9", description: "Bắt buộc nếu Loại thông số = REAGENT; khớp với Mã vật tư trong Kho" },
       { key: "default_qty", label: "Định mức / mẫu", aliases: ["Định mức"], example: "0.5", description: "Định mức tiêu hao gợi ý cho mỗi mẫu (nếu là Hóa chất)" },
       { key: "uom", label: "Đơn vị", aliases: ["unit", "Đơn vị tính"], example: "mL", description: "Đơn vị đo hoặc đơn vị trừ kho (mL, uL, g, °C, phút, OD)" },
