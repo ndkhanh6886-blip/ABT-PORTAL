@@ -249,22 +249,61 @@ export interface ExplodedBomLine {
  * để tự động suy ra Dạng cung cấp (`supply_form`) và Mã nhận diện Tube (`tube_code`) ngay khi người dùng gõ Số Lô.
  */
 const ABT_KNOWN_TUBE_CODES = new Set(["T02", "T01", "S02", "S01", "LQ02", "MIC", "R01", "LP02"]);
+const KNOWN_EXTRACTION_ACCESSORY_VARIANTS = new Set(["B32", "B96", "T32", "T48", "T96", "R32", "A", "T6", "KF96"]);
 
-function parseLotCodeToSupplyFormAndTube(lotCode: string | null | undefined): {
+export function formatDemoLotSuffix(demoSpec?: string | null): string {
+  const s = String(demoSpec ?? "").trim();
+  if (!s) return "DM25";
+  if (/^DEMO$/i.test(s)) return "DEMO";
+  if (/^DM(\d*)$/i.test(s)) return s.toUpperCase();
+  if (/1\s*\/\s*2/i.test(s)) return "DM";
+  const m = s.match(/(\d+)\s*(?:test|rxn|phản ứng|pu|t\b)/i) ?? s.match(/^(\d+)$/);
+  if (m && Number(m[1]) > 0) return `DM${m[1]}`;
+  return "DM25";
+}
+
+export function parseDemoLotToken(token?: string | null): {
+  isDemo: boolean;
+  demoToken: string | null;
+  demoSpec: string | null;
+} {
+  const raw = String(token ?? "").trim().toUpperCase();
+  if (!raw) return { isDemo: false, demoToken: null, demoSpec: null };
+  if (raw === "DEMO") return { isDemo: true, demoToken: "DEMO", demoSpec: "25 test" };
+  if (raw === "DM") return { isDemo: true, demoToken: "DM", demoSpec: "1/2 bộ" };
+  const m = raw.match(/^DM(\d+)$/);
+  if (m && Number(m[1]) > 0) {
+    return { isDemo: true, demoToken: raw, demoSpec: `${m[1]} test` };
+  }
+  return { isDemo: false, demoToken: null, demoSpec: null };
+}
+
+export function parseLotCodeToSupplyFormAndTube(lotCode: string | null | undefined): {
   baseLot: string;
   supplyForm: "NO_SPLIT_NO_IC" | "NO_SPLIT_WITH_IC" | "SPLIT_NO_IC" | "SPLIT_WITH_IC" | null;
   tubeCode: string | null;
+  isDemo: boolean;
+  demoToken: string | null;
+  demoSpec: string | null;
 } {
   const raw = String(lotCode || "").trim().toUpperCase();
   if (!raw || !raw.includes(".")) {
-    return { baseLot: raw, supplyForm: null, tubeCode: null };
+    return { baseLot: raw, supplyForm: null, tubeCode: null, isDemo: false, demoToken: null, demoSpec: null };
   }
   const tokens = raw.split(".").filter(Boolean);
   const baseLot = tokens[0] || raw;
-  const rest = tokens.slice(1);
+  let rest = tokens.slice(1);
+
+  // Tách hậu tố Demo (.DM25 / .DM24 / .DM10 / .DM / .DEMO) ở cuối nếu có
+  const demoInfo = parseDemoLotToken(rest[rest.length - 1]);
+  if (demoInfo.isDemo) {
+    rest = rest.slice(0, -1);
+  }
+
   const last = rest[rest.length - 1] || "";
   const tubeCode = ABT_KNOWN_TUBE_CODES.has(last) ? last : null;
-  const mid = (tubeCode ? rest.slice(0, -1) : rest).join(".");
+  const isAccVar = !tubeCode && KNOWN_EXTRACTION_ACCESSORY_VARIANTS.has(last);
+  const mid = (tubeCode || isAccVar ? rest.slice(0, -1) : rest).join(".");
 
   let supplyForm: "NO_SPLIT_NO_IC" | "NO_SPLIT_WITH_IC" | "SPLIT_NO_IC" | "SPLIT_WITH_IC" | null = null;
   if (mid === "C.IC" || mid === "IC.C") supplyForm = "SPLIT_WITH_IC";
@@ -272,7 +311,14 @@ function parseLotCodeToSupplyFormAndTube(lotCode: string | null | undefined): {
   else if (mid === "IC") supplyForm = "NO_SPLIT_WITH_IC";
   else if (mid === "" && tubeCode) supplyForm = "NO_SPLIT_NO_IC";
 
-  return { baseLot, supplyForm, tubeCode };
+  return {
+    baseLot,
+    supplyForm,
+    tubeCode,
+    isDemo: demoInfo.isDemo,
+    demoToken: demoInfo.demoToken,
+    demoSpec: demoInfo.demoSpec,
+  };
 }
 
 export async function explodeKitBom(
@@ -324,11 +370,13 @@ export async function explodeKitBom(
       bomVariant === "C.IC" ||
       prod.code.toUpperCase().includes(".IC"));
 
-  const isDemo = Boolean(order.is_demo) || order.order_mode === "DEMO";
+  const isDemo = Boolean(order.is_demo) || order.order_mode === "DEMO" || parsedFromLot.isDemo;
   const targetMixTests = isAliquoted ? 64 : 75;
   const targetPcrTubes = isAliquoted ? 64 : 80;
   const baseTests = Number((order as any).mix_tests_per_kit || bom.tests_per_kit || (isPcrKit ? targetMixTests : 50));
-  const demoRatio = isDemo ? parseDemoRatio(order.demo_specification, baseTests) : 1;
+  const demoRatio = isDemo
+    ? parseDemoRatio(order.demo_specification || parsedFromLot.demoSpec || "25 test", baseTests)
+    : 1;
 
   const plannedQty = Number(order.planned_qty) || 0;
   const retQty = order.no_retention ? 0 : Number(order.qc_retention_qty || 0);
@@ -2100,7 +2148,32 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
       (d.tube_code !== undefined ? (d.tube_code ? d.tube_code.trim().toUpperCase() : null) : "T02")
     : null;
 
+  const isAliquoted =
+    isPcrKit &&
+    (resolvedSupplyForm === "SPLIT_NO_IC" ||
+      resolvedSupplyForm === "SPLIT_WITH_IC" ||
+      Boolean(d.is_aliquoted) ||
+      d.order_mode === "ALIQUOTED" ||
+      product.code.toUpperCase().includes(".D.IC"));
+  const isDemo = Boolean(d.is_demo) || d.order_mode === "DEMO" || parsedTypedLot.isDemo;
+  const effectiveDemoSpec = d.demo_specification ?? parsedTypedLot.demoSpec ?? (isDemo ? "25 test" : null);
+  const orderMode = isDemo ? "DEMO" : isAliquoted ? "ALIQUOTED" : d.order_mode ?? "STANDARD";
+  const mixTestsPerKit = isPcrKit ? (isAliquoted ? 64 : 75) : Number(bom.tests_per_kit || 50);
+  const pcrTubesPerKit = isPcrKit ? (isAliquoted ? 64 : 80) : 0;
+  const bomVariantCode = isPcrKit ? String(bom.variant_code || targetVariantCode || "BASE") : "BASE";
+
   let customLotCode = d.lot_code?.trim() || undefined;
+  // Nếu người dùng gõ mã lô có sẵn hậu tố Demo ở cuối (VD: B2611001.DM25), tách tạm hậu tố Demo để gắn đúng mã Tube / Mã phụ ở giữa trước
+  let typedDemoToken: string | null = null;
+  if (customLotCode && customLotCode.includes(".")) {
+    const parts = customLotCode.split(".").filter(Boolean);
+    const trailingDemo = parseDemoLotToken(parts[parts.length - 1]);
+    if (trailingDemo.isDemo) {
+      typedDemoToken = trailingDemo.demoToken;
+      customLotCode = parts.slice(0, -1).join(".");
+    }
+  }
+
   // Nếu là Kit PCR và người dùng chỉ gõ mã lô gốc (VD: B2611001) mà chưa gõ hậu tố, tự động ghép hậu tố [.C][.IC].[Mã Tube]
   if (isPcrKit && customLotCode && !customLotCode.includes(".") && resolvedTubeCode) {
     const sf = String(resolvedSupplyForm || "").toUpperCase();
@@ -2115,19 +2188,6 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
     customLotCode = [customLotCode.toUpperCase(), infix, resolvedTubeCode].filter(Boolean).join(".");
   }
 
-  const isAliquoted =
-    isPcrKit &&
-    (resolvedSupplyForm === "SPLIT_NO_IC" ||
-      resolvedSupplyForm === "SPLIT_WITH_IC" ||
-      Boolean(d.is_aliquoted) ||
-      d.order_mode === "ALIQUOTED" ||
-      product.code.toUpperCase().includes(".D.IC"));
-  const isDemo = Boolean(d.is_demo) || d.order_mode === "DEMO";
-  const orderMode = isDemo ? "DEMO" : isAliquoted ? "ALIQUOTED" : d.order_mode ?? "STANDARD";
-  const mixTestsPerKit = isPcrKit ? (isAliquoted ? 64 : 75) : Number(bom.tests_per_kit || 50);
-  const pcrTubesPerKit = isPcrKit ? (isAliquoted ? 64 : 80) : 0;
-  const bomVariantCode = isPcrKit ? String(bom.variant_code || targetVariantCode || "BASE") : "BASE";
-
   if (isPcrKit && !customLotCode && resolvedTubeCode) {
     customLotCode = await generateAbtStructuredKitLotCode(tx, mfgDate, resolvedSupplyForm, resolvedTubeCode);
   }
@@ -2137,6 +2197,18 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
     if (variant) {
       if (!customLotCode) customLotCode = await generateAbtStructuredKitLotCode(tx, mfgDate, null, null);
       if (!customLotCode.toUpperCase().endsWith(`.${variant}`)) customLotCode = `${customLotCode.toUpperCase()}.${variant}`;
+    }
+  }
+  // Hàng Demo (Cách 1): gắn hậu tố .DM25 / .DM24 / .DM10 / .DM / .DEMO ở cuối Số Lô (VD: B2611001.T02.DM25, B2611001.B32.DM25, B2611001.DM25)
+  if (isDemo) {
+    if (!customLotCode) {
+      customLotCode = await generateAbtStructuredKitLotCode(tx, mfgDate, null, null);
+    }
+    const demoSuffix = typedDemoToken || formatDemoLotSuffix(effectiveDemoSpec);
+    const curSegments = customLotCode.toUpperCase().split(".").filter(Boolean);
+    const lastSeg = curSegments[curSegments.length - 1] || "";
+    if (!parseDemoLotToken(lastSeg).isDemo) {
+      customLotCode = `${customLotCode.toUpperCase()}.${demoSuffix}`;
     }
   }
   if (customLotCode) {
@@ -2173,7 +2245,7 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
     pcr_tubes_per_kit: pcrTubesPerKit,
     is_aliquoted: isAliquoted,
     is_demo: isDemo,
-    demo_specification: d.demo_specification ?? (isDemo ? "25 test" : null),
+    demo_specification: effectiveDemoSpec,
     qc_retention_qty: retQty,
     no_retention: d.no_retention,
     actual_ph: d.actual_ph ?? null,

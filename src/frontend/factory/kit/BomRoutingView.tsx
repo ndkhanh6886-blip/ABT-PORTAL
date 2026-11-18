@@ -211,6 +211,9 @@ export function BomRoutingView({
   const [showCreateRouting, setShowCreateRouting] = useState(false);
   const [showAddStep, setShowAddStep] = useState(false);
   const [showIssueOrder, setShowIssueOrder] = useState(false);
+  const [showMultiLevelRollup, setShowMultiLevelRollup] = useState(false);
+  const [rollupCalcQty, setRollupCalcQty] = useState("1");
+  const [rollupCalcMode, setRollupCalcMode] = useState<"STANDARD" | "ALIQUOTED">("STANDARD");
   const [issueOrderBusy, setIssueOrderBusy] = useState(false);
   const [createdOrderResult, setCreatedOrderResult] = useState<any | null>(null);
   const [issueOrderForm, setIssueOrderForm] = useState({
@@ -3061,6 +3064,17 @@ export function BomRoutingView({
                         : "📦 BOM Thành phẩm"}
                     </span>
                     <StatusBadge status={bomDetail.bom.status} />
+                    <button
+                      type="button"
+                      onClick={() => setShowMultiLevelRollup((v) => !v)}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border transition cursor-pointer flex items-center gap-1.5 ${
+                        showMultiLevelRollup
+                          ? "bg-amber-600 text-white border-amber-500 shadow"
+                          : "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/40 hover:bg-amber-500/25"
+                      }`}
+                    >
+                      🌳 {showMultiLevelRollup ? "Đóng Cây BOM Đa Cấp" : "Xem Cây BOM Đa Cấp & Tổng hợp Nguyên liệu Gốc (Kế toán / Giá thành)"}
+                    </button>
                     <Button
                       onClick={() => {
                         setCreatedOrderResult(null);
@@ -3326,6 +3340,8 @@ export function BomRoutingView({
                                       seqNo: 1,
                                       supplyForm: nextSf,
                                       tubeCode: issueOrderForm.tube_code,
+                                      isDemo: issueOrderForm.is_demo,
+                                      demoSpecification: issueOrderForm.demo_specification,
                                     });
                                     setIssueOrderForm({ ...issueOrderForm, supply_form: nextSf, lot_code: nextLot });
                                   }}
@@ -3352,6 +3368,8 @@ export function BomRoutingView({
                                       seqNo: 1,
                                       supplyForm: issueOrderForm.supply_form,
                                       tubeCode: nextTube,
+                                      isDemo: issueOrderForm.is_demo,
+                                      demoSpecification: issueOrderForm.demo_specification,
                                     });
                                     setIssueOrderForm({ ...issueOrderForm, tube_code: nextTube, lot_code: nextLot });
                                   }}
@@ -3365,6 +3383,60 @@ export function BomRoutingView({
                               </Field>
                             </div>
                           </>
+                        )}
+
+                        {!isSemi && (
+                          <div className="md:col-span-4 p-2.5 rounded-lg border border-amber-500/40 bg-amber-950/20 flex flex-wrap items-center justify-between gap-2">
+                            <label className="flex items-center gap-2 text-xs font-bold text-amber-300 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={issueOrderForm.is_demo}
+                                onChange={(e) => {
+                                  const nextDemo = e.target.checked;
+                                  const nextLot = buildAbtKitLotCode({
+                                    baseLot: issueOrderForm.lot_code,
+                                    mfgDate: issueOrderForm.mfg_date || vnToday(),
+                                    seqNo: 1,
+                                    isPcrKit: isPcrCat,
+                                    supplyForm: issueOrderForm.supply_form,
+                                    tubeCode: issueOrderForm.tube_code,
+                                    isDemo: nextDemo,
+                                    demoSpecification: issueOrderForm.demo_specification,
+                                  });
+                                  setIssueOrderForm({ ...issueOrderForm, is_demo: nextDemo, lot_code: nextLot });
+                                }}
+                              />
+                              🧪 Đóng gói Hàng Demo (Gắn hậu tố .DM25 / .DM10 / .DM vào cuối Số Lô để phân biệt với hàng chuẩn)
+                            </label>
+                            {issueOrderForm.is_demo && (
+                              <div className="flex items-center gap-2">
+                                <span className="text-[11px] text-amber-200 font-semibold">Quy cách Demo:</span>
+                                <select
+                                  className={`${inputClass} py-1 text-xs w-56`}
+                                  value={issueOrderForm.demo_specification}
+                                  onChange={(e) => {
+                                    const nextSpec = e.target.value;
+                                    const nextLot = buildAbtKitLotCode({
+                                      baseLot: issueOrderForm.lot_code,
+                                      mfgDate: issueOrderForm.mfg_date || vnToday(),
+                                      seqNo: 1,
+                                      isPcrKit: isPcrCat,
+                                      supplyForm: issueOrderForm.supply_form,
+                                      tubeCode: issueOrderForm.tube_code,
+                                      isDemo: true,
+                                      demoSpecification: nextSpec,
+                                    });
+                                    setIssueOrderForm({ ...issueOrderForm, demo_specification: nextSpec, lot_code: nextLot });
+                                  }}
+                                >
+                                  <option value="25 test">25 test (.DM25)</option>
+                                  <option value="24 test">24 test (.DM24)</option>
+                                  <option value="1/2 bộ">1/2 bộ (.DM)</option>
+                                  <option value="10 test">10 test (.DM10)</option>
+                                </select>
+                              </div>
+                            )}
+                          </div>
                         )}
 
                         <Field label="Mã số Lô (Lot Code — Tự sinh hoặc nhập tay)">
@@ -3684,6 +3756,335 @@ export function BomRoutingView({
                   )}
                 </div>
               </Card>
+
+              {showMultiLevelRollup && (() => {
+                const rollup = bomDetail.multi_level_rollup;
+                const treeNodes: any[] = rollup?.tree_nodes ?? [];
+                const rawSummary: any[] = rollup?.raw_material_summary ?? [];
+                const mult = Math.max(0.0001, Number(rollupCalcQty) || 1);
+                const isAliq = rollupCalcMode === "ALIQUOTED";
+                const baseUomLabel = bomDetail.bom.base_uom || "Kit";
+
+                const handleExportRollupExcel = () => {
+                  const csvEscape = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+                  const rows: string[][] = [
+                    [
+                      "BẢNG ĐỊNH MỨC NGUYÊN LIỆU GỐC ĐA CẤP (DÀNH CHO PHÒNG KẾ TOÁN / TÍNH GIÁ THÀNH)",
+                    ],
+                    [
+                      `Mã sản phẩm: ${bomDetail.bom.product_code}`,
+                      `Tên sản phẩm: ${bomDetail.bom.product_name}`,
+                      `Mã BOM: ${bomDetail.bom.code} (v${bomDetail.bom.bom_version})`,
+                      `Số lượng tính toán: ${mult} ${baseUomLabel}`,
+                      `Chế độ: ${isAliq ? "Chia sẵn (.C / .D.IC)" : "Định mức chuẩn"}`,
+                    ],
+                    [],
+                    ["I. BẢNG CỘNG GỘP NGUYÊN LIỆU GỐC CUỐI CÙNG (ĐÃ GỘP TRÙNG QUA CÁC BÁN THÀNH PHẨM)"],
+                    [
+                      "STT",
+                      "Mã Nguyên liệu gốc",
+                      "Tên Nguyên liệu / Vật tư gốc",
+                      "Vai trò",
+                      "Phân loại",
+                      "Nguồn tham gia (Trực tiếp / Quy đổi từ BTP)",
+                      `Định mức Chuẩn / 1 ${baseUomLabel}`,
+                      `Tổng lượng Chuẩn (Net) / ${mult} ${baseUomLabel}`,
+                      "% Hao hụt BQ",
+                      `Tổng lượng Cần xuất (Gross) / ${mult} ${baseUomLabel}`,
+                      "ĐVT",
+                    ],
+                  ];
+
+                  rawSummary.forEach((r: any, idx: number) => {
+                    const unitNet = isAliq ? Number(r.total_aliquoted_net_qty ?? r.total_net_qty) : Number(r.total_net_qty);
+                    const unitGross = isAliq ? Number(r.total_aliquoted_gross_qty ?? r.total_gross_qty) : Number(r.total_gross_qty);
+                    const srcText = (r.sources || [])
+                      .map((s: any) =>
+                        s.level === 1
+                          ? `Trực tiếp (${fmtQty(s.net_qty)} ${r.uom})`
+                          : `Từ BTP ${s.parent_code} (${fmtQty(s.net_qty)} ${r.uom})`
+                      )
+                      .join(" + ");
+                    rows.push([
+                      String(idx + 1),
+                      r.component_code,
+                      r.component_name,
+                      ROLE_LABELS[r.component_role] ?? r.component_role,
+                      r.item_type,
+                      srcText,
+                      String(Math.round(unitNet * 1e6) / 1e6),
+                      String(Math.round(unitNet * mult * 1e6) / 1e6),
+                      `${r.effective_scrap_pct ?? 0}%`,
+                      String(Math.round(unitGross * mult * 1e6) / 1e6),
+                      r.uom,
+                    ]);
+                  });
+
+                  rows.push([]);
+                  rows.push(["II. CÂY PHÂN RÃ ĐỊNH MỨC TỪNG CẤP (THÀNH PHẨM -> BÁN THÀNH PHẨM -> NGUYÊN LIỆU GỐC)"]);
+                  rows.push([
+                    "Cấp / Nhánh",
+                    "Loại dòng",
+                    "Thuộc Mã cha",
+                    "Mã Thành phần",
+                    "Tên Thành phần",
+                    "Công thức Quy đổi",
+                    `Lượng Chuẩn (Net) / ${mult} ${baseUomLabel}`,
+                    "% Hao hụt",
+                    `Lượng Cần xuất (Gross) / ${mult} ${baseUomLabel}`,
+                    "ĐVT",
+                  ]);
+
+                  treeNodes.forEach((n: any) => {
+                    const unitNet = isAliq ? Number(n.qty_aliquoted_net ?? n.qty_net) : Number(n.qty_net);
+                    const unitGross = isAliq ? Number(n.qty_aliquoted_gross ?? n.qty_gross) : Number(n.qty_gross);
+                    rows.push([
+                      `Cấp ${n.level} (${n.path_no})`,
+                      n.node_type === "SEMI_FINISHED" ? "Bán thành phẩm (BTP)" : "Nguyên liệu gốc",
+                      n.parent_item_code,
+                      n.component_code,
+                      n.component_name,
+                      n.formula_explanation,
+                      String(Math.round(unitNet * mult * 1e6) / 1e6),
+                      `${n.scrap_pct ?? 0}%`,
+                      String(Math.round(unitGross * mult * 1e6) / 1e6),
+                      n.uom,
+                    ]);
+                  });
+
+                  const csvContent = "\uFEFF" + rows.map((r) => r.map(csvEscape).join(",")).join("\r\n");
+                  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `Dinh_Muc_Nguyen_Lieu_Goc_${bomDetail.bom.product_code}_${bomDetail.bom.code}.csv`;
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+                };
+
+                return (
+                  <Card
+                    title={`🌳 Cây BOM Đa Cấp & Tổng hợp Nguyên liệu Gốc (Kế toán / Giá thành) — ${bomDetail.bom.product_code}`}
+                    actions={
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex items-center gap-1.5 text-xs">
+                          <span className="text-slate-400 font-semibold whitespace-nowrap">Số lượng tính:</span>
+                          <input
+                            type="number"
+                            min={0.01}
+                            step="any"
+                            className={`${inputClass} w-20 py-1 text-xs font-mono font-bold text-center`}
+                            value={rollupCalcQty}
+                            onChange={(e) => setRollupCalcQty(e.target.value)}
+                          />
+                          <span className="text-slate-300 font-bold">{baseUomLabel}</span>
+                        </div>
+                        <select
+                          className={`${inputClass} py-1 text-xs w-48`}
+                          value={rollupCalcMode}
+                          onChange={(e) => setRollupCalcMode(e.target.value as "STANDARD" | "ALIQUOTED")}
+                        >
+                          <option value="STANDARD">Định mức Chuẩn (Thường)</option>
+                          <option value="ALIQUOTED">Định mức Chia sẵn (.C / .D.IC)</option>
+                        </select>
+                        <Button onClick={handleExportRollupExcel}>
+                          📥 Xuất Excel (CSV) cho Kế toán
+                        </Button>
+                        <Button variant="ghost" onClick={() => setShowMultiLevelRollup(false)}>
+                          Đóng
+                        </Button>
+                      </div>
+                    }
+                  >
+                    <div className="space-y-4">
+                      <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-600/40 text-xs text-amber-100 flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          📐 <b>Công thức quy đổi tự động từ Bán thành phẩm (BTP) ra Nguyên liệu gốc</b>:{" "}
+                          <code className="px-1.5 py-0.5 rounded bg-slate-900 text-amber-300 font-mono">
+                            Lượng NL gốc = Lượng BTP trong 1 {baseUomLabel} × (Lượng NL gốc trong mẻ BTP / Quy mô mẻ chuẩn BTP)
+                          </code>
+                        </div>
+                        <div className="flex items-center gap-2 text-[11px]">
+                          <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold">
+                            🧪 {rollup?.semi_finished_count ?? 0} Bán thành phẩm được phân rã
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold">
+                            🧱 {rawSummary.length} Nguyên liệu / Vật tư gốc sau cộng gộp
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Bảng 1: Cây phân rã từng cấp */}
+                      <div className="space-y-1.5">
+                        <div className="text-xs font-extrabold text-sky-300 uppercase">
+                          1. Cây phân rã từng cấp (Thành phẩm ➔ Bán thành phẩm ➔ Nguyên liệu gốc)
+                        </div>
+                        {treeNodes.length === 0 ? (
+                          <Empty>BOM này chưa có dòng thành phần nào để phân rã.</Empty>
+                        ) : (
+                          <Table
+                            head={[
+                              "Cấp / Nhánh",
+                              "Mã & Tên Thành phần",
+                              "Phân loại",
+                              "Công thức Quy đổi (Tỷ lệ Mẻ BTP)",
+                              `Lượng Chuẩn (${mult} ${baseUomLabel})`,
+                              "% Hao hụt",
+                              `Tổng Cần Xuất (${mult} ${baseUomLabel})`,
+                            ]}
+                          >
+                            {treeNodes.map((n: any) => {
+                              const unitNet = isAliq ? Number(n.qty_aliquoted_net ?? n.qty_net) : Number(n.qty_net);
+                              const unitGross = isAliq ? Number(n.qty_aliquoted_gross ?? n.qty_gross) : Number(n.qty_gross);
+                              const isBtp = n.node_type === "SEMI_FINISHED";
+                              return (
+                                <tr
+                                  key={`${n.path_no}-${n.component_item_id}`}
+                                  className={
+                                    isBtp
+                                      ? "bg-amber-500/10 dark:bg-amber-950/35 font-semibold"
+                                      : n.level > 1
+                                        ? "bg-slate-900/40"
+                                        : ""
+                                  }
+                                >
+                                  <td className="px-2.5 py-2 text-xs font-mono whitespace-nowrap">
+                                    <span style={{ paddingLeft: `${Math.max(0, (n.level - 1) * 14)}px` }}>
+                                      {n.level > 1 ? "↳ " : ""}
+                                      <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-200 text-[10px]">
+                                        Cấp {n.level} · #{n.path_no}
+                                      </span>
+                                    </span>
+                                  </td>
+                                  <td className="px-2.5 py-2 text-xs">
+                                    <div style={{ paddingLeft: `${Math.max(0, (n.level - 1) * 14)}px` }}>
+                                      <span className="font-mono font-bold text-sky-300">{n.component_code}</span> —{" "}
+                                      <span>{n.component_name}</span>
+                                      {n.level > 1 && (
+                                        <span className="ml-1.5 text-[10px] text-amber-300 font-mono">
+                                          (từ BTP: {n.parent_item_code})
+                                        </span>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="px-2.5 py-2 text-xs whitespace-nowrap">
+                                    {isBtp ? (
+                                      <span className="px-2 py-0.5 rounded-full bg-amber-500/25 border border-amber-500/50 text-amber-300 text-[10px] font-bold">
+                                        🧪 Bán thành phẩm ({n.source_formula_code})
+                                      </span>
+                                    ) : (
+                                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-semibold">
+                                        🧱 NL Gốc ({ROLE_LABELS[n.component_role] ?? n.component_role})
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="px-2.5 py-2 text-[11px] text-slate-300 font-mono">
+                                    {n.formula_explanation}
+                                  </td>
+                                  <td className="px-2.5 py-2 text-xs font-mono font-bold text-right whitespace-nowrap">
+                                    {fmtQty(Math.round(unitNet * mult * 1e6) / 1e6)} {n.uom}
+                                  </td>
+                                  <td className="px-2.5 py-2 text-xs font-mono text-right whitespace-nowrap text-slate-400">
+                                    {Number(n.scrap_pct) > 0 ? `+${fmtQty(n.scrap_pct)}%` : "0%"}
+                                  </td>
+                                  <td className="px-2.5 py-2 text-xs font-mono font-extrabold text-right whitespace-nowrap text-emerald-300">
+                                    {fmtQty(Math.round(unitGross * mult * 1e6) / 1e6)} {n.uom}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </Table>
+                        )}
+                      </div>
+
+                      {/* Bảng 2: Bảng cộng gộp Nguyên liệu gốc cuối cùng */}
+                      <div className="space-y-1.5 pt-2 border-t border-slate-800">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-xs font-extrabold text-emerald-300 uppercase">
+                            2. Bảng cộng gộp Nguyên liệu Gốc cuối cùng (Gộp các nguyên liệu trùng nhau ở nhiều BTP về 1 dòng duy nhất)
+                          </div>
+                          <span className="text-[11px] text-slate-400">
+                            Đang tính cho <b className="text-white">{mult} {baseUomLabel}</b> ({bomDetail.bom.product_code})
+                          </span>
+                        </div>
+                        {rawSummary.length === 0 ? (
+                          <Empty>Chưa có dữ liệu nguyên liệu gốc.</Empty>
+                        ) : (
+                          <Table
+                            head={[
+                              "STT",
+                              "Mã NL Gốc",
+                              "Tên Nguyên liệu / Vật tư Gốc",
+                              "Vai trò",
+                              "Nguồn tham gia (Trực tiếp / Qua BTP)",
+                              `Định mức Chuẩn / 1 ${baseUomLabel}`,
+                              `Tổng Lượng Chuẩn (Net / ${mult} ${baseUomLabel})`,
+                              "% Hao hụt",
+                              `Tổng Cần Xuất (Gross / ${mult} ${baseUomLabel})`,
+                            ]}
+                          >
+                            {rawSummary.map((r: any, idx: number) => {
+                              const unitNet = isAliq
+                                ? Number(r.total_aliquoted_net_qty ?? r.total_net_qty)
+                                : Number(r.total_net_qty);
+                              const unitGross = isAliq
+                                ? Number(r.total_aliquoted_gross_qty ?? r.total_gross_qty)
+                                : Number(r.total_gross_qty);
+                              return (
+                                <tr key={`${r.component_item_id}-${r.uom}`}>
+                                  <td className="px-2.5 py-2 text-xs font-mono w-10">{idx + 1}</td>
+                                  <td className="px-2.5 py-2 text-xs font-mono font-bold text-sky-300 whitespace-nowrap">
+                                    {r.component_code}
+                                  </td>
+                                  <td className="px-2.5 py-2 text-xs font-semibold">
+                                    {r.component_name}
+                                  </td>
+                                  <td className="px-2.5 py-2 text-xs whitespace-nowrap">
+                                    {ROLE_LABELS[r.component_role] ?? r.component_role}
+                                  </td>
+                                  <td className="px-2.5 py-2 text-[11px]">
+                                    <div className="flex flex-wrap gap-1">
+                                      {(r.sources || []).map((s: any, sIdx: number) => (
+                                        <span
+                                          key={sIdx}
+                                          className={`px-1.5 py-0.5 rounded font-mono text-[10px] ${
+                                            s.level === 1
+                                              ? "bg-slate-800 text-slate-200 border border-slate-700"
+                                              : "bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                                          }`}
+                                          title={s.formula_note}
+                                        >
+                                          {s.level === 1
+                                            ? `Trực tiếp: ${fmtQty(s.net_qty)} ${r.uom}`
+                                            : `Từ BTP ${s.parent_code}: ${fmtQty(s.net_qty)} ${r.uom}`}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </td>
+                                  <td className="px-2.5 py-2 text-xs font-mono text-right whitespace-nowrap">
+                                    {fmtQty(unitNet)} {r.uom}
+                                  </td>
+                                  <td className="px-2.5 py-2 text-xs font-mono font-bold text-right whitespace-nowrap text-sky-200">
+                                    {fmtQty(Math.round(unitNet * mult * 1e6) / 1e6)} {r.uom}
+                                  </td>
+                                  <td className="px-2.5 py-2 text-xs font-mono text-right whitespace-nowrap text-slate-400">
+                                    {Number(r.effective_scrap_pct) > 0 ? `+${fmtQty(r.effective_scrap_pct)}%` : "0%"}
+                                  </td>
+                                  <td className="px-2.5 py-2 text-xs font-mono font-extrabold text-right whitespace-nowrap text-emerald-300">
+                                    {fmtQty(Math.round(unitGross * mult * 1e6) / 1e6)} {r.uom}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </Table>
+                        )}
+                      </div>
+                    </div>
+                  </Card>
+                );
+              })()}
 
                 <Card
                   title={`1. Định mức nguyên liệu / Bán thành phẩm (${bomDetail.lines.length}/${bomDetail.total_lines ?? bomDetail.lines.length} dòng)`}

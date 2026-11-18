@@ -1188,12 +1188,63 @@ export const ABT_KIT_SUPPLY_FORMS: Record<string, AbtKitSupplyFormSpec> = {
   },
 };
 
+const KNOWN_EXTRACTION_ACCESSORY_VARIANTS = new Set([
+  "B32",
+  "B96",
+  "T32",
+  "T48",
+  "T96",
+  "R32",
+  "A",
+  "T6",
+  "KF96",
+]);
+
 /**
- * Xây dựng Số Lô (Lot Code) chuẩn ABT cho Kit PCR theo quy cách đặt hàng:
+ * Chuyển quy cách Kit Demo (VD: "25 test", "24 test", "10 test", "1/2 bộ") sang hậu tố số lô chuẩn ABT:
+ * - "25 test" -> "DM25"
+ * - "24 test" -> "DM24"
+ * - "10 test" -> "DM10"
+ * - "1/2 bộ"  -> "DM"
+ * - "DEMO"    -> "DEMO"
+ */
+export function formatDemoLotSuffix(demoSpec?: string | null): string {
+  const s = String(demoSpec ?? "").trim();
+  if (!s) return "DM25";
+  if (/^DEMO$/i.test(s)) return "DEMO";
+  if (/^DM(\d*)$/i.test(s)) return s.toUpperCase();
+  if (/1\s*\/\s*2/i.test(s)) return "DM";
+  const m = s.match(/(\d+)\s*(?:test|rxn|phản ứng|pu|t\b)/i) ?? s.match(/^(\d+)$/);
+  if (m && Number(m[1]) > 0) return `DM${m[1]}`;
+  return "DM25";
+}
+
+/**
+ * Nhận diện đoạn hậu tố Demo trên Số Lô (VD: "DM25", "DM24", "DM10", "DM", "DEMO").
+ */
+export function parseDemoLotToken(token?: string | null): {
+  isDemo: boolean;
+  demoToken: string | null;
+  demoSpec: string | null;
+} {
+  const raw = String(token ?? "").trim().toUpperCase();
+  if (!raw) return { isDemo: false, demoToken: null, demoSpec: null };
+  if (raw === "DEMO") return { isDemo: true, demoToken: "DEMO", demoSpec: "25 test" };
+  if (raw === "DM") return { isDemo: true, demoToken: "DM", demoSpec: "1/2 bộ" };
+  const m = raw.match(/^DM(\d+)$/);
+  if (m && Number(m[1]) > 0) {
+    return { isDemo: true, demoToken: raw, demoSpec: `${m[1]} test` };
+  }
+  return { isDemo: false, demoToken: null, demoSpec: null };
+}
+
+/**
+ * Xây dựng Số Lô (Lot Code) chuẩn ABT cho Kit PCR / Kit Tách chiết / Hàng Demo theo quy cách đặt hàng:
  * - B2611001.[mã tube]: không chia sẵn, không sẵn IC
  * - B2611001.IC.[mã tube]: không chia sẵn, sẵn IC
  * - B2611001.C.[mã tube]: chia sẵn, không sẵn IC
  * - B2611001.C.IC.[mã tube]: chia sẵn, sẵn IC
+ * - Hàng Demo (Cách 1): gắn thêm hậu tố .DM25 / .DM10 / .DM / .DEMO ở cuối (VD: B2611001.C.IC.T02.DM25, B2611001.B32.DM25, B2611001.DM25)
  */
 export function buildAbtKitLotCode(params: {
   baseLot?: string;
@@ -1201,9 +1252,13 @@ export function buildAbtKitLotCode(params: {
   seqNo?: number;
   supplyForm?: AbtKitSupplyFormKey | string | null;
   tubeCode?: string | null;
+  isPcrKit?: boolean;
+  accessoryVariant?: string | null;
+  isDemo?: boolean;
+  demoSpecification?: string | null;
 }): string {
   let base = (params.baseLot || "").trim();
-  // Tách phần gốc nếu người dùng truyền cả chuỗi B2611001.C.IC.T02
+  // Tách phần gốc nếu người dùng truyền cả chuỗi B2611001.C.IC.T02.DM25
   if (base.includes(".")) {
     base = base.split(".")[0].trim();
   }
@@ -1214,18 +1269,29 @@ export function buildAbtKitLotCode(params: {
     const seq = String(params.seqNo || 1).padStart(3, "0");
     base = `B${yy}${mm}${seq}`;
   }
-  const formSpec =
-    ABT_KIT_SUPPLY_FORMS[(params.supplyForm as AbtKitSupplyFormKey) || "NO_SPLIT_NO_IC"] ||
-    ABT_KIT_SUPPLY_FORMS.NO_SPLIT_NO_IC;
-  const tube = (params.tubeCode || "").trim().toUpperCase();
   const parts = [base];
-  if (formSpec.lot_infix) parts.push(formSpec.lot_infix);
-  if (tube) parts.push(tube);
+  const isPcr = params.isPcrKit !== false;
+  if (isPcr) {
+    const formSpec =
+      ABT_KIT_SUPPLY_FORMS[(params.supplyForm as AbtKitSupplyFormKey) || "NO_SPLIT_NO_IC"] ||
+      ABT_KIT_SUPPLY_FORMS.NO_SPLIT_NO_IC;
+    const tube = (params.tubeCode || "").trim().toUpperCase();
+    if (formSpec.lot_infix) parts.push(formSpec.lot_infix);
+    if (tube) parts.push(tube);
+  }
+  const accVar = (params.accessoryVariant || "").trim().toUpperCase();
+  if (accVar) {
+    const cleanVar = accVar.includes(":") ? accVar.split(":").pop()!.trim() : accVar;
+    if (cleanVar && !parts.includes(cleanVar)) parts.push(cleanVar);
+  }
+  if (params.isDemo) {
+    parts.push(formatDemoLotSuffix(params.demoSpecification));
+  }
   return parts.join(".");
 }
 
 /**
- * Giải mã tự động Số Lô (Lot Code) của Kit PCR (VD: B2611001.C.IC.T02)
+ * Giải mã tự động Số Lô (Lot Code) của Kit PCR / Kit Tách chiết / Hàng Demo (VD: B2611001.C.IC.T02.DM25)
  * để hiển thị rõ trên Tồn kho, Phiếu xuất kho, Phiếu giao hàng và COA.
  */
 export function parseAbtKitLotCode(lotCode: string | null | undefined): {
@@ -1233,6 +1299,10 @@ export function parseAbtKitLotCode(lotCode: string | null | undefined): {
   baseLot: string;
   supplyForm: AbtKitSupplyFormSpec | null;
   tubeSpec: AbtTubeStripSpec | null;
+  accessoryVariant: string | null;
+  isDemo: boolean;
+  demoToken: string | null;
+  demoSpec: string | null;
   summaryShort: string;
   summaryDetail: string;
 } {
@@ -1243,37 +1313,56 @@ export function parseAbtKitLotCode(lotCode: string | null | undefined): {
       baseLot: raw,
       supplyForm: null,
       tubeSpec: null,
+      accessoryVariant: null,
+      isDemo: false,
+      demoToken: null,
+      demoSpec: null,
       summaryShort: "",
       summaryDetail: "",
     };
   }
   const tokens = raw.split(".").filter(Boolean);
   const baseLot = tokens[0] || raw;
-  const rest = tokens.slice(1);
+  let rest = tokens.slice(1);
+
+  // 1. Tách hậu tố Demo (.DM25 / .DM24 / .DM10 / .DM / .DEMO) ở cuối nếu có
+  const demoInfo = parseDemoLotToken(rest[rest.length - 1]);
+  if (demoInfo.isDemo) {
+    rest = rest.slice(0, -1);
+  }
+
+  // 2. Kiểm tra mã phụ kit tách chiết máy (B32, B96, T32...) hoặc mã Tube PCR ở cuối phần còn lại
   const lastToken = rest[rest.length - 1] || "";
   const matchedTube = ABT_TUBE_STRIP_CATALOG.find((t) => t.code === lastToken) || null;
-  const middleTokens = matchedTube ? rest.slice(0, -1) : rest;
+  const accessoryVariant =
+    !matchedTube && KNOWN_EXTRACTION_ACCESSORY_VARIANTS.has(lastToken) ? lastToken : null;
+  const middleTokens = matchedTube || accessoryVariant ? rest.slice(0, -1) : rest;
   const infix = middleTokens.join(".");
 
   let supplyForm: AbtKitSupplyFormSpec | null = null;
-  if (infix === "C.IC") supplyForm = ABT_KIT_SUPPLY_FORMS.SPLIT_WITH_IC;
+  if (infix === "C.IC" || infix === "IC.C") supplyForm = ABT_KIT_SUPPLY_FORMS.SPLIT_WITH_IC;
   else if (infix === "C") supplyForm = ABT_KIT_SUPPLY_FORMS.SPLIT_NO_IC;
   else if (infix === "IC") supplyForm = ABT_KIT_SUPPLY_FORMS.NO_SPLIT_WITH_IC;
   else if (infix === "" && matchedTube) supplyForm = ABT_KIT_SUPPLY_FORMS.NO_SPLIT_NO_IC;
 
-  if (!supplyForm && !matchedTube) {
+  if (!supplyForm && !matchedTube && !accessoryVariant && !demoInfo.isDemo) {
     return {
       isAbtStructuredLot: false,
       baseLot: raw,
       supplyForm: null,
       tubeSpec: null,
+      accessoryVariant: null,
+      isDemo: false,
+      demoToken: null,
+      demoSpec: null,
       summaryShort: "",
       summaryDetail: "",
     };
   }
 
-  const formText = supplyForm ? supplyForm.short_label : "Chuẩn";
+  const formText = supplyForm ? supplyForm.short_label : accessoryVariant ? `Mã phụ ${accessoryVariant}` : "Chuẩn";
   const tubeText = matchedTube ? `Tube ${matchedTube.code} (${matchedTube.name} - ${matchedTube.note})` : "";
+  const demoText = demoInfo.isDemo ? `🧪 Hàng Demo (${demoInfo.demoSpec || demoInfo.demoToken})` : "";
   const mixText = supplyForm
     ? `${supplyForm.mix_tests_per_kit}T Mix + ${supplyForm.pcr_tubes_per_kit} tube PCR${supplyForm.include_ic_tube ? " + Có ống IC rời" : " (IC pha sẵn)"}`
     : "";
@@ -1283,8 +1372,12 @@ export function parseAbtKitLotCode(lotCode: string | null | undefined): {
     baseLot,
     supplyForm,
     tubeSpec: matchedTube,
-    summaryShort: [formText, matchedTube ? `Tube ${matchedTube.code}` : ""].filter(Boolean).join(" · "),
-    summaryDetail: [formText, tubeText, mixText].filter(Boolean).join(" · "),
+    accessoryVariant,
+    isDemo: demoInfo.isDemo,
+    demoToken: demoInfo.demoToken,
+    demoSpec: demoInfo.demoSpec,
+    summaryShort: [formText, matchedTube ? `Tube ${matchedTube.code}` : "", demoText].filter(Boolean).join(" · "),
+    summaryDetail: [formText, tubeText, mixText, demoText].filter(Boolean).join(" · "),
   };
 }
 

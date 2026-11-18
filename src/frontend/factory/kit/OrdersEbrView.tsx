@@ -1406,6 +1406,17 @@ export function OrdersEbrView({
                     (activeBom?.bom_category || "PCR Kit") === "PCR Kit";
 
                   if (!isPcrKit) {
+                    const yymm = (orderForm.mfg_date || vnToday()).replace(/\D/g, "").slice(2, 6) || "2611";
+                    const accVariant = orderForm.accessory_set
+                      ? findAccessorySet(orderForm.accessory_set)?.variant || null
+                      : null;
+                    const nonPcrSampleLot = buildAbtKitLotCode({
+                      baseLot: `B${yymm}001`,
+                      isPcrKit: false,
+                      accessoryVariant: accVariant,
+                      isDemo: orderForm.is_demo,
+                      demoSpecification: orderForm.demo_specification,
+                    });
                     return (
                       <div className="p-3 rounded-xl border border-teal-300 dark:border-teal-800/70 bg-teal-50/50 dark:bg-teal-950/25 space-y-2.5">
                         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1429,6 +1440,19 @@ export function OrdersEbrView({
                             🧪 Sản xuất Kit Demo (Giảm nguyên liệu theo tỉ lệ, giữ nguyên chai chứa / vỏ hộp)
                           </label>
                         </div>
+                        {(orderForm.is_demo || accVariant) && (
+                          <div className="p-2 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-teal-200 dark:border-teal-900/60 text-[11px] flex flex-wrap items-center justify-between gap-2">
+                            <div className="text-slate-600 dark:text-slate-300">
+                              📌 Cấu trúc Số Lô tự sinh: Mã lô gốc
+                              {accVariant ? <> + Mã phụ <b>.{accVariant}</b></> : null}
+                              {orderForm.is_demo ? <> + Hậu tố Demo theo quy cách (<b>.{nonPcrSampleLot.split(".").pop()}</b>)</> : null}
+                            </div>
+                            <div className="text-right">
+                              <span className="text-[10px] uppercase text-slate-500 font-bold mr-1.5">Mẫu Lot tự sinh:</span>
+                              <span className="font-mono font-extrabold text-sm text-teal-700 dark:text-teal-300">{nonPcrSampleLot}</span>
+                            </div>
+                          </div>
+                        )}
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                           {orderForm.is_demo && (
                             <Field label="Quy cách đóng gói Kit Demo (Giảm nguyên liệu theo tỉ lệ)">
@@ -1437,9 +1461,9 @@ export function OrdersEbrView({
                                 value={orderForm.demo_specification}
                                 onChange={(e) => setOrderForm({ ...orderForm, demo_specification: e.target.value })}
                               >
-                                <option value="25 test">25 test (1/2 bộ chuẩn 50T, giữ nguyên chai chứa)</option>
-                                <option value="1/2 bộ">1/2 bộ (50% hóa chất, giữ nguyên 1 bộ chai chứa &amp; vỏ hộp)</option>
-                                <option value="10 test">10 test (Demo nhỏ, giữ nguyên chai chứa &amp; vỏ hộp)</option>
+                                <option value="25 test">25 test — Hậu tố .DM25 (1/2 bộ chuẩn 50T, giữ nguyên chai chứa)</option>
+                                <option value="1/2 bộ">1/2 bộ — Hậu tố .DM (50% hóa chất, giữ nguyên 1 bộ chai chứa &amp; vỏ hộp)</option>
+                                <option value="10 test">10 test — Hậu tố .DM10 (Demo nhỏ, giữ nguyên chai chứa &amp; vỏ hộp)</option>
                               </select>
                             </Field>
                           )}
@@ -1546,6 +1570,8 @@ export function OrdersEbrView({
                           baseLot: `B${yymm}001`,
                           supplyForm: orderForm.supply_form,
                           tubeCode: orderForm.tube_code,
+                          isDemo: orderForm.is_demo,
+                          demoSpecification: orderForm.demo_specification,
                         });
                         return (
                           <div className="p-2 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-indigo-200 dark:border-indigo-900/60 text-[11px] flex flex-wrap items-center justify-between gap-2">
@@ -1578,10 +1604,10 @@ export function OrdersEbrView({
                               value={orderForm.demo_specification}
                               onChange={(e) => setOrderForm({ ...orderForm, demo_specification: e.target.value })}
                             >
-                              <option value="25 test">25 test (Co giãn Mix theo tỉ lệ, giữ nguyên chai/hộp)</option>
-                              <option value="24 test">24 test (1/2 bộ chia sẵn, giữ nguyên vỏ hộp)</option>
-                              <option value="1/2 bộ">1/2 bộ (50% Mix, giữ nguyên 1 bộ chai chứa &amp; vỏ hộp)</option>
-                              <option value="10 test">10 test (Demo nhỏ, giữ nguyên chai chứa &amp; vỏ hộp)</option>
+                              <option value="25 test">25 test — Hậu tố .DM25 (Co giãn Mix theo tỉ lệ, giữ nguyên chai/hộp)</option>
+                              <option value="24 test">24 test — Hậu tố .DM24 (1/2 bộ chia sẵn, giữ nguyên vỏ hộp)</option>
+                              <option value="1/2 bộ">1/2 bộ — Hậu tố .DM (50% Mix, giữ nguyên 1 bộ chai chứa &amp; vỏ hộp)</option>
+                              <option value="10 test">10 test — Hậu tố .DM10 (Demo nhỏ, giữ nguyên chai chứa &amp; vỏ hộp)</option>
                             </select>
                           </Field>
                         )}
@@ -1624,13 +1650,16 @@ export function OrdersEbrView({
                         const matchedBom = (options.effective_boms ?? []).find(
                           (b) => b.product_item_id === orderForm.product_item_id && b.supply_form === nextSf
                         );
+                        const nextIsDemo = parsed.isDemo ? true : orderForm.is_demo;
                         setOrderForm({
                           ...orderForm,
                           lot_code: typedLot,
                           supply_form: nextSf,
                           tube_code: parsed.tubeSpec ? parsed.tubeSpec.code : orderForm.tube_code,
                           bom_id: matchedBom ? matchedBom.id : orderForm.bom_id,
-                          order_mode: orderForm.is_demo ? "DEMO" : sfSpec.is_aliquoted ? "ALIQUOTED" : "STANDARD",
+                          is_demo: nextIsDemo,
+                          demo_specification: parsed.demoSpec || orderForm.demo_specification,
+                          order_mode: nextIsDemo ? "DEMO" : sfSpec.is_aliquoted ? "ALIQUOTED" : "STANDARD",
                         });
                       } else {
                         setOrderForm({ ...orderForm, lot_code: typedLot });
@@ -1709,9 +1738,16 @@ export function OrdersEbrView({
                           {o.expiry_date ? ` · HSD: ${fmtDate(o.expiry_date)}` : ""}
                         </div>
                         {o.lot_code && (
-                          <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-                            🧬 {decoded.supplyForm ? decoded.supplyForm.short_label : "Chuẩn"}
-                            {decoded.tubeSpec ? ` · Tube ${decoded.tubeSpec.code} (${decoded.tubeSpec.name})` : ""}
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 flex flex-wrap items-center gap-1">
+                            <span>
+                              🧬 {decoded.supplyForm ? decoded.supplyForm.short_label : decoded.accessoryVariant ? `Mã phụ ${decoded.accessoryVariant}` : "Chuẩn"}
+                              {decoded.tubeSpec ? ` · Tube ${decoded.tubeSpec.code} (${decoded.tubeSpec.name})` : ""}
+                            </span>
+                            {(o.is_demo || o.order_mode === "DEMO" || decoded.isDemo) && (
+                              <span className="px-1.5 py-0.2 rounded bg-amber-500/20 border border-amber-500/40 text-amber-800 dark:text-amber-300 font-bold">
+                                🧪 DEMO ({o.demo_specification || decoded.demoSpec || "25 test"})
+                              </span>
+                            )}
                           </div>
                         )}
                       </td>
@@ -1800,6 +1836,11 @@ export function OrdersEbrView({
                           {tubeSpec && (
                             <span className="px-2 py-0.5 rounded bg-sky-500/20 border border-sky-500/40 text-sky-800 dark:text-sky-200 font-mono text-[11px]">
                               Tube: {tubeSpec.code} — {tubeSpec.name} ({tubeSpec.note})
+                            </span>
+                          )}
+                          {(detail.order.is_demo || detail.order.order_mode === "DEMO" || decoded.isDemo) && (
+                            <span className="px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-800 dark:text-amber-200 font-bold text-[11px]">
+                              🧪 Hàng Demo ({detail.order.demo_specification || decoded.demoSpec || "25 test"})
                             </span>
                           )}
                         </div>

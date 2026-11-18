@@ -5,7 +5,17 @@ import {
   isAccessorySetValidForProduct,
   isExtractionAccessoryProduct,
 } from "../extractionAccessories";
-import { hasKitSpec, kitSpecOf, parseKitSpecFromText, withPackagingNote } from "../packagingForm";
+import {
+  demoSpecOfLot,
+  hasKitSpec,
+  isDemoLot,
+  kitSpecMismatches,
+  kitSpecOf,
+  lotMatchesKitSpec,
+  parseKitSpecFromText,
+  withPackagingNote,
+} from "../packagingForm";
+import { buildAbtKitLotCode, formatDemoLotSuffix, parseAbtKitLotCode } from "../../factory/kit/shared";
 
 describe("Mã phụ kit tách chiết máy", () => {
   it("nhận biết mã chính và liệt kê đúng các mã phụ theo nhóm", () => {
@@ -57,5 +67,60 @@ describe("Mã phụ kit tách chiết máy", () => {
     const spec = kitSpecOf({ notes: n2 });
     expect(spec.packagingForm).toBe("PREALIQUOT");
     expect(spec.accessorySet).toBe("HI.A:B");
+  });
+
+  it("sinh và giải mã đúng Số Lô Hàng Demo theo Cách 1 (.DM25, .DM10, .DM, .DEMO) và chặn xuất nhầm cho SO thương mại chuẩn", () => {
+    expect(formatDemoLotSuffix("25 test")).toBe("DM25");
+    expect(formatDemoLotSuffix("24 test")).toBe("DM24");
+    expect(formatDemoLotSuffix("10 test")).toBe("DM10");
+    expect(formatDemoLotSuffix("1/2 bộ")).toBe("DM");
+
+    // 1. Kit PCR Demo (25 test): Chia sẵn, sẵn IC, tube T02 -> B2611001.C.IC.T02.DM25
+    const pcrDemoLot = buildAbtKitLotCode({
+      baseLot: "B2611001",
+      supplyForm: "SPLIT_WITH_IC",
+      tubeCode: "T02",
+      isDemo: true,
+      demoSpecification: "25 test",
+    });
+    expect(pcrDemoLot).toBe("B2611001.C.IC.T02.DM25");
+    const parsedPcrDemo = parseAbtKitLotCode(pcrDemoLot);
+    expect(parsedPcrDemo.isAbtStructuredLot).toBe(true);
+    expect(parsedPcrDemo.supplyForm?.key).toBe("SPLIT_WITH_IC");
+    expect(parsedPcrDemo.tubeSpec?.code).toBe("T02");
+    expect(parsedPcrDemo.isDemo).toBe(true);
+    expect(parsedPcrDemo.demoSpec).toBe("25 test");
+
+    // 2. Kit tách chiết máy Demo kèm mã phụ B32 -> B2611001.B32.DM25
+    const extDemoLot = buildAbtKitLotCode({
+      baseLot: "B2611001",
+      isPcrKit: false,
+      accessoryVariant: "B32",
+      isDemo: true,
+      demoSpecification: "25 test",
+    });
+    expect(extDemoLot).toBe("B2611001.B32.DM25");
+    const parsedExtDemo = parseAbtKitLotCode(extDemoLot);
+    expect(parsedExtDemo.isAbtStructuredLot).toBe(true);
+    expect(parsedExtDemo.accessoryVariant).toBe("B32");
+    expect(parsedExtDemo.isDemo).toBe(true);
+    expect(parsedExtDemo.demoSpec).toBe("25 test");
+
+    // 3. Kit tách chiết tay / Hóa chất lẻ Demo -> B2611001.DM25
+    const manualDemoLot = buildAbtKitLotCode({
+      baseLot: "B2611001",
+      isPcrKit: false,
+      isDemo: true,
+      demoSpecification: "25 test",
+    });
+    expect(manualDemoLot).toBe("B2611001.DM25");
+    expect(isDemoLot(manualDemoLot)).toBe(true);
+    expect(demoSpecOfLot(manualDemoLot)).toBe("25 test");
+
+    // 4. SO thương mại chuẩn không chọn nhầm lô Demo
+    const stdSoSpec = { packagingForm: "PREALIQUOT" as const, icForm: "IC" as const, tubeType: "T02" as const };
+    expect(lotMatchesKitSpec("B2611001.C.IC.T02", stdSoSpec)).toBe(true);
+    expect(lotMatchesKitSpec("B2611001.C.IC.T02.DM25", stdSoSpec)).toBe(false);
+    expect(kitSpecMismatches("B2611001.C.IC.T02.DM25", stdSoSpec)[0]).toMatch(/Hàng Demo/);
   });
 });

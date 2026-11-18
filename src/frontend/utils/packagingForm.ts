@@ -34,6 +34,9 @@ export interface KitSpec {
   tubeType?: TubeType;
   /** Mã phụ của kit tách chiết máy (khóa dạng "HI.A:B32"), xem extractionAccessories.ts. */
   accessorySet?: string;
+  /** Đánh dấu dòng hàng Demo (VD: .DM25, .DM10, .DM, .DEMO). */
+  isDemo?: boolean;
+  demoSpec?: string;
 }
 
 /** Mã kit PCR: SQ-, MQ-, SP-, MP- (kể cả có thêm 1 chữ trước dấu gạch: SQH-, SQS-...). */
@@ -128,11 +131,32 @@ export function factorySupplyAndTubeToKitSpec(
 const lotSegments = (lot: any): string[] =>
   String(lot ?? "").trim().toUpperCase().split(".").map(s => s.trim()).filter(Boolean);
 
+/** Nhận diện đoạn hậu tố Demo trên số lô (.DM25, .DM24, .DM10, .DM, .DEMO). */
+export function isDemoLot(lot: any): boolean {
+  const segs = lotSegments(lot);
+  if (segs.length <= 1) return false;
+  return segs.slice(1).some((s) => /^(?:DEMO|DM\d*)$/i.test(s));
+}
+
+/** Đọc quy cách số test Demo từ số lô (VD: "B2611001.T02.DM25" -> "25 test", "B2611001.DM" -> "1/2 bộ"). */
+export function demoSpecOfLot(lot: any): string | null {
+  const segs = lotSegments(lot);
+  if (segs.length <= 1) return null;
+  for (let i = segs.length - 1; i >= 1; i--) {
+    const s = segs[i];
+    if (s === "DEMO") return "25 test";
+    if (s === "DM") return "1/2 bộ";
+    const m = s.match(/^DM(\d+)$/);
+    if (m && Number(m[1]) > 0) return `${m[1]} test`;
+  }
+  return null;
+}
+
 /** Dạng đóng gói suy ra từ số lô (".C" = chia sẵn). Lô trống: không xác định. */
 export function packagingFormOfLot(lot: any): PackagingForm | null {
-  const s = String(lot ?? "").trim().toUpperCase();
-  if (!s) return null;
-  return /\.C/.test(s) ? "PREALIQUOT" : "WITH_ACCESSORIES";
+  const segs = lotSegments(lot);
+  if (segs.length === 0) return null;
+  return segs.slice(1).includes("C") ? "PREALIQUOT" : "WITH_ACCESSORIES";
 }
 
 /** IC suy ra từ số lô (đoạn ".IC"). Lô trống: không xác định. */
@@ -219,17 +243,26 @@ export function lotKitSpec(lot: any): KitSpec {
   if (f) spec.packagingForm = f;
   if (ic) spec.icForm = ic;
   if (tube) spec.tubeType = tube;
+  if (isDemoLot(lot)) {
+    spec.isDemo = true;
+    spec.demoSpec = demoSpecOfLot(lot) ?? undefined;
+  }
   return spec;
 }
 
 /**
  * Những yêu cầu của dòng SO mà số lô KHÔNG đáp ứng (rỗng = lô đúng quy cách), vd ["Chia sẵn (lô: Không chia sẵn)"].
- * Chỉ xét các mục SO có yêu cầu; lô trống thì chưa xét.
+ * Chỉ xét các mục SO có yêu cầu; lô trống thì chưa xét. Lô Demo (.DM25 / .DEMO) tự động loại khỏi SO thương mại chuẩn.
  */
 export function kitSpecMismatches(lot: any, spec: KitSpec): string[] {
   if (!String(lot ?? "").trim()) return [];
   const have = lotKitSpec(lot);
   const out: string[] = [];
+  if (have.isDemo && !spec.isDemo) {
+    out.push(`Hàng chuẩn thương mại (lô: Hàng Demo ${have.demoSpec || ".DEMO"})`);
+  } else if (spec.isDemo && !have.isDemo) {
+    out.push(`Hàng Demo (lô: Hàng chuẩn)`);
+  }
   if (spec.packagingForm && have.packagingForm !== spec.packagingForm) {
     out.push(`${PACKAGING_LABEL[spec.packagingForm]} (lô: ${have.packagingForm ? PACKAGING_LABEL[have.packagingForm] : "?"})`);
   }

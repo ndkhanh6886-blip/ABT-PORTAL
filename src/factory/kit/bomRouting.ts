@@ -3502,6 +3502,449 @@ export async function listBoms(tx: Tx, actor: AuthzActor, filter: ListFormulaFil
   ).rows;
 }
 
+export interface MultiLevelBomTreeNode {
+  path_no: string;
+  level: number;
+  node_type: "SEMI_FINISHED" | "RAW_MATERIAL";
+  box_no: number | null;
+  component_item_id: string;
+  component_code: string;
+  component_name: string;
+  item_type: string;
+  component_role: string;
+  parent_item_code: string;
+  parent_item_name: string;
+  uom: string;
+  qty_net: number;
+  qty_aliquoted_net: number;
+  scrap_pct: number;
+  qty_gross: number;
+  qty_aliquoted_gross: number;
+  is_stocked: boolean;
+  source_formula_kind: "KIT_BOM" | "PREP_FORMULA" | null;
+  source_formula_id: string | null;
+  source_formula_code: string | null;
+  source_basis_qty: number | null;
+  source_basis_uom: string | null;
+  conversion_ratio: number | null;
+  formula_explanation: string;
+}
+
+export interface MultiLevelRawMaterialSummaryRow {
+  component_item_id: string;
+  component_code: string;
+  component_name: string;
+  item_type: string;
+  component_role: string;
+  uom: string;
+  is_stocked: boolean;
+  total_net_qty: number;
+  total_aliquoted_net_qty: number;
+  total_gross_qty: number;
+  total_aliquoted_gross_qty: number;
+  effective_scrap_pct: number;
+  sources: {
+    parent_code: string;
+    parent_name: string;
+    level: number;
+    net_qty: number;
+    gross_qty: number;
+    formula_note: string;
+  }[];
+}
+
+function normalizeComparableUom(uom: string | null | undefined): { family: "VOL" | "MASS" | "OTHER"; factorToBase: number } {
+  const s = String(uom ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/μ/g, "µ");
+  if (s === "µl" || s === "ul" || s === "microlit" || s === "microliter") return { family: "VOL", factorToBase: 0.001 };
+  if (s === "ml" || s === "mililit" || s === "milliliter") return { family: "VOL", factorToBase: 1 };
+  if (s === "l" || s === "lit" || s === "lít" || s === "liter") return { family: "VOL", factorToBase: 1000 };
+  if (s === "µg" || s === "ug" || s === "microgam" || s === "microgram") return { family: "MASS", factorToBase: 1e-6 };
+  if (s === "mg" || s === "miligam" || s === "milligram") return { family: "MASS", factorToBase: 0.001 };
+  if (s === "g" || s === "gam" || s === "gram") return { family: "MASS", factorToBase: 1 };
+  if (s === "kg" || s === "kilogam" || s === "kilogram") return { family: "MASS", factorToBase: 1000 };
+  return { family: "OTHER", factorToBase: 1 };
+}
+
+function convertQtyBetweenUoms(qty: number, fromUom: string, toUom: string): number {
+  const a = normalizeComparableUom(fromUom);
+  const b = normalizeComparableUom(toUom);
+  if (a.family !== "OTHER" && a.family === b.family && b.factorToBase > 0) {
+    return (qty * a.factorToBase) / b.factorToBase;
+  }
+  return qty;
+}
+
+function roundNormQty(n: number): number {
+  return Math.round((Number(n) || 0) * 1e6) / 1e6;
+}
+
+/**
+ * Phân rã đệ quy BOM đa cấp (Thành phẩm -> Bán thành phẩm `kit.bom` / Dung dịch tự pha `prep.formula` -> Nguyên liệu gốc)
+ * phục vụ Phòng Kế toán / Giá thành tra cứu định mức nguyên vật liệu gốc cho 1 đơn vị sản phẩm.
+ */
+export async function computeMultiLevelBomRollup(
+  tx: Tx,
+  rootBom: { id: string; code: string; product_item_id: string; product_code: string; product_name: string; base_qty: number; base_uom: string }
+): Promise<{
+  base_qty: number;
+  base_uom: string;
+  semi_finished_count: number;
+  tree_nodes: MultiLevelBomTreeNode[];
+  raw_material_summary: MultiLevelRawMaterialSummaryRow[];
+}> {
+  const tree_nodes: MultiLevelBomTreeNode[] = [];
+  const summaryMap = new Map<string, MultiLevelRawMaterialSummaryRow>();
+  let semi_finished_count = 0;
+
+  async function expandFromKitBomLines(
+    lines: any[],
+    parentCode: string,
+    parentName: string,
+    level: number,
+    pathPrefix: string,
+    scaleStdNet: number,
+    scaleAliqNet: number,
+    scaleStdGross: number,
+    scaleAliqGross: number,
+    visitedItems: Set<string>,
+    parentBasisNote?: string
+  ) {
+    for (let idx = 0; idx < lines.length; idx++) {
+      const l = lines[idx];
+      const pathNo = pathPrefix ? `${pathPrefix}.${idx + 1}` : `${idx + 1}`;
+      const compItemId = String(l.component_item_id);
+      const compCode = String(l.component_code || l.item_code || "");
+      const compName = String(l.component_name || l.item_name || "");
+      const itemType = String(l.item_type || "RAW_MATERIAL");
+      const role = String(l.component_role || "REAGENT");
+      const uom = String(l.uom || l.component_base_uom || "");
+      const isStocked = l.is_stocked !== false && l.item_is_stocked !== false;
+
+      const rawStd = Number(l.qty_per_base ?? l.qty ?? 0);
+      const rawAliq = Number(l.qty_per_base_aliquoted ?? rawStd);
+      const scrapPct = Number(l.scrap_pct ?? 0);
+      const scrapFactor = 1 + Math.max(0, scrapPct) / 100;
+
+      const qtyNet = roundNormQty(rawStd * scaleStdNet);
+      const qtyAliqNet = roundNormQty(rawAliq * scaleAliqNet);
+      const qtyGross = roundNormQty(rawStd * scaleStdGross * scrapFactor);
+      const qtyAliqGross = roundNormQty(rawAliq * scaleAliqGross * scrapFactor);
+
+      // Kiểm tra xem thành phần này có BOM con (kit.bom) hoặc Công thức pha chế (prep.formula) hay không
+      let childKitBom: any = null;
+      let childPrepFormula: any = null;
+
+      if (!visitedItems.has(compItemId) && level < 5) {
+        childKitBom = (
+          await tx.query(
+            `SELECT b.id, b.code, b.name, b.bom_version, b.status, b.base_qty::float AS base_qty, b.base_uom
+               FROM kit.bom b
+              WHERE b.product_item_id = $1
+                AND b.status IN ('EFFECTIVE', 'IN_REVIEW', 'DRAFT')
+                AND b.id <> $2
+              ORDER BY CASE WHEN b.status = 'EFFECTIVE' THEN 0 WHEN b.status = 'IN_REVIEW' THEN 1 ELSE 2 END ASC,
+                       b.bom_version DESC
+              LIMIT 1`,
+            [compItemId, rootBom.id]
+          )
+        ).rows[0];
+
+        if (!childKitBom) {
+          childPrepFormula = (
+            await tx.query(
+              `SELECT f.id, f.code, f.name, f.version AS bom_version, f.status,
+                      f.basis_qty::float AS base_qty, f.basis_uom AS base_uom
+                 FROM prep.formula f
+                WHERE f.output_item_id = $1
+                  AND f.status IN ('ACTIVE', 'DRAFT')
+                ORDER BY CASE WHEN f.status = 'ACTIVE' THEN 0 ELSE 1 END ASC,
+                         f.version DESC
+                LIMIT 1`,
+              [compItemId]
+            )
+          ).rows[0];
+        }
+      }
+
+      if (childKitBom) {
+        semi_finished_count++;
+        const childBaseQty = Math.max(Number(childKitBom.base_qty) || 1, 1e-9);
+        const childBaseUom = String(childKitBom.base_uom || uom);
+        const netInChildUom = convertQtyBetweenUoms(qtyNet, uom, childBaseUom);
+        const aliqNetInChildUom = convertQtyBetweenUoms(qtyAliqNet, uom, childBaseUom);
+        const grossInChildUom = convertQtyBetweenUoms(qtyGross, uom, childBaseUom);
+        const aliqGrossInChildUom = convertQtyBetweenUoms(qtyAliqGross, uom, childBaseUom);
+
+        const ratioStdNet = netInChildUom / childBaseQty;
+        const ratioAliqNet = aliqNetInChildUom / childBaseQty;
+        const ratioStdGross = grossInChildUom / childBaseQty;
+        const ratioAliqGross = aliqGrossInChildUom / childBaseQty;
+
+        const explanation = `${qtyNet} ${uom} BTP / Mẻ chuẩn ${childBaseQty} ${childBaseUom} (${childKitBom.code}) → Hệ số quy đổi ×${roundNormQty(ratioStdNet)}`;
+
+        tree_nodes.push({
+          path_no: pathNo,
+          level,
+          node_type: "SEMI_FINISHED",
+          box_no: l.box_no ? Number(l.box_no) : null,
+          component_item_id: compItemId,
+          component_code: compCode,
+          component_name: compName,
+          item_type: itemType,
+          component_role: role,
+          parent_item_code: parentCode,
+          parent_item_name: parentName,
+          uom,
+          qty_net: qtyNet,
+          qty_aliquoted_net: qtyAliqNet,
+          scrap_pct: scrapPct,
+          qty_gross: qtyGross,
+          qty_aliquoted_gross: qtyAliqGross,
+          is_stocked: isStocked,
+          source_formula_kind: "KIT_BOM",
+          source_formula_id: String(childKitBom.id),
+          source_formula_code: String(childKitBom.code),
+          source_basis_qty: childBaseQty,
+          source_basis_uom: childBaseUom,
+          conversion_ratio: roundNormQty(ratioStdNet),
+          formula_explanation: explanation,
+        });
+
+        const childLines = (
+          await tx.query(
+            `SELECT bl.*, bl.qty_per_base::float AS qty_per_base,
+                    bl.qty_per_base_aliquoted::float AS qty_per_base_aliquoted,
+                    bl.scrap_pct::float AS scrap_pct,
+                    coalesce(bl.is_stocked, true) AS is_stocked,
+                    it.code AS component_code, it.name AS component_name,
+                    it.item_type, it.base_uom AS component_base_uom,
+                    coalesce(it.is_stocked, true) AS item_is_stocked
+               FROM kit.bom_line bl
+               JOIN master.item it ON it.id = bl.component_item_id
+              WHERE bl.bom_id = $1
+              ORDER BY bl.box_no ASC, bl.line_no ASC`,
+            [childKitBom.id]
+          )
+        ).rows;
+
+        const nextVisited = new Set(visitedItems);
+        nextVisited.add(compItemId);
+        await expandFromKitBomLines(
+          childLines,
+          compCode,
+          compName,
+          level + 1,
+          pathNo,
+          ratioStdNet,
+          ratioAliqNet,
+          ratioStdGross,
+          ratioAliqGross,
+          nextVisited,
+          `${qtyNet} ${uom} ${compCode} / ${childBaseQty} ${childBaseUom}`
+        );
+      } else if (childPrepFormula) {
+        semi_finished_count++;
+        const childBaseQty = Math.max(Number(childPrepFormula.base_qty) || 1, 1e-9);
+        const childBaseUom = String(childPrepFormula.base_uom || uom);
+        const netInChildUom = convertQtyBetweenUoms(qtyNet, uom, childBaseUom);
+        const aliqNetInChildUom = convertQtyBetweenUoms(qtyAliqNet, uom, childBaseUom);
+        const grossInChildUom = convertQtyBetweenUoms(qtyGross, uom, childBaseUom);
+        const aliqGrossInChildUom = convertQtyBetweenUoms(qtyAliqGross, uom, childBaseUom);
+
+        const ratioStdNet = netInChildUom / childBaseQty;
+        const ratioAliqNet = aliqNetInChildUom / childBaseQty;
+        const ratioStdGross = grossInChildUom / childBaseQty;
+        const ratioAliqGross = aliqGrossInChildUom / childBaseQty;
+
+        const explanation = `${qtyNet} ${uom} Dung dịch pha / Mẻ chuẩn ${childBaseQty} ${childBaseUom} (${childPrepFormula.code}) → Hệ số quy đổi ×${roundNormQty(ratioStdNet)}`;
+
+        tree_nodes.push({
+          path_no: pathNo,
+          level,
+          node_type: "SEMI_FINISHED",
+          box_no: l.box_no ? Number(l.box_no) : null,
+          component_item_id: compItemId,
+          component_code: compCode,
+          component_name: compName,
+          item_type: itemType,
+          component_role: role,
+          parent_item_code: parentCode,
+          parent_item_name: parentName,
+          uom,
+          qty_net: qtyNet,
+          qty_aliquoted_net: qtyAliqNet,
+          scrap_pct: scrapPct,
+          qty_gross: qtyGross,
+          qty_aliquoted_gross: qtyAliqGross,
+          is_stocked: isStocked,
+          source_formula_kind: "PREP_FORMULA",
+          source_formula_id: String(childPrepFormula.id),
+          source_formula_code: String(childPrepFormula.code),
+          source_basis_qty: childBaseQty,
+          source_basis_uom: childBaseUom,
+          conversion_ratio: roundNormQty(ratioStdNet),
+          formula_explanation: explanation,
+        });
+
+        const prepLines = (
+          await tx.query(
+            `SELECT fl.line_no, fl.ingredient_item_id AS component_item_id,
+                    fl.qty::float AS qty_per_base, fl.qty::float AS qty_per_base_aliquoted,
+                    0::float AS scrap_pct, fl.uom,
+                    'REAGENT'::text AS component_role, true AS is_stocked,
+                    it.code AS component_code, it.name AS component_name,
+                    it.item_type, it.base_uom AS component_base_uom,
+                    coalesce(it.is_stocked, true) AS item_is_stocked
+               FROM prep.formula_line fl
+               JOIN master.item it ON it.id = fl.ingredient_item_id
+              WHERE fl.formula_id = $1
+              ORDER BY fl.line_no ASC`,
+            [childPrepFormula.id]
+          )
+        ).rows;
+
+        const nextVisited = new Set(visitedItems);
+        nextVisited.add(compItemId);
+        await expandFromKitBomLines(
+          prepLines,
+          compCode,
+          compName,
+          level + 1,
+          pathNo,
+          ratioStdNet,
+          ratioAliqNet,
+          ratioStdGross,
+          ratioAliqGross,
+          nextVisited,
+          `${qtyNet} ${uom} ${compCode} / ${childBaseQty} ${childBaseUom}`
+        );
+      } else {
+        const formulaNote =
+          level === 1
+            ? `Trực tiếp trong BOM ${parentCode}: ${rawStd} ${uom}`
+            : `Quy đổi từ BTP ${parentCode} (${parentBasisNote || `×${roundNormQty(scaleStdNet)}`} × ${rawStd} ${uom} = ${qtyNet} ${uom})`;
+
+        tree_nodes.push({
+          path_no: pathNo,
+          level,
+          node_type: "RAW_MATERIAL",
+          box_no: l.box_no ? Number(l.box_no) : null,
+          component_item_id: compItemId,
+          component_code: compCode,
+          component_name: compName,
+          item_type: itemType,
+          component_role: role,
+          parent_item_code: parentCode,
+          parent_item_name: parentName,
+          uom,
+          qty_net: qtyNet,
+          qty_aliquoted_net: qtyAliqNet,
+          scrap_pct: scrapPct,
+          qty_gross: qtyGross,
+          qty_aliquoted_gross: qtyAliqGross,
+          is_stocked: isStocked,
+          source_formula_kind: null,
+          source_formula_id: null,
+          source_formula_code: null,
+          source_basis_qty: null,
+          source_basis_uom: null,
+          conversion_ratio: null,
+          formula_explanation: formulaNote,
+        });
+
+        const sumKey = `${compItemId}|${uom.toUpperCase()}`;
+        const existing = summaryMap.get(sumKey);
+        if (existing) {
+          existing.total_net_qty = roundNormQty(existing.total_net_qty + qtyNet);
+          existing.total_aliquoted_net_qty = roundNormQty(existing.total_aliquoted_net_qty + qtyAliqNet);
+          existing.total_gross_qty = roundNormQty(existing.total_gross_qty + qtyGross);
+          existing.total_aliquoted_gross_qty = roundNormQty(existing.total_aliquoted_gross_qty + qtyAliqGross);
+          existing.effective_scrap_pct =
+            existing.total_net_qty > 0
+              ? Math.round(((existing.total_gross_qty - existing.total_net_qty) / existing.total_net_qty) * 10000) / 100
+              : 0;
+          existing.sources.push({
+            parent_code: parentCode,
+            parent_name: parentName,
+            level,
+            net_qty: qtyNet,
+            gross_qty: qtyGross,
+            formula_note: formulaNote,
+          });
+        } else {
+          summaryMap.set(sumKey, {
+            component_item_id: compItemId,
+            component_code: compCode,
+            component_name: compName,
+            item_type: itemType,
+            component_role: role,
+            uom,
+            is_stocked: isStocked,
+            total_net_qty: qtyNet,
+            total_aliquoted_net_qty: qtyAliqNet,
+            total_gross_qty: qtyGross,
+            total_aliquoted_gross_qty: qtyAliqGross,
+            effective_scrap_pct:
+              qtyNet > 0 ? Math.round(((qtyGross - qtyNet) / qtyNet) * 10000) / 100 : scrapPct,
+            sources: [
+              {
+                parent_code: parentCode,
+                parent_name: parentName,
+                level,
+                net_qty: qtyNet,
+                gross_qty: qtyGross,
+                formula_note: formulaNote,
+              },
+            ],
+          });
+        }
+      }
+    }
+  }
+
+  const rootLines = (
+    await tx.query(
+      `SELECT bl.*, bl.qty_per_base::float AS qty_per_base,
+              bl.qty_per_base_aliquoted::float AS qty_per_base_aliquoted,
+              bl.scrap_pct::float AS scrap_pct,
+              coalesce(bl.is_stocked, true) AS is_stocked,
+              it.code AS component_code, it.name AS component_name,
+              it.item_type, it.base_uom AS component_base_uom,
+              coalesce(it.is_stocked, true) AS item_is_stocked
+         FROM kit.bom_line bl
+         JOIN master.item it ON it.id = bl.component_item_id
+        WHERE bl.bom_id = $1
+        ORDER BY bl.box_no ASC, bl.line_no ASC`,
+      [rootBom.id]
+    )
+  ).rows;
+
+  const initialVisited = new Set<string>([String(rootBom.product_item_id)]);
+  await expandFromKitBomLines(
+    rootLines,
+    String(rootBom.product_code),
+    String(rootBom.product_name),
+    1,
+    "",
+    1,
+    1,
+    1,
+    1,
+    initialVisited
+  );
+
+  return {
+    base_qty: Number(rootBom.base_qty) || 1,
+    base_uom: String(rootBom.base_uom || "bộ"),
+    semi_finished_count,
+    tree_nodes,
+    raw_material_summary: Array.from(summaryMap.values()),
+  };
+}
+
 export async function getBomDetail(
   tx: Tx,
   actor: AuthzActor,
@@ -3591,7 +4034,16 @@ export async function getBomDetail(
   ).rows;
 
   const actions = await listAllowedActions(tx, bomMachine, actor, bom);
-  return { ...bom, bom, lines, substitutes, total_lines, packaging, actions, allowed_actions: actions };
+  const multi_level_rollup = await computeMultiLevelBomRollup(tx, {
+    id: String(bom.id),
+    code: String(bom.code),
+    product_item_id: String(bom.product_item_id),
+    product_code: String(bom.product_code || ""),
+    product_name: String(bom.product_name || ""),
+    base_qty: Number(bom.base_qty) || 1,
+    base_uom: String(bom.base_uom || "bộ"),
+  });
+  return { ...bom, bom, lines, substitutes, total_lines, packaging, multi_level_rollup, actions, allowed_actions: actions };
 }
 
 export async function listRoutings(tx: Tx, actor: AuthzActor, filter: ListFormulaFilter = {}) {
