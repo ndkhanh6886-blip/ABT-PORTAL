@@ -17370,31 +17370,151 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 return acc + qty * price;
             }, 0);
 
+        const isSlipCancelledLocal = (s: any) => {
+            if (!s) return true;
+            const st = String(s.deliveryStatus || "").toUpperCase();
+            const rawSt = String(s.status || "").toUpperCase();
+            return st === "CANCELLED" || rawSt === "CANCELLED" || Boolean(s.cancelledAt);
+        };
+
         // Phiếu đã được Kho xác nhận giao (WAREHOUSE_DELIVERED) hoặc NVKD xác nhận (DELIVERED) đều hoàn tất xuất kho & đủ điều kiện xuất hóa đơn (Slide 8)
-        const isSlipReadyForInvoice = (s: any) => Boolean(
-            s?.isDelivered ||
-            ["WAREHOUSE_DELIVERED", "SHIPPED", "DELIVERED", "FULLY_DELIVERED", "PARTIALLY_DELIVERED"].includes(String(s?.deliveryStatus || "").toUpperCase())
-        );
+        // Phiếu đã hủy (CANCELLED) tuyệt đối không được tính vào danh sách cần xuất hóa đơn
+        const isSlipReadyForInvoice = (s: any) => {
+            if (!s || isSlipCancelledLocal(s)) return false;
+            return Boolean(
+                s?.isDelivered ||
+                ["WAREHOUSE_DELIVERED", "SHIPPED", "DELIVERED", "FULLY_DELIVERED", "PARTIALLY_DELIVERED"].includes(String(s?.deliveryStatus || "").toUpperCase())
+            );
+        };
+
+        // Chuẩn hóa tìm kiếm Khách hàng & Nhân sự phụ trách cho từng đơn giao thành công
+        const findCustomerForOrder = (custId?: any, custCode?: any, custName?: any) => {
+            if (custId) {
+                const byId = customers.find(c => String(c.id) === String(custId));
+                if (byId) return byId;
+            }
+            if (custCode) {
+                const cc = String(custCode).trim().toLowerCase();
+                const byCode = customers.find(c => String(c.customer_code || "").trim().toLowerCase() === cc);
+                if (byCode) return byCode;
+            }
+            const normName = normalizeComparableVN(custName);
+            if (!normName) return undefined;
+            return (
+                customers.find(c => normalizeComparableVN(c.name) === normName) ||
+                customers.find(c => {
+                    const cn = normalizeComparableVN(c.name);
+                    return cn && (cn.includes(normName) || normName.includes(cn));
+                })
+            );
+        };
+
+        const resolveRepRecord = (rawRepId?: any, rawRepName?: any, fallbackCust?: any) => {
+            const rId = String(rawRepId || "").trim();
+            const rName = String(rawRepName || "").trim();
+            const stripCode = (s: string) => s.replace(/\s*\([^)]*\)\s*$/, "").trim();
+            const normRName = normalizeComparableVN(stripCode(rName));
+            let matched = salesPersonnel.find(p =>
+                (rId && (p.employee_id === rId || p.employee_code === rId || String(p.id) === rId)) ||
+                (rName && (p.employee_id === rName || p.employee_code === rName)) ||
+                (normRName && normalizeComparableVN(p.full_name) === normRName)
+            );
+            if (!matched && normRName) {
+                matched = salesPersonnel.find(p => {
+                    const pn = normalizeComparableVN(p.full_name);
+                    return pn && (pn.includes(normRName) || normRName.includes(pn));
+                });
+            }
+            if (!matched && fallbackCust) {
+                const assignedId = getCustomerAssignedRep(fallbackCust);
+                if (assignedId) {
+                    const normAssigned = normalizeComparableVN(stripCode(String(assignedId)));
+                    matched = salesPersonnel.find(p =>
+                        p.employee_id === assignedId ||
+                        p.employee_code === assignedId ||
+                        (normAssigned && normalizeComparableVN(p.full_name) === normAssigned)
+                    );
+                }
+            }
+            return {
+                sales_rep_id: matched?.employee_id || rId || "",
+                sales_rep_name: matched?.full_name || stripCode(rName) || (fallbackCust ? getCustomerAssignedRep(fallbackCust) : "") || ""
+            };
+        };
+
+        const computeOrderDiscountInfo = (fo: any, totalAmt: number) => {
+            let discAmt = Number(fo?.discount_amount ?? fo?.discountAmount ?? fo?.totalDiscount) || 0;
+            let discRate = Number(fo?.discount_rate ?? fo?.discountRate) || 0;
+            if (discAmt <= 0 && Array.isArray(fo?.items)) {
+                discAmt = fo.items.reduce((s: number, it: any) => {
+                    const lineD = Number(it?.discountAmount ?? it?.discount_amount) || 0;
+                    if (lineD > 0) return s + lineD;
+                    const r = Number(it?.discountRate ?? it?.discount_rate ?? it?.discountPercent) || 0;
+                    if (r > 0) {
+                        const gross = (Number(it?.quantity ?? it?.qty) || 0) * (Number(it?.unitPrice ?? it?.unit_price ?? it?.price) || 0);
+                        const vatR = Number(it?.vatRate ?? it?.vat_rate ?? 8);
+                        const net = vatR > 0 ? Math.round(gross / (1 + vatR / 100)) : gross;
+                        return s + Math.round(net * (r / 100));
+                    }
+                    return s;
+                }, 0);
+            }
+            if (discAmt <= 0 && (fo?.quoteId || fo?.quote_code)) {
+                const qCode = String(fo.quoteId || fo.quote_code).trim();
+                const linkedQ = (quotations || []).find((q: any) => q && (String(q.id) === qCode || String(q.quote_code) === qCode));
+                if (linkedQ) {
+                    const qDisc = Number(linkedQ.totalDiscount ?? linkedQ.discount_amount) || 0;
+                    const qTotal = Number(linkedQ.totalAmount ?? linkedQ.total_amount) || 0;
+                    if (qDisc > 0) {
+                        discAmt = (qTotal > 0 && totalAmt > 0 && Math.abs(totalAmt - qTotal) > 1000)
+                            ? Math.round(qDisc * (totalAmt / qTotal))
+                            : qDisc;
+                    }
+                    if (!discRate && linkedQ.discountRate) discRate = Number(linkedQ.discountRate) || 0;
+                }
+            }
+            return { discount_amount: Math.max(0, Math.round(discAmt)), discount_rate: discRate };
+        };
 
         // 1. From factoryOrders
         factoryOrders.forEach(fo => {
-            const linkedSlips = deliverySlips.filter(s => 
-                s.orderId === fo.id || 
-                s.orderCode === fo.order_code || 
-                s.orderCode === fo.linkedSalesOrderId || 
-                (fo.linkedSalesOrderId && s.orderCode && cleanOrderCode(s.orderCode) === cleanOrderCode(fo.linkedSalesOrderId)) ||
-                (fo.id && s.orderId === String(fo.id))
+            // Không đưa đơn lưu kho nội bộ (SO Stock / gối đầu) vào thống kê doanh số bán hàng & sổ hóa đơn KH
+            if (checkIsPureStock(fo) || Boolean(fo.isStockOrder)) return;
+            if (fo.status === "Cancelled" || fo.status === "CANCELLED" || fo.delivery_status === "CANCELLED" || fo.status === "Rejected") return;
+
+            const allMatchedSlips = deliverySlips.filter(s => 
+                s && !s.isDraftPreview && (
+                    s.orderId === fo.id || 
+                    s.orderCode === fo.order_code || 
+                    s.orderCode === fo.linkedSalesOrderId || 
+                    (fo.linkedSalesOrderId && s.orderCode && cleanOrderCode(s.orderCode) === cleanOrderCode(fo.linkedSalesOrderId)) ||
+                    (fo.id && s.orderId === String(fo.id))
+                )
             );
-            const isDelivered = fo.status === "Delivered" || fo.status === "COMPLETED" || !!fo.deliveredAt || linkedSlips.some(isSlipReadyForInvoice);
+            // Loại bỏ hoàn toàn các phiếu giao hàng đã hủy (CANCELLED) khỏi Sổ hóa đơn
+            const linkedSlips = allMatchedSlips.filter(s => !isSlipCancelledLocal(s));
+            const deliveredSlips = linkedSlips.filter(isSlipReadyForInvoice);
+            const isDelivered = allMatchedSlips.length > 0
+                ? deliveredSlips.length > 0
+                : (fo.status === "Delivered" || fo.status === "COMPLETED" || !!fo.deliveredAt);
             if (isDelivered) {
                 const canonicalCode = resolveCanonicalCode(fo.linkedSalesOrderId || fo.order_code, fo.id);
-                const cust = customers.find(c => 
-                    c.id === fo.customerId || 
-                    c.id === fo.customer_id || 
-                    (fo.customerName && c.name && (c.name.toLowerCase().includes(fo.customerName.toLowerCase()) || fo.customerName.toLowerCase().includes(c.name.toLowerCase())))
-                );
-                const primarySlip = linkedSlips.find(s => (s.totalAmount || 0) > 0) || linkedSlips[0];
+                const cust = findCustomerForOrder(fo.customerId || fo.customer_id, fo.customer_code, fo.customerName || fo.customer_name);
+                const repInfo = resolveRepRecord(fo.salesRepId || fo.sales_rep_id, fo.salesRepName || fo.sales_rep_name, cust);
+                const primarySlip = deliveredSlips.find(s => (s.totalAmount || 0) > 0) || deliveredSlips[0] || linkedSlips.find(s => (s.totalAmount || 0) > 0) || linkedSlips[0];
                 const amt = itemsTotal(fo.items) || fo.total_amount || fo.totalAmount || primarySlip?.totalAmount || 0;
+                const paidFromOrder = getOrderPaidAmount(fo);
+                const paidFromSlips = linkedSlips.reduce((s, sl) => s + (Number(slipPaidMap[sl.id]) || 0), 0);
+                const resolvedPaid = Math.max(paidFromOrder, paidFromSlips);
+                const discInfo = computeOrderDiscountInfo(fo, Number(amt) || 0);
+                const effectiveDelivDate =
+                    primarySlip?.deliveryDate ||
+                    primarySlip?.delivery_date ||
+                    fo.deliveredAt ||
+                    primarySlip?.deliveredAt ||
+                    (fo as any).order_date ||
+                    fo.date ||
+                    fo.createdAt;
 
                 candidates.push({
                     canonical_code: canonicalCode,
@@ -17402,18 +17522,24 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     order_code: canonicalCode || fo.order_code || fo.linkedSalesOrderId || `ORD-${fo.id}`,
                     raw_code: fo.linkedSalesOrderId || fo.id,
                     factory_order_id: fo.id,
-                    customer_name: fo.customerName || cust?.name || "Khách hàng",
+                    customer_id: cust?.id ?? fo.customerId ?? fo.customer_id ?? null,
+                    customer_code: cust?.customer_code || (fo as any).customer_code || (cust?.id ? `KH-${cust.id}` : ""),
+                    customer_name: cust?.name || fo.customerName || (fo as any).customer_name || "Khách hàng",
+                    customer_group: cust?.classification || cust?.industry || (fo as any).customer_group || (fo as any).customerGroup || "Khách hàng doanh nghiệp",
                     customer_tax_code: cust?.tax_code || "",
                     customer_phone: cust?.phone || "",
                     customer_address: cust?.address || cust?.region || "",
-                    sales_rep_name: fo.salesRepName || fo.sales_rep_name || (cust ? getCustomerAssignedRep(cust) : ""),
+                    sales_rep_id: repInfo.sales_rep_id,
+                    sales_rep_name: repInfo.sales_rep_name,
                     total_amount: Number(amt) || 0,
+                    discount_amount: discInfo.discount_amount,
+                    discount_rate: discInfo.discount_rate,
                     items: (fo.items && fo.items.length > 0) ? fo.items : (primarySlip?.items || []),
-                    deliveredAt: fo.deliveredAt || primarySlip?.deliveredAt || fo.updatedAt || fo.createdAt,
+                    deliveredAt: effectiveDelivDate,
                     deliverySlip: primarySlip,
                     deliverySlips: linkedSlips,
                     invoiceNo: fo.invoiceNo || (fo as any).invoice_no || primarySlip?.invoiceNo || "",
-                    invoiceDate: fo.invoiceDate || (fo as any).invoice_date || fo.deliveredAt || primarySlip?.deliveredAt || "",
+                    invoiceDate: fo.invoiceDate || (fo as any).invoice_date || effectiveDelivDate || "",
                     invoiceStatus: resolveEffectiveInvoiceStatus(fo, linkedSlips),
                     invoiceFiles: fo.invoiceFiles || primarySlip?.invoiceFiles || [],
                     deliveryNotes: fo.deliveryNotes || primarySlip?.notes || "",
@@ -17428,8 +17554,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     invoiceNotes: fo.invoiceNotes || fo.invoice_notes || "",
                     shipping_method: fo.shipping_method || fo.shippingMethod,
                     tracking_code: fo.tracking_code || fo.trackingCode,
-                    amount_paid: Number(fo.amountPaid ?? fo.amount_paid ?? 0) || 0,
-                    payment_status: fo.payment_status || fo.paymentStatus || "UNPAID"
+                    amount_paid: resolvedPaid,
+                    payment_status: (resolvedPaid >= (Number(amt) || 0) && (Number(amt) || 0) > 0)
+                        ? "PAID"
+                        : (fo.payment_status || fo.paymentStatus || (resolvedPaid > 0 ? "PARTIAL" : "UNPAID"))
                 });
             }
         });
@@ -17438,33 +17566,45 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         deliverySlips.forEach(slip => {
             if (isSlipReadyForInvoice(slip)) {
                 const canonicalCode = resolveCanonicalCode(slip.orderCode, slip.orderId || slip.id);
-                const cust = customers.find(c => 
-                    c.id === slip.customerId || 
-                    (slip.customerName && c.name && (c.name.toLowerCase().includes(slip.customerName.toLowerCase()) || slip.customerName.toLowerCase().includes(c.name.toLowerCase())))
-                );
+                const cust = findCustomerForOrder(slip.customerId, slip.customer_code, slip.customerName);
+                const repInfo = resolveRepRecord(slip.salesRepId || slip.sales_rep_id, slip.salesRep || slip.sales_rep_name, cust);
                 const amt = slip.totalAmount || (slip.items || []).reduce((acc: number, it: any) => acc + (Number(it.quantity || 1) * Number(it.unitPrice || it.price || 0)), 0);
+                const slipPaid = Math.max(
+                    Number(slipPaidMap[slip.id]) || 0,
+                    canonicalCode ? (Number(orderPaidMap[canonicalCode]) || 0) : 0,
+                    slip.orderCode ? (Number(orderPaidMap[String(slip.orderCode).trim()]) || 0) : 0
+                );
+                const effectiveSlipDate = slip.deliveryDate || slip.delivery_date || slip.deliveredAt || slip.createdAt;
 
                 candidates.push({
                     canonical_code: canonicalCode,
                     order_id: slip.orderId || slip.id,
                     order_code: canonicalCode || slip.orderCode || `ORD-${slip.id}`,
                     raw_code: slip.orderCode,
-                    customer_name: slip.customerName || cust?.name || "Khách hàng",
+                    customer_id: cust?.id ?? slip.customerId ?? null,
+                    customer_code: cust?.customer_code || (cust?.id ? `KH-${cust.id}` : ""),
+                    customer_name: cust?.name || slip.customerName || "Khách hàng",
+                    customer_group: cust?.classification || cust?.industry || "Khách hàng doanh nghiệp",
                     customer_tax_code: cust?.tax_code || "",
                     customer_phone: cust?.phone || "",
                     customer_address: cust?.address || cust?.region || "",
-                    sales_rep_name: slip.salesRep || (cust ? getCustomerAssignedRep(cust) : ""),
+                    sales_rep_id: repInfo.sales_rep_id,
+                    sales_rep_name: repInfo.sales_rep_name,
                     total_amount: Number(amt) || 0,
+                    discount_amount: 0,
+                    discount_rate: 0,
                     items: slip.items || [],
-                    deliveredAt: slip.deliveredAt || slip.createdAt,
+                    deliveredAt: effectiveSlipDate,
                     deliverySlip: slip,
                     deliverySlips: [slip],
                     invoiceNo: slip.invoiceNo || "",
-                    invoiceDate: slip.invoiceDate || slip.deliveredAt || "",
+                    invoiceDate: slip.invoiceDate || effectiveSlipDate || "",
                     invoiceStatus: resolveEffectiveInvoiceStatus(slip, [slip]),
                     invoiceFiles: slip.invoiceFiles || [],
                     deliveryNotes: slip.notes || "",
-                    rawOrder: slip
+                    rawOrder: slip,
+                    amount_paid: slipPaid,
+                    payment_status: (slipPaid >= (Number(amt) || 0) && (Number(amt) || 0) > 0) ? "PAID" : (slipPaid > 0 ? "PARTIAL" : "UNPAID")
                 });
             }
         });
@@ -17515,9 +17655,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     ? existing.sales_rep_name
                     : (cand.sales_rep_name || existing.sales_rep_name);
 
-                // Combine slips
+                // Combine slips (chỉ lấy các phiếu hợp lệ chưa hủy)
                 const allSlips = [...(existing.deliverySlips || []), ...(cand.deliverySlips || [])];
-                const uniqueSlips = allSlips.filter((s, i, arr) => s && s.id && arr.findIndex(x => x && x.id === s.id) === i);
+                const uniqueSlips = allSlips.filter((s, i, arr) => s && s.id && !isSlipCancelledLocal(s) && arr.findIndex(x => x && x.id === s.id) === i);
                 const primarySlip = uniqueSlips.find(s => (s.totalAmount || 0) > 0) || uniqueSlips[0] || existing.deliverySlip || cand.deliverySlip;
 
                 // Accurately compute total delivered amount: use original SO total_amount if available, or sum of all delivered slips
@@ -17529,6 +17669,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 const soOrder = existing.factory_order_id ? existing.rawOrder : (cand.factory_order_id ? cand.rawOrder : null);
                 const soTotal = soOrder ? (itemsTotal(soOrder.items) || Number(soOrder.total_amount ?? soOrder.totalAmount) || 0) : 0;
                 const resolvedTotalAmount = soTotal || (sumSlipAmounts > 0 ? sumSlipAmounts : Math.max(existing.total_amount || 0, cand.total_amount || 0));
+                const paidFromSlips = uniqueSlips.reduce((s, sl) => s + (Number(slipPaidMap[sl.id]) || 0), 0);
+                const paidFromSo = soOrder ? getOrderPaidAmount(soOrder) : 0;
+                const resolvedAmountPaid = Math.max(paidFromSo, paidFromSlips, Number(existing.amount_paid) || 0, Number(cand.amount_paid) || 0);
+                const resolvedPaymentStatus = (resolvedAmountPaid >= resolvedTotalAmount && resolvedTotalAmount > 0)
+                    ? "PAID"
+                    : (existing.payment_status === "PAID" || cand.payment_status === "PAID" ? "PAID" : (resolvedAmountPaid > 0 ? "PARTIAL" : "UNPAID"));
 
                 // Merge files
                 const allFiles = [...(existing.invoiceFiles || []), ...(cand.invoiceFiles || [])];
@@ -17537,8 +17683,19 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 mergedMap.set(matchKey, {
                     ...existing,
                     order_code: cand.canonical_code || existing.canonical_code || existing.order_code,
+                    customer_id: existing.customer_id ?? cand.customer_id ?? null,
+                    customer_code: existing.customer_code || cand.customer_code || "",
+                    customer_name: existing.customer_name || cand.customer_name || "Khách hàng",
+                    customer_group: (existing.customer_group && existing.customer_group !== "Khách hàng doanh nghiệp")
+                        ? existing.customer_group
+                        : (cand.customer_group || existing.customer_group || "Khách hàng doanh nghiệp"),
                     total_amount: resolvedTotalAmount,
+                    discount_amount: Math.max(Number(existing.discount_amount) || 0, Number(cand.discount_amount) || 0),
+                    discount_rate: Math.max(Number(existing.discount_rate) || 0, Number(cand.discount_rate) || 0),
+                    amount_paid: resolvedAmountPaid,
+                    payment_status: resolvedPaymentStatus,
                     items: bestItems,
+                    sales_rep_id: existing.sales_rep_id || cand.sales_rep_id || "",
                     sales_rep_name: bestRep,
                     deliverySlip: primarySlip,
                     deliverySlips: uniqueSlips,
@@ -17550,7 +17707,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             ? "NO_INVOICE"
                             : resolveEffectiveInvoiceStatus({ ...existing, items: bestItems }, uniqueSlips)),
                     invoiceFiles: uniqueFiles,
-                    deliveredAt: existing.deliveredAt || cand.deliveredAt,
+                    deliveredAt: primarySlip?.deliveryDate || primarySlip?.delivery_date || existing.deliveredAt || cand.deliveredAt,
                     deliveryNotes: existing.deliveryNotes || cand.deliveryNotes || "",
                     invoice_notes: existing.invoice_notes || cand.invoice_notes || existing.invoiceNotes || cand.invoiceNotes || "",
                     invoiceNotes: existing.invoiceNotes || cand.invoiceNotes || existing.invoice_notes || cand.invoice_notes || ""
@@ -17559,7 +17716,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         });
 
         return Array.from(mergedMap.values()).sort((a, b) => new Date(b.deliveredAt || 0).getTime() - new Date(a.deliveredAt || 0).getTime());
-    }, [factoryOrders, deliverySlips, customers]);
+    }, [factoryOrders, deliverySlips, customers, salesPersonnel, quotations, orderPaidMap, slipPaidMap]);
 
     const handleExportInvoiceBook = () => {
         try {
@@ -25518,7 +25675,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     quotations={quotations}
                     contracts={contracts}
                     salesNvkdCustomers={salesNvkdCustomers}
-                    biolabProducts={biolabProducts}
+                    biolabProducts={allSalesProducts}
+                    selectedAssigneeFilter={selectedAssigneeFilter}
+                    onChangeAssigneeFilter={setSelectedAssigneeFilter}
                     isManagerOrAdmin={isManagerOrAdmin}
                     isViewerDirector={isViewerDirector}
                     loggedInStaff={loggedInStaff}

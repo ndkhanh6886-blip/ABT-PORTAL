@@ -56,6 +56,8 @@ export interface SalesPerformanceAnalyticsProps {
   contracts: any[];
   salesNvkdCustomers?: any[];
   biolabProducts?: any[];
+  selectedAssigneeFilter?: string;
+  onChangeAssigneeFilter?: (repId: string) => void;
   isManagerOrAdmin: boolean;
   isViewerDirector: boolean;
   loggedInStaff: any;
@@ -66,6 +68,68 @@ export interface SalesPerformanceAnalyticsProps {
 
 // Benchmark transactions (Clean slate: empty by default for real-world operations)
 const BENCHMARK_TRANSACTIONS: any[] = [];
+
+const METRIC_LABELS_VN: Record<string, string> = {
+  revenue_gross: "DOANH SỐ SAU VAT",
+  revenue_net: "DOANH SỐ TRƯỚC VAT",
+  vat: "THUẾ VAT",
+  discount: "CHIẾT KHẤU",
+  collected: "THỰC THU (ĐÃ THU)",
+  debt: "CÔNG NỢ CÒN LẠI",
+  debt_rate: "TỶ LỆ THU HỒI CÔNG NỢ",
+  quantity: "SẢN LƯỢNG HÀNG HÓA"
+};
+
+const DIMENSION_LABELS_VN: Record<string, string> = {
+  employee: "NHÂN VIÊN KINH DOANH (SALE)",
+  customer: "KHÁCH HÀNG",
+  customer_group: "NHÓM KHÁCH HÀNG",
+  debt: "KHÁCH HÀNG & CÔNG NỢ",
+  product: "MÃ HÀNG HÓA",
+  category: "NHÓM SẢN PHẨM",
+  trend: "THỜI GIAN",
+  target: "CHỈ TIÊU KPI"
+};
+
+const normVN = (val: any): string => {
+  if (!val) return "";
+  return String(val)
+    .normalize("NFC")
+    .replace(/\s*\([^)]*\)\s*$/, "")
+    .trim()
+    .toLowerCase()
+    .replace(/thuỳ/g, "thùy")
+    .replace(/thúy/g, "thuý")
+    .replace(/quí/g, "quý")
+    .replace(/hoà/g, "hòa")
+    .replace(/oà/g, "òa")
+    .replace(/uỷ/g, "ủy")
+    .replace(/\s+/g, " ");
+};
+
+const inferProductCategory = (code: string, name: string, explicitCat?: string): string => {
+  const c = String(explicitCat || "").trim();
+  if (c && c.toLowerCase() !== "khác" && c.toLowerCase() !== "other" && c.toLowerCase() !== "sản phẩm") {
+    return c;
+  }
+  const hay = `${code} ${name}`.toLowerCase();
+  if (/toppure|kit\b|qpcr|pcr|master\s*mix|extraction|tách chiết|sinh phẩm/.test(hay)) {
+    return "Sinh phẩm & Kit xét nghiệm";
+  }
+  if (/^(oligo|pri|prb|primer|probe)|primer|probe|oligo|mồi|đầu dò|taqman|bhq/.test(hay)) {
+    return "Mồi & Đầu dò (Oligo/Primer)";
+  }
+  if (/máy\b|tủ\b|ly tâm|thiết bị|pipet|vortex|spindown|block nhiệt|kính hiển vi|nồi hấp/.test(hay)) {
+    return "Thiết bị & Dụng cụ Lab";
+  }
+  if (/tube|ống\b|tip\b|đầu côn|plate|đĩa\b|màng lọc|filter|syringe|găng|chai\b|lọ\b|vật tư/.test(hay)) {
+    return "Vật tư tiêu hao Lab";
+  }
+  if (/agarose|ethanol|buffer|stain|giemsa|enzyme|proteinase|taq|dntp|ladder|marker|hóa chất|thuốc thử|acid|muối/.test(hay)) {
+    return "Hóa chất & Thuốc thử";
+  }
+  return "Hàng hóa thương mại khác";
+};
 
 export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps> = ({
   salesPersonnel,
@@ -82,6 +146,8 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
   contracts,
   salesNvkdCustomers = [],
   biolabProducts = [],
+  selectedAssigneeFilter,
+  onChangeAssigneeFilter,
   isManagerOrAdmin,
   isViewerDirector,
   loggedInStaff,
@@ -104,7 +170,20 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
   // Filter States
   const [periodType, setPeriodType] = useState<"month" | "quarter" | "year" | "all">("month");
   const [periodValue, setPeriodValue] = useState<string>(() => defaultPeriodInfo.month);
-  const [selectedRepId, setSelectedRepId] = useState<string>("all");
+  const [selectedRepId, setSelectedRepId] = useState<string>(() => selectedAssigneeFilter || "all");
+
+  // Đồng bộ bộ lọc nhân viên trên thanh tiêu đề chung (selectedAssigneeFilter) với bộ lọc SALE trong tab KPI
+  React.useEffect(() => {
+    if (selectedAssigneeFilter !== undefined && selectedAssigneeFilter !== selectedRepId) {
+      setSelectedRepId(selectedAssigneeFilter);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAssigneeFilter]);
+
+  const handleSelectRepId = (nextRepId: string) => {
+    setSelectedRepId(nextRepId);
+    if (onChangeAssigneeFilter) onChangeAssigneeFilter(nextRepId);
+  };
 
   // Sync period when a target is saved in the modal so the screen always reflects the newly assigned period immediately
   React.useEffect(() => {
@@ -131,24 +210,36 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
   const [kpiViewMode, setKpiViewMode] = useState<"table_and_chart" | "table_only" | "chart_only">("table_and_chart");
 
   // Robust date normalization helper
-  const parseNormalizedDate = (dateVal: any): { year: number; month: number; dateStr: string } | null => {
+  const parseNormalizedDate = (dateVal: any): { year: number; month: number; day: number; dateStr: string } | null => {
     if (!dateVal) return null;
     const str = String(dateVal).trim();
-    if (str.includes("T")) {
-      const d = new Date(str);
-      if (!isNaN(d.getTime())) {
-        return { year: d.getFullYear(), month: d.getMonth() + 1, dateStr: str.slice(0, 10) };
-      }
-    }
-    // Check YYYY-MM-DD
+    // Check YYYY-MM-DD first (or ISO starting with YYYY-MM-DD)
     const isoMatch = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-    if (isoMatch) {
-      return { year: parseInt(isoMatch[1], 10), month: parseInt(isoMatch[2], 10), dateStr: str };
+    if (isoMatch && !str.includes("T")) {
+      const y = parseInt(isoMatch[1], 10);
+      const m = parseInt(isoMatch[2], 10);
+      const d = parseInt(isoMatch[3], 10);
+      return { year: y, month: m, day: d, dateStr: `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}` };
     }
-    // Check DD/MM/YYYY
+    // Check DD/MM/YYYY or DD-MM-YYYY
     const slashMatch = str.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})/);
     if (slashMatch) {
-      return { year: parseInt(slashMatch[3], 10), month: parseInt(slashMatch[2], 10), dateStr: `${slashMatch[3]}-${String(slashMatch[2]).padStart(2, "0")}-${String(slashMatch[1]).padStart(2, "0")}` };
+      const d = parseInt(slashMatch[1], 10);
+      const m = parseInt(slashMatch[2], 10);
+      const y = parseInt(slashMatch[3], 10);
+      return { year: y, month: m, day: d, dateStr: `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}` };
+    }
+    if (str.includes("T")) {
+      const dt = new Date(str);
+      if (!isNaN(dt.getTime())) {
+        // Chuyển sang múi giờ Việt Nam (UTC+7)
+        const vnMs = dt.getTime() + 7 * 3600 * 1000;
+        const vnDate = new Date(vnMs);
+        const y = vnDate.getUTCFullYear();
+        const m = vnDate.getUTCMonth() + 1;
+        const d = vnDate.getUTCDate();
+        return { year: y, month: m, day: d, dateStr: `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}` };
+      }
     }
     return null;
   };
@@ -179,6 +270,122 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
     return false;
   };
 
+  // Chỉ mục tra cứu nhanh Danh mục sản phẩm, Khách hàng và Nhân sự kinh doanh
+  const productCatalogMap = useMemo(() => {
+    const m = new Map<string, any>();
+    (biolabProducts || []).forEach((p: any) => {
+      const code = String(p?.code || p?.product_code || p?.productCode || "").trim().toLowerCase();
+      if (code && !m.has(code)) m.set(code, p);
+    });
+    return m;
+  }, [biolabProducts]);
+
+  const resolveCustomerMeta = useMemo(() => {
+    const byId = new Map<string, any>();
+    const byCode = new Map<string, any>();
+    const byName = new Map<string, any>();
+    (customers || []).forEach((c: any) => {
+      if (!c) return;
+      if (c.id !== undefined && c.id !== null) byId.set(String(c.id), c);
+      if (c.customer_code) byCode.set(String(c.customer_code).trim().toLowerCase(), c);
+      const n = normVN(c.name);
+      if (n && !byName.has(n)) byName.set(n, c);
+    });
+    return (ord: any) => {
+      const rawId = ord?.customer_id ?? ord?.customerId;
+      const rawCode = String(ord?.customer_code || "").trim();
+      const rawName = String(ord?.customer_name || ord?.customerName || "").trim();
+      const normName = normVN(rawName);
+      let cust =
+        (rawId !== undefined && rawId !== null ? byId.get(String(rawId)) : undefined) ||
+        (rawCode && rawCode !== "KH-CUSTOM" ? byCode.get(rawCode.toLowerCase()) : undefined) ||
+        (normName ? byName.get(normName) : undefined);
+      if (!cust && normName) {
+        for (const [k, v] of byName.entries()) {
+          if (k.includes(normName) || normName.includes(k)) {
+            cust = v;
+            break;
+          }
+        }
+      }
+      const resolvedName = cust?.name || rawName || "Khách hàng";
+      const resolvedCode =
+        cust?.customer_code ||
+        (rawCode && rawCode !== "KH-CUSTOM" ? rawCode : "") ||
+        (cust?.id ? `KH-${cust.id}` : `KH:${normVN(resolvedName) || "khach-hang"}`);
+      const resolvedGroup =
+        cust?.classification ||
+        cust?.industry ||
+        (ord?.customer_group && ord.customer_group !== "Khách hàng doanh nghiệp" ? ord.customer_group : "") ||
+        ord?.customerGroup ||
+        cust?.customer_type ||
+        "Khách hàng doanh nghiệp";
+      return { cust, customer_code: resolvedCode, customer_name: resolvedName, customer_group: resolvedGroup };
+    };
+  }, [customers]);
+
+  const resolveSalesRepMeta = useMemo(() => {
+    const allStaff = [...(salesPersonnel || []), ...(visibleSalesPersonnel || [])];
+    const byIdOrCode = new Map<string, any>();
+    const byName = new Map<string, any>();
+    allStaff.forEach((p: any) => {
+      if (!p) return;
+      if (p.employee_id) byIdOrCode.set(String(p.employee_id).trim().toLowerCase(), p);
+      if (p.employee_code) byIdOrCode.set(String(p.employee_code).trim().toLowerCase(), p);
+      if (p.id !== undefined && p.id !== null) byIdOrCode.set(String(p.id).trim().toLowerCase(), p);
+      const n = normVN(p.full_name || p.name);
+      if (n && !byName.has(n)) byName.set(n, p);
+    });
+    return (rawRepId: any, rawRepName: any, cust?: any) => {
+      const rId = String(rawRepId || "").trim();
+      const rName = String(rawRepName || "").trim();
+      const normRName = normVN(rName);
+      let rep =
+        (rId && rId !== "UNASSIGNED" ? byIdOrCode.get(rId.toLowerCase()) : undefined) ||
+        (rName ? byIdOrCode.get(rName.toLowerCase()) : undefined) ||
+        (normRName ? byName.get(normRName) : undefined);
+      if (!rep && normRName) {
+        for (const [k, v] of byName.entries()) {
+          if (k.includes(normRName) || normRName.includes(k)) {
+            rep = v;
+            break;
+          }
+        }
+      }
+      if (!rep && cust) {
+        const custRepId = String(cust.sales_rep_id || cust.salesRepId || "").trim();
+        const custRepName = String(cust.sales_rep_name || cust.salesRepName || "").trim();
+        rep =
+          (custRepId ? byIdOrCode.get(custRepId.toLowerCase()) : undefined) ||
+          (custRepName ? byName.get(normVN(custRepName)) : undefined);
+      }
+      const cleanRawName = rName.replace(/\s*\([^)]*\)\s*$/, "").trim();
+      const finalId =
+        rep?.employee_id ||
+        (rId && rId !== "UNASSIGNED" ? rId : "") ||
+        (cleanRawName ? `REP:${normVN(cleanRawName)}` : "UNASSIGNED");
+      const finalName = rep?.full_name || rep?.name || cleanRawName || "Chưa gán NVKD";
+      return { sales_rep_id: finalId, sales_rep_name: finalName, rep };
+    };
+  }, [salesPersonnel, visibleSalesPersonnel]);
+
+  const doesTxMatchRep = (tx: any, repOrId: any): boolean => {
+    if (!repOrId || repOrId === "all") return true;
+    const targetId = typeof repOrId === "string" ? repOrId : (repOrId.employee_id || repOrId.id || repOrId.employee_code || "");
+    const repObj = typeof repOrId === "object"
+      ? repOrId
+      : (salesPersonnel || []).find(p => p.employee_id === targetId || p.employee_code === targetId || String(p.id) === targetId);
+    const repIdLc = String(repObj?.employee_id || targetId || "").trim().toLowerCase();
+    const repCodeLc = String(repObj?.employee_code || "").trim().toLowerCase();
+    const repNameNorm = normVN(repObj?.full_name || repObj?.name || (typeof repOrId === "string" ? repOrId : ""));
+    const txIdLc = String(tx?.sales_rep_id || tx?.seller_id || tx?.salesRepId || "").trim().toLowerCase();
+    const txNameNorm = normVN(tx?.sales_rep_name || tx?.seller_name || tx?.salesRepName || "");
+    if (repIdLc && (txIdLc === repIdLc || txNameNorm === repIdLc)) return true;
+    if (repCodeLc && (txIdLc === repCodeLc || txNameNorm === repCodeLc)) return true;
+    if (repNameNorm && txNameNorm && (txNameNorm === repNameNorm || txIdLc === `rep:${repNameNorm}`)) return true;
+    return false;
+  };
+
   // Merge Live transactions with Benchmark dataset
   const unifiedTransactions = useMemo(() => {
     const list: any[] = [...BENCHMARK_TRANSACTIONS];
@@ -187,36 +394,66 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
     if (Array.isArray(allDeliveredOrders)) {
       allDeliveredOrders.forEach(ord => {
         if (!list.some(item => item.order_code === ord.order_code)) {
-          // ord.total_amount is the grand total (gross, after VAT/discount)
-          const total_amount = Number(ord.total_amount) || 0;
-          // Extract pre-VAT subtotal and VAT amount based on 8% standard
-          const subtotal = Math.round(total_amount / 1.08);
-          const vat_amount = total_amount - subtotal;
+          const itemsArr: any[] = Array.isArray(ord.items) ? ord.items.filter((it: any) => it && it.status !== "CANCELLED") : [];
+          // Giá trên đơn hàng SO đã bao gồm VAT (mặc định 8% hoặc theo vatRate từng dòng)
+          let calcGrossFromItems = 0;
+          let calcNetFromItems = 0;
+          let calcDiscountFromItems = 0;
+          itemsArr.forEach((it: any) => {
+            const qty = Number(it.quantity ?? it.qty) || 0;
+            const price = Number(it.unitPrice ?? it.unit_price ?? it.price) || 0;
+            const vatR = Number(it.vatRate ?? it.vat_rate ?? 8);
+            const lineGross = Math.round(qty * price);
+            const lineNet = vatR > 0 ? Math.round(lineGross / (1 + vatR / 100)) : lineGross;
+            calcGrossFromItems += lineGross;
+            calcNetFromItems += lineNet;
+            const lineDisc = Number(it.discountAmount ?? it.discount_amount) || 0;
+            const discR = Number(it.discountRate ?? it.discount_rate ?? it.discountPercent) || 0;
+            calcDiscountFromItems += lineDisc > 0 ? lineDisc : (discR > 0 ? Math.round(lineNet * (discR / 100)) : 0);
+          });
+
+          const total_amount = Math.round(Number(ord.total_amount) || calcGrossFromItems || 0);
+          let subtotal = Math.round(total_amount / 1.08);
+          if (calcGrossFromItems > 0 && calcNetFromItems > 0) {
+            subtotal = Math.abs(total_amount - calcGrossFromItems) <= 10
+              ? calcNetFromItems
+              : Math.round(total_amount * (calcNetFromItems / calcGrossFromItems));
+          }
+          const vat_amount = Math.max(0, total_amount - subtotal);
           const vat_rate = 8;
-          
+
+          const discount_amount = Math.round(Number(ord.discount_amount ?? ord.discountAmount) || calcDiscountFromItems || 0);
+          const discount_rate = Number(ord.discount_rate ?? ord.discountRate) || (subtotal > 0 && discount_amount > 0 ? Number(((discount_amount / subtotal) * 100).toFixed(1)) : 0);
+
           // Actual payment tracking from order status / payment fields
           const isPaid = ord.paymentStatus === "PAID" || ord.debt_status === "PAID" || ord.payment_status === "PAID";
-          const paid_amount = isPaid ? total_amount : (Number(ord.amount_paid ?? ord.paid_amount) || 0);
+          const rawPaid = isPaid ? total_amount : (Number(ord.amount_paid ?? ord.paid_amount ?? ord.amountPaid) || 0);
+          const paid_amount = Math.min(total_amount, Math.max(0, Math.round(rawPaid)));
           const debt_amount = Math.max(0, total_amount - paid_amount);
+
+          const custMeta = resolveCustomerMeta(ord);
+          const repMeta = resolveSalesRepMeta(ord.sales_rep_id || ord.salesRepId, ord.sales_rep_name || ord.salesRepName, custMeta.cust);
+          const rawDate = ord.deliveredAt || ord.deliveryDate || ord.invoiceDate || todayVN();
+          const normDate = parseNormalizedDate(rawDate);
 
           list.push({
             order_code: ord.order_code,
-            date: ord.deliveredAt ? String(ord.deliveredAt).slice(0, 10) : (ord.deliveryDate || todayVN()),
-            customer_code: ord.customer_code || ord.customerId || "KH-CUSTOM",
-            customer_name: ord.customer_name || ord.customerName || "Khách hàng ABT",
-            customer_group: ord.customer_group || ord.customerGroup || "Khách hàng doanh nghiệp",
-            sales_rep_id: ord.sales_rep_id || ord.salesRepId || "UNASSIGNED",
-            sales_rep_name: ord.sales_rep_name || ord.salesRepName || "Chưa gán NVKD",
-            items: ord.items || [],
+            date: normDate ? normDate.dateStr : String(rawDate).slice(0, 10),
+            customer_code: custMeta.customer_code,
+            customer_name: custMeta.customer_name,
+            customer_group: custMeta.customer_group,
+            sales_rep_id: repMeta.sales_rep_id,
+            sales_rep_name: repMeta.sales_rep_name,
+            items: itemsArr,
             subtotal,
-            discount_rate: Number(ord.discount_rate) || 0,
-            discount_amount: Number(ord.discount_amount) || 0,
+            discount_rate,
+            discount_amount,
             vat_rate,
             vat_amount,
             total_amount,
             paid_amount,
             debt_amount,
-            debt_status: debt_amount === 0 ? "PAID" : "PARTIAL",
+            debt_status: debt_amount === 0 ? "PAID" : (paid_amount > 0 ? "PARTIAL" : "UNPAID"),
             invoice_no: ord.invoiceNo || ""
           });
         }
@@ -229,14 +466,15 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
         const total_amount = Number(log.total) || 0;
         const subtotal = Math.round(total_amount / 1.08);
         const vat_amount = total_amount - subtotal;
+        const repMeta = resolveSalesRepMeta(log.salesRepId, log.salesRepName);
         list.push({
           order_code: log.id || `RET-${log.date}`,
           date: log.date || todayVN(),
-          customer_code: "KH-RETAIL",
+          customer_code: `KH-RETAIL-${normVN(log.customerName || "khach-le")}`,
           customer_name: log.customerName || "Khách lẻ Kho 13B",
           customer_group: "Trung tâm Xét nghiệm Lab",
-          sales_rep_id: log.salesRepId || "KD-RETAIL",
-          sales_rep_name: log.salesRepName || "Tổ bán lẻ 13B",
+          sales_rep_id: repMeta.sales_rep_id !== "UNASSIGNED" ? repMeta.sales_rep_id : (log.salesRepId || "KD-RETAIL"),
+          sales_rep_name: repMeta.sales_rep_name !== "Chưa gán NVKD" ? repMeta.sales_rep_name : (log.salesRepName || "Tổ bán lẻ 13B"),
           items: log.items || [],
           subtotal,
           discount_rate: 0,
@@ -253,99 +491,35 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
     }
 
     return list;
-  }, [allDeliveredOrders, retailLogs13b]);
+  }, [allDeliveredOrders, retailLogs13b, resolveCustomerMeta, resolveSalesRepMeta]);
 
   // Filtered transactions based on Period and Sales Rep
   const filteredTransactions = useMemo(() => {
     return unifiedTransactions.filter(tx => {
       const matchP = matchPeriod(tx.date);
-      const matchR = selectedRepId === "all" || tx.sales_rep_id === selectedRepId || tx.sales_rep_name === selectedRepId;
+      const matchR = selectedRepId === "all" || doesTxMatchRep(tx, selectedRepId);
       return matchP && matchR;
     });
-  }, [unifiedTransactions, periodType, periodValue, selectedRepId]);
-
-  // Aggregated KPI Metrics
-  const summaryKpis = useMemo(() => {
-    let preVat = 0;
-    let postVat = 0;
-    let discount = 0;
-    let collected = 0;
-    let debt = 0;
-    let totalQty = 0;
-
-    filteredTransactions.forEach(tx => {
-      preVat += tx.subtotal || 0;
-      postVat += tx.total_amount || 0;
-      discount += tx.discount_amount || 0;
-      collected += tx.paid_amount || 0;
-      debt += tx.debt_amount || 0;
-      (tx.items || []).forEach((it: any) => {
-        totalQty += Number(it.quantity) || 0;
-      });
-    });
-
-    const collectionRate = postVat > 0 ? Math.round((collected / postVat) * 100) : 100;
-
-    // Target KPI calculation
-    const defaultMonthlyTarget = 0;
-    const currentRepTargets = salesTargets.filter(t => {
-      if (selectedRepId !== "all" && t.salesRepId !== selectedRepId) return false;
-      if (periodType === "month") return t.month === periodValue;
-      if (periodType === "quarter") {
-        const [yearStr, qStr] = periodValue.split("-Q");
-        const qNum = parseInt(qStr, 10);
-        const qMonthsMap: Record<number, string[]> = {
-          1: ["01", "02", "03"],
-          2: ["04", "05", "06"],
-          3: ["07", "08", "09"],
-          4: ["10", "11", "12"]
-        };
-        const validMonths = (qMonthsMap[qNum] || []).map(m => `${yearStr}-${m}`);
-        return validMonths.includes(t.month) || t.month === periodValue;
-      }
-      if (periodType === "year") return (t.month || "").startsWith(periodValue) || t.month === periodValue;
-      return true;
-    });
-
-    const repMultiplier = selectedRepId === "all" ? Math.max(1, (visibleSalesPersonnel.length || salesPersonnel.length || 5)) : 1;
-    const periodMultiplier = periodType === "quarter" ? 3 : periodType === "year" ? 12 : 1;
-    const benchmarkTarget = defaultMonthlyTarget * repMultiplier * periodMultiplier;
-
-    const targetAmount = currentRepTargets.length > 0 
-      ? currentRepTargets.reduce((acc, t) => acc + (Number(t.targetAmount) || 0), 0)
-      : 0;
-
-    const completionRate = targetAmount > 0 ? Math.round((postVat / targetAmount) * 100) : 0;
-
-    return {
-      preVat,
-      postVat,
-      discount,
-      collected,
-      debt,
-      collectionRate,
-      targetAmount,
-      completionRate,
-      totalQty,
-      orderCount: filteredTransactions.length
-    };
-  }, [filteredTransactions, salesTargets, selectedRepId, periodType, periodValue, visibleSalesPersonnel, salesPersonnel]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unifiedTransactions, periodType, periodValue, selectedRepId, salesPersonnel]);
 
   // Format currency helper
   const fmtCurrency = (n: number) => new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Math.round(n || 0)) + "đ";
 
   const matchRepTargetRecord = (t: any, repId: string, repName?: string, repCode?: string): boolean => {
-    const tRepId = String(t?.salesRepId || "").trim();
-    if (tRepId && (tRepId === repId || (repCode && tRepId === repCode))) return true;
-    if (repName && t?.salesRepName) {
-      return String(t.salesRepName).trim().toLowerCase() === String(repName).trim().toLowerCase();
-    }
+    const tRepId = String(t?.salesRepId || "").trim().toLowerCase();
+    const rId = String(repId || "").trim().toLowerCase();
+    const rCode = String(repCode || "").trim().toLowerCase();
+    if (tRepId && ((rId && tRepId === rId) || (rCode && tRepId === rCode))) return true;
+    const tName = normVN(t?.salesRepName);
+    const rName = normVN(repName);
+    if (tName && rName && tName === rName) return true;
     return false;
   };
 
-  // Helper to get target amount for specific rep in current period
+  // Helper to get target amount for specific rep in current period (khử trùng lặp theo kỳ)
   const getRepTargetForPeriod = (repId: string, repName?: string, repCode?: string): number => {
-    const matched = salesTargets.filter(t => {
+    const matched = (salesTargets || []).filter(t => {
       if (!matchRepTargetRecord(t, repId, repName, repCode)) return false;
       if (periodType === "month") return t.month === periodValue;
       if (periodType === "quarter") {
@@ -363,8 +537,78 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
       if (periodType === "year") return (t.month || "").startsWith(periodValue) || t.month === periodValue;
       return true;
     });
-    return matched.reduce((acc, t) => acc + (Number(t.targetAmount) || 0), 0);
+    if (matched.length === 0) return 0;
+    const byPeriod = new Map<string, number>();
+    matched.forEach(t => {
+      const mKey = String(t.month || "").trim();
+      const val = Number(t.targetAmount) || 0;
+      if (val > (byPeriod.get(mKey) || 0)) byPeriod.set(mKey, val);
+    });
+    if ((periodType === "quarter" || periodType === "year") && byPeriod.has(periodValue) && (byPeriod.get(periodValue) || 0) > 0) {
+      return byPeriod.get(periodValue)!;
+    }
+    let total = 0;
+    byPeriod.forEach(v => { total += v; });
+    return total;
   };
+
+  // Aggregated KPI Metrics
+  const summaryKpis = useMemo(() => {
+    let preVat = 0;
+    let postVat = 0;
+    let discount = 0;
+    let collected = 0;
+    let debt = 0;
+    let totalQty = 0;
+
+    filteredTransactions.forEach(tx => {
+      preVat += tx.subtotal || 0;
+      postVat += tx.total_amount || 0;
+      discount += tx.discount_amount || 0;
+      collected += tx.paid_amount || 0;
+      debt += tx.debt_amount || 0;
+      (tx.items || []).forEach((it: any) => {
+        totalQty += Number(it.quantity ?? it.qty) || 0;
+      });
+    });
+
+    const collectionRate = postVat > 0 ? Math.round((collected / postVat) * 100) : 100;
+
+    // Target KPI calculation (đồng nhất 100% với Bảng theo dõi & đánh giá chỉ tiêu nhân viên)
+    const staffList = (visibleSalesPersonnel && visibleSalesPersonnel.length > 0) ? visibleSalesPersonnel : salesPersonnel;
+    let targetAmount = 0;
+    if (selectedRepId !== "all") {
+      const selRep = staffList.find((p: any) => p.employee_id === selectedRepId || p.employee_code === selectedRepId || String(p.id) === selectedRepId);
+      targetAmount = getRepTargetForPeriod(
+        selRep?.employee_id || selectedRepId,
+        selRep?.full_name || selRep?.name || selectedRepId,
+        selRep?.employee_code || selectedRepId
+      );
+    } else {
+      targetAmount = staffList.reduce((acc: number, p: any, idx: number) => {
+        const rId = p.employee_id || p.id || p.employee_code || `REP-${idx}`;
+        const rCode = p.employee_code || rId;
+        const rName = p.full_name || p.name || rId;
+        return acc + getRepTargetForPeriod(rId, rName, rCode);
+      }, 0);
+    }
+
+    const completionRate = targetAmount > 0 ? Math.round((postVat / targetAmount) * 100) : 0;
+
+    return {
+      preVat,
+      postVat,
+      discount,
+      collected,
+      debt,
+      collectionRate,
+      targetAmount,
+      completionRate,
+      totalQty,
+      orderCount: filteredTransactions.length
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredTransactions, salesTargets, selectedRepId, periodType, periodValue, visibleSalesPersonnel, salesPersonnel]);
 
   // Find if rep has a target saved in another period when current period is 0
   const getRepOtherPeriodTarget = (repId: string, repName?: string, repCode?: string): { month: string; targetAmount: number } | null => {
@@ -413,12 +657,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
       const otherTarget = targetAmount === 0 ? getRepOtherPeriodTarget(repId, repName, repCode) : null;
 
       // Find rep transactions in period
-      const repTxs = filteredTransactions.filter(tx => 
-        tx.sales_rep_id === repId || 
-        tx.seller_id === repId || 
-        (tx.sales_rep_name && tx.sales_rep_name.toLowerCase() === repName.toLowerCase()) || 
-        (tx.seller_name && tx.seller_name.toLowerCase() === repName.toLowerCase())
-      );
+      const repTxs = filteredTransactions.filter(tx => doesTxMatchRep(tx, rep));
 
       const preVat = repTxs.reduce((sum, tx) => sum + (tx.subtotal || 0), 0);
       const postVat = repTxs.reduce((sum, tx) => sum + (tx.total_amount || 0), 0);
@@ -553,14 +792,16 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
       completion: number;
     }> = {};
     const categoryOrderSets: Record<string, Set<string>> = {};
+    const productOrderSets: Record<string, Set<string>> = {};
 
     // For target evaluation dimension, initialize all personnel from staffList first
     if (analysisDimension === "target") {
       const staffList = (visibleSalesPersonnel && visibleSalesPersonnel.length > 0) ? visibleSalesPersonnel : salesPersonnel;
       staffList.forEach((p, idx) => {
         const repId = p.employee_id || p.id || p.employee_code || `REP-${idx}`;
+        const repCode = p.employee_code || repId;
         const repName = p.full_name || p.name || repId;
-        const targetAmount = getRepTargetForPeriod(repId, repName);
+        const targetAmount = getRepTargetForPeriod(repId, repName, repCode);
         map[repId] = {
           id: repId,
           label: repName,
@@ -588,32 +829,45 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
       let category = "";
 
       if (analysisDimension === "employee") {
-        key = tx.sales_rep_id || tx.sales_rep_name || "Khác";
-        label = tx.sales_rep_name || tx.sales_rep_id;
-        subLabel = tx.sales_rep_id;
+        const rawId = String(tx.sales_rep_id || "").trim();
+        const rawName = String(tx.sales_rep_name || "").trim();
+        key = (rawId && rawId !== "UNASSIGNED") ? rawId : (rawName ? `REP:${normVN(rawName)}` : "UNASSIGNED");
+        label = rawName || (rawId && rawId !== "UNASSIGNED" ? rawId : "Chưa gán NVKD");
+        subLabel = (rawId && !rawId.startsWith("REP:") && rawId !== "UNASSIGNED") ? rawId : "";
         category = "Phòng Kinh Doanh";
       } else if (analysisDimension === "customer") {
-        key = tx.customer_code || tx.customer_name;
-        label = tx.customer_name;
-        subLabel = tx.customer_code;
+        const rawCode = String(tx.customer_code || "").trim();
+        const rawName = String(tx.customer_name || "").trim();
+        key = (rawCode && rawCode !== "KH-CUSTOM" && !rawCode.startsWith("KH:")) ? rawCode : `KH:${normVN(rawName || rawCode || "khach-hang")}`;
+        label = rawName || rawCode || "Khách hàng";
+        subLabel = (rawCode && !rawCode.startsWith("KH:") && rawCode !== "KH-CUSTOM") ? rawCode : "";
         category = tx.customer_group || "Khách hàng";
       } else if (analysisDimension === "customer_group") {
-        key = tx.customer_group || "Nhóm chung";
+        key = tx.customer_group || "Khách hàng doanh nghiệp";
         label = key;
         category = "Phân khúc khách hàng";
       } else if (analysisDimension === "debt") {
-        key = tx.customer_code || tx.customer_name;
-        label = tx.customer_name;
+        const rawCode = String(tx.customer_code || "").trim();
+        const rawName = String(tx.customer_name || "").trim();
+        key = (rawCode && rawCode !== "KH-CUSTOM" && !rawCode.startsWith("KH:")) ? rawCode : `KH:${normVN(rawName || rawCode || "khach-hang")}`;
+        label = rawName || rawCode || "Khách hàng";
         subLabel = tx.sales_rep_name ? `Sale: ${tx.sales_rep_name}` : "";
         category = tx.customer_group || "Công nợ";
       } else if (analysisDimension === "category") {
-        (tx.items || []).forEach((it: any) => {
-          const cat = it.category || "Khác";
+        const itemsArr: any[] = Array.isArray(tx.items) ? tx.items : [];
+        const rawSumGross = itemsArr.reduce((s, it) => s + Math.round((Number(it?.quantity ?? it?.qty) || 0) * (Number(it?.unitPrice ?? it?.unit_price ?? it?.price) || 0)), 0);
+        const scaleFactor = (rawSumGross > 0 && tx.total_amount > 0) ? (tx.total_amount / rawSumGross) : 1;
+
+        itemsArr.forEach((it: any) => {
+          const pCode = String(it.productCode || it.product_code || it.code || "").trim();
+          const prod = pCode ? productCatalogMap.get(pCode.toLowerCase()) : undefined;
+          const pName = String(it.productName || it.product_name || it.name || prod?.name || pCode || "").trim();
+          const cat = inferProductCategory(pCode, pName, it.category || prod?.category || prod?.product_group);
           if (!map[cat]) {
             map[cat] = {
               id: cat,
               label: cat,
-              category: "Danh mục",
+              category: "Nhóm sản phẩm",
               orderCount: 0,
               revenue_net: 0,
               vat: 0,
@@ -628,34 +882,48 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
             };
             categoryOrderSets[cat] = new Set();
           }
-          const itemAmt = (Number(it.quantity) || 0) * Number(it.unitPrice || it.price || 0);
-          const itemVat = Math.round(itemAmt * 0.08);
-          const itemGross = itemAmt + itemVat;
+          // Đơn giá trên SO đã bao gồm VAT -> tính ngược Trước VAT và Thuế VAT để tổng luôn khớp 100% với thẻ KPI trên đầu
+          const qty = Number(it.quantity ?? it.qty) || 0;
+          const unitPrice = Number(it.unitPrice ?? it.unit_price ?? it.price) || 0;
+          const vatR = Number(it.vatRate ?? it.vat_rate ?? prod?.vat_rate ?? 8);
+          const itemGross = Math.round(qty * unitPrice * scaleFactor);
+          const itemNet = vatR > 0 ? Math.round(itemGross / (1 + vatR / 100)) : itemGross;
+          const itemVat = Math.max(0, itemGross - itemNet);
           const isTxPaid = tx.debt_status === "PAID" || (tx.paid_amount >= tx.total_amount && tx.total_amount > 0);
           const paymentRatio = tx.total_amount > 0 ? Math.min(1, Math.max(0, (tx.paid_amount || 0) / tx.total_amount)) : (isTxPaid ? 1 : 0);
           const itemCollected = Math.round(itemGross * paymentRatio);
           const itemDebt = Math.max(0, itemGross - itemCollected);
+          const itemDiscRatio = tx.total_amount > 0 ? ((tx.discount_amount || 0) / tx.total_amount) : 0;
+          const itemDiscount = Number(it.discountAmount ?? it.discount_amount) || Math.round(itemGross * itemDiscRatio);
 
           categoryOrderSets[cat].add(tx.order_code);
           map[cat].orderCount = categoryOrderSets[cat].size;
-          map[cat].revenue_net += itemAmt;
+          map[cat].revenue_net += itemNet;
           map[cat].vat += itemVat;
           map[cat].revenue_gross += itemGross;
+          map[cat].discount += itemDiscount;
           map[cat].collected += itemCollected;
           map[cat].debt += itemDebt;
-          map[cat].quantity += Number(it.quantity) || 0;
+          map[cat].quantity += qty;
         });
         return;
       } else if (analysisDimension === "product") {
-        (tx.items || []).forEach((it: any) => {
-          const pCode = it.productCode || "SP-GEN";
-          const pName = it.productName || pCode;
+        const itemsArr: any[] = Array.isArray(tx.items) ? tx.items : [];
+        const rawSumGross = itemsArr.reduce((s, it) => s + Math.round((Number(it?.quantity ?? it?.qty) || 0) * (Number(it?.unitPrice ?? it?.unit_price ?? it?.price) || 0)), 0);
+        const scaleFactor = (rawSumGross > 0 && tx.total_amount > 0) ? (tx.total_amount / rawSumGross) : 1;
+
+        itemsArr.forEach((it: any) => {
+          const rawCode = String(it.productCode || it.product_code || it.code || "").trim();
+          const prod = rawCode ? productCatalogMap.get(rawCode.toLowerCase()) : undefined;
+          const pName = String(it.productName || it.product_name || it.name || prod?.name || rawCode || "Sản phẩm").trim();
+          const pCode = rawCode || `SP:${normVN(pName)}`;
+          const cat = inferProductCategory(rawCode, pName, it.category || prod?.category || prod?.product_group);
           if (!map[pCode]) {
             map[pCode] = {
               id: pCode,
-              label: `${pCode} - ${pName}`,
-              subLabel: pCode,
-              category: it.category || "Sản phẩm",
+              label: rawCode ? `${rawCode} - ${pName}` : pName,
+              subLabel: rawCode || "—",
+              category: cat,
               orderCount: 0,
               revenue_net: 0,
               vat: 0,
@@ -668,33 +936,51 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
               target: 0,
               completion: 0
             };
+            productOrderSets[pCode] = new Set();
           }
-          const itemAmt = (Number(it.quantity) || 0) * Number(it.unitPrice || it.price || 0);
-          const itemVat = Math.round(itemAmt * 0.08);
-          const itemGross = itemAmt + itemVat;
+          const qty = Number(it.quantity ?? it.qty) || 0;
+          const unitPrice = Number(it.unitPrice ?? it.unit_price ?? it.price) || 0;
+          const vatR = Number(it.vatRate ?? it.vat_rate ?? prod?.vat_rate ?? 8);
+          const itemGross = Math.round(qty * unitPrice * scaleFactor);
+          const itemNet = vatR > 0 ? Math.round(itemGross / (1 + vatR / 100)) : itemGross;
+          const itemVat = Math.max(0, itemGross - itemNet);
           const isTxPaid = tx.debt_status === "PAID" || (tx.paid_amount >= tx.total_amount && tx.total_amount > 0);
           const paymentRatio = tx.total_amount > 0 ? Math.min(1, Math.max(0, (tx.paid_amount || 0) / tx.total_amount)) : (isTxPaid ? 1 : 0);
           const itemCollected = Math.round(itemGross * paymentRatio);
           const itemDebt = Math.max(0, itemGross - itemCollected);
+          const itemDiscRatio = tx.total_amount > 0 ? ((tx.discount_amount || 0) / tx.total_amount) : 0;
+          const itemDiscount = Number(it.discountAmount ?? it.discount_amount) || Math.round(itemGross * itemDiscRatio);
 
-          map[pCode].orderCount += 1;
-          map[pCode].revenue_net += itemAmt;
+          productOrderSets[pCode].add(tx.order_code);
+          map[pCode].orderCount = productOrderSets[pCode].size;
+          map[pCode].revenue_net += itemNet;
           map[pCode].vat += itemVat;
           map[pCode].revenue_gross += itemGross;
+          map[pCode].discount += itemDiscount;
           map[pCode].collected += itemCollected;
           map[pCode].debt += itemDebt;
-          map[pCode].quantity += Number(it.quantity) || 0;
+          map[pCode].quantity += qty;
         });
         return;
       } else if (analysisDimension === "trend") {
         const p = parseNormalizedDate(tx.date);
-        key = p ? `${p.year}-${String(p.month).padStart(2, "0")}` : "Khác";
-        label = p ? `Tháng ${p.month}/${p.year}` : key;
-        category = "Dòng thời gian";
+        if (periodType === "month" && p) {
+          // Khi đang lọc theo 1 tháng cụ thể: chia theo từng Ngày để thấy diễn biến doanh số trong tháng
+          const dd = String(p.day).padStart(2, "0");
+          const mm = String(p.month).padStart(2, "0");
+          key = `${p.year}-${mm}-${dd}`;
+          label = `Ngày ${dd}/${mm}`;
+          subLabel = `${dd}/${mm}/${p.year}`;
+          category = `Tháng ${p.month}/${p.year}`;
+        } else {
+          key = p ? `${p.year}-${String(p.month).padStart(2, "0")}` : "Khác";
+          label = p ? `Tháng ${p.month}/${p.year}` : key;
+          category = "Dòng thời gian";
+        }
       } else if (analysisDimension === "target") {
         const repId = tx.sales_rep_id || tx.seller_id;
         const repName = tx.sales_rep_name || tx.seller_name;
-        const existingKey = Object.keys(map).find(k => k === repId || map[k].label === repName);
+        const existingKey = Object.keys(map).find(k => k === repId || normVN(map[k].label) === normVN(repName));
         key = existingKey || repId || "REP";
         label = repName || tx.sales_rep_name || "Nhân viên";
         subLabel = key;
@@ -702,8 +988,10 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
       }
 
       if (!map[key]) {
-        // Individual target
-        const repTarget = getRepTargetForPeriod(key, label);
+        // Individual target (chỉ tính cho chiều nhân sự / mục tiêu KPI)
+        const repTarget = (analysisDimension === "employee" || analysisDimension === "target")
+          ? getRepTargetForPeriod(key, label)
+          : 0;
         map[key] = {
           id: key,
           label,
@@ -731,7 +1019,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
       map[key].collected += tx.paid_amount || 0;
       map[key].debt += tx.debt_amount || 0;
       (tx.items || []).forEach((it: any) => {
-        map[key].quantity += Number(it.quantity) || 0;
+        map[key].quantity += Number(it.quantity ?? it.qty) || 0;
       });
     });
 
@@ -746,6 +1034,11 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
       };
     });
 
+    // Chiều "Theo Thời Gian" luôn sắp xếp theo thứ tự thời gian tăng dần (trái sang phải)
+    if (analysisDimension === "trend") {
+      return res.sort((a, b) => a.id.localeCompare(b.id));
+    }
+
     // Sorting by active metric
     return res.sort((a, b) => {
       if (activeMetric === "debt_rate") return b.debt_rate - a.debt_rate;
@@ -757,7 +1050,8 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
       if (activeMetric === "quantity") return b.quantity - a.quantity;
       return b.revenue_gross - a.revenue_gross;
     });
-  }, [filteredTransactions, analysisDimension, activeMetric, salesTargets, visibleSalesPersonnel, salesPersonnel, periodType, periodValue]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredTransactions, analysisDimension, activeMetric, salesTargets, visibleSalesPersonnel, salesPersonnel, periodType, periodValue, productCatalogMap]);
 
   // Export Dedicated Personnel Target & KPI Evaluation Report
   const handleExportKpiExcel = () => {
@@ -1017,7 +1311,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
               <span className="text-[10px] text-slate-500 font-bold uppercase">Sale:</span>
               <select
                 value={selectedRepId}
-                onChange={(e) => setSelectedRepId(e.target.value)}
+                onChange={(e) => handleSelectRepId(e.target.value)}
                 className="bg-transparent text-white font-bold cursor-pointer outline-none border-none focus:ring-0 max-w-[150px]"
               >
                 <option value="all" className="bg-slate-950 text-slate-300 font-bold">
@@ -1192,7 +1486,10 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
               <span>Nhóm Khách Hàng</span>
             </button>
             <button
-              onClick={() => setAnalysisDimension("debt")}
+              onClick={() => {
+                setAnalysisDimension("debt");
+                if (activeMetric === "revenue_gross") setActiveMetric("debt");
+              }}
               className={cn(
                 "flex-1 min-w-[130px] text-xs font-bold py-2 px-3 rounded-xl transition-all text-center flex items-center justify-center gap-1.5",
                 analysisDimension === "debt" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:text-white"
@@ -1903,7 +2200,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                                 )}
                                 <button
                                   onClick={() => {
-                                    setSelectedRepId(rep.repId);
+                                    handleSelectRepId(rep.repId);
                                     setAnalysisDimension("employee");
                                   }}
                                   className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-indigo-400 transition-colors cursor-pointer"
@@ -1951,14 +2248,19 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
               <div>
                 <h3 className="text-xs font-bold text-indigo-400 font-mono tracking-wider uppercase flex items-center gap-2">
                   <span>
-                    PHÂN TÍCH {activeMetric.toUpperCase()} THEO {analysisDimension.toUpperCase()}
+                    PHÂN TÍCH {METRIC_LABELS_VN[activeMetric] || activeMetric.toUpperCase()} THEO {DIMENSION_LABELS_VN[analysisDimension] || analysisDimension.toUpperCase()}
                   </span>
                   <span className="text-[10px] text-slate-500 font-normal">
                     ({chartView === "vertical_bar" ? "Biểu đồ Cột dọc" : chartView === "horizontal_bar" ? "Biểu đồ Cột ngang" : chartView === "donut" ? "Biểu đồ Donut" : chartView === "line_trend" ? "Biểu đồ Đường" : "Bảng Pivot đa chiều"})
                   </span>
                 </h3>
                 <p className="text-[10px] text-slate-400 mt-0.5">
-                  Dữ liệu phát sinh trong kỳ: <span className="text-white font-semibold">{periodType === "all" ? "Toàn bộ" : periodValue}</span> • Phạm vi: <span className="text-indigo-300 font-semibold">{selectedRepId === "all" ? "Toàn công ty" : selectedRepId}</span>
+                  Dữ liệu phát sinh trong kỳ: <span className="text-white font-semibold">{periodType === "all" ? "Toàn bộ" : periodValue}</span> • Phạm vi:{" "}
+                  <span className="text-indigo-300 font-semibold">
+                    {selectedRepId === "all"
+                      ? "Toàn công ty"
+                      : (salesPersonnel.find(p => p.employee_id === selectedRepId || p.employee_code === selectedRepId)?.full_name || selectedRepId)}
+                  </span>
                 </p>
               </div>
 
@@ -2326,14 +2628,14 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
             </div>
 
             {(() => {
-              // Group by sales personnel
+              // Group by sales personnel (khớp chuẩn theo cả mã NV, mã code và tên chuẩn hóa tiếng Việt)
               const repRankings = salesPersonnel.map(rep => {
-                const repTxs = filteredTransactions.filter(tx => tx.sales_rep_id === rep.employee_id || tx.sales_rep_name === rep.full_name);
+                const repTxs = filteredTransactions.filter(tx => doesTxMatchRep(tx, rep));
                 const total = repTxs.reduce((sum, tx) => sum + (tx.total_amount || 0), 0);
                 const collected = repTxs.reduce((sum, tx) => sum + (tx.paid_amount || 0), 0);
                 const debt = repTxs.reduce((sum, tx) => sum + (tx.debt_amount || 0), 0);
                 const collectionRate = total > 0 ? Math.round((collected / total) * 100) : 100;
-                const repTarget = getRepTargetForPeriod(rep.employee_id, rep.full_name);
+                const repTarget = getRepTargetForPeriod(rep.employee_id, rep.full_name, rep.employee_code);
                 const completion = repTarget > 0 ? Math.round((total / repTarget) * 100) : 0;
 
                 return {
@@ -2431,8 +2733,18 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
             </h3>
 
             {(() => {
-              const totalQuotes = quotations.length;
-              const totalContracts = contracts.length;
+              const filteredQuotes = (quotations || []).filter(q => {
+                if (!matchPeriod(q?.date || q?.createdAt || q?.created_at)) return false;
+                if (selectedRepId !== "all" && !doesTxMatchRep({ sales_rep_id: q?.salesRepId || q?.sales_rep_id, sales_rep_name: q?.salesRepName || q?.sales_rep_name }, selectedRepId)) return false;
+                return true;
+              });
+              const filteredContracts = (contracts || []).filter(c => {
+                if (!matchPeriod(c?.signDate || c?.sign_date || c?.date || c?.createdAt || c?.created_at)) return false;
+                if (selectedRepId !== "all" && !doesTxMatchRep({ sales_rep_id: c?.salesRepId || c?.sales_rep_id, sales_rep_name: c?.salesRepName || c?.sales_rep_name }, selectedRepId)) return false;
+                return true;
+              });
+              const totalQuotes = filteredQuotes.length;
+              const totalContracts = filteredContracts.length;
               const totalOrders = filteredTransactions.length;
               const paidOrders = filteredTransactions.filter(t => t.debt_amount === 0).length;
 
