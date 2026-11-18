@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback, useDeferredValue } from "react";
 import { sanitizeProposalList } from "@/frontend/utils/recoveredProposals";
 import { BufferedField } from "./BufferedField";
 import {
@@ -10,6 +10,7 @@ import {
   isSameWorkspaceDept,
   formatWorkspaceScopeLabel,
   defaultConcreteDeptForScope,
+  memoizeString,
 } from "@/frontend/utils/workspaceScope";
 export {
   WORKSPACE_BLOCKS,
@@ -153,11 +154,16 @@ export const FICTIONAL_WORKSPACE_ASSIGNEES = new Set([
  * kiểu cũ / mới ("Thùy" - "Thuỳ", "Hòa" - "Hoà"), có khoảng trắng thừa. Tên ở Tài khoản và ở Nhân sự lệch nhau
  * như vậy làm nhân viên không thấy việc được giao cho mình.
  */
-export function canonStaffName(name: any): string {
-  let s = String(name || "").normalize("NFC").toLowerCase().replace(/[\s\u00a0\u200b]+/g, " ").trim();
+// Chuẩn hóa tên có bộ nhớ đệm: sameStaffName được gọi hàng nghìn lần mỗi lần render (nhân sự × công việc)
+const canonStaffNameCached = memoizeString((raw: string) => {
+  let s = raw.normalize("NFC").toLowerCase().replace(/[\s\u00a0\u200b]+/g, " ").trim();
   // đặt dấu kiểu mới (dấu trên chữ thứ hai của oa, oe, uy) -> kiểu cũ, để hai cách gõ trùng nhau
   s = s.normalize("NFD").replace(/([ou])([\u0300\u0301\u0309\u0303\u0323])([aey])/g, "$1$3$2").normalize("NFC");
   return s;
+});
+
+export function canonStaffName(name: any): string {
+  return canonStaffNameCached(String(name || ""));
 }
 
 /** Hai tên là cùng một người (so sánh sau chuẩn hóa; tên đầy đủ chứa tên ngắn vẫn tính là trùng). */
@@ -1950,6 +1956,8 @@ export const UnifiedWorkspace: React.FC = () => {
   const managerDept = userDept && userDept !== "Ban Giám Đốc" ? userDept : "Application";
 
   const [activeSubTab, setActiveSubTab] = useState<"tasks" | "workflows" | "proposals" | "planner" | "projects" | "daily" | "announcements" | "analytics">("tasks");
+  // Nội dung tab đọc bản trễ của tab: nút tab đổi màu ngay, nội dung tab mới được React dựng ở nền (có thể ngắt).
+  const renderedSubTab = useDeferredValue(activeSubTab);
   const [selectedDept, setSelectedDept] = useState<string>("all");
   const [plannerView, setPlannerView] = useState<"calendar" | "lab_projects" | "sales_targets">("calendar");
   const [loading, setLoading] = useState(true);
@@ -2025,6 +2033,9 @@ export const UnifiedWorkspace: React.FC = () => {
     }
     return selectedDept;
   }, [rolePerspective, managerDept, userDept, selectedDept]);
+  // Bộ lọc Khối / phòng ban cho các phép lọc nặng: nút bộ lọc đổi ngay, danh sách lọc lại ở nền (useDeferredValue).
+  const filterDept = useDeferredValue(effectiveSelectedDept);
+  const isFilterStale = filterDept !== effectiveSelectedDept || renderedSubTab !== activeSubTab;
 
   // Automatically initialize department according to user role
   useEffect(() => {
@@ -2975,7 +2986,7 @@ export const UnifiedWorkspace: React.FC = () => {
 
   // Dynamic list of staff for the active department (chỉ trả về đúng nhân sự thuộc phòng ban đang chọn)
   const departmentStaffList = useMemo(() => {
-    const currentDept = effectiveSelectedDept;
+    const currentDept = filterDept;
 
     if (!currentDept || currentDept === "all") {
       return personnelList || [];
@@ -3013,12 +3024,12 @@ export const UnifiedWorkspace: React.FC = () => {
     });
 
     return list;
-  }, [personnelList, effectiveSelectedDept]);
+  }, [personnelList, filterDept]);
 
   // Tự động đồng bộ nhân sự đang chọn ở Bảng việc & Nhật ký Daily khi chuyển Phòng ban
   useEffect(() => {
     if (rolePerspective === "staff") return;
-    const currentDept = effectiveSelectedDept;
+    const currentDept = filterDept;
     if (currentDept && currentDept !== "all") {
       if (
         selectedAssignee !== "all" &&
@@ -3035,7 +3046,7 @@ export const UnifiedWorkspace: React.FC = () => {
         setSelectedDailyStaff(firstStaff);
       }
     }
-  }, [effectiveSelectedDept, departmentStaffList, rolePerspective, selectedAssignee, selectedDailyStaff]);
+  }, [filterDept, departmentStaffList, rolePerspective, selectedAssignee, selectedDailyStaff]);
 
   // Đồng bộ khi người dùng chọn 1 nhân sự cụ thể trên thanh lọc chung
   useEffect(() => {
@@ -3055,6 +3066,16 @@ export const UnifiedWorkspace: React.FC = () => {
     return list.some((a) => sameStaffName(a, target));
   }, []);
 
+  // Tra Phiếu phối hợp theo mã (O(1)) thay cho workflows.find trong vòng lặp nhân sự × công việc
+  const workflowByCode = useMemo(() => {
+    const m = new Map<string, any>();
+    for (const w of workflows) {
+      const code = String(w?.workflow_code || "").toUpperCase();
+      if (code && !m.has(code)) m.set(code, w);
+    }
+    return m;
+  }, [workflows]);
+
   // Kiểm tra công việc có do nhân sự này khởi tạo / yêu cầu hay không (kể cả việc sinh tự động từ Phiếu phối hợp)
   const isTaskCreatedByStaff = useCallback((t: any, targetName: any, targetUsername?: any): boolean => {
     if (!t) return false;
@@ -3067,9 +3088,7 @@ export const UnifiedWorkspace: React.FC = () => {
     if (createdBy && sameStaffName(createdBy, staff)) return true;
     const relWfCode = String(t.related_workflow_code || "").trim();
     if (relWfCode) {
-      const linkedWf = workflows.find(
-        (w: any) => String(w.workflow_code || "").toUpperCase() === relWfCode.toUpperCase()
-      );
+      const linkedWf = workflowByCode.get(relWfCode.toUpperCase());
       if (linkedWf && sameStaffName(linkedWf.requester_name, staff)) return true;
     }
     const descMatch = String(t.description || "").match(/Yêu cầu từ:\s*([^\n(]+)/i);
@@ -3078,7 +3097,7 @@ export const UnifiedWorkspace: React.FC = () => {
       return true;
     }
     return false;
-  }, [workflows]);
+  }, [workflowByCode]);
 
   // Kiểm tra Phiếu phối hợp có liên quan trực tiếp tới người đang đăng nhập (Người yêu cầu hoặc Người xử lý ở bất kỳ bước nào)
   const wfInvolvesMe = useCallback((w: any, mode: "requested" | "assigned" | "any" = "any"): boolean => {
@@ -3138,7 +3157,7 @@ export const UnifiedWorkspace: React.FC = () => {
     }
 
     // 4. Bất kỳ nhân sự nào thuộc phòng ban đang lọc là người yêu cầu hoặc người xử lý
-    if (isSameWorkspaceDept(targetDept, effectiveSelectedDept)) {
+    if (isSameWorkspaceDept(targetDept, filterDept)) {
       const staffInvolved = departmentStaffList.some((p: any) => {
         const pName = p.full_name || p;
         if (sameStaffName(w.requester_name, pName) || taskHasAssignee(w.assignee_name, pName)) {
@@ -3155,7 +3174,7 @@ export const UnifiedWorkspace: React.FC = () => {
     }
 
     return false;
-  }, [userDept, wfInvolvesMe, effectiveSelectedDept, departmentStaffList, taskHasAssignee]);
+  }, [userDept, wfInvolvesMe, filterDept, departmentStaffList, taskHasAssignee]);
 
   // Hợp nhất Công việc điều hành chung (company_tasks) + Công việc thực tế từ toàn Khối Kỹ Thuật – Nhà Máy & Application / Pháp Chế
   const mergedWorkspaceTasks = useMemo(() => {
@@ -3221,7 +3240,7 @@ export const UnifiedWorkspace: React.FC = () => {
     }
 
     // 3. Công việc giao cho hoặc khởi tạo bởi nhân sự thuộc phòng ban đang lọc
-    if (isSameWorkspaceDept(targetDept, effectiveSelectedDept)) {
+    if (isSameWorkspaceDept(targetDept, filterDept)) {
       const hasDeptMember = departmentStaffList.some((p: any) => {
         const pName = p.full_name || p;
         const pUid = resolveUserIdForStaffName(pName);
@@ -3285,7 +3304,7 @@ export const UnifiedWorkspace: React.FC = () => {
     }
 
     return false;
-  }, [userDept, currentStaffName, user, effectiveSelectedDept, departmentStaffList, taskHasAssignee, isTaskCreatedByStaff, workflows, workflowInvolvesDept, allCompanyProjects, resolveUserIdForStaffName]);
+  }, [userDept, currentStaffName, user, filterDept, departmentStaffList, taskHasAssignee, isTaskCreatedByStaff, workflows, workflowInvolvesDept, allCompanyProjects, resolveUserIdForStaffName]);
 
   // Kiểm tra 1 Công việc (Portal hoặc Kỹ thuật) có giao cho nhân sự staffName hay không
   const taskBelongsToStaff = useCallback((t: any, staffName: string): boolean => {
@@ -3295,6 +3314,24 @@ export const UnifiedWorkspace: React.FC = () => {
     if (uid && Array.isArray(t.assigneeUserIds) && t.assigneeUserIds.includes(uid)) return true;
     return false;
   }, [taskHasAssignee, isTaskCreatedByStaff, resolveUserIdForStaffName]);
+
+  // Số việc theo từng nhân sự cho hàng chip "Xem theo nhân sự": lọc theo phòng ban một lần, đếm một lần cho mỗi
+  // thay đổi dữ liệu / bộ lọc (trước đây tính lại 85 nhân sự × toàn bộ công việc ở mỗi lần render).
+  const showStaffChips = renderedSubTab === "tasks" && (rolePerspective === "manager" || rolePerspective === "director");
+  const staffChipCounts = useMemo(() => {
+    const byName = new Map<string, number>();
+    if (!showStaffChips) return { byName, unassigned: 0 };
+    const deptTasks =
+      filterDept === "all"
+        ? mergedWorkspaceTasks
+        : mergedWorkspaceTasks.filter((t: any) => taskInvolvesDept(t, filterDept));
+    const unassigned = deptTasks.filter((t: any) => !cleanWorkspaceAssignee(t.assignee_name)).length;
+    for (const p of departmentStaffList) {
+      const name = (p as any).full_name || p;
+      if (!byName.has(name)) byName.set(name, deptTasks.filter((t: any) => taskBelongsToStaff(t, name)).length);
+    }
+    return { byName, unassigned };
+  }, [showStaffChips, mergedWorkspaceTasks, filterDept, taskInvolvesDept, departmentStaffList, taskBelongsToStaff]);
 
   // RBAC Filtered Tasks (Bao gồm toàn bộ việc Điều hành + việc Khối Kỹ Thuật – Nhà Máy & Application / Pháp Chế):
   const filteredTasks = useMemo(() => {
@@ -3315,7 +3352,7 @@ export const UnifiedWorkspace: React.FC = () => {
           return false;
         }
       } else {
-        const activeFilterDept = effectiveSelectedDept;
+        const activeFilterDept = filterDept;
         if (activeFilterDept !== "all" && !taskInvolvesDept(t, activeFilterDept)) {
           return false;
         }
@@ -3352,7 +3389,7 @@ export const UnifiedWorkspace: React.FC = () => {
         (t.department && String(t.department).toLowerCase().includes(q));
       return matchStatus && matchSearch;
     });
-  }, [mergedWorkspaceTasks, rolePerspective, userDept, effectiveSelectedDept, selectedAssignee, taskSourceFilter, currentStaffName, statusFilter, searchQuery, user, taskHasAssignee, isTaskCreatedByStaff, taskInvolvesDept, taskBelongsToStaff]);
+  }, [mergedWorkspaceTasks, rolePerspective, userDept, filterDept, selectedAssignee, taskSourceFilter, currentStaffName, statusFilter, searchQuery, user, taskHasAssignee, isTaskCreatedByStaff, taskInvolvesDept, taskBelongsToStaff]);
 
   // RBAC Filtered Technical Weekly Plans (Lịch phân công & Kế hoạch tuần các phòng Kỹ thuật)
   const filteredHubWeeklyPlans = useMemo(() => {
@@ -3362,8 +3399,8 @@ export const UnifiedWorkspace: React.FC = () => {
         if (myUid > 0 && s.actorUserId === myUid) return true;
         return Boolean(s.actor) && sameStaffName(s.actor, currentStaffName);
       }
-      if (effectiveSelectedDept !== "all") {
-        const matchDept = isSameWorkspaceDept(s.category, effectiveSelectedDept);
+      if (filterDept !== "all") {
+        const matchDept = isSameWorkspaceDept(s.category, filterDept);
         const matchDeptStaff = Boolean(s.actor) && departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, s.actor));
         if (!matchDept && !matchDeptStaff) return false;
       }
@@ -3374,7 +3411,7 @@ export const UnifiedWorkspace: React.FC = () => {
       }
       return true;
     });
-  }, [hubWeeklyPlans, rolePerspective, user, effectiveSelectedDept, departmentStaffList, selectedAssignee, currentStaffName, resolveUserIdForStaffName]);
+  }, [hubWeeklyPlans, rolePerspective, user, filterDept, departmentStaffList, selectedAssignee, currentStaffName, resolveUserIdForStaffName]);
 
   // RBAC Filtered Weekly Schedules:
   // - Staff: ONLY sees their own schedule items
@@ -3387,8 +3424,8 @@ export const UnifiedWorkspace: React.FC = () => {
         if (s.isPublic) return true;
         return Boolean(s.actor) && sameStaffName(s.actor, currentStaffName);
       }
-      if (effectiveSelectedDept !== "all") {
-        const matchScheduleDept = isSameWorkspaceDept(s.category, effectiveSelectedDept);
+      if (filterDept !== "all") {
+        const matchScheduleDept = isSameWorkspaceDept(s.category, filterDept);
         const matchDeptStaff = Boolean(s.actor) && departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, s.actor));
         if (!matchScheduleDept && !matchDeptStaff) return false;
       }
@@ -3399,7 +3436,7 @@ export const UnifiedWorkspace: React.FC = () => {
       }
       return true;
     });
-  }, [weeklySchedule, rolePerspective, effectiveSelectedDept, departmentStaffList, selectedAssignee, currentStaffName]);
+  }, [weeklySchedule, rolePerspective, filterDept, departmentStaffList, selectedAssignee, currentStaffName]);
 
   // RBAC Filtered Projects (Dự án liên phòng ban + Dự án Stage-Gate R&D / KTCN):
   const filteredLabProjects = useMemo(() => {
@@ -3425,7 +3462,7 @@ export const UnifiedWorkspace: React.FC = () => {
       };
 
       // Filter by department
-      if (effectiveSelectedDept !== "all" && !matchesDeptFilter(effectiveSelectedDept)) {
+      if (filterDept !== "all" && !matchesDeptFilter(filterDept)) {
         return false;
       }
 
@@ -3460,7 +3497,7 @@ export const UnifiedWorkspace: React.FC = () => {
 
       return true;
     });
-  }, [allCompanyProjects, user, rolePerspective, userDept, effectiveSelectedDept, departmentStaffList, selectedAssignee, currentStaffName, thematicFilterType, searchQuery, resolveUserIdForStaffName]);
+  }, [allCompanyProjects, user, rolePerspective, userDept, filterDept, departmentStaffList, selectedAssignee, currentStaffName, thematicFilterType, searchQuery, resolveUserIdForStaffName]);
 
   // RBAC Filtered Sales Targets:
   // - Staff: ONLY sees their assigned pipeline targets
@@ -3474,9 +3511,9 @@ export const UnifiedWorkspace: React.FC = () => {
       if (rolePerspective === "manager") {
         return isSameWorkspaceDept(managerDept, "Kinh Doanh");
       }
-      return effectiveSelectedDept === "all" || isSameWorkspaceDept(effectiveSelectedDept, "Kinh Doanh");
+      return filterDept === "all" || isSameWorkspaceDept(filterDept, "Kinh Doanh");
     });
-  }, [salesTargets, rolePerspective, managerDept, effectiveSelectedDept, currentStaffName]);
+  }, [salesTargets, rolePerspective, managerDept, filterDept, currentStaffName]);
 
   // Ngày ISO ("YYYY-MM-DD") của thứ đang chọn trong tuần đang xem tại Nhật ký Daily
   const selectedDailyDayObj = useMemo(() => {
@@ -3493,7 +3530,7 @@ export const UnifiedWorkspace: React.FC = () => {
       if (rolePerspective === "staff") {
         if (!emp || !sameStaffName(emp, currentStaffName)) return false;
       } else {
-        const activeDept = effectiveSelectedDept;
+        const activeDept = filterDept;
         if (activeDept !== "all") {
           const matchLogDept = isSameWorkspaceDept(log.department, activeDept);
           const matchStaffDept = departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, emp));
@@ -3515,7 +3552,7 @@ export const UnifiedWorkspace: React.FC = () => {
       }
       return true;
     });
-  }, [dailyLogs, rolePerspective, effectiveSelectedDept, currentStaffName, departmentStaffList, dailyLogStaffScope, selectedDailyStaff, dailyLogTimeScope, selectedDailyDayObj.date, viewedWeek.startDate, viewedWeek.endDate]);
+  }, [dailyLogs, rolePerspective, filterDept, currentStaffName, departmentStaffList, dailyLogStaffScope, selectedDailyStaff, dailyLogTimeScope, selectedDailyDayObj.date, viewedWeek.startDate, viewedWeek.endDate]);
 
   // Filtered Workflows
   const filteredWorkflows = useMemo(() => {
@@ -3533,8 +3570,8 @@ export const UnifiedWorkspace: React.FC = () => {
               )
             )));
       const matchDept =
-        effectiveSelectedDept === "all" ||
-        workflowInvolvesDept(w, effectiveSelectedDept);
+        filterDept === "all" ||
+        workflowInvolvesDept(w, filterDept);
       if (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__" && !involvesSelectedStaff) {
         return false;
       }
@@ -3555,7 +3592,7 @@ export const UnifiedWorkspace: React.FC = () => {
           ));
       return matchDept && matchSearch;
     });
-  }, [workflows, effectiveSelectedDept, selectedAssignee, searchQuery, workflowInvolvesDept, taskHasAssignee]);
+  }, [workflows, filterDept, selectedAssignee, searchQuery, workflowInvolvesDept, taskHasAssignee]);
 
   // Helper to re-index & normalize multi-department / multi-assignee workflow steps
   const reindexWorkflowSteps = useCallback((rawSteps: any[]) => {
@@ -4383,8 +4420,11 @@ export const UnifiedWorkspace: React.FC = () => {
 
   // Comprehensive Real-time Analytics & KPI Metrics
   const analyticsData = useMemo(() => {
-    const isDeptScoped = effectiveSelectedDept !== "all";
-    const currentScopeDept = effectiveSelectedDept;
+    // Báo cáo KPI chỉ hiển thị ở tab Hiệu suất & KPI: không tính khi tab khác đang mở (đổi bộ lọc không còn chờ phần này).
+    // activeSubTab nằm trong deps nên khi mở tab KPI, giá trị được tính trong chính lần render đó; JSX chỉ đọc khi tab mở.
+    if (renderedSubTab !== "analytics") return null!;
+    const isDeptScoped = filterDept !== "all";
+    const currentScopeDept = filterDept;
     const todayStr = todayVN();
     const currentMonthPrefix = todayStr.slice(0, 7); // YYYY-MM
     const weekStartStr = viewedWeek.days[0]?.date || todayStr;
@@ -4408,7 +4448,7 @@ export const UnifiedWorkspace: React.FC = () => {
     };
 
     const scopeTasks = mergedWorkspaceTasks.filter((t: any) => {
-      if (effectiveSelectedDept !== "all" && !taskInvolvesDept(t, effectiveSelectedDept)) return false;
+      if (filterDept !== "all" && !taskInvolvesDept(t, filterDept)) return false;
       if (selectedAssignee === "__UNASSIGNED__" && cleanWorkspaceAssignee(t.assignee_name)) return false;
       if (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__" && !taskBelongsToStaff(t, selectedAssignee)) return false;
       if (!matchesSearch(t.title, t.task_code, t.assignee_name, t.customer_name, t.department)) return false;
@@ -4416,7 +4456,7 @@ export const UnifiedWorkspace: React.FC = () => {
     });
 
     const scopeWorkflows = workflows.filter(w => {
-      if (effectiveSelectedDept !== "all" && !workflowInvolvesDept(w, effectiveSelectedDept)) {
+      if (filterDept !== "all" && !workflowInvolvesDept(w, filterDept)) {
         return false;
       }
       if (!matchesSearch(w.title, w.workflow_code, w.requester_name, w.assignee_name, w.customer_name, w.product_info)) return false;
@@ -4424,7 +4464,7 @@ export const UnifiedWorkspace: React.FC = () => {
     });
 
     const scopeDailyLogs = dailyLogs.filter(d => {
-      if (effectiveSelectedDept !== "all" && !isSameWorkspaceDept(d.department, effectiveSelectedDept)) return false;
+      if (filterDept !== "all" && !isSameWorkspaceDept(d.department, filterDept)) return false;
       if (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__" && !sameStaffName(d.employee_name, selectedAssignee)) return false;
       if (!matchesPeriod(d.log_date || d.created_at)) return false;
       if (!matchesSearch(d.employee_name, d.work_content, d.result, d.issues, d.department)) return false;
@@ -4432,13 +4472,13 @@ export const UnifiedWorkspace: React.FC = () => {
     });
 
     const scopeThematicPlans = allCompanyProjects.filter((p: any) => {
-      if (effectiveSelectedDept !== "all") {
+      if (filterDept !== "all") {
         const partDepts: string[] = Array.isArray(p.participatingDepts) ? p.participatingDepts : [];
         const stageDepts: string[] = Array.isArray(p.stages) ? p.stages.map((s: any) => s.dept).filter(Boolean) : [];
         const matchesPrjDept =
-          isSameWorkspaceDept(p.dept, effectiveSelectedDept) ||
-          partDepts.some((d) => isSameWorkspaceDept(d, effectiveSelectedDept)) ||
-          stageDepts.some((d) => isSameWorkspaceDept(d, effectiveSelectedDept));
+          isSameWorkspaceDept(p.dept, filterDept) ||
+          partDepts.some((d) => isSameWorkspaceDept(d, filterDept)) ||
+          stageDepts.some((d) => isSameWorkspaceDept(d, filterDept));
         if (!matchesPrjDept) return false;
       }
       if (!matchesSearch(p.id, p.name, p.lead, p.dept, p.description)) return false;
@@ -4446,8 +4486,8 @@ export const UnifiedWorkspace: React.FC = () => {
     });
 
     const scopePersonnel = personnelList.filter(p => {
-      if (effectiveSelectedDept === "all") return true;
-      return isSameWorkspaceDept(p.department, effectiveSelectedDept);
+      if (filterDept === "all") return true;
+      return isSameWorkspaceDept(p.department, filterDept);
     });
 
     // Task metrics
@@ -4580,11 +4620,11 @@ export const UnifiedWorkspace: React.FC = () => {
       "Đơn Nội Bộ"
     ];
     const isCoreDept = (deptName: string) => coreDepts.some(c => isSameWorkspaceDept(deptName, c));
-    const scopedCoreDepts = isWorkspaceBlockKey(effectiveSelectedDept)
-      ? coreDepts.filter((c) => isSameWorkspaceDept(c, effectiveSelectedDept))
+    const scopedCoreDepts = isWorkspaceBlockKey(filterDept)
+      ? coreDepts.filter((c) => isSameWorkspaceDept(c, filterDept))
       : coreDepts;
     const activeCoreDepts = scopedCoreDepts.filter(c =>
-      (isWorkspaceBlockKey(effectiveSelectedDept) ||
+      (isWorkspaceBlockKey(filterDept) ||
         ["Kinh Doanh", "Application", "Kho & Vận Hành", "Cung Ứng", "Nghiên Cứu R&D", "Sản Xuất Kit", "QA/QC", "Kho Nhà Máy", "Cung Ứng Kỹ Thuật"].includes(c) ||
         scopeTasks.some(t => isSameWorkspaceDept(t.department, c)) ||
         scopeWorkflows.some(w => isSameWorkspaceDept(w.target_dept, c) || isSameWorkspaceDept(w.requester_dept, c)) ||
@@ -4593,7 +4633,7 @@ export const UnifiedWorkspace: React.FC = () => {
     const otherTasksCheck = scopeTasks.filter(t => !isCoreDept(t.department));
     const otherStaffCheck = scopePersonnel.filter(p => !isCoreDept(p.department));
     const departments =
-      effectiveSelectedDept !== "BLOCK_TECHNICAL" && (otherTasksCheck.length > 0 || otherStaffCheck.length > 0)
+      filterDept !== "BLOCK_TECHNICAL" && (otherTasksCheck.length > 0 || otherStaffCheck.length > 0)
         ? [...activeCoreDepts, "Khối Hành Chính & Văn Phòng"]
         : activeCoreDepts;
 
@@ -4733,7 +4773,7 @@ export const UnifiedWorkspace: React.FC = () => {
       scoreColor,
       deptScorecards
     };
-  }, [mergedWorkspaceTasks, workflows, dailyLogs, allCompanyProjects, weeklySchedule, hubWeeklyPlans, personnelList, effectiveSelectedDept, selectedAssignee, searchQuery, analyticsPeriod, viewedWeek, taskInvolvesDept, workflowInvolvesDept, taskBelongsToStaff]);
+  }, [renderedSubTab, mergedWorkspaceTasks, workflows, dailyLogs, allCompanyProjects, weeklySchedule, hubWeeklyPlans, personnelList, filterDept, selectedAssignee, searchQuery, analyticsPeriod, viewedWeek, taskInvolvesDept, workflowInvolvesDept, taskBelongsToStaff]);
 
   // Handle Save Task
   const handleSaveTask = async (e: React.FormEvent) => {
@@ -6104,7 +6144,7 @@ export const UnifiedWorkspace: React.FC = () => {
   }, [getDailyItemOriginMeta, workflows, tasks, navigateToTargetTab]);
 
   // Sync daily items when day or staff changes (Kết nối Lịch Công Tác Tuần + Bảng Công Việc + Quy Trình Phối Hợp + Chuyên đề)
-  useEffect(() => {
+  const syncDailyPlanItems = useCallback(() => {
     const targetStaff = activeDailyStaff;
     const targetDept = selectedDept !== "all" ? selectedDept : (rolePerspective === "manager" ? managerDept : "");
     const targetDayObj = viewedWeek.all7Days.find(d => d.name === selectedDailyDay) || { name: selectedDailyDay, date: currentTodayIso };
@@ -6316,6 +6356,27 @@ export const UnifiedWorkspace: React.FC = () => {
 
     setDailyPlanItems([...itemsFromSchedule, ...itemsFromTasks, ...itemsFromWorkflows, ...itemsFromHub]);
   }, [selectedDailyDay, activeDailyStaff, weeklySchedule, tasks, workflows, labProjects, hubWorkItems, viewedWeek, rolePerspective, managerDept, selectedDept, resolveUserIdForStaffName]);
+
+  // Dựng lại danh sách Daily chỉ khi tab Nhật ký Daily đang mở. Tab đóng: ghi nhớ là cần dựng lại và dựng khi mở tab,
+  // nên đổi bộ lọc Khối / phòng ban ở tab khác không còn tính phần này; chuyển tab qua lại mà nguồn không đổi thì giữ
+  // nguyên các mục người dùng đã sửa (như trước).
+  const activeSubTabRef = useRef(activeSubTab);
+  activeSubTabRef.current = activeSubTab;
+  const dailySyncPendingRef = useRef(true);
+  useEffect(() => {
+    if (activeSubTabRef.current === "daily") {
+      dailySyncPendingRef.current = false;
+      syncDailyPlanItems();
+    } else {
+      dailySyncPendingRef.current = true;
+    }
+  }, [syncDailyPlanItems]);
+  useEffect(() => {
+    if (activeSubTab === "daily" && dailySyncPendingRef.current) {
+      dailySyncPendingRef.current = false;
+      syncDailyPlanItems();
+    }
+  }, [activeSubTab, syncDailyPlanItems]);
 
   // Auto-calculate daily total hours from plan items
   useEffect(() => {
@@ -8175,7 +8236,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
   const dailyLogsPage = usePaged(filteredDailyLogs, 20);
 
   return (
-    <div className="space-y-4 w-full pb-12">
+    <div className="space-y-4 w-full pb-12" aria-busy={isFilterStale || undefined}>
+      {/* Bộ lọc / tab vừa đổi, nội dung đang được dựng lại ở nền */}
+      {isFilterStale && (
+        <div className="fixed top-0 inset-x-0 h-0.5 z-[60] bg-indigo-500/80 animate-pulse pointer-events-none" role="progressbar" aria-label="Đang cập nhật dữ liệu" />
+      )}
       {/* ==================== LEVEL 1: MASTER HEADER & FEATURE TABS ==================== */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
@@ -8661,7 +8726,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           )}
 
           {/* Staff / Assignee Filter Dropdown */}
-          {(activeSubTab === "tasks" || activeSubTab === "planner" || activeSubTab === "projects") && (rolePerspective === "manager" || rolePerspective === "director") && (
+          {(renderedSubTab === "tasks" || renderedSubTab === "planner" || renderedSubTab === "projects") && (rolePerspective === "manager" || rolePerspective === "director") && (
             <div className="relative shrink-0 min-w-[170px]">
               <User className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
               <select
@@ -8673,7 +8738,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 <option value="all">
                   {effectiveSelectedDept === "all" ? "👥 Tất cả nhân sự" : `👥 Tất cả (${departmentStaffList.length} người)`}
                 </option>
-                {activeSubTab === "tasks" && (
+                {renderedSubTab === "tasks" && (
                   <option value="__UNASSIGNED__">
                     ⏳ Chờ phân công ({mergedWorkspaceTasks.filter((t: any) => (effectiveSelectedDept === "all" || taskInvolvesDept(t, effectiveSelectedDept)) && !cleanWorkspaceAssignee(t.assignee_name)).length})
                   </option>
@@ -8681,7 +8746,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 {departmentStaffList.map((p: any) => {
                   const name = p.full_name || p;
                   const code = p.employee_code ? ` (${p.employee_code})` : "";
-                  const count = activeSubTab === "planner"
+                  const count = renderedSubTab === "planner"
                     ? weeklySchedule.filter(s => {
                         const matchesDept = effectiveSelectedDept === "all" || isSameWorkspaceDept(s.category, effectiveSelectedDept) || departmentStaffList.some((st: any) => sameStaffName(st.full_name || st, s.actor));
                         const actor = (s.actor || "").toLowerCase().trim();
@@ -8716,7 +8781,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           </div>
 
           {/* Status Filter (when on tasks tab) */}
-          {activeSubTab === "tasks" && (
+          {renderedSubTab === "tasks" && (
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
@@ -8730,7 +8795,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           )}
 
           {/* Date Range & Sort Filter (when on announcements tab) */}
-          {activeSubTab === "announcements" && (
+          {renderedSubTab === "announcements" && (
             <div className="flex flex-wrap items-center gap-1.5">
               <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs">
                 <Calendar className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
@@ -8780,7 +8845,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
         {/* Right: Dynamic Actions strictly per active tab */}
         <div className="flex items-center gap-2 shrink-0 justify-between md:justify-end">
           {/* TAB 1: BẢNG CÔNG VIỆC -> CHỈ hiển thị chuyển chế độ và nút Tạo Việc Mới */}
-          {activeSubTab === "tasks" && (
+          {renderedSubTab === "tasks" && (
             <>
               <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-xl mr-1">
                 <button
@@ -8825,7 +8890,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           )}
 
           {/* TAB 2: QUY TRÌNH PHỐI HỢP -> Nút Tạo Quy Trình Mới & Khởi tạo phiếu phối hợp */}
-          {activeSubTab === "workflows" && (
+          {renderedSubTab === "workflows" && (
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -8854,7 +8919,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           )}
 
           {/* TAB 2B: ĐỀ XUẤT & PHÊ DUYỆT -> Nút Lập Đề Xuất / Tờ Trình + Nút nhanh Xin Nghỉ Phép (DXNP) */}
-          {activeSubTab === "proposals" && (
+          {renderedSubTab === "proposals" && (
             <div className="flex items-center gap-2 flex-wrap">
               <button
                 type="button"
@@ -8877,7 +8942,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           )}
 
           {/* TAB 3: LỊCH CÔNG TÁC TUẦN -> Hiển thị trực tiếp nút tạo lịch họp & thêm lịch tuần */}
-          {activeSubTab === "planner" && (
+          {renderedSubTab === "planner" && (
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -8899,7 +8964,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           )}
 
           {/* TAB 3B: DỰ ÁN & NHÓM VIỆC LIÊN PHÒNG -> Mở trực tiếp nút tạo Dự án / Nhóm việc */}
-          {activeSubTab === "projects" && (
+          {renderedSubTab === "projects" && (
             <button
               onClick={() => openCreateThematicModal()}
               className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white transition-all shadow-xs cursor-pointer"
@@ -8910,7 +8975,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           )}
 
           {/* TAB 5: THÔNG BÁO & QUYẾT ĐỊNH -> Gộp thành 1 nút duy nhất Ban Hành Thông Báo / Quyết Định */}
-          {activeSubTab === "announcements" && (
+          {renderedSubTab === "announcements" && (
             <button
               type="button"
               onClick={() => openCreateAnnouncementModal("DECISION")}
@@ -8926,7 +8991,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       {/* ==================== LEVEL 3: TAB CONTENTS ==================== */}
 
       {/* TAB 2B: ĐỀ XUẤT & PHÊ DUYỆT ĐA CẤP (ENTERPRISE PROPOSALS & E-APPROVAL) */}
-      {activeSubTab === "proposals" && (
+      {renderedSubTab === "proposals" && (
         <ProposalsApprovalView
           currentStaffName={currentStaffName}
           userDept={userDept}
@@ -8962,7 +9027,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       )}
 
       {/* TAB 1: BẢNG CÔNG VIỆC (TASKS & KANBAN TOÀN CÔNG TY) */}
-      {activeSubTab === "tasks" && (
+      {renderedSubTab === "tasks" && (
         <div className="space-y-3.5">
           {/* Source Domain Filter Strip (Liên thông Điều hành chung + Khối Kỹ Thuật – Nhà Máy + Application / Pháp Chế) */}
           {(() => {
@@ -9026,10 +9091,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 Tất cả ({departmentStaffList.length})
               </button>
               {(() => {
-                const unassignedCount = mergedWorkspaceTasks.filter((t: any) => {
-                  const matchesDept = effectiveSelectedDept === "all" || taskInvolvesDept(t, effectiveSelectedDept);
-                  return matchesDept && !cleanWorkspaceAssignee(t.assignee_name);
-                }).length;
+                const unassignedCount = staffChipCounts.unassigned;
                 if (unassignedCount === 0 && selectedAssignee !== "__UNASSIGNED__") return null;
                 const isSelected = selectedAssignee === "__UNASSIGNED__";
                 return (
@@ -9053,10 +9115,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               })()}
               {departmentStaffList.map((p: any) => {
                 const name = p.full_name || p;
-                const count = mergedWorkspaceTasks.filter((t: any) => {
-                  const matchesDept = effectiveSelectedDept === "all" || taskInvolvesDept(t, effectiveSelectedDept);
-                  return matchesDept && taskBelongsToStaff(t, name);
-                }).length;
+                const count = staffChipCounts.byName.get(name) ?? 0;
                 const isSelected = selectedAssignee === name;
                 return (
                   <button
@@ -9299,7 +9358,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       )}
 
       {/* TAB 2: QUY TRÌNH PHỐI HỢP LIÊN PHÒNG BAN */}
-      {activeSubTab === "workflows" && (
+      {renderedSubTab === "workflows" && (
         <div className="space-y-4">
           {/* Quy trình mẫu: mặc định 1 thanh "Phát lệnh nhanh", bấm "Chi tiết" để xem dạng thẻ (mô tả, sửa / xóa) */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 shadow-xs flex flex-wrap items-center gap-2">
@@ -10261,7 +10320,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       )}
 
       {/* TAB 3: LỊCH CÔNG TÁC TUẦN (MỞ TRỰC TIẾP KHÔNG QUA TAB PHỤ) */}
-      {activeSubTab === "planner" && (
+      {renderedSubTab === "planner" && (
         <div className="space-y-4">
                   {viewingScheduleEvent && (() => {
                     const ev = viewingScheduleEvent;
@@ -10769,7 +10828,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       )}
 
       {/* TAB 3B: DỰ ÁN & NHÓM VIỆC LIÊN PHÒNG BAN (MỞ TRỰC TIẾP GIAO DIỆN LÀM VIỆC) */}
-      {activeSubTab === "projects" && (
+      {renderedSubTab === "projects" && (
         <div className="space-y-4">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs">
             <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
@@ -11546,7 +11605,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       )}
 
       {/* TAB 4: NHẬT KÝ DAILY - KẾT NỐI KẾ HOẠCH TUẦN & CHỈ ĐẠO 2 CHIỀU */}
-      {activeSubTab === "daily" && (
+      {renderedSubTab === "daily" && (
         <div className="space-y-5">
           {/* Top Control Bar: Weekday Navigator & Personnel Filter */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs space-y-3.5">
@@ -12493,7 +12552,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       )}
 
       {/* TAB 5: BÁO CÁO PHÂN TÍCH HIỆU SUẤT TOÀN DIỆN (CÔNG VIỆC • KẾ HOẠCH • NHẬT KÝ DAILY) */}
-      {activeSubTab === "analytics" && (
+      {renderedSubTab === "analytics" && (
         <div className="space-y-6">
           {/* Header Summary Banner - Clean, High Contrast Theme */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xs space-y-5">
@@ -13031,7 +13090,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       )}
 
       {/* ==================== TAB 6: THÔNG BÁO, QUYẾT ĐỊNH & VĂN BẢN ĐIỀNH HÀNH (ENTERPRISE ANNOUNCEMENTS) ==================== */}
-      {activeSubTab === "announcements" && (() => {
+      {renderedSubTab === "announcements" && (() => {
         const normAnnDate = (raw: any): string => {
           const s = String(raw || "").trim();
           if (!s) return "";
