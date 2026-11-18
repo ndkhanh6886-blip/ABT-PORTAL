@@ -65,6 +65,22 @@ import { DateInputVN, formatDayVN, toISODate } from "@/frontend/components/DateI
 import { printWarehouseSlip, exportWarehouseSlipExcel, txPartnerName } from "@/frontend/components/warehouse/warehouseSlipDocs";
 import { packagingFormOfLot, isPcrKitProduct, PACKAGING_LABEL } from "@/frontend/utils/packagingForm";
 import { isOligoMtoProduct } from "@/backend/services/catalogRules";
+import { DEFAULT_ABT_KIT_BOM_COMPONENTS } from "@/shared/defaultKitBomComponents";
+
+function mergeKitBomComponents(apiRows: any[] | undefined): any[] {
+  const rows = Array.isArray(apiRows) ? [...apiRows] : [];
+  const seen = new Set(
+    rows.map((r) => `${String(r?.parent_product_code || "").trim().toUpperCase()}__${String(r?.component_code || "").trim().toUpperCase()}`)
+  );
+  for (const def of DEFAULT_ABT_KIT_BOM_COMPONENTS) {
+    const key = `${def.parent_product_code.toUpperCase()}__${def.component_code.toUpperCase()}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      rows.push(def);
+    }
+  }
+  return rows;
+}
 
 /**
  * Hỏi lại khi có dòng hàng mà hạn dùng ≤ ngày nhập kho (thường là gõ nhầm ngày sản xuất vào ô hạn dùng).
@@ -194,7 +210,7 @@ export const WarehouseModule: React.FC = () => {
   const [selectedBarcodeItem, setSelectedBarcodeItem] = useState<PrintableItem | null>(null);
 
   // Phase 4 States: BOM & Components for Kits & Multi-Unit Goods (Parent-Child Tracking)
-  const [productComponents, setProductComponents] = useState<any[]>([]);
+  const [productComponents, setProductComponents] = useState<any[]>(() => DEFAULT_ABT_KIT_BOM_COMPONENTS);
   const [selectedBomParent, setSelectedBomParent] = useState<string>("HI-612");
   const [bomSearchQuery, setBomSearchQuery] = useState("");
   const [bomTypeFilter, setBomTypeFilter] = useState<"all" | "kits_only" | "single">("kits_only");
@@ -454,11 +470,34 @@ export const WarehouseModule: React.FC = () => {
             }
           } catch { /* ignore */ }
         }
+        const mergedComps = mergeKitBomComponents(data.product_components);
+        const seenProdCodes = new Set(apiProds.map((p: any) => String(p?.code || "").trim().toUpperCase()));
+        for (const c of mergedComps) {
+          const pCode = String(c?.parent_product_code || "").trim();
+          if (!pCode || seenProdCodes.has(pCode.toUpperCase())) continue;
+          seenProdCodes.add(pCode.toUpperCase());
+          const basePrefix = pCode.split(".")[0].toUpperCase();
+          const baseMatch = apiProds.find(
+            (p: any) =>
+              String(p?.code || "").trim().toUpperCase() === basePrefix ||
+              String(p?.code || "").trim().toUpperCase().startsWith(basePrefix + ".")
+          );
+          apiProds.push({
+            code: pCode,
+            name: baseMatch?.name ? `${baseMatch.name} (${pCode})` : `Bộ Kit tách chiết ${pCode}`,
+            category: baseMatch?.category || "KIT TÁCH CHIẾT",
+            manufacturer: baseMatch?.manufacturer || "ABT",
+            origin: baseMatch?.origin || "Việt Nam",
+            specification: c.specification || baseMatch?.specification || "Hộp",
+            unit: c.unit || baseMatch?.unit || "Hộp",
+            cost_price: Number(baseMatch?.cost_price) || 0,
+            standard_price: Number(baseMatch?.standard_price) || 0,
+            storage_condition: c.storage_condition || baseMatch?.storage_condition || "2-8°C (Tủ mát chuyên dụng)",
+          });
+        }
         setProducts(apiProds);
         setReservations(data.reservations || []);
-        if (data.product_components) {
-          setProductComponents(data.product_components);
-        }
+        setProductComponents(mergedComps);
         if (data.personnel) {
           setPersonnelList(data.personnel);
         }
@@ -675,11 +714,19 @@ export const WarehouseModule: React.FC = () => {
   const componentsByParentMap = useMemo(() => {
     const map = new Map<string, any[]>();
     for (const c of productComponents) {
-      const parent = c?.parent_product_code;
+      const parent = String(c?.parent_product_code || "").trim();
       if (!parent) continue;
-      const list = map.get(parent);
-      if (list) list.push(c);
-      else map.set(parent, [c]);
+      const upper = parent.toUpperCase();
+      const list = map.get(parent) || map.get(upper);
+      if (list) {
+        list.push(c);
+        map.set(parent, list);
+        map.set(upper, list);
+      } else {
+        const arr = [c];
+        map.set(parent, arr);
+        map.set(upper, arr);
+      }
     }
     return map;
   }, [productComponents]);
@@ -2256,12 +2303,12 @@ export const WarehouseModule: React.FC = () => {
   // Danh sách sản phẩm ở tab BOM: lọc sau khi ngừng gõ, đếm thành phần một lần, vẽ từng trang
   const bomSearchDebounced = useDebouncedValue(bomSearchQuery, 300);
   const bomFilteredProducts = useMemo(() => {
-    const withComps = new Set(productComponents.map((c: any) => c.parent_product_code));
+    const withComps = new Set(productComponents.map((c: any) => String(c.parent_product_code || "").trim().toUpperCase()));
     const q = bomSearchDebounced.toLowerCase();
     return products.filter((p: any) => {
       const matchesQuery = !q || String(p.code || "").toLowerCase().includes(q) || String(p.name || "").toLowerCase().includes(q);
       if (!matchesQuery) return false;
-      const hasComponents = withComps.has(p.code);
+      const hasComponents = withComps.has(String(p.code || "").trim().toUpperCase());
       if (bomTypeFilter === "kits_only") return hasComponents;
       if (bomTypeFilter === "single") return !hasComponents;
       return true;

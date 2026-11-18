@@ -33,6 +33,7 @@ import {
   readCatalog,
 } from "@/backend/services/catalogStore";
 import { isDetailedOligoSkuCode } from "@/shared/oligoCatalog";
+import { DEFAULT_ABT_KIT_BOM_COMPONENTS } from "@/shared/defaultKitBomComponents";
 import { applyPOReceipt, reconcileHistoricalPOsWithInbound, markPOReconcileDirty } from "@/backend/services/poReceipt";
 import { isPcrKitProduct, packagingFormOfLot } from "@/frontend/utils/packagingForm";
 import {
@@ -49,6 +50,70 @@ import {
 } from "@/backend/services/inventoryLedger";
 
 let lastOverviewSyncAt = 0;
+let defaultKitBomSynced = false;
+
+async function ensureDefaultKitBomComponents() {
+  if (defaultKitBomSynced) return;
+  defaultKitBomSynced = true;
+  try {
+    for (const c of DEFAULT_ABT_KIT_BOM_COMPONENTS) {
+      const ex = await query(
+        "SELECT id FROM product_components WHERE UPPER(TRIM(parent_product_code)) = UPPER(TRIM($1)) AND UPPER(TRIM(component_code)) = UPPER(TRIM($2)) LIMIT 1",
+        [c.parent_product_code, c.component_code]
+      );
+      if (ex.rows.length === 0) {
+        await query(
+          `INSERT INTO product_components (parent_product_code, component_code, component_name, specification, unit, quantity_per_kit, tracking_type, storage_condition, is_required, notes)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [
+            c.parent_product_code,
+            c.component_code,
+            c.component_name,
+            c.specification,
+            c.unit,
+            c.quantity_per_kit,
+            c.tracking_type,
+            c.storage_condition,
+            c.is_required,
+            c.notes || "",
+          ]
+        );
+      }
+    }
+    await query(`
+      INSERT INTO products (code, name, category, manufacturer, origin, specification, unit, cost_price, standard_price, storage_condition)
+      SELECT DISTINCT
+             TRIM(pc.parent_product_code),
+             COALESCE(base_p.name, 'Bộ Kit ' || TRIM(pc.parent_product_code)),
+             COALESCE(base_p.category, 'KIT TÁCH CHIẾT'),
+             COALESCE(base_p.manufacturer, 'ABT'),
+             COALESCE(base_p.origin, 'Việt Nam'),
+             COALESCE(MAX(pc.specification), base_p.specification, 'Hộp'),
+             COALESCE(base_p.unit, 'Hộp'),
+             COALESCE(base_p.cost_price, 0),
+             COALESCE(base_p.standard_price, 0),
+             COALESCE(base_p.storage_condition, '2-8°C (Tủ mát chuyên dụng)')
+        FROM product_components pc
+        LEFT JOIN LATERAL (
+          SELECT p2.*
+            FROM products p2
+           WHERE UPPER(TRIM(p2.code)) = UPPER(SPLIT_PART(TRIM(pc.parent_product_code), '.', 1))
+              OR UPPER(TRIM(p2.code)) LIKE UPPER(SPLIT_PART(TRIM(pc.parent_product_code), '.', 1)) || '.%'
+           ORDER BY p2.id ASC
+           LIMIT 1
+        ) base_p ON TRUE
+       WHERE TRIM(COALESCE(pc.parent_product_code, '')) <> ''
+         AND NOT EXISTS (
+           SELECT 1 FROM products p WHERE UPPER(TRIM(p.code)) = UPPER(TRIM(pc.parent_product_code))
+         )
+       GROUP BY TRIM(pc.parent_product_code), base_p.name, base_p.category, base_p.manufacturer, base_p.origin, base_p.specification, base_p.unit, base_p.cost_price, base_p.standard_price, base_p.storage_condition
+      ON CONFLICT (code) DO NOTHING
+    `).catch(() => {});
+  } catch (e) {
+    defaultKitBomSynced = false;
+    console.warn("ensureDefaultKitBomComponents warning:", e);
+  }
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -342,6 +407,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (action === "product_components") {
+      await ensureDefaultKitBomComponents();
       const parentCode = searchParams.get("product_code");
       let res;
       if (parentCode) {
@@ -353,6 +419,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (action === "overview") {
+      await ensureDefaultKitBomComponents();
       // Đối soát PO ↔ phiếu nhập đọc toàn bộ PO, phiếu nhập và nhật ký: chạy nền, không bắt màn hình Kho chờ
       void reconcileHistoricalPOsWithInbound(query).catch(() => {});
       // Đồng bộ tự động 2 chiều giữa products / inventory_lots và inventory_items:
@@ -416,6 +483,37 @@ export async function GET(req: NextRequest) {
              AND COALESCE(ci.data->>'name', '') NOT ILIKE 'Dịch vụ%'
              AND COALESCE(ci.data->>'name', '') NOT ILIKE '%dịch vụ sửa chữa%'
              AND NOT EXISTS (SELECT 1 FROM products p WHERE UPPER(TRIM(p.code)) = UPPER(TRIM(ci.code)))
+          ON CONFLICT (code) DO NOTHING
+        `).catch(() => {});
+
+        // Đảm bảo mọi mã SKU cha có trong product_components đều có dòng tương ứng trong bảng products
+        await query(`
+          INSERT INTO products (code, name, category, manufacturer, origin, specification, unit, cost_price, standard_price, storage_condition)
+          SELECT DISTINCT
+                 TRIM(pc.parent_product_code),
+                 COALESCE(base_p.name, 'Bộ Kit ' || TRIM(pc.parent_product_code)),
+                 COALESCE(base_p.category, 'KIT TÁCH CHIẾT'),
+                 COALESCE(base_p.manufacturer, 'ABT'),
+                 COALESCE(base_p.origin, 'Việt Nam'),
+                 COALESCE(MAX(pc.specification), base_p.specification, 'Hộp'),
+                 COALESCE(base_p.unit, 'Hộp'),
+                 COALESCE(base_p.cost_price, 0),
+                 COALESCE(base_p.standard_price, 0),
+                 COALESCE(base_p.storage_condition, '2-8°C (Tủ mát chuyên dụng)')
+            FROM product_components pc
+            LEFT JOIN LATERAL (
+              SELECT p2.*
+                FROM products p2
+               WHERE UPPER(TRIM(p2.code)) = UPPER(SPLIT_PART(TRIM(pc.parent_product_code), '.', 1))
+                  OR UPPER(TRIM(p2.code)) LIKE UPPER(SPLIT_PART(TRIM(pc.parent_product_code), '.', 1)) || '.%'
+               ORDER BY p2.id ASC
+               LIMIT 1
+            ) base_p ON TRUE
+           WHERE TRIM(COALESCE(pc.parent_product_code, '')) <> ''
+             AND NOT EXISTS (
+               SELECT 1 FROM products p WHERE UPPER(TRIM(p.code)) = UPPER(TRIM(pc.parent_product_code))
+             )
+           GROUP BY TRIM(pc.parent_product_code), base_p.name, base_p.category, base_p.manufacturer, base_p.origin, base_p.specification, base_p.unit, base_p.cost_price, base_p.standard_price, base_p.storage_condition
           ON CONFLICT (code) DO NOTHING
         `).catch(() => {});
 

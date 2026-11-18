@@ -23,6 +23,22 @@ import {
 } from "@/frontend/utils/oligoCatalogPricing";
 import { packagingFormOfLot, normalizePackagingForm, normalizeIcForm, normalizeTubeType, withPackagingNote, isPcrKitProduct, PACKAGING_LABEL, IC_LABEL, PCR_TUBE_CODES, kitSpecOf, kitSpecLabel, lotKitSpec, lotMatchesKitSpec, kitSpecMismatches, missingKitSpec, hasKitSpec, type KitSpec } from "@/frontend/utils/packagingForm";
 import { accessorySetsForProduct, findAccessorySet, isAccessorySetValidForProduct, isExtractionAccessoryProduct } from "@/frontend/utils/extractionAccessories";
+import { DEFAULT_ABT_KIT_BOM_COMPONENTS } from "@/shared/defaultKitBomComponents";
+
+function mergeDbWithDefaultKitBom(apiRows: any[] | undefined): any[] {
+    const rows = Array.isArray(apiRows) ? [...apiRows] : [];
+    const seen = new Set(
+        rows.map((r) => `${String(r?.parent_product_code || "").trim().toUpperCase()}__${String(r?.component_code || "").trim().toUpperCase()}`)
+    );
+    for (const def of DEFAULT_ABT_KIT_BOM_COMPONENTS) {
+        const key = `${def.parent_product_code.toUpperCase()}__${def.component_code.toUpperCase()}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            rows.push(def);
+        }
+    }
+    return rows;
+}
 import {
     Wallet,
     Briefcase,
@@ -3693,7 +3709,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     .then(res => res.json())
                     .then(overview => {
                         if (overview.product_components && Array.isArray(overview.product_components)) {
-                            setDbProductComponents(overview.product_components);
+                            setDbProductComponents(mergeDbWithDefaultKitBom(overview.product_components));
                         }
                         if (overview.products && Array.isArray(overview.products)) {
                             setDbMasterProducts(overview.products);
@@ -3920,7 +3936,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 !isNonPricedPipelineStatus(`${p.leadTime || ""} ${p.notes || ""}`)
         );
     }, [commercialProducts]);
-    const [dbProductComponents, setDbProductComponents] = useState<any[]>([]);
+    const [dbProductComponents, setDbProductComponents] = useState<any[]>(() => DEFAULT_ABT_KIT_BOM_COMPONENTS);
     const [dbMasterProducts, setDbMasterProducts] = useState<any[]>([]);
     const [dbSuppliers, setDbSuppliers] = useState<any[]>([]);
     const [viewingProductComponents, setViewingProductComponents] = useState<{ product: any; components: any[] } | null>(null);
@@ -3930,6 +3946,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const targetCode = String(prod.code || "").trim().toUpperCase();
         const fromDb = dbProductComponents.filter(c => String(c.parent_product_code || "").trim().toUpperCase() === targetCode);
         if (fromDb.length > 0) return fromDb;
+        if (!targetCode.includes(".")) {
+            const dotC = dbProductComponents.filter(c => String(c.parent_product_code || "").trim().toUpperCase() === `${targetCode}.C`);
+            if (dotC.length > 0) return dotC;
+        }
         if (prod.configurations && Array.isArray(prod.configurations) && prod.configurations.length > 0) {
             return prod.configurations.map((cfg: any, idx: number) => ({
                 id: cfg.id || `CFG-${prod.code}-${idx + 1}`,
@@ -10900,7 +10920,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             .then(r => r.json())
                             .then(ov => {
                                 if (ov?.product_components && Array.isArray(ov.product_components)) {
-                                    setDbProductComponents(ov.product_components);
+                                    setDbProductComponents(mergeDbWithDefaultKitBom(ov.product_components));
                                 }
                                 if (ov?.products && Array.isArray(ov.products)) {
                                     setDbMasterProducts(ov.products);
