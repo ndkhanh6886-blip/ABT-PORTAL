@@ -8468,7 +8468,13 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           </button>
 
           <button
-            onClick={() => setActiveSubTab("proposals")}
+            onClick={() => {
+              setProposalCreateTrigger(0);
+              setProposalLeaveCreateTrigger(0);
+              setProposalLeaveTabTrigger(0);
+              setProposalTemplateTrigger(0);
+              setActiveSubTab("proposals");
+            }}
             className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
               activeSubTab === "proposals"
                 ? "bg-emerald-600 text-white shadow-sm shadow-emerald-600/25"
@@ -9187,6 +9193,12 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           externalLeaveTabTrigger={proposalLeaveTabTrigger}
           externalTemplateTrigger={proposalTemplateTrigger}
           externalOpenProposalId={externalOpenProposalId}
+          onConsumeTriggers={() => {
+            setProposalCreateTrigger(0);
+            setProposalLeaveCreateTrigger(0);
+            setProposalLeaveTabTrigger(0);
+            setProposalTemplateTrigger(0);
+          }}
         />
       )}
 

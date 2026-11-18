@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import { needsLeaveDates } from "@/frontend/utils/recoveredProposals";
 import { isSameWorkspaceDept, defaultConcreteDeptForScope, normalizeWorkspaceDept, WORKSPACE_BLOCKS } from "@/frontend/utils/workspaceScope";
@@ -1094,6 +1094,7 @@ export interface ProposalsApprovalViewProps {
   externalLeaveTabTrigger?: number;
   externalTemplateTrigger?: number;
   externalOpenProposalId?: string | null;
+  onConsumeTriggers?: () => void;
 }
 
 export function ProposalsApprovalView({
@@ -1119,7 +1120,8 @@ export function ProposalsApprovalView({
   externalLeaveCreateTrigger,
   externalLeaveTabTrigger,
   externalTemplateTrigger,
-  externalOpenProposalId
+  externalOpenProposalId,
+  onConsumeTriggers
 }: ProposalsApprovalViewProps) {
   // Danh sách biểu mẫu (cho phép cấu hình & thêm mẫu mới lưu bền vững)
   const [templates, setTemplates] = useState<ProposalTemplate[]>(DEFAULT_PROPOSAL_TEMPLATES);
@@ -1505,29 +1507,42 @@ export function ProposalsApprovalView({
   };
 
   // Respond to external triggers from UnifiedWorkspace Action Bar & Deep-link Notifications
+  const handledCreateTriggerRef = useRef<number>(0);
+  const handledLeaveCreateTriggerRef = useRef<number>(0);
+
   useEffect(() => {
-    if (externalCreateTrigger && externalCreateTrigger > 0) {
+    if (externalCreateTrigger && externalCreateTrigger > 0 && externalCreateTrigger !== handledCreateTriggerRef.current) {
+      handledCreateTriggerRef.current = externalCreateTrigger;
       openCreateProposalModal();
+      onConsumeTriggers?.();
     }
   }, [externalCreateTrigger]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (externalLeaveCreateTrigger && externalLeaveCreateTrigger > 0) {
+    if (
+      externalLeaveCreateTrigger &&
+      externalLeaveCreateTrigger > 0 &&
+      externalLeaveCreateTrigger !== handledLeaveCreateTriggerRef.current
+    ) {
+      handledLeaveCreateTriggerRef.current = externalLeaveCreateTrigger;
       openCreateProposalModal("tmpl_leave_request");
+      onConsumeTriggers?.();
     }
   }, [externalLeaveCreateTrigger]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (externalLeaveTabTrigger && externalLeaveTabTrigger > 0) {
       setSubView("leave_tracker");
+      onConsumeTriggers?.();
     }
-  }, [externalLeaveTabTrigger]);
+  }, [externalLeaveTabTrigger]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (externalTemplateTrigger && externalTemplateTrigger > 0) {
       setSubView("templates");
+      onConsumeTriggers?.();
     }
-  }, [externalTemplateTrigger]);
+  }, [externalTemplateTrigger]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (externalOpenProposalId && proposals.length > 0) {
