@@ -47,6 +47,7 @@ edge_debug_*/
 edge_temp_*/
 scratch/
 uploads/
+backups/
 *.png
 *.jpg
 *.jpeg

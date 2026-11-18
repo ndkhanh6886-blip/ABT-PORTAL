@@ -8,6 +8,7 @@ import { hasPermission } from "@/backend/services/permissions";
 import { stripCostFields } from "@/backend/services/costVisibility";
 import { CATALOG_KEY, readCatalog, catalogVersion, applyCatalogPatch, replaceCatalog } from "@/backend/services/catalogStore";
 import { itemIdentity } from "@/backend/services/storagePatch";
+import { EMBEDDED_FILE_KEYS, externalizeDataUrls } from "@/backend/services/externalizeDataUrls";
 import { PROTECTED_PROPOSAL_KEY, limitProposalDeletes, keepMissingProposals, dedupeProposalCodes } from "@/backend/services/proposalStoreGuard";
 import type { AuthorizedUser } from "@/backend/services/authz";
 import { syncCatalogSuppliersAndProducts } from "@/backend/services/supplierCatalogSync";
@@ -254,6 +255,7 @@ export async function POST(request: NextRequest) {
         }
         let next = applyStoragePatch(current, patch);
         if (key === "sales_contracts") next = stripNestedContractExtra(next);
+        if (EMBEDDED_FILE_KEYS.has(key)) next = externalizeDataUrls(next).value;
         let recoded: Array<[string, string, string]> = [];
         if (key === PROTECTED_PROPOSAL_KEY && Array.isArray(next)) {
           const existingIds = new Set((Array.isArray(current) ? current : []).map((p: any) => String(itemIdentity(p))));
@@ -308,6 +310,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Data is required" }, { status: 400 });
     }
     if (key === "sales_contracts") data = stripNestedContractExtra(data);
+    if (EMBEDDED_FILE_KEYS.has(key)) data = externalizeDataUrls(data).value;
 
     // Optimistic Concurrency Control (OCC): Check version if provided
     const expectedVersion = (isEnvelope ? (body.expectedVersion ?? body.version) : undefined)

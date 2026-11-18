@@ -1,6 +1,7 @@
 import fs from "fs";
 import { syncLegacySalesData } from "./legacySalesSync";
 import { hashPassword, generateTemporaryPassword } from "@/backend/services/passwords";
+import { EMBEDDED_FILE_KEYS, externalizeDataUrls } from "@/backend/services/externalizeDataUrls";
 import { employeeCodeVariants, normalizePersonText, personNameKey } from "@/backend/services/utils";
 import path from "path";
 import { Pool, PoolClient, types } from "pg";
@@ -383,6 +384,38 @@ async function runIntegrityMigrations() {
     });
 
     // D2b: ensure sales_contracts has extra_data JSONB, unique index on contract_code, and syncs with app_storage.sales_contracts
+    // Tệp nhúng base64 trong đơn hàng, phiếu giao, báo giá, hồ sơ Pháp lý -> tệp trong uploads/, dữ liệu chỉ giữ đường dẫn.
+    // Chỉ đụng tới dòng còn chuỗi base64; bản gốc được lưu vào backups/ trước khi đổi.
+    await step("externalize_embedded_files", async () => {
+      const keys = Array.from(EMBEDDED_FILE_KEYS);
+      const cand = await client.query(
+        "SELECT key FROM app_storage WHERE key = ANY($1::text[]) AND position(';base64,' in data::text) > 0",
+        [keys]
+      );
+      for (const { key } of cand.rows) {
+        await client.query("BEGIN");
+        try {
+          const row = (await client.query("SELECT data FROM app_storage WHERE key = $1 FOR UPDATE", [key])).rows[0];
+          if (!row) { await client.query("COMMIT"); continue; }
+          const { value, count } = externalizeDataUrls(row.data);
+          if (count === 0) { await client.query("COMMIT"); continue; }
+          const backupDir = path.join(process.cwd(), "backups");
+          fs.mkdirSync(backupDir, { recursive: true });
+          const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+          fs.writeFileSync(path.join(backupDir, `embedded_${key}_${stamp}.json`), JSON.stringify(row.data));
+          await client.query(
+            "UPDATE app_storage SET data = $2::jsonb, version = COALESCE(version, 1) + 1, updated_at = NOW() WHERE key = $1",
+            [key, JSON.stringify(value)]
+          );
+          await client.query("COMMIT");
+          console.log(`[MIGRATION:externalize_embedded_files] ${key}: ${count} embedded file(s) moved to uploads/`);
+        } catch (e) {
+          await client.query("ROLLBACK").catch(() => undefined);
+          throw e;
+        }
+      }
+    });
+
     await step("dedupe_and_sync_sales_contracts", async () => {
       await client.query("ALTER TABLE sales_contracts ADD COLUMN IF NOT EXISTS extra_data JSONB DEFAULT '{}'::jsonb");
       // extra_data must never hold a nested copy of itself: each save used to wrap the previous copy one level
