@@ -6,7 +6,7 @@ import { preAuthenticate, runTransition, type MachineDef, type TransitionRequest
 import { makeItem, makeSite, stockedLot } from "../../inv/__tests__/fixtures";
 import { addBomLine, addRoutingStep, bomMachine, createBom, createRouting, routingMachine } from "../../kit/bomRouting";
 import { createProductionOrder } from "../../kit/ordersEbr";
-import { getEnterpriseAnalyticsOverview, simulateWhatIfOrder } from "../enterpriseAnalytics";
+import { getEnterpriseAnalyticsOverview, lookupMultiLevelBomCosting, simulateWhatIfOrder } from "../enterpriseAnalytics";
 import "../../modules";
 
 beforeAll(() => withTransaction((tx) => syncPermissions(tx)));
@@ -175,5 +175,17 @@ describe("Enterprise Analytics & Forecasting (enterpriseAnalytics.ts)", () => {
     expect(sim.product.code).toBe(kitItem.code);
     expect(sim.product.domain).toBe("KIT");
     expect(sim.bom_lines.length).toBeGreaterThanOrEqual(1);
+
+    expect(Array.isArray(overview.bom_costing_catalog)).toBe(true);
+    const rollup = await withTransaction((tx) =>
+      lookupMultiLevelBomCosting(tx, kitOps, {
+        bom_id: bom.id,
+      })
+    );
+    expect(rollup.bom_id).toBe(bom.id);
+    expect(rollup.product_code).toBe(kitItem.code);
+    expect(rollup.raw_material_summary.length).toBe(1);
+    expect(rollup.raw_material_summary[0].component_item_id).toBe(reagentItem.id);
+    expect(rollup.raw_material_summary[0].total_net_qty).toBeCloseTo(2, 5);
   });
 });

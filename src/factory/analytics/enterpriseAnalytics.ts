@@ -10,6 +10,7 @@ import { runTransition } from "../core/stateMachine";
 import { ensureWarehouseOpsSchema } from "../inv/warehouseOps";
 import { ensureSupplyChainSchema } from "../purchase/supplyChainOps";
 import { createRequest } from "../purchase/requests";
+import { computeMultiLevelBomRollup } from "../kit/bomRouting";
 import { productionOrderMachine } from "../kit/ordersEbr";
 import { raiseDeviation } from "../qms/incidents";
 import { ensureQaOpsSchema } from "../qms/qaOps";
@@ -1137,6 +1138,43 @@ export async function getEnterpriseAnalyticsOverview(tx: Tx, actor: AuthzActor) 
     ],
   };
 
+  // 6. MULTI-LEVEL BOM RAW MATERIAL ROLLUP CATALOG (ACCOUNTING / COSTING)
+  const bom_costing_catalog = (
+    await tx.query(`
+      SELECT
+        b.id AS bom_id,
+        b.code AS bom_code,
+        b.name AS bom_name,
+        b.bom_version,
+        b.status,
+        COALESCE(b.bom_type, 'finished_good') AS bom_type,
+        COALESCE(b.bom_category, 'PCR Kit') AS bom_category,
+        COALESCE(b.variant_code, 'BASE') AS variant_code,
+        b.base_qty::float AS base_qty,
+        b.base_uom,
+        b.tests_per_kit,
+        b.tccs_code,
+        i.id AS product_item_id,
+        i.code AS product_code,
+        i.name AS product_name,
+        (SELECT count(*)::int FROM kit.bom_line bl WHERE bl.bom_id = b.id) AS line_count
+      FROM kit.bom b
+      JOIN master.item i ON i.id = b.product_item_id
+      WHERE b.status IN ('EFFECTIVE', 'IN_REVIEW', 'DRAFT')
+      ORDER BY
+        CASE WHEN COALESCE(b.bom_type, 'finished_good') = 'finished_good' THEN 0 ELSE 1 END ASC,
+        CASE WHEN b.status = 'EFFECTIVE' THEN 0 WHEN b.status = 'IN_REVIEW' THEN 1 ELSE 2 END ASC,
+        i.code ASC,
+        b.bom_version DESC
+      LIMIT 300
+    `)
+  ).rows;
+
+  const initial_bom_rollup =
+    bom_costing_catalog.length > 0
+      ? await buildEnrichedBomCostingRollup(tx, bom_costing_catalog[0])
+      : null;
+
   return {
     generated_at: new Date().toISOString(),
     today,
@@ -1153,7 +1191,145 @@ export async function getEnterpriseAnalyticsOverview(tx: Tx, actor: AuthzActor) 
     bio_lots,
     genealogy_edges,
     iso13485_management_review,
+    bom_costing_catalog,
+    initial_bom_rollup,
   };
+}
+
+async function buildEnrichedBomCostingRollup(tx: Tx, bomMeta: Record<string, any>) {
+  const rollup = await computeMultiLevelBomRollup(tx, {
+    id: String(bomMeta.bom_id),
+    code: String(bomMeta.bom_code),
+    product_item_id: String(bomMeta.product_item_id),
+    product_code: String(bomMeta.product_code || ""),
+    product_name: String(bomMeta.product_name || ""),
+    base_qty: Number(bomMeta.base_qty) || 1,
+    base_uom: String(bomMeta.base_uom || "bộ"),
+  });
+
+  const itemIds = Array.from(
+    new Set([
+      ...rollup.raw_material_summary.map((r) => r.component_item_id),
+      ...rollup.tree_nodes.map((n) => n.component_item_id),
+    ])
+  );
+
+  const costAndStockMap = new Map<string, { std_unit_cost: number; on_hand_qty: number }>();
+  if (itemIds.length > 0) {
+    const rows = (
+      await tx.query(
+        `SELECT i.id AS item_id,
+                COALESCE(i.std_unit_cost, 0)::float AS std_unit_cost,
+                COALESCE((
+                  SELECT sum(sb.qty_on_hand - sb.qty_reserved)
+                    FROM inv.stock_balance sb
+                    JOIN master.location loc ON loc.id = sb.location_id
+                    LEFT JOIN inv.lot l ON l.id = sb.lot_id
+                   WHERE sb.item_id = i.id
+                     AND loc.is_quarantine = false
+                     AND COALESCE(l.status, 'RELEASED') = 'RELEASED'
+                ), 0)::float AS on_hand_qty
+           FROM master.item i
+          WHERE i.id = ANY($1::uuid[])`,
+        [itemIds]
+      )
+    ).rows;
+    for (const r of rows) {
+      costAndStockMap.set(String(r.item_id), {
+        std_unit_cost: Number(r.std_unit_cost || 0),
+        on_hand_qty: Number(r.on_hand_qty || 0),
+      });
+    }
+  }
+
+  let total_std_net_cost = 0;
+  let total_std_gross_cost = 0;
+  const enrichedSummary = rollup.raw_material_summary.map((r) => {
+    const cs = costAndStockMap.get(r.component_item_id) ?? { std_unit_cost: 0, on_hand_qty: 0 };
+    const lineNetCost = Math.round(r.total_net_qty * cs.std_unit_cost);
+    const lineGrossCost = Math.round(r.total_gross_qty * cs.std_unit_cost);
+    total_std_net_cost += lineNetCost;
+    total_std_gross_cost += lineGrossCost;
+    return {
+      ...r,
+      std_unit_cost: cs.std_unit_cost,
+      on_hand_qty: cs.on_hand_qty,
+      est_net_cost: lineNetCost,
+      est_gross_cost: lineGrossCost,
+    };
+  });
+
+  return {
+    bom_id: String(bomMeta.bom_id),
+    bom_code: String(bomMeta.bom_code),
+    bom_name: String(bomMeta.bom_name || ""),
+    bom_version: Number(bomMeta.bom_version || 1),
+    status: String(bomMeta.status || "EFFECTIVE"),
+    bom_type: String(bomMeta.bom_type || "finished_good"),
+    bom_category: String(bomMeta.bom_category || "PCR Kit"),
+    variant_code: String(bomMeta.variant_code || "BASE"),
+    product_item_id: String(bomMeta.product_item_id),
+    product_code: String(bomMeta.product_code || ""),
+    product_name: String(bomMeta.product_name || ""),
+    tests_per_kit: Number(bomMeta.tests_per_kit || 50),
+    tccs_code: bomMeta.tccs_code ? String(bomMeta.tccs_code) : null,
+    base_qty: rollup.base_qty,
+    base_uom: rollup.base_uom,
+    semi_finished_count: rollup.semi_finished_count,
+    total_std_net_cost,
+    total_std_gross_cost,
+    tree_nodes: rollup.tree_nodes,
+    raw_material_summary: enrichedSummary,
+  };
+}
+
+const lookupBomRollupSchema = z.object({
+  bom_id: z.string().uuid().optional(),
+  product_item_id: z.string().uuid().optional(),
+});
+
+export async function lookupMultiLevelBomCosting(tx: Tx, _actor: AuthzActor, input: unknown) {
+  await ensureAnalyticsSchema(tx);
+  const d = parseInput(lookupBomRollupSchema, input);
+  if (!d.bom_id && !d.product_item_id) {
+    throw invalid("Vui lòng chọn Mã sản phẩm hoặc Công thức BOM cần tra cứu định mức nguyên liệu gốc.");
+  }
+
+  const bomMeta = (
+    await tx.query(
+      `SELECT
+         b.id AS bom_id,
+         b.code AS bom_code,
+         b.name AS bom_name,
+         b.bom_version,
+         b.status,
+         COALESCE(b.bom_type, 'finished_good') AS bom_type,
+         COALESCE(b.bom_category, 'PCR Kit') AS bom_category,
+         COALESCE(b.variant_code, 'BASE') AS variant_code,
+         b.base_qty::float AS base_qty,
+         b.base_uom,
+         b.tests_per_kit,
+         b.tccs_code,
+         i.id AS product_item_id,
+         i.code AS product_code,
+         i.name AS product_name
+       FROM kit.bom b
+       JOIN master.item i ON i.id = b.product_item_id
+      WHERE ($1::uuid IS NOT NULL AND b.id = $1)
+         OR ($1::uuid IS NULL AND b.product_item_id = $2)
+      ORDER BY
+        CASE WHEN b.status = 'EFFECTIVE' THEN 0 WHEN b.status = 'IN_REVIEW' THEN 1 ELSE 2 END ASC,
+        b.bom_version DESC
+      LIMIT 1`,
+      [d.bom_id ?? null, d.product_item_id ?? null]
+    )
+  ).rows[0];
+
+  if (!bomMeta) {
+    throw notFound("Công thức định mức BOM của sản phẩm");
+  }
+
+  return buildEnrichedBomCostingRollup(tx, bomMeta);
 }
 
 // =========================================================================

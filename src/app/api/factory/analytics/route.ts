@@ -15,6 +15,7 @@ import {
   createForecastPrOneClick,
   fastTrackReleaseZeroExceptionBatch,
   getEnterpriseAnalyticsOverview,
+  lookupMultiLevelBomCosting,
   recordLotFreezeThaw,
   simulateWhatIfOrder,
   updateDynamicMinStock,
@@ -47,6 +48,9 @@ export const POST = factoryRoute(
       case "simulate_what_if":
         await authorizeAnywhere(tx, actor, "inv.stock.view");
         return simulateWhatIfOrder(tx, actor, body);
+      case "lookup_bom_rollup":
+        await authorizeAnywhere(tx, actor, "qms.qc.view");
+        return lookupMultiLevelBomCosting(tx, actor, body);
       case "cascade_quarantine":
         await authorizeAnywhere(tx, actor, "qms.qc.review");
         return cascadeQuarantineLotTree(tx, actor, body);
