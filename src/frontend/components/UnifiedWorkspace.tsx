@@ -1989,6 +1989,8 @@ export const UnifiedWorkspace: React.FC = () => {
   const [selectedAnnouncementDetail, setSelectedAnnouncementDetail] = useState<any>(null);
   const [announcementCommentText, setAnnouncementCommentText] = useState("");
   const [sendingAnnouncementRemindId, setSendingAnnouncementRemindId] = useState<string | number | null>(null);
+  const [announcementStaffSearch, setAnnouncementStaffSearch] = useState("");
+  const [announcementStaffDeptFilter, setAnnouncementStaffDeptFilter] = useState("all");
   const [announcementForm, setAnnouncementForm] = useState<{
     docCode: string;
     docType: "DECISION" | "ANNOUNCEMENT" | "POLICY" | "SALES_POLICY" | "RECOGNITION";
@@ -2000,7 +2002,7 @@ export const UnifiedWorkspace: React.FC = () => {
     issuerName: string;
     issuerRole: string;
     issuerDept: string;
-    targetScope: "ALL" | "DEPARTMENTS" | "INDIVIDUALS";
+    targetScope: "ALL" | "DEPARTMENTS" | "MANAGERS" | "INDIVIDUALS";
     targetDepts: string[];
     targetStaff: string[];
     issueDate: string;
@@ -7996,14 +7998,51 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
     }
   };
 
+  const isStaffManagementRole = useCallback(
+    (person: { name: string; dept?: string; position?: string; role?: string }): boolean => {
+      const name = String(person?.name || "").trim();
+      const dept = String(person?.dept || "").trim();
+      if (!name) return false;
+      if (isSameWorkspaceDept(dept, "Ban Giám Đốc")) return true;
+      if (isPersonDeptHeadOrDeputy(name, dept, personnelList)) return true;
+      const posAndRole = `${person?.position || ""} ${person?.role || ""}`.toLowerCase();
+      return /giám\s*đốc|pgđ|trưởng\s*phòng|phó\s*trưởng\s*phòng|phó\s*phòng|trưởng\s*bộ\s*phận|phụ\s*trách|quản\s*lý/i.test(
+        posAndRole
+      );
+    },
+    [personnelList]
+  );
+
+  const allAnnouncementStaffCatalog = useMemo(() => {
+    const seen = new Set<string>();
+    const out: Array<{ name: string; dept: string; position: string; isManager: boolean }> = [];
+    (personnelList || []).forEach((p: any) => {
+      const name = String(p?.full_name || p?.name || p || "").trim();
+      if (!name) return;
+      const key = canonStaffName(name);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      const dept = String(p?.department || "Nhân sự").trim();
+      const position = String(p?.position || "").trim();
+      const role = String(p?.role || "").trim();
+      out.push({
+        name,
+        dept,
+        position: position || (isSameWorkspaceDept(dept, "Ban Giám Đốc") ? "Ban Giám Đốc" : "Nhân sự"),
+        isManager: isStaffManagementRole({ name, dept, position, role }),
+      });
+    });
+    return out;
+  }, [personnelList, isStaffManagementRole]);
+
+  const managementStaffCatalog = useMemo(
+    () => allAnnouncementStaffCatalog.filter((p) => p.isManager),
+    [allAnnouncementStaffCatalog]
+  );
+
   const getTargetStaffForAnnouncement = useCallback(
-    (ann: any): Array<{ name: string; dept: string }> => {
-      const allStaff = (personnelList || [])
-        .map((p: any) => ({
-          name: String(p.full_name || p || "").trim(),
-          dept: String(p.department || "Nhân sự").trim()
-        }))
-        .filter((p) => p.name);
+    (ann: any): Array<{ name: string; dept: string; position?: string }> => {
+      const allStaff = allAnnouncementStaffCatalog;
 
       if (!ann || ann.targetScope === "ALL" || !ann.targetScope) {
         return allStaff;
@@ -8013,14 +8052,36 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           ann.targetDepts.some((d: string) => isSameWorkspaceDept(d, p.dept))
         );
       }
+      if (ann.targetScope === "MANAGERS") {
+        if (Array.isArray(ann.targetStaff) && ann.targetStaff.length > 0) {
+          const matched = allStaff.filter((p) =>
+            ann.targetStaff.some((s: string) => sameStaffName(s, p.name))
+          );
+          const missing = ann.targetStaff
+            .filter((s: string) => s && !matched.some((m) => sameStaffName(m.name, s)))
+            .map((s: string) => ({ name: s, dept: resolveStaffDept(s) || "Cấp Quản lý" }));
+          return [...matched, ...missing];
+        }
+        return allStaff.filter((p) => {
+          if (!p.isManager) return false;
+          if (Array.isArray(ann.targetDepts) && ann.targetDepts.length > 0) {
+            return ann.targetDepts.some((d: string) => isSameWorkspaceDept(d, p.dept));
+          }
+          return true;
+        });
+      }
       if (ann.targetScope === "INDIVIDUALS" && Array.isArray(ann.targetStaff) && ann.targetStaff.length > 0) {
-        return allStaff.filter((p) =>
+        const matched = allStaff.filter((p) =>
           ann.targetStaff.some((s: string) => sameStaffName(s, p.name))
         );
+        const missing = ann.targetStaff
+          .filter((s: string) => s && !matched.some((m) => sameStaffName(m.name, s)))
+          .map((s: string) => ({ name: s, dept: resolveStaffDept(s) || "Nhân sự" }));
+        return [...matched, ...missing];
       }
       return allStaff;
     },
-    [personnelList]
+    [allAnnouncementStaffCatalog, resolveStaffDept]
   );
 
   const isUserTargetedByAnnouncement = useCallback(
@@ -8030,12 +8091,31 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       if (ann.targetScope === "DEPARTMENTS" && Array.isArray(ann.targetDepts)) {
         return ann.targetDepts.some((d: string) => isSameWorkspaceDept(d, staffDept));
       }
+      if (ann.targetScope === "MANAGERS") {
+        if (Array.isArray(ann.targetStaff) && ann.targetStaff.length > 0) {
+          return ann.targetStaff.some((s: string) => sameStaffName(s, staffName));
+        }
+        const staffEntry = allAnnouncementStaffCatalog.find((p) => sameStaffName(p.name, staffName));
+        const isMgr =
+          staffEntry?.isManager ||
+          isDirector ||
+          isManager ||
+          isStaffManagementRole({ name: staffName, dept: staffDept });
+        if (!isMgr) return false;
+        if (Array.isArray(ann.targetDepts) && ann.targetDepts.length > 0) {
+          return (
+            isSameWorkspaceDept(staffDept, "Ban Giám Đốc") ||
+            ann.targetDepts.some((d: string) => isSameWorkspaceDept(d, staffDept))
+          );
+        }
+        return true;
+      }
       if (ann.targetScope === "INDIVIDUALS" && Array.isArray(ann.targetStaff)) {
         return ann.targetStaff.some((s: string) => sameStaffName(s, staffName));
       }
-      return true;
+      return false;
     },
-    [currentStaffName, userDept]
+    [currentStaffName, userDept, allAnnouncementStaffCatalog, isDirector, isManager, isStaffManagementRole]
   );
 
   const hasUserAcknowledgedAnnouncement = useCallback(
@@ -8064,6 +8144,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
   const openCreateAnnouncementModal = (defaultType: "DECISION" | "ANNOUNCEMENT" | "POLICY" | "SALES_POLICY" | "RECOGNITION" = "DECISION") => {
     setEditingAnnouncementId(null);
+    setAnnouncementStaffSearch("");
+    setAnnouncementStaffDeptFilter("all");
     const defaultIssuerRole = isDirector ? "Ban Giám Đốc" : isManager ? `Trưởng bộ phận ${managerDept}` : "Cán bộ Ban hành";
     const defaultIssuerDept = isDirector ? "Ban Giám Đốc" : managerDept;
     setAnnouncementForm({
@@ -8092,6 +8174,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
   const openEditAnnouncementModal = (ann: any) => {
     setEditingAnnouncementId(ann.id);
+    setAnnouncementStaffSearch("");
+    setAnnouncementStaffDeptFilter("all");
     setAnnouncementForm({
       docCode: ann.docCode || generateNextDocCode(ann.docType || "ANNOUNCEMENT"),
       docType: ann.docType || "ANNOUNCEMENT",
@@ -8124,6 +8208,18 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
     }
     if (!announcementForm.content.trim() && !announcementForm.summary.trim()) {
       showToast("Vui lòng nhập nội dung chi tiết hoặc tóm tắt văn bản", "warning");
+      return;
+    }
+    if (announcementForm.targetScope === "DEPARTMENTS" && announcementForm.targetDepts.length === 0) {
+      showToast("Vui lòng chọn ít nhất 1 phòng ban nhận văn bản", "warning");
+      return;
+    }
+    if (announcementForm.targetScope === "INDIVIDUALS" && announcementForm.targetStaff.length === 0) {
+      showToast("Vui lòng chọn ít nhất 1 nhân sự cụ thể nhận văn bản", "warning");
+      return;
+    }
+    if (announcementForm.targetScope === "MANAGERS" && announcementForm.targetStaff.length === 0 && managementStaffCatalog.length === 0) {
+      showToast("Vui lòng chọn ít nhất 1 Quản lý nhận văn bản", "warning");
       return;
     }
 
@@ -8186,7 +8282,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
         ? "Toàn công ty"
         : savedItem.targetScope === "DEPARTMENTS"
         ? `Phòng: ${(savedItem.targetDepts || []).join(", ")}`
-        : `${(savedItem.targetStaff || []).length} nhân sự chỉ định`;
+        : savedItem.targetScope === "MANAGERS"
+        ? `Cấp Quản lý (${recipients.length} Quản lý/BGĐ)`
+        : `Cá nhân chỉ định: ${(savedItem.targetStaff || []).slice(0, 3).join(", ")}${
+            (savedItem.targetStaff || []).length > 3 ? ` (+${(savedItem.targetStaff || []).length - 3} người)` : ""
+          }`;
 
     // Gửi thông báo Chuông hệ thống
     if (announcementForm.sendBellNotify) {
@@ -13324,12 +13424,23 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
         const filteredAnnouncements = (announcements || [])
           .map((ann: any, _idx: number) => ({ ann, _idx }))
           .filter(({ ann }) => {
+            // Bảo mật phạm vi đối tượng nhận: Văn bản giới hạn (Cấp Quản lý / Cá nhân chỉ định / Phòng ban) chỉ hiển thị cho người thuộc phạm vi, người ban hành hoặc Ban Giám Đốc / Admin
+            if (ann.targetScope && ann.targetScope !== "ALL") {
+              const canSeeRestricted =
+                isDirector ||
+                Boolean((user as any)?.isRootAdmin) ||
+                sameStaffName(ann.issuerName || "", currentStaffName) ||
+                isUserTargetedByAnnouncement(ann);
+              if (!canSeeRestricted) return false;
+            }
             // Lọc theo phòng ban đang chọn trên thanh Level 2
             if (selectedDept !== "all") {
+              const targetsOfAnn = getTargetStaffForAnnouncement(ann);
               const appliesToSelectedDept =
                 ann.targetScope === "ALL" ||
                 !ann.targetScope ||
                 (Array.isArray(ann.targetDepts) && ann.targetDepts.some((d: string) => isSameWorkspaceDept(d, selectedDept))) ||
+                targetsOfAnn.some((t) => isSameWorkspaceDept(t.dept, selectedDept)) ||
                 isSameWorkspaceDept(ann.issuerDept, selectedDept);
               if (!appliesToSelectedDept) return false;
             }
@@ -13566,7 +13677,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       ? "🏢 Toàn công ty"
                       : ann.targetScope === "DEPARTMENTS"
                       ? `🏬 Phòng: ${(ann.targetDepts || []).join(", ")}`
-                      : `👥 ${(ann.targetStaff || []).length} nhân sự chỉ định`;
+                      : ann.targetScope === "MANAGERS"
+                      ? `👔 Cấp Quản lý (${targets.length} Quản lý/BGĐ)`
+                      : `👤 Cá nhân (${(ann.targetStaff || []).length}): ${(ann.targetStaff || []).slice(0, 3).join(", ")}${
+                          (ann.targetStaff || []).length > 3 ? ` (+${(ann.targetStaff || []).length - 3})` : ""
+                        }`;
 
                   return (
                     <div
@@ -18770,13 +18885,13 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             </div>
           </div>
 
-          {/* Hàng 3: Phạm vi áp dụng (Toàn công ty / Chọn phòng ban / Chọn nhân sự) */}
-          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 space-y-2">
+          {/* Hàng 3: Phạm vi áp dụng (Toàn công ty / Chọn phòng ban / Cấp Quản lý / Cá nhân cụ thể) */}
+          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 space-y-2.5">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <label className="font-bold text-slate-700 dark:text-slate-200">
                 2. Phạm vi đối tượng áp dụng &amp; nhận văn bản *
               </label>
-              <div className="inline-flex rounded-lg bg-slate-200/80 dark:bg-slate-800 p-0.5 text-[10px] font-bold">
+              <div className="inline-flex flex-wrap rounded-lg bg-slate-200/80 dark:bg-slate-800 p-0.5 text-[10px] font-bold gap-0.5">
                 <button
                   type="button"
                   onClick={() => setAnnouncementForm({ ...announcementForm, targetScope: "ALL" })}
@@ -18804,6 +18919,42 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   }`}
                 >
                   🏬 Chọn theo Phòng ban
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAnnouncementForm({
+                      ...announcementForm,
+                      targetScope: "MANAGERS",
+                      targetStaff:
+                        announcementForm.targetScope === "MANAGERS" && announcementForm.targetStaff.length > 0
+                          ? announcementForm.targetStaff
+                          : managementStaffCatalog.map((m) => m.name)
+                    })
+                  }
+                  className={`px-2.5 py-1 rounded-md cursor-pointer ${
+                    announcementForm.targetScope === "MANAGERS"
+                      ? "bg-indigo-600 text-white"
+                      : "text-slate-600 dark:text-slate-300"
+                  }`}
+                >
+                  👔 Chỉ Cấp Quản lý ({managementStaffCatalog.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAnnouncementForm({
+                      ...announcementForm,
+                      targetScope: "INDIVIDUALS"
+                    })
+                  }
+                  className={`px-2.5 py-1 rounded-md cursor-pointer ${
+                    announcementForm.targetScope === "INDIVIDUALS"
+                      ? "bg-indigo-600 text-white"
+                      : "text-slate-600 dark:text-slate-300"
+                  }`}
+                >
+                  👤 Cá nhân / Người cụ thể ({announcementForm.targetStaff.length})
                 </button>
               </div>
             </div>
@@ -18833,6 +18984,232 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     </button>
                   );
                 })}
+              </div>
+            )}
+
+            {announcementForm.targetScope === "MANAGERS" && (
+              <div className="space-y-2 pt-1">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <span className="text-slate-600 dark:text-slate-300">
+                    Áp dụng riêng cho <b>Ban Giám Đốc, Trưởng phòng &amp; Phó trưởng phòng</b> (nhân viên thường sẽ không thấy văn bản này). Đã chọn:{" "}
+                    <b className="text-indigo-600 dark:text-indigo-400">{announcementForm.targetStaff.length} Quản lý</b>.
+                  </span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAnnouncementForm({
+                          ...announcementForm,
+                          targetStaff: managementStaffCatalog.map((m) => m.name)
+                        })
+                      }
+                      className="px-2 py-0.5 rounded-md bg-indigo-100 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 font-bold text-[10px] cursor-pointer"
+                    >
+                      ✓ Chọn tất cả Quản lý ({managementStaffCatalog.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAnnouncementForm({
+                          ...announcementForm,
+                          targetStaff: managementStaffCatalog
+                            .filter((m) => {
+                              const d = DEPARTMENTS.find((x) => isSameWorkspaceDept(x.id, m.dept));
+                              return d?.block === "COMMERCIAL" || d?.block === "EXECUTIVE";
+                            })
+                            .map((m) => m.name)
+                        })
+                      }
+                      className="px-2 py-0.5 rounded-md bg-sky-100 dark:bg-sky-950/70 text-sky-700 dark:text-sky-300 font-bold text-[10px] cursor-pointer"
+                    >
+                      + Quản lý Khối KD &amp; VP
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAnnouncementForm({
+                          ...announcementForm,
+                          targetStaff: managementStaffCatalog
+                            .filter((m) => {
+                              const d = DEPARTMENTS.find((x) => isSameWorkspaceDept(x.id, m.dept));
+                              return d?.block === "TECHNICAL" || d?.block === "EXECUTIVE";
+                            })
+                            .map((m) => m.name)
+                        })
+                      }
+                      className="px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 font-bold text-[10px] cursor-pointer"
+                    >
+                      + Quản lý Khối Kỹ Thuật
+                    </button>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto p-2 rounded-xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                  {managementStaffCatalog.map((mgr) => {
+                    const picked = announcementForm.targetStaff.some((s) => sameStaffName(s, mgr.name));
+                    return (
+                      <button
+                        key={mgr.name}
+                        type="button"
+                        onClick={() => {
+                          const next = picked
+                            ? announcementForm.targetStaff.filter((s) => !sameStaffName(s, mgr.name))
+                            : [...announcementForm.targetStaff, mgr.name];
+                          setAnnouncementForm({ ...announcementForm, targetStaff: next });
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${
+                          picked
+                            ? "bg-indigo-600 text-white border-indigo-500"
+                            : "bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                        }`}
+                      >
+                        {picked ? "✓ " : "+ "}
+                        {mgr.name}{" "}
+                        <span className={picked ? "text-indigo-100 font-normal text-[10px]" : "text-slate-400 font-normal text-[10px]"}>
+                          ({mgr.position} • {mgr.dept})
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {announcementForm.targetScope === "INDIVIDUALS" && (
+              <div className="space-y-2 pt-1">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[11px] text-slate-600 dark:text-slate-300">
+                    Chỉ những cá nhân được chọn dưới đây mới nhìn thấy văn bản và nhận thông báo Chat / Chuông (Đã chọn:{" "}
+                    <b className="text-indigo-600 dark:text-indigo-400">{announcementForm.targetStaff.length} người</b>).
+                  </span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const merged = [...announcementForm.targetStaff];
+                        managementStaffCatalog.forEach((m) => {
+                          if (!merged.some((s) => sameStaffName(s, m.name))) merged.push(m.name);
+                        });
+                        setAnnouncementForm({ ...announcementForm, targetStaff: merged });
+                      }}
+                      className="px-2 py-0.5 rounded-md bg-indigo-100 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 font-bold text-[10px] cursor-pointer"
+                    >
+                      + Thêm tất cả Quản lý
+                    </button>
+                    {announcementForm.targetStaff.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setAnnouncementForm({ ...announcementForm, targetStaff: [] })}
+                        className="px-2 py-0.5 rounded-md bg-rose-100 dark:bg-rose-950/70 text-rose-700 dark:text-rose-300 font-bold text-[10px] cursor-pointer"
+                      >
+                        ✕ Bỏ chọn hết
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Danh sách người nhận đã chọn (chips) */}
+                {announcementForm.targetStaff.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 p-2 rounded-xl bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-900/60">
+                    {announcementForm.targetStaff.map((staffName) => {
+                      const info = allAnnouncementStaffCatalog.find((p) => sameStaffName(p.name, staffName));
+                      return (
+                        <span
+                          key={staffName}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-[11px] font-bold shadow-2xs"
+                        >
+                          <span>
+                            👤 {staffName}
+                            {info?.dept ? <span className="font-normal text-indigo-100"> ({info.dept})</span> : ""}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setAnnouncementForm({
+                                ...announcementForm,
+                                targetStaff: announcementForm.targetStaff.filter((s) => !sameStaffName(s, staffName))
+                              })
+                            }
+                            className="hover:text-rose-200 cursor-pointer"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Thanh lọc Phòng ban + Tìm tên nhân sự */}
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                  <div className="sm:col-span-5">
+                    <select
+                      value={announcementStaffDeptFilter}
+                      onChange={(e) => setAnnouncementStaffDeptFilter(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-200 font-semibold text-[11px]"
+                    >
+                      <option value="all">🏢 Tất cả phòng ban ({allAnnouncementStaffCatalog.length} NS)</option>
+                      <option value="__MANAGERS__">👔 Chỉ lọc Cấp Quản lý ({managementStaffCatalog.length})</option>
+                      {DEPARTMENTS.filter((d) => d.id !== "all").map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="sm:col-span-7">
+                    <input
+                      type="text"
+                      value={announcementStaffSearch}
+                      onChange={(e) => setAnnouncementStaffSearch(e.target.value)}
+                      placeholder="🔍 Gõ tên, chức vụ hoặc phòng ban để tìm nhân sự..."
+                      className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-200 text-[11px]"
+                    />
+                  </div>
+                </div>
+
+                {/* Bảng chọn nhanh nhân sự */}
+                <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto p-2 rounded-xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                  {allAnnouncementStaffCatalog
+                    .filter((p) => {
+                      if (announcementStaffDeptFilter === "__MANAGERS__") {
+                        if (!p.isManager) return false;
+                      } else if (announcementStaffDeptFilter !== "all") {
+                        if (!isSameWorkspaceDept(p.dept, announcementStaffDeptFilter)) return false;
+                      }
+                      if (announcementStaffSearch.trim()) {
+                        const q = canonStaffName(announcementStaffSearch);
+                        const hay = canonStaffName(`${p.name} ${p.dept} ${p.position}`);
+                        if (!hay.includes(q)) return false;
+                      }
+                      return true;
+                    })
+                    .map((p) => {
+                      const picked = announcementForm.targetStaff.some((s) => sameStaffName(s, p.name));
+                      return (
+                        <button
+                          key={p.name}
+                          type="button"
+                          onClick={() => {
+                            const next = picked
+                              ? announcementForm.targetStaff.filter((s) => !sameStaffName(s, p.name))
+                              : [...announcementForm.targetStaff, p.name];
+                            setAnnouncementForm({ ...announcementForm, targetStaff: next });
+                          }}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${
+                            picked
+                              ? "bg-indigo-600 text-white border-indigo-500"
+                              : "bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-indigo-400"
+                          }`}
+                        >
+                          {picked ? "✓ " : "+ "}
+                          {p.name}{" "}
+                          <span className={picked ? "text-indigo-100 font-normal text-[10px]" : "text-slate-400 font-normal text-[10px]"}>
+                            ({p.position ? `${p.position} • ` : ""}{p.dept})
+                          </span>
+                        </button>
+                      );
+                    })}
+                </div>
               </div>
             )}
           </div>
@@ -19065,7 +19442,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     <strong className="text-slate-900 dark:text-white">
                       {ann.targetScope === "ALL" || !ann.targetScope
                         ? "Toàn thể Cán bộ Nhân viên Công ty"
-                        : `Phòng: ${(ann.targetDepts || []).join(", ")}`}
+                        : ann.targetScope === "DEPARTMENTS"
+                        ? `Phòng: ${(ann.targetDepts || []).join(", ")}`
+                        : ann.targetScope === "MANAGERS"
+                        ? `Chỉ Cấp Quản lý (${targets.length} Quản lý/BGĐ: ${targets.map((t) => t.name).join(", ")})`
+                        : `Cá nhân chỉ định (${(ann.targetStaff || []).length} người): ${(ann.targetStaff || []).join(", ")}`}
                     </strong>
                   </div>
                   <div className="text-right">
