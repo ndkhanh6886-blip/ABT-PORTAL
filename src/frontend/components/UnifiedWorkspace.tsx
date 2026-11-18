@@ -1896,6 +1896,7 @@ export const UnifiedWorkspace: React.FC = () => {
   const [hubWeeklyPlans, setHubWeeklyPlans] = useState<HubWeeklyPlanEvent[]>([]);
   const [workspaceUsersList, setWorkspaceUsersList] = useState<any[]>([]);
   const [taskSourceFilter, setTaskSourceFilter] = useState<"all" | "portal" | "RD" | "KIT_OLIGO" | "DEVICE" | "QA_WH_PUR" | "APP_LEGAL">("all");
+  const [myTaskScopeFilter, setMyTaskScopeFilter] = useState<"ALL" | "ASSIGNED_TO_ME" | "CREATED_BY_ME" | "FOLLOWING" | "MY_DEPT">("ALL");
   const [scheduleScopeMode, setScheduleScopeMode] = useState<"person" | "dept">("person");
   const [scheduleWorkSearch, setScheduleWorkSearch] = useState<string>("");
   const [showTechWeeklyPlans, setShowTechWeeklyPlans] = useState<boolean>(true);
@@ -3450,6 +3451,17 @@ export const UnifiedWorkspace: React.FC = () => {
         }
       }
 
+      // Filter by personal scope (Giao cho tôi / Do tôi tạo / Đang theo dõi / Việc phòng tôi)
+      if (myTaskScopeFilter === "ASSIGNED_TO_ME") {
+        if (!isAssignedToMe) return false;
+      } else if (myTaskScopeFilter === "CREATED_BY_ME") {
+        if (t.isHubItem || !isCreatedByMe) return false;
+      } else if (myTaskScopeFilter === "FOLLOWING") {
+        if (!isFollowedByMe) return false;
+      } else if (myTaskScopeFilter === "MY_DEPT") {
+        if (!taskInvolvesDept(t, userDept)) return false;
+      }
+
       const matchStatus =
         statusFilter === "all"
           ? true
@@ -3470,7 +3482,7 @@ export const UnifiedWorkspace: React.FC = () => {
         (t.department && String(t.department).toLowerCase().includes(q));
       return matchStatus && matchSearch;
     });
-  }, [mergedWorkspaceTasks, rolePerspective, userDept, filterDept, selectedAssignee, taskSourceFilter, currentStaffName, statusFilter, searchQuery, user, taskHasAssignee, taskHasFollower, parseTaskFollowersList, isTaskCreatedByStaff, taskInvolvesDept, taskBelongsToStaff]);
+  }, [mergedWorkspaceTasks, rolePerspective, userDept, filterDept, selectedAssignee, taskSourceFilter, myTaskScopeFilter, currentStaffName, statusFilter, searchQuery, user, taskHasAssignee, taskHasFollower, parseTaskFollowersList, isTaskCreatedByStaff, taskInvolvesDept, taskBelongsToStaff]);
 
   // RBAC Filtered Technical Weekly Plans (Lịch phân công & Kế hoạch tuần các phòng Kỹ thuật)
   const filteredHubWeeklyPlans = useMemo(() => {
@@ -9305,6 +9317,126 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       {/* TAB 1: BẢNG CÔNG VIỆC (TASKS & KANBAN TOÀN CÔNG TY) */}
       {renderedSubTab === "tasks" && (
         <div className="space-y-3.5">
+          {/* Personal Task Perspective Filter Strip (Giao cho tôi / Do tôi tạo / Đang theo dõi / Việc phòng tôi) */}
+          {(() => {
+            const assignedToMeCount = mergedWorkspaceTasks.filter((t: any) =>
+              taskHasAssignee(t.assignee_name, currentStaffName)
+            ).length;
+            const createdByMeCount = mergedWorkspaceTasks.filter(
+              (t: any) => !t.isHubItem && isTaskCreatedByStaff(t, currentStaffName, (user as any)?.username)
+            ).length;
+            const followingCount = mergedWorkspaceTasks.filter((t: any) =>
+              taskHasFollower(t.followers, currentStaffName)
+            ).length;
+            const myDeptCount = mergedWorkspaceTasks.filter((t: any) =>
+              taskInvolvesDept(t, userDept)
+            ).length;
+
+            const personalPills: {
+              id: "ALL" | "ASSIGNED_TO_ME" | "CREATED_BY_ME" | "FOLLOWING" | "MY_DEPT";
+              label: string;
+              count: number;
+              activeClass: string;
+              inactiveClass: string;
+            }[] = [
+              {
+                id: "ALL",
+                label: "📋 Tất cả theo phạm vi",
+                count: mergedWorkspaceTasks.length,
+                activeClass: "bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900 dark:border-white",
+                inactiveClass: "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50",
+              },
+              {
+                id: "ASSIGNED_TO_ME",
+                label: "📥 Việc giao cho tôi",
+                count: assignedToMeCount,
+                activeClass: "bg-indigo-600 text-white border-indigo-600",
+                inactiveClass: "bg-indigo-50/70 dark:bg-indigo-950/40 text-indigo-800 dark:text-indigo-200 border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100",
+              },
+              {
+                id: "CREATED_BY_ME",
+                label: "📤 Việc do tôi tạo / giao đi",
+                count: createdByMeCount,
+                activeClass: "bg-emerald-600 text-white border-emerald-600",
+                inactiveClass: "bg-emerald-50/70 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-200 border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100",
+              },
+              {
+                id: "FOLLOWING",
+                label: "👁️ Đang theo dõi (CC)",
+                count: followingCount,
+                activeClass: "bg-sky-600 text-white border-sky-600",
+                inactiveClass: "bg-sky-50/70 dark:bg-sky-950/40 text-sky-800 dark:text-sky-200 border-sky-200 dark:border-sky-800 hover:bg-sky-100",
+              },
+              {
+                id: "MY_DEPT",
+                label: `🏢 Việc phòng ${userDept}`,
+                count: myDeptCount,
+                activeClass: "bg-amber-600 text-white border-amber-600",
+                inactiveClass: "bg-amber-50/70 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 border-amber-200 dark:border-amber-800 hover:bg-amber-100",
+              },
+            ];
+
+            return (
+              <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-2xl border border-indigo-200/80 dark:border-indigo-900/60 bg-indigo-50/40 dark:bg-slate-900/80">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[11px] font-extrabold text-indigo-900 dark:text-indigo-200 mr-1">
+                    👤 Góc nhìn cá nhân:
+                  </span>
+                  {personalPills.map((p) => {
+                    const isActive = myTaskScopeFilter === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setMyTaskScopeFilter(p.id)}
+                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                          isActive ? `${p.activeClass} shadow-xs` : p.inactiveClass
+                        }`}
+                      >
+                        <span>{p.label}</span>
+                        <span
+                          className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                            isActive
+                              ? "bg-white/20 text-current"
+                              : "bg-white/80 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+                          }`}
+                        >
+                          {p.count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const defaultDept = rolePerspective === "manager" ? managerDept : defaultConcreteDeptForScope(selectedDept, userDept);
+                    setTaskForm({
+                      id: null,
+                      title: "",
+                      department: defaultDept,
+                      task_category: DEPARTMENT_CATEGORIES[defaultDept]?.[0] || "Chung",
+                      assignee_name: currentStaffName,
+                      customer_name: "",
+                      priority: "MEDIUM",
+                      status: "TODO",
+                      deadline: todayVN(),
+                      description: "",
+                      result: "",
+                      attachments: [],
+                      followers: []
+                    });
+                    setIsTaskModalOpen(true);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-extrabold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  + Tạo / Giao việc mới
+                </button>
+              </div>
+            );
+          })()}
+
           {/* Source Domain Filter Strip (Liên thông Điều hành chung + Khối Kỹ Thuật – Nhà Máy + Application / Pháp Chế) */}
           {(() => {
             const deptScopedAll = mergedWorkspaceTasks.filter((t: any) =>
@@ -9586,6 +9718,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         {parseTaskFollowersList(t.followers).length > 0 && (
                           <div className="text-[10px] text-sky-600 dark:text-sky-400 font-medium mt-0.5">
                             👁️ Theo dõi: {parseTaskFollowersList(t.followers).join(", ")}
+                          </div>
+                        )}
+                        {t.created_by_name && (
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400 font-normal mt-0.5">
+                            ✍️ Giao bởi: {t.created_by_name}
                           </div>
                         )}
                       </td>
@@ -19853,6 +19990,12 @@ const TaskCard: React.FC<{
         <div className="flex items-center gap-1 text-[10px] text-sky-700 dark:text-sky-300 font-medium truncate">
           <Eye className="w-3 h-3 text-sky-500 shrink-0" />
           <span className="truncate">Theo dõi: {followersList.join(", ")}</span>
+        </div>
+      )}
+
+      {task.created_by_name && (
+        <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+          ✍️ Giao bởi: <span className="font-semibold text-slate-700 dark:text-slate-300">{task.created_by_name}</span>
         </div>
       )}
 

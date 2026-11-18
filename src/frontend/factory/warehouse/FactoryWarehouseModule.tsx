@@ -10,6 +10,7 @@ import { ItemsView } from "./ItemsView";
 import { StockView } from "./StockView";
 import { WarehouseHubView } from "./WarehouseHubView";
 import { WarehousesView, type WarehouseRow } from "./WarehousesView";
+import { DepartmentWorkTasksBar } from "@/frontend/components/DepartmentWorkTasksBar";
 
 type SubTab = "hub" | "stock" | "documents" | "items" | "warehouses";
 
@@ -41,6 +42,7 @@ export function FactoryWarehouseModule() {
 
   return (
     <div className="flex flex-col gap-3">
+      <DepartmentWorkTasksBar deptCode="Kho Nhà Máy" deptLabel="Kho Nhà Máy" />
       <div className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-1.5">
         {visible.map((t) => (
           <button

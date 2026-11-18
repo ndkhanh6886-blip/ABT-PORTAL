@@ -6,6 +6,7 @@ import { Empty } from "../ui";
 import { ProjectsView } from "../rd/ProjectsView";
 import { TransferView } from "../rd/TransferView";
 import { SoftwareLifecycleView } from "../device/SoftwareLifecycleView";
+import { DepartmentWorkTasksBar } from "@/frontend/components/DepartmentWorkTasksBar";
 
 /**
  * Phòng IT (Khối Kinh Doanh): IT chung và nghiên cứu – phát triển phần mềm.
@@ -27,6 +28,7 @@ export function FactoryItModule() {
       <div className="rounded-2xl border border-cyan-200 dark:border-cyan-900 bg-cyan-50/60 dark:bg-cyan-950/30 px-4 py-2.5 text-xs font-bold text-cyan-900 dark:text-cyan-200">
         💻 Phòng IT — Khối Kinh Doanh · Nghiên cứu &amp; Phát triển phần mềm (IEC 62304)
       </div>
+      <DepartmentWorkTasksBar deptCode="Phòng IT" deptLabel="Phòng IT (Phát Triển Phần Mềm)" />
       <SoftwareLifecycleView />
       <ProjectsView
         domainLock="SOFTWARE"

@@ -7,13 +7,14 @@ import { api, fmtDate, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { openExcelImportTemplate } from "../import/FactoryExcelImportModule";
 import { CatalogItemCombobox, type CatalogMasterItemOption } from "./CatalogItemCombobox";
+import { DepartmentWorkTasksBar } from "@/frontend/components/DepartmentWorkTasksBar";
 
-const MODULE_IMPORT_TARGET: Record<"RD" | "KIT" | "OLIGO" | "DEVICE" | "QMS", { deptCode: string; warehouseCode: string }> = {
-  OLIGO: { deptCode: "P-OLIGO", warehouseCode: "KHO-OLIGO" },
-  KIT: { deptCode: "P-KIT", warehouseCode: "KHO-KIT" },
-  RD: { deptCode: "P-RD", warehouseCode: "KHO-RD" },
-  DEVICE: { deptCode: "P-DEVICE", warehouseCode: "KHO-TONG" },
-  QMS: { deptCode: "P-QA", warehouseCode: "KHO-QA" },
+const MODULE_IMPORT_TARGET: Record<"RD" | "KIT" | "OLIGO" | "DEVICE" | "QMS", { deptCode: string; warehouseCode: string; taskDeptCode: string }> = {
+  OLIGO: { deptCode: "P-OLIGO", warehouseCode: "KHO-OLIGO", taskDeptCode: "Tổng Hợp Oligo" },
+  KIT: { deptCode: "P-KIT", warehouseCode: "KHO-KIT", taskDeptCode: "Sản Xuất Kit" },
+  RD: { deptCode: "P-RD", warehouseCode: "KHO-RD", taskDeptCode: "Nghiên Cứu R&D" },
+  DEVICE: { deptCode: "P-DEVICE", warehouseCode: "KHO-TONG", taskDeptCode: "Kỹ Thuật – Thiết Bị" },
+  QMS: { deptCode: "P-QA", warehouseCode: "KHO-QA", taskDeptCode: "QA/QC" },
 };
 
 interface WarehouseItem {
@@ -396,6 +397,12 @@ export function DeptMaterialActionBar({
           </button>
         </div>
       </div>
+
+      {/* Bảng quản lý Công việc Phòng & Của tôi (liên thông 2 chiều với tab Điều Hành & Nhật ký Daily) */}
+      <DepartmentWorkTasksBar
+        deptCode={MODULE_IMPORT_TARGET[moduleKey].taskDeptCode}
+        deptLabel={deptLabel}
+      />
 
       {/* 1. Quick Department Stock Lookup Drawer */}
       {panel === "stock" && (

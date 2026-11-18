@@ -13,6 +13,7 @@ import {
 } from "../oligo/OligoOrderPanel";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { ShipmentForm, type OrderLine } from "./ShipmentForm";
+import { DepartmentWorkTasksBar } from "@/frontend/components/DepartmentWorkTasksBar";
 
 const STATUS: Record<string, [string, string]> = {
   RECEIVED: ["QUARANTINE", "Chờ nhận đơn"],
@@ -1788,6 +1789,7 @@ export function FactoryOrdersModule() {
 
   return (
     <div className="flex flex-col gap-3">
+      <DepartmentWorkTasksBar deptCode="Đơn Nội Bộ" deptLabel="Điều Phối Đơn Nội Bộ" />
       {/* SƠ ĐỒ PHÂN LUỒNG 3 PHÒNG SẢN XUẤT */}
       <div className="grid gap-3 sm:grid-cols-4">
         <button

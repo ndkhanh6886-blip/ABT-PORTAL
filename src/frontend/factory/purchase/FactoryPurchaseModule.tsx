@@ -9,6 +9,7 @@ import { OrdersView } from "./OrdersView";
 import { RequestsView } from "./RequestsView";
 import { SuppliersView } from "./SuppliersView";
 import { SupplyChainRadarView } from "./SupplyChainRadarView";
+import { DepartmentWorkTasksBar } from "@/frontend/components/DepartmentWorkTasksBar";
 
 type SubTab = "radar" | "requests" | "inbox" | "orders" | "suppliers";
 
@@ -61,6 +62,7 @@ export function FactoryPurchaseModule() {
   if (!visible.length) return <Empty>Bạn chưa có quyền trong Cung Ứng NVL.</Empty>;
   return (
     <div className="flex flex-col gap-3">
+      <DepartmentWorkTasksBar deptCode="Cung Ứng Kỹ Thuật" deptLabel="Cung Ứng Kỹ Thuật (NVL)" />
       <div className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-1.5">
         {visible.map((t) => (
           <button

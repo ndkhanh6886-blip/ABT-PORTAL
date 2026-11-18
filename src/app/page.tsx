@@ -9,6 +9,7 @@ import { SearchableSelectEnhancer } from "@/frontend/components/SearchableSelect
 import { DataSyncGate } from "@/frontend/components/DataSyncGate";
 import { AccountSecurityModal } from "@/frontend/components/AccountSecurityModal";
 import { BUSINESS_TABS, BusinessTabs, TECHNICAL_TABS, TechnicalTabs, SETTINGS_TABS, SettingsTabs } from "@/frontend/components/GroupTabs";
+import { DepartmentWorkTasksBar } from "@/frontend/components/DepartmentWorkTasksBar";
 
 // Modules kept mounted in hidden tabs (visitedTabs): React.memo so switching the main tab does not re-render every
 // visited module (Kinh doanh ~42k lines, Điều hành ~19k…). They still re-render on their own state / context changes.
@@ -198,26 +199,41 @@ export default function Home() {
           )}
           {can("sales.view") && (activeTab === "sales" || visitedTabs.sales) && (
             <div className={activeTab === "sales" ? "block" : "hidden"}>
+              <div className="mb-3">
+                <DepartmentWorkTasksBar deptCode="Kinh Doanh" deptLabel="Khối Kinh Doanh" />
+              </div>
               <SalesFullABT />
             </div>
           )}
           {can("warehouse.view") && (activeTab === "warehouse" || visitedTabs.warehouse) && (
             <div className={activeTab === "warehouse" ? "block" : "hidden"}>
+              <div className="mb-3">
+                <DepartmentWorkTasksBar deptCode="Kho & Vận Hành" deptLabel="Kho Kinh Doanh & Vận Hành" />
+              </div>
               <WarehouseModule />
             </div>
           )}
           {can("application.view") && (activeTab === "application" || visitedTabs.application) && (
             <div className={activeTab === "application" ? "block" : "hidden"}>
+              <div className="mb-3">
+                <DepartmentWorkTasksBar deptCode="Application" deptLabel="Application (Hỗ Trợ Kỹ Thuật & CSKT)" />
+              </div>
               <ApplicationFullABT />
             </div>
           )}
           {can("procurement.view") && (activeTab === "procurement" || visitedTabs.procurement) && (
             <div className={activeTab === "procurement" ? "block" : "hidden"}>
+              <div className="mb-3">
+                <DepartmentWorkTasksBar deptCode="Cung Ứng" deptLabel="Cung Ứng Kinh Doanh" />
+              </div>
               <ProcurementModule />
             </div>
           )}
           {can("legal.view") && (activeTab === "legal" || visitedTabs.legal) && (
             <div className={activeTab === "legal" ? "block" : "hidden"}>
+              <div className="mb-3">
+                <DepartmentWorkTasksBar deptCode="Pháp Chế" deptLabel="Pháp Chế & Tuân Thủ" />
+              </div>
               <LegalModule />
             </div>
           )}
