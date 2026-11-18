@@ -142,38 +142,48 @@ export const GET = factoryRoute(async (tx, { actor }) => {
     await tx.query("SELECT id, code, name, module_key FROM core.org_unit WHERE status = 'ACTIVE' AND unit_type <> 'COMPANY' ORDER BY code")
   ).rows;
 
-  // Query active R&D projects, experiments, Kit production orders, Oligo orders, Device work orders for reason dropdown
-  const [rdProjects, rdExps, kitPos, oligoOrders, deviceWos, internalOrders] = await Promise.all([
-    tx.query("SELECT id, code, name FROM rd.project WHERE status NOT IN ('CLOSED', 'CANCELLED') ORDER BY created_at DESC LIMIT 30").catch(() => ({ rows: [] })),
-    tx.query("SELECT id, code, title FROM rd.experiment ORDER BY created_at DESC LIMIT 20").catch(() => ({ rows: [] })),
-    tx.query(
-      `SELECT po.id, po.code, i.name AS item_name
-         FROM kit.production_order po
-         LEFT JOIN master.item i ON i.id = po.item_id
-        WHERE po.status NOT IN ('CLOSED', 'CANCELLED')
-        ORDER BY po.created_at DESC LIMIT 30`
-    ).catch(() => ({ rows: [] })),
-    tx.query(
-      `SELECT id, code, customer_label
-         FROM oligo.oligo_order
-        WHERE status NOT IN ('CLOSED', 'CANCELLED')
-        ORDER BY created_at DESC LIMIT 30`
-    ).catch(() => ({ rows: [] })),
-    tx.query(
-      `SELECT wo.id, wo.code, dm.name AS model_name
-         FROM device.work_order wo
-         LEFT JOIN device.device_model dm ON dm.id = wo.model_id
-        WHERE wo.status NOT IN ('CLOSED', 'CANCELLED')
-        ORDER BY wo.created_at DESC LIMIT 30`
-    ).catch(() => ({ rows: [] })),
-    tx.query(
-      `SELECT o.id, o.code, o.kd_po_code, u.module_key
-         FROM intake.internal_order o
-         LEFT JOIN core.org_unit u ON u.id = o.org_unit_id
-        WHERE o.status NOT IN ('CLOSED', 'CANCELLED', 'REJECTED')
-        ORDER BY o.created_at DESC LIMIT 30`
-    ).catch(() => ({ rows: [] })),
-  ]);
+  // Danh sách lý do gợi ý (dự án, lệnh sản xuất, đơn nội bộ...). Mỗi truy vấn chạy trong SAVEPOINT riêng:
+  // một truy vấn lỗi (bảng / cột chưa có) chỉ làm thiếu gợi ý, không làm hỏng cả giao dịch (trước đây gây "Lỗi hệ thống").
+  const safeRows = async (sql: string): Promise<{ rows: any[] }> => {
+    await tx.query("SAVEPOINT pr_opts");
+    try {
+      const r = await tx.query(sql);
+      await tx.query("RELEASE SAVEPOINT pr_opts");
+      return r;
+    } catch {
+      await tx.query("ROLLBACK TO SAVEPOINT pr_opts");
+      return { rows: [] };
+    }
+  };
+  const rdProjects = await safeRows("SELECT id, code, name FROM rd.project WHERE status NOT IN ('CLOSED', 'CANCELLED') ORDER BY created_at DESC LIMIT 30");
+  const rdExps = await safeRows("SELECT id, code, title FROM rd.experiment ORDER BY created_at DESC LIMIT 20");
+  const kitPos = await safeRows(
+    `SELECT po.id, po.code, i.name AS item_name
+       FROM kit.production_order po
+       LEFT JOIN master.item i ON i.id = po.product_item_id
+      WHERE po.status NOT IN ('CLOSED', 'CANCELLED', 'RELEASED')
+      ORDER BY po.created_at DESC LIMIT 30`
+  );
+  const oligoOrders = await safeRows(
+    `SELECT id, code, customer_label
+       FROM oligo.oligo_order
+      WHERE status NOT IN ('CLOSED', 'CANCELLED')
+      ORDER BY created_at DESC LIMIT 30`
+  );
+  const deviceWos = await safeRows(
+    `SELECT wo.id, wo.code, dm.name AS model_name
+       FROM device.device_order wo
+       LEFT JOIN device.device_model dm ON dm.id = wo.model_id
+      WHERE wo.status NOT IN ('CLOSED', 'CANCELLED')
+      ORDER BY wo.created_at DESC LIMIT 30`
+  );
+  const internalOrders = await safeRows(
+    `SELECT o.id, o.code, o.kd_po_code, u.module_key
+       FROM intake.internal_order o
+       LEFT JOIN core.org_unit u ON u.id = o.org_unit_id
+      WHERE o.status NOT IN ('CLOSED', 'CANCELLED', 'REJECTED')
+      ORDER BY o.created_at DESC LIMIT 30`
+  );
 
   const out = [];
   for (const u of units) {
