@@ -5,8 +5,11 @@ import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import { barcode128SvgMarkup } from "./barcodeSvg";
 import {
   normalizeQcFormsConfig,
+  resolveCoaTemplate,
   resolveQcSignature,
+  type CoaCustomFields,
   type CoaExportLang,
+  type CoaTemplateVariant,
   type QcFormsConfig,
   type ResolvedQcSignature,
 } from "./qcSignatures";
@@ -30,6 +33,8 @@ const safeOriginBase = () => {
 export interface QcSignerOverrides {
   analyst_name?: string;
   manager_name?: string;
+  template_key?: string;
+  custom_fields?: Partial<CoaCustomFields>;
 }
 
 export function calcShelfLifeMonths(
@@ -275,6 +280,18 @@ export interface CoaCertificateViewModel {
   manager: ResolvedQcSignature;
   isSuperseded: boolean;
   customNotes: string | null;
+  templateKey: string;
+  templateName: string;
+  template: CoaTemplateVariant;
+  hideTccs: boolean;
+  contractNo: string | null;
+  oemPartner: string | null;
+  volumeText: string | null;
+  concentrationText: string | null;
+  sequenceText: string | null;
+  ctStandardText: string | null;
+  supplierLotText: string | null;
+  extraTraceRows: { leftLabel: string; leftValue: string; rightLabel?: string; rightValue?: string; fullWidth?: boolean; mono?: boolean }[];
 }
 
 export function prepareCoaCertificateModel(
@@ -284,6 +301,15 @@ export function prepareCoaCertificateModel(
   signerOverrides?: QcSignerOverrides | null
 ): CoaCertificateViewModel {
   const cfg = normalizeQcFormsConfig(null, configOverrides);
+  const effectiveTplKey = String(signerOverrides?.template_key || coa?.template_key || "STANDARD").trim().toUpperCase();
+  const tpl = resolveCoaTemplate(cfg, effectiveTplKey);
+  const rawCf: CoaCustomFields =
+    coa?.custom_fields && typeof coa.custom_fields === "object" ? (coa.custom_fields as CoaCustomFields) : {};
+  const cf: CoaCustomFields = {
+    ...rawCf,
+    ...(signerOverrides?.custom_fields ?? {}),
+  };
+
   const snapshot: any[] = Array.isArray(coa?.qc_results_snapshot) ? coa.qc_results_snapshot : [];
   const summaryUpper = String(coa?.qc_summary ?? "").toUpperCase();
   const hasExplicitFail =
@@ -292,8 +318,13 @@ export function prepareCoaCertificateModel(
     summaryUpper.includes("FAIL");
   const overallPassed = !hasExplicitFail;
 
-  const tccsCode = String(coa?.tccs_code || coa?.spec_code || "").trim();
-  const standardDisplay = tccsCode || "TCCS";
+  const rawTccsCode = String(cf.kit_tccs_code || coa?.tccs_code || coa?.spec_code || "").trim();
+  const tccsCode = tpl.hide_tccs ? "" : rawTccsCode;
+  const standardDisplay = tpl.hide_tccs
+    ? lang === "EN"
+      ? "In-house SOP (No TCCS)"
+      : "Tiêu chuẩn nội bộ / SOP (Không áp dụng TCCS)"
+    : tccsCode || "TCCS";
   const mfgRaw = coa?.mfg_date ?? null;
   const expRaw = coa?.expiry_date ?? null;
   const months = calcShelfLifeMonths(mfgRaw, expRaw, coa?.shelf_life_months);
@@ -316,14 +347,14 @@ export function prepareCoaCertificateModel(
   let includeActualColumn = false;
   let rows: CoaTableRowModel[] = [];
 
-  if (cfg.coa.results_mode === "TCCS_CONFORMANCE") {
-    const paramName = lang === "EN" ? cfg.coa.tccs_param_en : cfg.coa.tccs_param_vi;
-    const methodName = lang === "EN" ? cfg.coa.tccs_method_en : cfg.coa.tccs_method_vi;
+  if (tpl.results_mode === "TCCS_CONFORMANCE") {
+    const paramName = lang === "EN" ? tpl.tccs_param_en : tpl.tccs_param_vi;
+    const methodName = lang === "EN" ? tpl.tccs_method_en : tpl.tccs_method_vi;
     const specName = tccsCode
-      ? (lang === "EN" ? cfg.coa.tccs_spec_template_en : cfg.coa.tccs_spec_template_vi).replace(/\{TCCS\}/g, tccsCode)
+      ? (lang === "EN" ? tpl.tccs_spec_template_en : tpl.tccs_spec_template_vi).replace(/\{TCCS\}/g, tccsCode)
       : lang === "EN"
-        ? cfg.coa.tccs_spec_fallback_en
-        : cfg.coa.tccs_spec_fallback_vi;
+        ? tpl.tccs_spec_fallback_en
+        : tpl.tccs_spec_fallback_vi;
     rows = [
       {
         seq: 1,
@@ -335,9 +366,9 @@ export function prepareCoaCertificateModel(
         passed: overallPassed,
       },
     ];
-  } else if (cfg.coa.results_mode === "SUMMARY_TEMPLATE" && cfg.coa.custom_summary_rows.length > 0) {
+  } else if (tpl.results_mode === "SUMMARY_TEMPLATE" && tpl.custom_summary_rows.length > 0) {
     includeActualColumn = false;
-    rows = cfg.coa.custom_summary_rows.map((r, i) => {
+    rows = tpl.custom_summary_rows.map((r, i) => {
       const p = r.passed !== false;
       return {
         seq: r.seq ?? i + 1,
@@ -349,7 +380,7 @@ export function prepareCoaCertificateModel(
         passed: p,
       };
     });
-  } else if (cfg.coa.results_mode === "CONFORMS_ONLY") {
+  } else if (tpl.results_mode === "CONFORMS_ONLY") {
     includeActualColumn = false;
     rows = snapshot.map((st: any, idx: number) => {
       const p = st.passed !== false;
@@ -389,12 +420,99 @@ export function prepareCoaCertificateModel(
   const analystRaw = signerOverrides?.analyst_name || coa?.analyst_name || cfg.default_analyst_name;
   const managerRaw = signerOverrides?.manager_name || coa?.reviewer_name || coa?.issued_by_name || cfg.default_manager_name;
 
+  const contractNo = String(cf.contract_no ?? tpl.default_contract_no ?? "").trim() || null;
+  const oemPartner = String(cf.oem_partner ?? tpl.oem_partner_name ?? "").trim() || null;
+  const volumeText = String(cf.volume ?? "").trim() || null;
+  const concentrationText = String(cf.concentration ?? "").trim() || null;
+  const sequenceText = String(cf.sequence ?? "").trim() || null;
+  const ctStandardText = String(cf.ct_standard ?? "").trim() || null;
+  const supplierLotText = String(cf.supplier_lot_no ?? coa?.mfr_lot_no ?? "").trim() || null;
+
+  const extraTraceRows: CoaCertificateViewModel["extraTraceRows"] = [];
+  if (tpl.category === "OEM" || contractNo || oemPartner) {
+    extraTraceRows.push({
+      leftLabel:
+        lang === "EN"
+          ? "OEM Contract No.:"
+          : lang === "VI"
+            ? "Số hợp đồng gia công:"
+            : "Số HĐ gia công / OEM Contract No.:",
+      leftValue: contractNo || "—",
+      rightLabel:
+        lang === "EN"
+          ? "OEM Partner / Unit:"
+          : lang === "VI"
+            ? "Đơn vị đặt gia công:"
+            : "Đơn vị gia công / OEM Partner:",
+      rightValue: oemPartner || "—",
+    });
+  }
+  if (tpl.show_volume_conc_seq || volumeText || concentrationText) {
+    extraTraceRows.push({
+      leftLabel:
+        lang === "EN" ? "Volume:" : lang === "VI" ? "Thể tích:" : "Thể tích / Volume:",
+      leftValue: volumeText || "—",
+      rightLabel:
+        lang === "EN" ? "Concentration:" : lang === "VI" ? "Nồng độ:" : "Nồng độ / Concentration:",
+      rightValue: concentrationText || "—",
+    });
+  }
+  if (tpl.show_ct_standard || ctStandardText) {
+    extraTraceRows.push({
+      leftLabel:
+        lang === "EN"
+          ? "Standard Ct Value:"
+          : lang === "VI"
+            ? "Tiêu chuẩn Ct:"
+            : "Tiêu chuẩn Ct / Standard Ct:",
+      leftValue: ctStandardText || "—",
+      rightLabel:
+        lang === "EN"
+          ? "Kit Standard (TCCS):"
+          : lang === "VI"
+            ? "Số TCCS bộ Kit:"
+            : "TCCS bộ Kit / Kit Standard:",
+      rightValue: rawTccsCode || "—",
+    });
+  }
+  if (sequenceText) {
+    extraTraceRows.push({
+      leftLabel:
+        lang === "EN"
+          ? "Sequence (5'→3'):"
+          : lang === "VI"
+            ? "Trình tự (nếu yêu cầu):"
+            : "Trình tự / Sequence (5'→3'):",
+      leftValue: sequenceText,
+      fullWidth: true,
+      mono: true,
+    });
+  }
+  if (tpl.show_raw_material_lot || supplierLotText) {
+    extraTraceRows.push({
+      leftLabel:
+        lang === "EN"
+          ? "Material Lot / Mfg. Lot:"
+          : lang === "VI"
+            ? "Lô nguyên liệu (1 lô NL - 1 COA):"
+            : "Lô nguyên liệu / Material Lot:",
+      leftValue: supplierLotText || String(coa?.lot_code || "—"),
+      rightLabel:
+        lang === "EN"
+          ? "Scope:"
+          : lang === "VI"
+            ? "Phạm vi cấp COA:"
+            : "Phạm vi / Scope:",
+      rightValue: lang === "EN" ? "1 Material Lot – 1 COA" : "1 Lô nguyên liệu – 1 COA",
+    });
+  }
+
   return {
     lang,
     config: cfg,
-    coaCode: String(coa?.code || `${cfg.coa.doc_prefix}${coa?.lot_code || ""}`),
+    coaCode: String(coa?.code || `${tpl.doc_prefix || cfg.coa.doc_prefix}${coa?.lot_code || ""}`),
     qcTestCode: String(coa?.qc_test_code || "—"),
-    formCode: cfg.coa.form_code || "BM-QC-COA-01",
+    formCode: tpl.form_code || cfg.coa.form_code || "BM-QC-COA-01",
     issueDate: d(coa?.issued_at || coa?.mfg_date) || "—",
     companyNamePrimary: lang === "EN" ? cfg.company_name_en : cfg.company_name_vi,
     companyNameSecondary: lang === "BI" ? cfg.company_name_en : null,
@@ -404,8 +522,8 @@ export function prepareCoaCertificateModel(
         ? `Tel: ${cfg.phone} | Email: ${cfg.email}`
         : `Điện thoại: ${cfg.phone} | Email: ${cfg.email}`,
     titleMain:
-      lang === "EN" ? cfg.coa.title_en_main : lang === "VI" ? cfg.coa.title_vi_main : cfg.coa.title_bi_main,
-    titleSub: lang === "EN" ? cfg.coa.title_en_sub : lang === "BI" ? cfg.coa.title_bi_sub : null,
+      lang === "EN" ? tpl.title_en_main : lang === "VI" ? tpl.title_vi_main : tpl.title_bi_main,
+    titleSub: lang === "EN" ? tpl.title_en_sub : lang === "BI" ? tpl.title_bi_sub : null,
     isoBadge: lang === "EN" ? cfg.iso_badge_en : cfg.iso_badge_vi,
     section1Title:
       lang === "EN"
@@ -442,11 +560,11 @@ export function prepareCoaCertificateModel(
     conclusionPrefix: lang === "EN" ? "CONCLUSION:" : lang === "VI" ? "KẾT LUẬN:" : "KẾT LUẬN (CONCLUSION):",
     conclusionBody: overallPassed
       ? lang === "EN"
-        ? cfg.coa.conclusion_pass_en
-        : cfg.coa.conclusion_pass_vi
+        ? tpl.conclusion_pass_en
+        : tpl.conclusion_pass_vi
       : lang === "EN"
-        ? cfg.coa.conclusion_fail_en
-        : cfg.coa.conclusion_fail_vi,
+        ? tpl.conclusion_fail_en
+        : tpl.conclusion_fail_vi,
     analystTitleMain: lang === "EN" ? "TESTED BY" : cfg.analyst_label_vi,
     analystTitleSub: lang === "EN" ? "QC Analyst" : lang === "VI" ? null : cfg.analyst_label_en,
     analystVerifiedText: lang === "EN" ? cfg.analyst_verified_en : cfg.analyst_verified_vi,
@@ -457,6 +575,18 @@ export function prepareCoaCertificateModel(
     manager: resolveQcSignature(managerRaw, "MANAGER", cfg),
     isSuperseded: Boolean(coa?.is_superseded),
     customNotes: coa?.custom_notes ? String(coa.custom_notes) : null,
+    templateKey: tpl.key,
+    templateName: tpl.name,
+    template: tpl,
+    hideTccs: tpl.hide_tccs,
+    contractNo,
+    oemPartner,
+    volumeText,
+    concentrationText,
+    sequenceText,
+    ctStandardText,
+    supplierLotText,
+    extraTraceRows,
   };
 }
 
@@ -823,10 +953,16 @@ export function buildCoaCertificateSheetHtml(m: CoaCertificateViewModel): string
       </tr>
       <tr>
         <td class="lbl">${esc(lbl.pres)}</td>
-        <td class="val">${esc(m.presentation)}</td>
-        <td class="lbl">${esc(lbl.std)}</td>
-        <td class="val">${esc(m.standardCode)}</td>
+        <td class="val"${m.hideTccs ? ' colspan="3"' : ""}>${esc(m.presentation)}</td>
+        ${m.hideTccs ? "" : `<td class="lbl">${esc(lbl.std)}</td><td class="val">${esc(m.standardCode)}</td>`}
       </tr>
+      ${m.extraTraceRows
+        .map((er) =>
+          er.fullWidth
+            ? `<tr><td class="lbl">${esc(er.leftLabel)}</td><td class="val" colspan="3" style="${er.mono ? "font-family:monospace;word-break:break-all;" : ""}"><b>${esc(er.leftValue)}</b></td></tr>`
+            : `<tr><td class="lbl">${esc(er.leftLabel)}</td><td class="val"><b>${esc(er.leftValue)}</b></td><td class="lbl">${esc(er.rightLabel ?? "")}</td><td class="val"><b>${esc(er.rightValue ?? "")}</b></td></tr>`
+        )
+        .join("")}
     </table>
 
     <div class="sec-title">${esc(m.section2Title)}</div>

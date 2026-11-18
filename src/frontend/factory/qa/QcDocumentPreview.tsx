@@ -70,16 +70,22 @@ export function QcDocumentPreview({
   const [lang, setLang] = useState<CoaExportLang>(resolvedDefaultLang);
   const [analystName, setAnalystName] = useState<string>("");
   const [managerName, setManagerName] = useState<string>("");
+  const [templateKey, setTemplateKey] = useState<string>("");
 
   useEffect(() => {
     setLang(resolvedDefaultLang);
   }, [resolvedDefaultLang]);
+
+  useEffect(() => {
+    setTemplateKey(String(data?.template_key || ""));
+  }, [data?.id, data?.template_key]);
 
   if (!data) return null;
 
   const signerOverrides: QcSignerOverrides = {
     ...(analystName ? { analyst_name: analystName } : {}),
     ...(managerName ? { manager_name: managerName } : {}),
+    ...(templateKey ? { template_key: templateKey } : {}),
   };
 
   const staffList = cfg.staff_signatures;
@@ -120,6 +126,24 @@ export function QcDocumentPreview({
               </button>
             ))}
           </div>
+        )}
+        {kind === "COA" && cfg.coa_templates?.length > 0 && (
+          <label className="flex items-center gap-1.5 text-xs">
+            <span className="font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">Mẫu COA:</span>
+            <select
+              className={`${inputClass} !py-1 !text-xs w-56`}
+              value={templateKey || String(data?.template_key || "STANDARD")}
+              onChange={(e) => setTemplateKey(e.target.value)}
+            >
+              {cfg.coa_templates
+                .filter((t) => t.active !== false)
+                .map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {t.name} ({t.form_code})
+                  </option>
+                ))}
+            </select>
+          </label>
         )}
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <label className="flex items-center gap-1.5">
@@ -407,10 +431,31 @@ export function QcDocumentPreview({
             </tr>
             <tr>
               <td className="border border-slate-300 bg-slate-50 px-2 py-1.5 font-semibold">{lbl.pres}</td>
-              <td className="border border-slate-300 px-2 py-1.5">{m.presentation}</td>
-              <td className="border border-slate-300 bg-slate-50 px-2 py-1.5 font-semibold">{lbl.std}</td>
-              <td className="border border-slate-300 px-2 py-1.5">{m.standardCode}</td>
+              <td colSpan={m.hideTccs ? 3 : 1} className="border border-slate-300 px-2 py-1.5">{m.presentation}</td>
+              {!m.hideTccs && (
+                <>
+                  <td className="border border-slate-300 bg-slate-50 px-2 py-1.5 font-semibold">{lbl.std}</td>
+                  <td className="border border-slate-300 px-2 py-1.5">{m.standardCode}</td>
+                </>
+              )}
             </tr>
+            {m.extraTraceRows.map((er, idx) =>
+              er.fullWidth ? (
+                <tr key={idx}>
+                  <td className="border border-slate-300 bg-slate-50 px-2 py-1.5 font-semibold">{er.leftLabel}</td>
+                  <td colSpan={3} className={`border border-slate-300 px-2 py-1.5 font-bold ${er.mono ? "font-mono break-all" : ""}`}>
+                    {er.leftValue}
+                  </td>
+                </tr>
+              ) : (
+                <tr key={idx}>
+                  <td className="border border-slate-300 bg-slate-50 px-2 py-1.5 font-semibold">{er.leftLabel}</td>
+                  <td className="border border-slate-300 px-2 py-1.5 font-bold">{er.leftValue}</td>
+                  <td className="border border-slate-300 bg-slate-50 px-2 py-1.5 font-semibold">{er.rightLabel ?? ""}</td>
+                  <td className="border border-slate-300 px-2 py-1.5 font-bold">{er.rightValue ?? ""}</td>
+                </tr>
+              )
+            )}
           </tbody>
         </table>
 

@@ -14,6 +14,9 @@ import { createQcTest, registerQcSubject, runTransition } from "./qcTests";
 import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import {
   normalizeQcFormsConfig,
+  resolveCoaTemplate,
+  suggestCoaTemplateKey,
+  type CoaCustomFields,
   type HrQcPersonnelInput,
   type QcFormsConfig,
 } from "../../frontend/factory/qcSignatures";
@@ -539,9 +542,25 @@ export async function receiveAndCreateQcTest(tx: Tx, actor: AuthzActor, input: u
   return { test_id: test.id, test_code: test.code, lot_code: lot.code, spec_code: spec.code };
 }
 
+const coaCustomFieldsSchema = z
+  .object({
+    contract_no: z.string().trim().max(160).optional().nullable(),
+    oem_partner: z.string().trim().max(160).optional().nullable(),
+    volume: z.string().trim().max(120).optional().nullable(),
+    concentration: z.string().trim().max(120).optional().nullable(),
+    sequence: z.string().trim().max(2000).optional().nullable(),
+    ct_standard: z.string().trim().max(160).optional().nullable(),
+    kit_tccs_code: z.string().trim().max(120).optional().nullable(),
+    supplier_lot_no: z.string().trim().max(120).optional().nullable(),
+  })
+  .optional()
+  .nullable();
+
 const issueCoaFromTestSchema = z.object({
   test_id: z.string().uuid(),
   qc_summary: z.string().trim().max(500).optional().nullable(),
+  template_key: z.string().trim().max(60).optional().nullable(),
+  custom_fields: coaCustomFieldsSchema,
 });
 
 /**
@@ -597,7 +616,7 @@ export async function issueCoaFromQcTest(
     if (order?.lot_id) {
       lot = (
         await tx.query(
-          `SELECT l.*, i.code AS item_code, i.name AS item_name, i.base_uom
+          `SELECT l.*, i.code AS item_code, i.name AS item_name, i.item_type, i.base_uom
              FROM inv.lot l JOIN master.item i ON i.id = l.item_id
             WHERE l.id = $1`,
           [order.lot_id]
@@ -607,7 +626,7 @@ export async function issueCoaFromQcTest(
   } else if (test.entity_type === "LOT") {
     lot = (
       await tx.query(
-        `SELECT l.*, i.code AS item_code, i.name AS item_name, i.base_uom
+        `SELECT l.*, i.code AS item_code, i.name AS item_name, i.item_type, i.base_uom
            FROM inv.lot l JOIN master.item i ON i.id = l.item_id
           WHERE l.id = $1`,
         [test.entity_id]
@@ -652,6 +671,50 @@ export async function issueCoaFromQcTest(
         [order.id, test.id, d.qc_summary ?? null, `Đạt QC & Đã cấp COA ${existingCoa.code} từ phiếu ${test.code}`]
       );
     }
+
+    // If caller explicitly supplied a different template_key or non-empty custom_fields compared to the auto-issued COA,
+    // automatically append a new revision (-R2) with those template & custom fields (append-only, preserving history).
+    const requestedTplKey = d.template_key ? String(d.template_key).trim().toUpperCase() : null;
+    const rawReqCf = d.custom_fields ?? {};
+    const hasCustomFieldInput = Object.values(rawReqCf).some((v) => v != null && String(v).trim() !== "");
+    const existingTplKey = String(existingCoa.template_key || "STANDARD").trim().toUpperCase();
+    const tplChanged = Boolean(requestedTplKey && requestedTplKey !== existingTplKey);
+    const cfChanged =
+      hasCustomFieldInput &&
+      JSON.stringify(rawReqCf) !== JSON.stringify(existingCoa.custom_fields ?? {});
+
+    if (tplChanged || cfChanged) {
+      const mfgStr = String(existingCoa.mfg_date ?? order?.mfg_date ?? lot.mfg_date ?? vnToday()).slice(0, 10);
+      const expStr = String(existingCoa.expiry_date ?? order?.expiry_date ?? lot.expiry_date ?? addDays(vnToday(), 365)).slice(0, 10);
+      const amended = await updateCoaCertificate(
+        tx,
+        actor,
+        {
+          id: existingCoa.id,
+          code: existingCoa.code,
+          product_code: existingCoa.product_code,
+          product_name: existingCoa.product_name,
+          lot_code: existingCoa.lot_code,
+          mfg_date: mfgStr,
+          expiry_date: expStr,
+          tests_per_kit: Number(existingCoa.tests_per_kit ?? 0),
+          good_qty: Number(existingCoa.good_qty ?? 1),
+          uom: existingCoa.uom || "KIT",
+          spec_code: existingCoa.spec_code ?? null,
+          qc_summary: d.qc_summary ?? existingCoa.qc_summary ?? null,
+          analyst_name: existingCoa.analyst_name ?? null,
+          issued_by_name: existingCoa.issued_by_name || actor.name || "Trưởng phòng QA/QC",
+          custom_notes: existingCoa.custom_notes ?? null,
+          template_key: requestedTplKey || existingTplKey,
+          custom_fields: { ...(existingCoa.custom_fields ?? {}), ...rawReqCf },
+          reason: `Áp dụng mẫu COA ${requestedTplKey || existingTplKey} và thông tin đặc thù khi cấp COA chính thức`,
+          qc_results_snapshot: Array.isArray(existingCoa.qc_results_snapshot) ? existingCoa.qc_results_snapshot : [],
+        },
+        opts
+      );
+      return { coa: amended, already_issued: false };
+    }
+
     return { coa: existingCoa, already_issued: true };
   }
 
@@ -741,29 +804,66 @@ export async function issueCoaFromQcTest(
     else if (String(lot.base_uom ?? "").toUpperCase() === "KIT") testsPerKit = 50;
   }
 
-  // Gather COA template config to determine how parameters should be displayed on the COA
+  // Gather COA template config & resolve selected or auto-suggested COA template variant
   const { qcFormsConfig } = await loadQcFormsConfig(tx);
-  const displayMode: string = qcFormsConfig.coa.results_mode ?? "TCCS_CONFORMANCE";
-  const tplDefaultParams = qcFormsConfig.coa.custom_summary_rows;
+  const autoKey = suggestCoaTemplateKey(qcFormsConfig, {
+    item_code: lot.item_code,
+    item_name: lot.item_name,
+    item_type: lot.item_type,
+    test_kind: test.test_kind,
+    has_production_order: Boolean(order),
+  });
+  const resolvedTpl = resolveCoaTemplate(qcFormsConfig, d.template_key || autoKey);
+  const displayMode: string = resolvedTpl.results_mode ?? qcFormsConfig.coa.results_mode ?? "TCCS_CONFORMANCE";
+  const tplDefaultParams =
+    resolvedTpl.custom_summary_rows?.length > 0 ? resolvedTpl.custom_summary_rows : qcFormsConfig.coa.custom_summary_rows;
+
+  const rawCf = d.custom_fields ?? {};
+  const customFields: CoaCustomFields = {};
+  for (const k of [
+    "contract_no",
+    "oem_partner",
+    "volume",
+    "concentration",
+    "sequence",
+    "ct_standard",
+    "kit_tccs_code",
+    "supplier_lot_no",
+  ] as const) {
+    const v = rawCf[k];
+    if (v != null && String(v).trim() !== "") {
+      customFields[k] = String(v).trim();
+    }
+  }
+  if (resolvedTpl.category === "OEM") {
+    if (!customFields.oem_partner && resolvedTpl.oem_partner_name) customFields.oem_partner = resolvedTpl.oem_partner_name;
+    if (!customFields.contract_no && resolvedTpl.default_contract_no) customFields.contract_no = resolvedTpl.default_contract_no;
+  }
+  if (resolvedTpl.show_raw_material_lot && !customFields.supplier_lot_no && lot.mfr_lot_no) {
+    customFields.supplier_lot_no = String(lot.mfr_lot_no);
+  }
+  if (customFields.kit_tccs_code) {
+    tccsCode = customFields.kit_tccs_code;
+  }
 
   let finalCoaResults = qcParamRows;
   if (displayMode === "TCCS_CONFORMANCE") {
-    const resolvedTccs = tccsCode || test.spec_code || "";
+    const resolvedTccs = resolvedTpl.hide_tccs ? "" : tccsCode || test.spec_code || "";
     const tccsSpecText = resolvedTccs
-      ? qcFormsConfig.coa.tccs_spec_template_vi.replace(/\{TCCS\}/g, resolvedTccs)
-      : qcFormsConfig.coa.tccs_spec_fallback_vi;
+      ? resolvedTpl.tccs_spec_template_vi.replace(/\{TCCS\}/g, resolvedTccs)
+      : resolvedTpl.tccs_spec_fallback_vi;
     const isPass = test.overall_result !== "FAIL";
     finalCoaResults = [
       {
         seq: 1,
         source: "COA_TCCS",
-        parameter_name: qcFormsConfig.coa.tccs_param_vi,
-        method: qcFormsConfig.coa.tccs_method_vi,
+        parameter_name: resolvedTpl.tccs_param_vi,
+        method: resolvedTpl.tccs_method_vi,
         spec_limit: tccsSpecText,
         observed_value: isPass ? "ĐẠT (PASS)" : "KHÔNG ĐẠT (FAIL)",
         passed: isPass,
         step_code: "COA-01",
-        step_name: qcFormsConfig.coa.tccs_param_vi,
+        step_name: resolvedTpl.tccs_param_vi,
         param_values: {
           "Yêu cầu": tccsSpecText,
           "Kết quả QC": isPass ? "ĐẠT (PASS)" : "KHÔNG ĐẠT (FAIL)",
@@ -833,6 +933,54 @@ export async function issueCoaFromQcTest(
   const summaryText =
     d.qc_summary?.trim() ||
     `Đạt tiêu chuẩn kiểm nghiệm chất lượng theo phiếu QC ${test.code} (${test.spec_code} v${test.spec_version})`;
+  // Append custom fields as synthetic parameters in snapshot if template uses DETAILED_QC / SUMMARY_TEMPLATE and user entered them
+  const extraSnapshotRows: any[] = [];
+  if (customFields.volume) {
+    extraSnapshotRows.push({
+      seq: finalCoaResults.length + extraSnapshotRows.length + 1,
+      source: "COA_CUSTOM",
+      parameter_name: "Thể tích / Volume",
+      method: "Kiểm tra định lượng / Quantitative Check",
+      spec_limit: customFields.volume,
+      observed_value: customFields.volume,
+      passed: true,
+      step_code: "COA-VOL",
+      step_name: "Thể tích / Volume",
+      param_values: { "Yêu cầu": customFields.volume, "Kết quả QC": customFields.volume },
+    });
+  }
+  if (customFields.concentration) {
+    extraSnapshotRows.push({
+      seq: finalCoaResults.length + extraSnapshotRows.length + 1,
+      source: "COA_CUSTOM",
+      parameter_name: "Nồng độ / Concentration",
+      method: "Đo quang / Spectrophotometry (SOP-QC)",
+      spec_limit: customFields.concentration,
+      observed_value: customFields.concentration,
+      passed: true,
+      step_code: "COA-CONC",
+      step_name: "Nồng độ / Concentration",
+      param_values: { "Yêu cầu": customFields.concentration, "Kết quả QC": customFields.concentration },
+    });
+  }
+  if (customFields.ct_standard) {
+    extraSnapshotRows.push({
+      seq: finalCoaResults.length + extraSnapshotRows.length + 1,
+      source: "COA_CUSTOM",
+      parameter_name: "Tiêu chuẩn Ct (Chứng dương / Positive Control)",
+      method: "Real-time qPCR (SOP-QC)",
+      spec_limit: customFields.ct_standard,
+      observed_value: customFields.ct_standard,
+      passed: true,
+      step_code: "COA-CT",
+      step_name: "Tiêu chuẩn Ct",
+      param_values: { "Yêu cầu": customFields.ct_standard, "Kết quả QC": customFields.ct_standard },
+    });
+  }
+  if (extraSnapshotRows.length > 0 && displayMode !== "TCCS_CONFORMANCE") {
+    finalCoaResults = [...finalCoaResults, ...extraSnapshotRows];
+  }
+
   const coaPayloadHash = recordHash({
     code: coaCode,
     lot_id: lot.id,
@@ -849,6 +997,8 @@ export async function issueCoaFromQcTest(
     good_qty: goodQty,
     uom,
     qc_summary: summaryText,
+    template_key: resolvedTpl.key,
+    custom_fields: customFields,
     qc_results_snapshot: finalCoaResults,
     standard_usages_snapshot: stdUsages,
     packaging_snapshot: packRows,
@@ -862,8 +1012,8 @@ export async function issueCoaFromQcTest(
           product_code, product_name, lot_code, mfg_date, expiry_date,
           tests_per_kit, good_qty, uom, qc_summary,
           qc_results_snapshot, standard_usages_snapshot, packaging_snapshot,
-          analyst_name, issued_by, issued_by_name, sha256_hash)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18::jsonb, $19::jsonb, $20, $21, $22, $23)
+          analyst_name, issued_by, issued_by_name, template_key, custom_fields, sha256_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18::jsonb, $19::jsonb, $20, $21, $22, $23, $24::jsonb, $25)
        RETURNING *`,
       [
         coaCode,
@@ -888,6 +1038,8 @@ export async function issueCoaFromQcTest(
         test.analyst_name ?? null,
         test.reviewer_id ?? actor.userId,
         issuedByName,
+        resolvedTpl.key,
+        JSON.stringify(customFields),
         coaPayloadHash,
       ]
     )
@@ -944,6 +1096,8 @@ const releaseFromTestSchema = z.object({
   test_id: z.string().uuid(),
   auto_putaway: z.boolean().default(true),
   retain_sample_qty: z.coerce.number().min(0).default(0),
+  template_key: z.string().trim().max(60).optional().nullable(),
+  custom_fields: coaCustomFieldsSchema,
 });
 
 /**
@@ -1122,7 +1276,12 @@ export async function releaseLotFromQcTest(
   }
 
   // Automatically issue official COA from QC test and map to Kit/Lot
-  const coaRes = await issueCoaFromQcTest(tx, actor, { test_id: test.id }, opts);
+  const coaRes = await issueCoaFromQcTest(
+    tx,
+    actor,
+    { test_id: test.id, template_key: d.template_key ?? null, custom_fields: d.custom_fields ?? null },
+    opts
+  );
 
   return {
     lot_code: lot.code,
@@ -1772,6 +1931,8 @@ const updateCoaCertSchema = z.object({
   analyst_name: z.string().trim().max(200).optional().nullable(),
   issued_by_name: z.string().trim().min(1).max(200),
   custom_notes: z.string().trim().max(1000).optional().nullable(),
+  template_key: z.string().trim().max(60).optional().nullable(),
+  custom_fields: coaCustomFieldsSchema,
   reason: z.string().trim().max(500).optional().nullable(),
   qc_results_snapshot: z.array(coaResultLineSchema).default([]),
 });
@@ -1855,6 +2016,9 @@ export async function updateCoaCertificate(
     issued_by_name: d.issued_by_name,
   });
 
+  const mergedTemplateKey = String(d.template_key || oldRow.template_key || "STANDARD").trim().toUpperCase();
+  const mergedCustomFields = d.custom_fields !== undefined ? d.custom_fields ?? {} : oldRow.custom_fields ?? {};
+
   const newRow = (
     await tx.query(
       `INSERT INTO kit.coa_certificate
@@ -1862,10 +2026,10 @@ export async function updateCoaCertificate(
           product_code, product_name, lot_code, mfg_date, expiry_date,
           tests_per_kit, good_qty, uom, qc_summary,
           qc_results_snapshot, standard_usages_snapshot, packaging_snapshot,
-          analyst_name, issued_by, issued_by_name, custom_notes,
+          analyst_name, issued_by, issued_by_name, custom_notes, template_key, custom_fields,
           revision_no, revision_reason, amended_from_id, sha256_hash)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-               $17::jsonb, $18::jsonb, $19::jsonb, $20, $21, $22, $23, $24, $25, $26, $27)
+               $17::jsonb, $18::jsonb, $19::jsonb, $20, $21, $22, $23, $24, $25::jsonb, $26, $27, $28, $29)
        RETURNING *`,
       [
         amendedCode,
@@ -1891,6 +2055,8 @@ export async function updateCoaCertificate(
         actor.userId,
         d.issued_by_name,
         d.custom_notes ?? null,
+        mergedTemplateKey,
+        JSON.stringify(mergedCustomFields),
         nextRev,
         revisionReason,
         oldRow.id,

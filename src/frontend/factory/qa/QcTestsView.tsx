@@ -6,9 +6,15 @@ import { ActionBar, type AllowedAction } from "../actions";
 import { api, fmtDate, fmtQty, useFactoryMe } from "../api";
 import { printKitCoaCertificate, printTestCoa } from "../coa";
 import {
+  DEFAULT_COA_TEMPLATES,
   DEFAULT_QC_FORMS_CONFIG,
   normalizeQcFormsConfig,
+  resolveCoaTemplate,
   stripVnAccents,
+  suggestCoaTemplateKey,
+  type CoaCustomFields,
+  type CoaTemplateCategory,
+  type CoaTemplateVariant,
   type QcFormsConfig,
   type QcStaffSignatureEntry,
 } from "../qcSignatures";
@@ -136,9 +142,23 @@ function QcDetailPanel({
   const [releaseNotice, setReleaseNotice] = useState<string | null>(null);
   const [sigMethod, setSigMethod] = useState<"PIN" | "PASSWORD">("PIN");
   const [sigSecret, setSigSecret] = useState("");
+  const [selectedTplKey, setSelectedTplKey] = useState<string>("");
+  const [customFields, setCustomFields] = useState<CoaCustomFields>({});
 
   useEffect(() => {
     if (!test.data) return;
+    const autoKey = suggestCoaTemplateKey(formsConfig, {
+      item_code: test.data.item_code,
+      item_name: test.data.item_name,
+      test_kind: test.data.test_kind,
+    });
+    const tpl = resolveCoaTemplate(formsConfig, autoKey);
+    setSelectedTplKey(tpl.key);
+    setCustomFields((prev) => ({
+      ...prev,
+      contract_no: prev.contract_no ?? tpl.default_contract_no ?? "",
+      oem_partner: prev.oem_partner ?? tpl.oem_partner_name ?? "",
+    }));
     setValues(
       Object.fromEntries(
         test.data.results.map((r) => [
@@ -208,6 +228,8 @@ function QcDetailPanel({
         json: {
           op: "issue_coa_from_test",
           test_id: id,
+          template_key: selectedTplKey || undefined,
+          custom_fields: customFields,
           credential: { method: sigMethod, secret: sigSecret },
         },
       }),
@@ -231,6 +253,8 @@ function QcDetailPanel({
           test_id: id,
           auto_putaway: true,
           retain_sample_qty: Number(retainQty || 0),
+          template_key: selectedTplKey || undefined,
+          custom_fields: customFields,
           credential: { method: sigMethod, secret: sigSecret },
         },
       }),
@@ -445,6 +469,127 @@ function QcDetailPanel({
                 )}
                 {["LOT", "PRODUCTION_ORDER"].includes(t.entity_type) && t.overall_result === "PASS" && (
                   <>
+                    {(() => {
+                      const activeTpl = resolveCoaTemplate(formsConfig, selectedTplKey || linkedCoa?.template_key || "STANDARD");
+                      return (
+                        <div className="w-full p-3 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/30 space-y-2.5 text-xs">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="font-extrabold text-indigo-900 dark:text-indigo-200 uppercase">
+                              📑 Chọn Mẫu COA áp dụng cho Lô / Sản phẩm này (tự gợi ý theo nhóm SP — QC có thể đổi &amp; bấm Cấp/Áp dụng lại)
+                            </span>
+                            <span className="text-[11px] text-slate-500">{activeTpl.note}</span>
+                          </div>
+                          <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+                            <div className="sm:col-span-2">
+                              <Field label="Mẫu COA áp dụng *">
+                                <select
+                                  className={inputClass}
+                                  value={activeTpl.key}
+                                  onChange={(e) => {
+                                    const nextTpl = resolveCoaTemplate(formsConfig, e.target.value);
+                                    setSelectedTplKey(nextTpl.key);
+                                    setCustomFields((prev) => ({
+                                      ...prev,
+                                      contract_no: nextTpl.default_contract_no || prev.contract_no || "",
+                                      oem_partner: nextTpl.oem_partner_name || prev.oem_partner || "",
+                                    }));
+                                  }}
+                                >
+                                  {(formsConfig.coa_templates?.length ? formsConfig.coa_templates : DEFAULT_COA_TEMPLATES)
+                                    .filter((x) => x.active !== false)
+                                    .map((x) => (
+                                      <option key={x.key} value={x.key}>
+                                        {x.name} ({x.form_code})
+                                      </option>
+                                    ))}
+                                </select>
+                              </Field>
+                            </div>
+                            {activeTpl.category === "OEM" && (
+                              <>
+                                <Field label="Số hợp đồng gia công (OEM) *">
+                                  <input
+                                    className={inputClass}
+                                    placeholder="VD: 01/2026/HĐGC-ABT"
+                                    value={customFields.contract_no ?? activeTpl.default_contract_no ?? ""}
+                                    onChange={(e) => setCustomFields({ ...customFields, contract_no: e.target.value })}
+                                  />
+                                </Field>
+                                <Field label="Đơn vị đặt gia công">
+                                  <input
+                                    className={inputClass}
+                                    value={customFields.oem_partner ?? activeTpl.oem_partner_name ?? ""}
+                                    onChange={(e) => setCustomFields({ ...customFields, oem_partner: e.target.value })}
+                                  />
+                                </Field>
+                              </>
+                            )}
+                            {activeTpl.show_volume_conc_seq && (
+                              <>
+                                <Field label="Thể tích (Volume)">
+                                  <input
+                                    className={inputClass}
+                                    placeholder="VD: 1.0 mL / ống"
+                                    value={customFields.volume ?? ""}
+                                    onChange={(e) => setCustomFields({ ...customFields, volume: e.target.value })}
+                                  />
+                                </Field>
+                                <Field label="Nồng độ (Concentration)">
+                                  <input
+                                    className={inputClass}
+                                    placeholder="VD: 10 µM hoặc 1x"
+                                    value={customFields.concentration ?? ""}
+                                    onChange={(e) => setCustomFields({ ...customFields, concentration: e.target.value })}
+                                  />
+                                </Field>
+                              </>
+                            )}
+                            {activeTpl.show_ct_standard && (
+                              <>
+                                <Field label="Tiêu chuẩn Ct (Chứng dương)">
+                                  <input
+                                    className={inputClass}
+                                    placeholder="VD: Ct 25.0 ± 2.0"
+                                    value={customFields.ct_standard ?? ""}
+                                    onChange={(e) => setCustomFields({ ...customFields, ct_standard: e.target.value })}
+                                  />
+                                </Field>
+                                <Field label="Số TCCS của bộ Kit">
+                                  <input
+                                    className={inputClass}
+                                    placeholder="Tự lấy theo Kit hoặc gõ tại đây"
+                                    value={customFields.kit_tccs_code ?? ""}
+                                    onChange={(e) => setCustomFields({ ...customFields, kit_tccs_code: e.target.value })}
+                                  />
+                                </Field>
+                              </>
+                            )}
+                            {activeTpl.show_volume_conc_seq && !activeTpl.show_ct_standard && (
+                              <div className="sm:col-span-2">
+                                <Field label="Trình tự 5'→3' (nếu yêu cầu)">
+                                  <input
+                                    className={`${inputClass} font-mono`}
+                                    placeholder="Để trống nếu không yêu cầu in trình tự"
+                                    value={customFields.sequence ?? ""}
+                                    onChange={(e) => setCustomFields({ ...customFields, sequence: e.target.value })}
+                                  />
+                                </Field>
+                              </div>
+                            )}
+                            {activeTpl.show_raw_material_lot && (
+                              <Field label="Số lô nguyên liệu / NSX (1 lô NL - 1 COA)">
+                                <input
+                                  className={inputClass}
+                                  placeholder={t.lot_code || "Tự lấy theo số lô"}
+                                  value={customFields.supplier_lot_no ?? ""}
+                                  onChange={(e) => setCustomFields({ ...customFields, supplier_lot_no: e.target.value })}
+                                />
+                              </Field>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
                     <div className="flex flex-wrap items-end gap-2 p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900/40">
                       <Field label="Ký số (21 CFR Part 11)">
                         <select
@@ -467,8 +612,16 @@ function QcDetailPanel({
                       </Field>
                     </div>
                     {t.coa_code ? (
-                      <div className="px-3 py-2 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50/70 dark:bg-sky-950/30 text-xs font-semibold text-sky-900 dark:text-sky-200 flex items-center gap-2">
-                        <span>📜 Đã cấp COA chính thức: <b className="font-mono">{t.coa_code}</b> (Đã ánh xạ sang Sản xuất Kit &amp; Kinh doanh)</span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="px-3 py-2 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50/70 dark:bg-sky-950/30 text-xs font-semibold text-sky-900 dark:text-sky-200 flex items-center gap-2">
+                          <span>
+                            📜 Đã cấp COA: <b className="font-mono">{t.coa_code}</b>
+                            {linkedCoa?.template_key ? ` · Mẫu: ${linkedCoa.template_key}` : ""}
+                          </span>
+                        </div>
+                        <Button variant="secondary" onClick={() => issueCoaMut.mutate()} disabled={issueCoaMut.isPending}>
+                          🔄 Áp dụng Mẫu COA / Thông tin đặc thù đã chọn
+                        </Button>
                       </div>
                     ) : (
                       <Button onClick={() => issueCoaMut.mutate()} disabled={issueCoaMut.isPending}>
@@ -549,6 +702,7 @@ export function QcTestsView() {
   const [formsConfig, setFormsConfig] = useState<QcFormsConfig>(() => structuredClone(DEFAULT_QC_FORMS_CONFIG));
   const [sigUploadNotice, setSigUploadNotice] = useState<string | null>(null);
   const [editingCoa, setEditingCoa] = useState<any | null>(null);
+  const [activeTplKey, setActiveTplKey] = useState<string>("STANDARD");
   const [coaNotice, setCoaNotice] = useState<string | null>(null);
   const [coaSigMethod, setCoaSigMethod] = useState<"PIN" | "PASSWORD">("PIN");
   const [coaSigSecret, setCoaSigSecret] = useState("");
@@ -643,6 +797,8 @@ export function QcTestsView() {
       analyst_name: c.analyst_name ?? "",
       issued_by_name: c.issued_by_name ?? "",
       custom_notes: c.custom_notes ?? "",
+      template_key: c.template_key ?? "STANDARD",
+      custom_fields: c.custom_fields && typeof c.custom_fields === "object" ? { ...c.custom_fields } : {},
       reason: "",
       qc_results_snapshot: rawResults.map((st: any, idx: number) => ({
         seq: st.seq ?? idx + 1,
@@ -1159,281 +1315,494 @@ export function QcTestsView() {
               </div>
             </div>
 
-            {/* PHẦN III: MẪU 2 — PHIẾU COA (BM-QC-COA-01) & NGÔN NGỮ */}
+            {/* PHẦN III: DANH MỤC MẪU COA THEO NHÓM SẢN PHẨM (9 MẪU CHUẨN + TÙY THÊM MẪU MỚI) */}
             <div className="pt-3 border-t border-sky-200 dark:border-sky-800 space-y-3">
-              <div>
-                <div className="text-xs font-extrabold uppercase text-blue-900 dark:text-sky-300">
-                  III. Cài đặt Mẫu 2 — Giấy Chứng Nhận Phân Tích COA ({formsConfig.coa.form_code}) &amp; Ngôn ngữ xuất
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="text-xs font-extrabold uppercase text-blue-900 dark:text-sky-300">
+                    III. Quản lý Các Mẫu COA Theo Nhóm Sản Phẩm ({formsConfig.coa_templates.length} mẫu) &amp; Ngôn ngữ xuất
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    Mỗi nhóm sản phẩm (Kit phổ biến, OEM HN / TBR / Celltek / Medi / Metalab, Hóa chất tự pha, Chứng dương, Vật tư nguyên liệu) có mẫu COA riêng với câu chữ, tiêu đề, số HĐ gia công và trường thông tin riêng.
+                  </div>
                 </div>
-                <div className="text-[11px] text-slate-500">
-                  Mặc định COA chỉ ghi kết luận ĐẠT / KHÔNG ĐẠT so với Tiêu chuẩn Cơ sở (TCCS), không công bố số đo nội bộ chi tiết. Khi xem/in có thể chuyển nhanh giữa Song ngữ, Tiếng Việt và Tiếng Anh.
-                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    const rawKey = window.prompt("Nhập mã định danh mẫu COA mới (VD: OEM_ABC, KIT_EXPORT):");
+                    if (!rawKey) return;
+                    const key = rawKey.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+                    if (!key) return;
+                    if (formsConfig.coa_templates.some((t) => t.key === key)) {
+                      window.alert("Mã mẫu COA này đã tồn tại!");
+                      setActiveTplKey(key);
+                      return;
+                    }
+                    const name = window.prompt("Nhập tên hiển thị của mẫu COA:", `COA ${key}`) || `COA ${key}`;
+                    const baseTpl = resolveCoaTemplate(formsConfig, "STANDARD");
+                    const newTpl: CoaTemplateVariant = {
+                      ...structuredClone(baseTpl),
+                      key,
+                      name: name.trim(),
+                      category: key.startsWith("OEM") ? "OEM" : "STANDARD",
+                      form_code: `BM-QC-COA-${key}`,
+                      note: "Mẫu COA tùy chỉnh do Phòng QC tạo thêm.",
+                      match_item_types: [],
+                      match_product_prefixes: [],
+                      match_product_codes: [],
+                    };
+                    setFormsConfig({
+                      ...formsConfig,
+                      coa_templates: [...formsConfig.coa_templates, newTpl],
+                    });
+                    setActiveTplKey(key);
+                  }}
+                >
+                  + Tạo thêm Mẫu COA mới
+                </Button>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <Field label="Mã biểu mẫu COA">
-                  <input
-                    className={inputClass}
-                    value={formsConfig.coa.form_code}
-                    onChange={(e) =>
-                      setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, form_code: e.target.value } })
-                    }
-                  />
-                </Field>
-                <Field label="Tiền tố mã COA (VD: COA-)">
-                  <input
-                    className={inputClass}
-                    value={formsConfig.coa.doc_prefix}
-                    onChange={(e) =>
-                      setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, doc_prefix: e.target.value } })
-                    }
-                  />
-                </Field>
-                <Field label="Ngôn ngữ xuất COA mặc định">
-                  <select
-                    className={inputClass}
-                    value={formsConfig.coa.default_lang}
-                    onChange={(e) =>
-                      setFormsConfig({
-                        ...formsConfig,
-                        coa: { ...formsConfig.coa, default_lang: e.target.value as any },
-                      })
-                    }
+              {/* Template selector pills */}
+              <div className="flex flex-wrap gap-1.5">
+                {formsConfig.coa_templates.map((tpl) => (
+                  <button
+                    key={tpl.key}
+                    type="button"
+                    onClick={() => setActiveTplKey(tpl.key)}
+                    className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border cursor-pointer transition-colors ${
+                      activeTplKey === tpl.key
+                        ? "bg-blue-800 text-white border-blue-800 shadow-xs"
+                        : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700 hover:bg-slate-100"
+                    }`}
                   >
-                    <option value="BI">Song ngữ Mẫu chuẩn (BI)</option>
-                    <option value="VI">🇻🇳 Tiếng Việt hoàn toàn (VI)</option>
-                    <option value="EN">🇬🇧 Tiếng Anh hoàn toàn (EN)</option>
-                  </select>
-                </Field>
-                <Field label="Chế độ Bảng kết quả trên COA">
-                  <select
-                    className={inputClass}
-                    value={formsConfig.coa.results_mode}
-                    onChange={(e) =>
-                      setFormsConfig({
-                        ...formsConfig,
-                        coa: { ...formsConfig.coa, results_mode: e.target.value as any },
-                      })
-                    }
-                  >
-                    <option value="TCCS_CONFORMANCE">1. Chỉ ghi Đạt / Không đạt theo TCCS (Mẫu ABT đang áp dụng)</option>
-                    <option value="SUMMARY_TEMPLATE">2. Bộ chỉ tiêu tổng quát tự cấu hình bên dưới</option>
-                    <option value="CONFORMS_ONLY">3. Tên chỉ tiêu từ QC nhưng chỉ ghi Đạt chuẩn</option>
-                    <option value="DETAILED_QC">4. Hiển thị chi tiết giá trị đo thực tế từ QC</option>
-                  </select>
-                </Field>
+                    {tpl.name} <span className="opacity-75 font-mono text-[10px]">({tpl.form_code})</span>
+                  </button>
+                ))}
               </div>
 
-              {formsConfig.coa.results_mode === "TCCS_CONFORMANCE" && (
-                <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 space-y-2.5">
-                  <div className="text-[11px] font-bold text-slate-700 dark:text-slate-200">
-                    Nội dung dòng Chỉ tiêu đánh giá theo TCCS (dùng <code>{"{TCCS}"}</code> để tự động chèn mã TCCS của sản phẩm):
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <Field label="Chỉ tiêu (VI / Song ngữ)">
-                      <input
-                        className={inputClass}
-                        value={formsConfig.coa.tccs_param_vi}
-                        onChange={(e) =>
-                          setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, tccs_param_vi: e.target.value } })
-                        }
-                      />
-                    </Field>
-                    <Field label="Chỉ tiêu (English)">
-                      <input
-                        className={inputClass}
-                        value={formsConfig.coa.tccs_param_en}
-                        onChange={(e) =>
-                          setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, tccs_param_en: e.target.value } })
-                        }
-                      />
-                    </Field>
-                    <Field label="Phương pháp kiểm tra (VI / Song ngữ)">
-                      <input
-                        className={inputClass}
-                        value={formsConfig.coa.tccs_method_vi}
-                        onChange={(e) =>
-                          setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, tccs_method_vi: e.target.value } })
-                        }
-                      />
-                    </Field>
-                    <Field label="Phương pháp kiểm tra (English)">
-                      <input
-                        className={inputClass}
-                        value={formsConfig.coa.tccs_method_en}
-                        onChange={(e) =>
-                          setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, tccs_method_en: e.target.value } })
-                        }
-                      />
-                    </Field>
-                    <Field label="Mẫu Yêu cầu kỹ thuật (VI · dùng {TCCS})">
-                      <input
-                        className={inputClass}
-                        value={formsConfig.coa.tccs_spec_template_vi}
-                        onChange={(e) =>
-                          setFormsConfig({
-                            ...formsConfig,
-                            coa: { ...formsConfig.coa, tccs_spec_template_vi: e.target.value },
-                          })
-                        }
-                      />
-                    </Field>
-                    <Field label="Mẫu Yêu cầu kỹ thuật (EN · dùng {TCCS})">
-                      <input
-                        className={inputClass}
-                        value={formsConfig.coa.tccs_spec_template_en}
-                        onChange={(e) =>
-                          setFormsConfig({
-                            ...formsConfig,
-                            coa: { ...formsConfig.coa, tccs_spec_template_en: e.target.value },
-                          })
-                        }
-                      />
-                    </Field>
-                  </div>
-                </div>
-              )}
+              {(() => {
+                const tplIdx = Math.max(
+                  0,
+                  formsConfig.coa_templates.findIndex((t) => t.key === activeTplKey)
+                );
+                const tpl = formsConfig.coa_templates[tplIdx] ?? formsConfig.coa_templates[0];
+                if (!tpl) return null;
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="Kết luận ĐẠT trên COA (Tiếng Việt / Song ngữ)">
-                  <textarea
-                    rows={2}
-                    className={inputClass}
-                    value={formsConfig.coa.conclusion_pass_vi}
-                    onChange={(e) =>
-                      setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, conclusion_pass_vi: e.target.value } })
-                    }
-                  />
-                </Field>
-                <Field label="Kết luận ĐẠT trên COA (English)">
-                  <textarea
-                    rows={2}
-                    className={inputClass}
-                    value={formsConfig.coa.conclusion_pass_en}
-                    onChange={(e) =>
-                      setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, conclusion_pass_en: e.target.value } })
-                    }
-                  />
-                </Field>
-              </div>
+                const updateActiveTpl = (patch: Partial<CoaTemplateVariant>) => {
+                  const nextList = [...formsConfig.coa_templates];
+                  const updated = { ...tpl, ...patch };
+                  nextList[tplIdx] = updated;
+                  // Đồng bộ mẫu STANDARD với formsConfig.coa để giữ tương thích ngược
+                  const nextCoa =
+                    updated.key === "STANDARD"
+                      ? {
+                          ...formsConfig.coa,
+                          form_code: updated.form_code,
+                          doc_prefix: updated.doc_prefix,
+                          default_lang: updated.default_lang,
+                          title_bi_main: updated.title_bi_main,
+                          title_bi_sub: updated.title_bi_sub,
+                          title_vi_main: updated.title_vi_main,
+                          title_en_main: updated.title_en_main,
+                          title_en_sub: updated.title_en_sub,
+                          results_mode: updated.results_mode,
+                          tccs_param_vi: updated.tccs_param_vi,
+                          tccs_param_en: updated.tccs_param_en,
+                          tccs_method_vi: updated.tccs_method_vi,
+                          tccs_method_en: updated.tccs_method_en,
+                          tccs_spec_template_vi: updated.tccs_spec_template_vi,
+                          tccs_spec_template_en: updated.tccs_spec_template_en,
+                          tccs_spec_fallback_vi: updated.tccs_spec_fallback_vi,
+                          tccs_spec_fallback_en: updated.tccs_spec_fallback_en,
+                          conclusion_pass_vi: updated.conclusion_pass_vi,
+                          conclusion_pass_en: updated.conclusion_pass_en,
+                          conclusion_fail_vi: updated.conclusion_fail_vi,
+                          conclusion_fail_en: updated.conclusion_fail_en,
+                          custom_summary_rows: updated.custom_summary_rows,
+                        }
+                      : formsConfig.coa;
+                  setFormsConfig({ ...formsConfig, coa: nextCoa, coa_templates: nextList });
+                };
 
-              {formsConfig.coa.results_mode === "SUMMARY_TEMPLATE" && (
-                <div className="space-y-2 bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-700 dark:text-slate-200">
-                      Danh sách Chỉ tiêu Tổng quát trên COA ({formsConfig.coa.custom_summary_rows.length} dòng):
-                    </span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      onClick={() =>
-                        setFormsConfig({
-                          ...formsConfig,
-                          coa: {
-                            ...formsConfig.coa,
-                            custom_summary_rows: [
-                              ...formsConfig.coa.custom_summary_rows,
-                              {
-                                seq: formsConfig.coa.custom_summary_rows.length + 1,
-                                parameter_name: "Cảm quan và kỹ thuật",
-                                parameter_name_en: "Sensory & Technical",
-                                method: "Kiểm tra theo SOP",
-                                method_en: "Tested according to SOP",
-                                spec_limit: "Đạt yêu cầu theo TCCS",
-                                spec_limit_en: "Conforms to TCCS",
-                                observed_value: "ĐẠT (PASS)",
-                                observed_value_en: "PASS",
-                                passed: true,
-                              },
-                            ],
-                          },
-                        })
-                      }
-                    >
-                      + Thêm dòng chỉ tiêu COA
-                    </Button>
-                  </div>
+                return (
+                  <div className="p-3.5 rounded-xl border border-blue-200 dark:border-blue-800 bg-white dark:bg-slate-900 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
+                      <div>
+                        <span className="text-xs font-extrabold text-blue-900 dark:text-sky-300">
+                          Đang chỉnh mẫu: {tpl.name} (Mã: {tpl.key})
+                        </span>
+                        <div className="text-[11px] text-slate-500">{tpl.note}</div>
+                      </div>
+                      {!DEFAULT_COA_TEMPLATES.some((d) => d.key === tpl.key) && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={() => {
+                            const nextList = formsConfig.coa_templates.filter((t) => t.key !== tpl.key);
+                            setFormsConfig({ ...formsConfig, coa_templates: nextList });
+                            setActiveTplKey("STANDARD");
+                          }}
+                        >
+                          🗑️ Xóa mẫu này
+                        </Button>
+                      )}
+                    </div>
 
-                  <Table head={["#", "Chỉ tiêu (VI)", "Chỉ tiêu (EN)", "Phương pháp (VI)", "Yêu cầu (VI)", "Kết luận", ""]}>
-                    {formsConfig.coa.custom_summary_rows.map((row, idx) => (
-                      <tr key={idx}>
-                        <td className="py-1.5 pr-2 font-mono text-xs w-8">{idx + 1}</td>
-                        <td className="py-1.5 pr-2">
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <Field label="Tên mẫu COA *">
+                        <input
+                          className={inputClass}
+                          value={tpl.name}
+                          onChange={(e) => updateActiveTpl({ name: e.target.value })}
+                        />
+                      </Field>
+                      <Field label="Phân nhóm mẫu COA">
+                        <select
+                          className={inputClass}
+                          value={tpl.category}
+                          onChange={(e) => updateActiveTpl({ category: e.target.value as CoaTemplateCategory })}
+                        >
+                          <option value="STANDARD">1. COA phổ biến (Chuẩn ABT)</option>
+                          <option value="OEM">2. COA OEM (Gia công theo HĐ)</option>
+                          <option value="SELF_PREP">3. COA tự pha (BTP / Dung dịch)</option>
+                          <option value="POSITIVE_CONTROL">4. COA chứng dương (Positive Control)</option>
+                          <option value="RAW_MATERIAL">5. COA vật tư / nguyên liệu (1 lô - 1 COA)</option>
+                        </select>
+                      </Field>
+                      <Field label="Mã biểu mẫu COA">
+                        <input
+                          className={inputClass}
+                          value={tpl.form_code}
+                          onChange={(e) => updateActiveTpl({ form_code: e.target.value })}
+                        />
+                      </Field>
+                      <Field label="Tiền tố mã COA (VD: COA-)">
+                        <input
+                          className={inputClass}
+                          value={tpl.doc_prefix}
+                          onChange={(e) => updateActiveTpl({ doc_prefix: e.target.value })}
+                        />
+                      </Field>
+                      <Field label="Ngôn ngữ xuất mặc định">
+                        <select
+                          className={inputClass}
+                          value={tpl.default_lang}
+                          onChange={(e) => updateActiveTpl({ default_lang: e.target.value as any })}
+                        >
+                          <option value="BI">Song ngữ Mẫu chuẩn (BI)</option>
+                          <option value="VI">🇻🇳 Tiếng Việt hoàn toàn (VI)</option>
+                          <option value="EN">🇬🇧 Tiếng Anh hoàn toàn (EN)</option>
+                        </select>
+                      </Field>
+                      <Field label="Chế độ Bảng kết quả trên COA">
+                        <select
+                          className={inputClass}
+                          value={tpl.results_mode}
+                          onChange={(e) => updateActiveTpl({ results_mode: e.target.value as any })}
+                        >
+                          <option value="TCCS_CONFORMANCE">1. Chỉ ghi Đạt / Không đạt theo TCCS</option>
+                          <option value="SUMMARY_TEMPLATE">2. Bộ chỉ tiêu tổng quát tự cấu hình</option>
+                          <option value="CONFORMS_ONLY">3. Tên chỉ tiêu từ QC nhưng chỉ ghi Đạt chuẩn</option>
+                          <option value="DETAILED_QC">4. Hiển thị chi tiết giá trị đo thực tế từ QC</option>
+                        </select>
+                      </Field>
+                      <Field label="Tiêu đề phụ COA (Song ngữ / VI)">
+                        <input
+                          className={inputClass}
+                          value={tpl.title_bi_sub}
+                          onChange={(e) => updateActiveTpl({ title_bi_sub: e.target.value, title_vi_main: `${e.target.value} (COA)` })}
+                        />
+                      </Field>
+                      <Field label="Tiêu đề phụ COA (English)">
+                        <input
+                          className={inputClass}
+                          value={tpl.title_en_sub}
+                          onChange={(e) => updateActiveTpl({ title_en_sub: e.target.value })}
+                        />
+                      </Field>
+                    </div>
+
+                    {/* Quy tắc hiển thị đặc thù theo mẫu */}
+                    <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2.5">
+                      <div className="text-[11px] font-bold text-slate-700 dark:text-slate-200">
+                        Tùy chọn trường thông tin đặc thù &amp; Gợi ý tự động theo nhóm sản phẩm:
+                      </div>
+                      <div className="flex flex-wrap gap-4 text-xs">
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={tpl.hide_tccs}
+                            onChange={(e) => updateActiveTpl({ hide_tccs: e.target.checked })}
+                          />
+                          Ẩn số TCCS (dùng cho COA tự pha / COA vật tư)
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={tpl.show_volume_conc_seq}
+                            onChange={(e) => updateActiveTpl({ show_volume_conc_seq: e.target.checked })}
+                          />
+                          Thể hiện Thể tích, Nồng độ, Trình tự (nếu yêu cầu)
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={tpl.show_ct_standard}
+                            onChange={(e) => updateActiveTpl({ show_ct_standard: e.target.checked })}
+                          />
+                          Thể hiện Tiêu chuẩn Ct &amp; Số TCCS bộ Kit (COA chứng dương)
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={tpl.show_raw_material_lot}
+                            onChange={(e) => updateActiveTpl({ show_raw_material_lot: e.target.checked })}
+                          />
+                          Xuất theo lô nguyên liệu (1 lô nguyên liệu - 1 COA)
+                        </label>
+                      </div>
+
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        {tpl.category === "OEM" && (
+                          <>
+                            <Field label="Tên đơn vị OEM (VD: HN, TBR, Celltek...)">
+                              <input
+                                className={inputClass}
+                                value={tpl.oem_partner_name}
+                                onChange={(e) => updateActiveTpl({ oem_partner_name: e.target.value })}
+                              />
+                            </Field>
+                            <Field label="Số Hợp đồng gia công mặc định">
+                              <input
+                                className={inputClass}
+                                placeholder="VD: 01/2026/HĐGC-HN"
+                                value={tpl.default_contract_no}
+                                onChange={(e) => updateActiveTpl({ default_contract_no: e.target.value })}
+                              />
+                            </Field>
+                          </>
+                        )}
+                        <Field label="Tiền tố mã SP tự gợi ý (cách bởi dấu phẩy, VD: SOL-, PREP-)">
                           <input
                             className={inputClass}
-                            value={row.parameter_name}
-                            onChange={(e) => {
-                              const next = [...formsConfig.coa.custom_summary_rows];
-                              next[idx] = { ...next[idx], parameter_name: e.target.value };
-                              setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, custom_summary_rows: next } });
-                            }}
+                            placeholder="VD: SOL-, PREP-, PC-"
+                            value={tpl.match_product_prefixes.join(", ")}
+                            onChange={(e) =>
+                              updateActiveTpl({
+                                match_product_prefixes: e.target.value
+                                  .split(",")
+                                  .map((s) => s.trim().toUpperCase())
+                                  .filter(Boolean),
+                              })
+                            }
                           />
-                        </td>
-                        <td className="py-1.5 pr-2">
+                        </Field>
+                        <Field label="Mã sản phẩm gán cố định vào mẫu này (cách bởi dấu phẩy)">
                           <input
                             className={inputClass}
-                            value={row.parameter_name_en ?? ""}
-                            onChange={(e) => {
-                              const next = [...formsConfig.coa.custom_summary_rows];
-                              next[idx] = { ...next[idx], parameter_name_en: e.target.value };
-                              setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, custom_summary_rows: next } });
-                            }}
+                            placeholder="VD:SQH-001, HI-002"
+                            value={tpl.match_product_codes.join(", ")}
+                            onChange={(e) =>
+                              updateActiveTpl({
+                                match_product_codes: e.target.value
+                                  .split(",")
+                                  .map((s) => s.trim().toUpperCase())
+                                  .filter(Boolean),
+                              })
+                            }
                           />
-                        </td>
-                        <td className="py-1.5 pr-2">
-                          <input
-                            className={inputClass}
-                            value={row.method}
-                            onChange={(e) => {
-                              const next = [...formsConfig.coa.custom_summary_rows];
-                              next[idx] = { ...next[idx], method: e.target.value };
-                              setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, custom_summary_rows: next } });
-                            }}
-                          />
-                        </td>
-                        <td className="py-1.5 pr-2">
-                          <input
-                            className={inputClass}
-                            value={row.spec_limit}
-                            onChange={(e) => {
-                              const next = [...formsConfig.coa.custom_summary_rows];
-                              next[idx] = { ...next[idx], spec_limit: e.target.value };
-                              setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, custom_summary_rows: next } });
-                            }}
-                          />
-                        </td>
-                        <td className="py-1.5 pr-2 w-28">
-                          <select
-                            className={inputClass}
-                            value={row.passed ? "PASS" : "FAIL"}
-                            onChange={(e) => {
-                              const next = [...formsConfig.coa.custom_summary_rows];
-                              next[idx] = { ...next[idx], passed: e.target.value === "PASS" };
-                              setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, custom_summary_rows: next } });
-                            }}
-                          >
-                            <option value="PASS">ĐẠT / PASS</option>
-                            <option value="FAIL">KHÔNG ĐẠT</option>
-                          </select>
-                        </td>
-                        <td className="py-1.5 text-right w-8">
-                          <button
+                        </Field>
+                      </div>
+                    </div>
+
+                    {tpl.results_mode === "TCCS_CONFORMANCE" && (
+                      <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900 space-y-2.5">
+                        <div className="text-[11px] font-bold text-slate-700 dark:text-slate-200">
+                          Nội dung dòng Chỉ tiêu đánh giá của mẫu {tpl.name} (dùng <code>{"{TCCS}"}</code> để tự chèn mã TCCS):
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <Field label="Chỉ tiêu (VI / Song ngữ)">
+                            <input
+                              className={inputClass}
+                              value={tpl.tccs_param_vi}
+                              onChange={(e) => updateActiveTpl({ tccs_param_vi: e.target.value })}
+                            />
+                          </Field>
+                          <Field label="Chỉ tiêu (English)">
+                            <input
+                              className={inputClass}
+                              value={tpl.tccs_param_en}
+                              onChange={(e) => updateActiveTpl({ tccs_param_en: e.target.value })}
+                            />
+                          </Field>
+                          <Field label="Phương pháp kiểm tra (VI / Song ngữ)">
+                            <input
+                              className={inputClass}
+                              value={tpl.tccs_method_vi}
+                              onChange={(e) => updateActiveTpl({ tccs_method_vi: e.target.value })}
+                            />
+                          </Field>
+                          <Field label="Phương pháp kiểm tra (English)">
+                            <input
+                              className={inputClass}
+                              value={tpl.tccs_method_en}
+                              onChange={(e) => updateActiveTpl({ tccs_method_en: e.target.value })}
+                            />
+                          </Field>
+                          <Field label="Mẫu Yêu cầu kỹ thuật (VI · dùng {TCCS})">
+                            <input
+                              className={inputClass}
+                              value={tpl.tccs_spec_template_vi}
+                              onChange={(e) => updateActiveTpl({ tccs_spec_template_vi: e.target.value })}
+                            />
+                          </Field>
+                          <Field label="Mẫu Yêu cầu kỹ thuật (EN · dùng {TCCS})">
+                            <input
+                              className={inputClass}
+                              value={tpl.tccs_spec_template_en}
+                              onChange={(e) => updateActiveTpl({ tccs_spec_template_en: e.target.value })}
+                            />
+                          </Field>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <Field label="Câu chữ Kết luận ĐẠT trên COA (Tiếng Việt / Song ngữ)">
+                        <textarea
+                          rows={2}
+                          className={inputClass}
+                          value={tpl.conclusion_pass_vi}
+                          onChange={(e) => updateActiveTpl({ conclusion_pass_vi: e.target.value })}
+                        />
+                      </Field>
+                      <Field label="Câu chữ Kết luận ĐẠT trên COA (English)">
+                        <textarea
+                          rows={2}
+                          className={inputClass}
+                          value={tpl.conclusion_pass_en}
+                          onChange={(e) => updateActiveTpl({ conclusion_pass_en: e.target.value })}
+                        />
+                      </Field>
+                    </div>
+
+                    {tpl.results_mode === "SUMMARY_TEMPLATE" && (
+                      <div className="space-y-2 bg-slate-50/60 dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                            Danh sách Chỉ tiêu Tổng quát của mẫu {tpl.name} ({tpl.custom_summary_rows.length} dòng):
+                          </span>
+                          <Button
                             type="button"
-                            className="text-rose-600 hover:text-rose-800 font-bold px-2 py-1 cursor-pointer"
-                            title="Xóa dòng"
-                            onClick={() => {
-                              const next = formsConfig.coa.custom_summary_rows.filter((_, i) => i !== idx);
-                              setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, custom_summary_rows: next } });
-                            }}
+                            variant="ghost"
+                            onClick={() =>
+                              updateActiveTpl({
+                                custom_summary_rows: [
+                                  ...tpl.custom_summary_rows,
+                                  {
+                                    seq: tpl.custom_summary_rows.length + 1,
+                                    parameter_name: "Cảm quan và kỹ thuật",
+                                    parameter_name_en: "Sensory & Technical",
+                                    method: "Kiểm tra theo SOP",
+                                    method_en: "Tested according to SOP",
+                                    spec_limit: "Đạt yêu cầu",
+                                    spec_limit_en: "Conforms",
+                                    observed_value: "ĐẠT (PASS)",
+                                    observed_value_en: "PASS",
+                                    passed: true,
+                                  },
+                                ],
+                              })
+                            }
                           >
-                            ✕
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </Table>
-                </div>
-              )}
+                            + Thêm dòng chỉ tiêu COA
+                          </Button>
+                        </div>
+
+                        <Table head={["#", "Chỉ tiêu (VI)", "Chỉ tiêu (EN)", "Phương pháp (VI)", "Yêu cầu (VI)", "Kết luận", ""]}>
+                          {tpl.custom_summary_rows.map((row, idx) => (
+                            <tr key={idx}>
+                              <td className="py-1.5 pr-2 font-mono text-xs w-8">{idx + 1}</td>
+                              <td className="py-1.5 pr-2">
+                                <input
+                                  className={inputClass}
+                                  value={row.parameter_name}
+                                  onChange={(e) => {
+                                    const next = [...tpl.custom_summary_rows];
+                                    next[idx] = { ...next[idx], parameter_name: e.target.value };
+                                    updateActiveTpl({ custom_summary_rows: next });
+                                  }}
+                                />
+                              </td>
+                              <td className="py-1.5 pr-2">
+                                <input
+                                  className={inputClass}
+                                  value={row.parameter_name_en ?? ""}
+                                  onChange={(e) => {
+                                    const next = [...tpl.custom_summary_rows];
+                                    next[idx] = { ...next[idx], parameter_name_en: e.target.value };
+                                    updateActiveTpl({ custom_summary_rows: next });
+                                  }}
+                                />
+                              </td>
+                              <td className="py-1.5 pr-2">
+                                <input
+                                  className={inputClass}
+                                  value={row.method}
+                                  onChange={(e) => {
+                                    const next = [...tpl.custom_summary_rows];
+                                    next[idx] = { ...next[idx], method: e.target.value };
+                                    updateActiveTpl({ custom_summary_rows: next });
+                                  }}
+                                />
+                              </td>
+                              <td className="py-1.5 pr-2">
+                                <input
+                                  className={inputClass}
+                                  value={row.spec_limit}
+                                  onChange={(e) => {
+                                    const next = [...tpl.custom_summary_rows];
+                                    next[idx] = { ...next[idx], spec_limit: e.target.value };
+                                    updateActiveTpl({ custom_summary_rows: next });
+                                  }}
+                                />
+                              </td>
+                              <td className="py-1.5 pr-2 w-28">
+                                <select
+                                  className={inputClass}
+                                  value={row.passed ? "PASS" : "FAIL"}
+                                  onChange={(e) => {
+                                    const next = [...tpl.custom_summary_rows];
+                                    next[idx] = { ...next[idx], passed: e.target.value === "PASS" };
+                                    updateActiveTpl({ custom_summary_rows: next });
+                                  }}
+                                >
+                                  <option value="PASS">ĐẠT / PASS</option>
+                                  <option value="FAIL">KHÔNG ĐẠT</option>
+                                </select>
+                              </td>
+                              <td className="py-1.5 text-right w-8">
+                                <button
+                                  type="button"
+                                  className="text-rose-600 hover:text-rose-800 font-bold px-2 py-1 cursor-pointer"
+                                  title="Xóa dòng"
+                                  onClick={() => {
+                                    const next = tpl.custom_summary_rows.filter((_, i) => i !== idx);
+                                    updateActiveTpl({ custom_summary_rows: next });
+                                  }}
+                                >
+                                  ✕
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </Table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* PHẦN IV: QUẢN LÝ CHỮ KÝ NHÂN VIÊN PHÒNG QC/QA */}
@@ -2014,6 +2383,84 @@ export function QcTestsView() {
                     />
                   </Field>
                 </div>
+                <Field label="Mẫu COA áp dụng">
+                  <select
+                    className={inputClass}
+                    value={editingCoa.template_key || "STANDARD"}
+                    onChange={(e) => setEditingCoa({ ...editingCoa, template_key: e.target.value })}
+                  >
+                    {formsConfig.coa_templates.map((t) => (
+                      <option key={t.key} value={t.key}>
+                        {t.name} ({t.form_code})
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Số HĐ gia công (nếu mẫu OEM)">
+                  <input
+                    className={inputClass}
+                    value={editingCoa.custom_fields?.contract_no ?? ""}
+                    onChange={(e) =>
+                      setEditingCoa({
+                        ...editingCoa,
+                        custom_fields: { ...(editingCoa.custom_fields ?? {}), contract_no: e.target.value },
+                      })
+                    }
+                    placeholder="VD: 01/2026/HĐGC-ABT"
+                  />
+                </Field>
+                <Field label="Thể tích / Nồng độ (nếu tự pha / chứng dương)">
+                  <div className="flex gap-1.5">
+                    <input
+                      className={inputClass}
+                      value={editingCoa.custom_fields?.volume ?? ""}
+                      onChange={(e) =>
+                        setEditingCoa({
+                          ...editingCoa,
+                          custom_fields: { ...(editingCoa.custom_fields ?? {}), volume: e.target.value },
+                        })
+                      }
+                      placeholder="Thể tích"
+                    />
+                    <input
+                      className={inputClass}
+                      value={editingCoa.custom_fields?.concentration ?? ""}
+                      onChange={(e) =>
+                        setEditingCoa({
+                          ...editingCoa,
+                          custom_fields: { ...(editingCoa.custom_fields ?? {}), concentration: e.target.value },
+                        })
+                      }
+                      placeholder="Nồng độ"
+                    />
+                  </div>
+                </Field>
+                <Field label="Tiêu chuẩn Ct / Trình tự (nếu có)">
+                  <div className="flex gap-1.5">
+                    <input
+                      className={inputClass}
+                      value={editingCoa.custom_fields?.ct_standard ?? ""}
+                      onChange={(e) =>
+                        setEditingCoa({
+                          ...editingCoa,
+                          custom_fields: { ...(editingCoa.custom_fields ?? {}), ct_standard: e.target.value },
+                        })
+                      }
+                      placeholder="Tiêu chuẩn Ct"
+                    />
+                    <input
+                      className={inputClass}
+                      value={editingCoa.custom_fields?.sequence ?? ""}
+                      onChange={(e) =>
+                        setEditingCoa({
+                          ...editingCoa,
+                          custom_fields: { ...(editingCoa.custom_fields ?? {}), sequence: e.target.value },
+                        })
+                      }
+                      placeholder="Trình tự 5'→3'"
+                    />
+                  </div>
+                </Field>
                 <Field label="Ghi chú bổ sung trên COA">
                   <input
                     className={inputClass}

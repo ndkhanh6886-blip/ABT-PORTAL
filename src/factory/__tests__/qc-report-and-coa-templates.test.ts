@@ -12,10 +12,13 @@ import { coaForTest } from "../qms/coa";
 import { issueCoaFromQcTest, loadQcFormsConfig, saveCoaTemplateConfig } from "../qms/qaOps";
 import { listQualityRecords } from "../kit/qualityTrace";
 import {
+  DEFAULT_COA_TEMPLATES,
   DEFAULT_QC_FORMS_CONFIG,
   DEFAULT_QC_STAFF_SIGNATURES,
   normalizeQcFormsConfig,
+  resolveCoaTemplate,
   resolveQcSignature,
+  suggestCoaTemplateKey,
 } from "../../frontend/factory/qcSignatures";
 import {
   buildCoaCertificateHtml,
@@ -405,6 +408,37 @@ describe("QC Test Report (BM-QC-TR-01), COA (BM-QC-COA-01), Multilingual Export 
     expect(issued.coa.qc_results_snapshot[0].parameter_name).toBe("Cảm quan và kỹ thuật");
     expect(issued.coa.qc_results_snapshot[0].spec_limit).toContain("TCCS 222:2024/ABTLH");
 
+    // 5c-bis. Issue COA on an OEM lot with template_key + manual custom_fields and verify DB persistence
+    const oemLot = await stockedLot(site, product.id, 10, "2027-12-31");
+    const oemTest = await withTransaction((tx) =>
+      createQcTest(tx, analyst, { entity_type: "LOT", entity_id: oemLot.id, spec_id: spec.id, test_kind: "FQC" })
+    );
+    await act(qcTestMachine, analyst, oemTest.id, "start");
+    await withTransaction((tx) =>
+      saveResults(tx, analyst, oemTest.id, { results: [{ parameter_id: params[0].id, value_numeric: 7.2 }] })
+    );
+    await act(qcTestMachine, analyst, oemTest.id, "submit_results");
+    await act(qcTestMachine, reviewer, oemTest.id, "review", signed);
+
+    const oemIssued = await withTransaction((tx) =>
+      issueCoaFromQcTest(
+        tx,
+        reviewer,
+        {
+          test_id: oemTest.id,
+          template_key: "OEM_HN",
+          custom_fields: { contract_no: "09/2026/HĐGC-HN", oem_partner: "Đối tác HN" },
+          ...signed,
+        },
+        { signerAuthenticated: true }
+      )
+    );
+    expect(oemIssued.coa.template_key).toBe("OEM_HN");
+    expect(oemIssued.coa.custom_fields).toEqual({
+      contract_no: "09/2026/HĐGC-HN",
+      oem_partner: "Đối tác HN",
+    });
+
     await expect(
       getFactoryPool().query("UPDATE kit.coa_certificate SET qc_summary = 'tampered' WHERE id = $1", [issued.coa.id])
     ).rejects.toThrow();
@@ -424,5 +458,129 @@ describe("QC Test Report (BM-QC-TR-01), COA (BM-QC-COA-01), Multilingual Export 
         qc_forms_config: DEFAULT_QC_FORMS_CONFIG,
       })
     );
+  });
+
+  it("6. Supports 9 specialized COA templates (Standard, OEM HN/TBR/Celltek/Medi/Metalab, Self-Prep, Positive Control, Raw Material) with auto-suggestion & manual custom fields", () => {
+    const cfg = normalizeQcFormsConfig(null, null);
+    expect(cfg.coa_templates).toHaveLength(9);
+    expect(cfg.coa_templates.map((t) => t.key)).toEqual([
+      "STANDARD",
+      "OEM_HN",
+      "OEM_TBR",
+      "OEM_CELLTEK",
+      "OEM_MEDI",
+      "OEM_METALAB",
+      "SELF_PREP",
+      "POSITIVE_CONTROL",
+      "RAW_MATERIAL",
+    ]);
+    expect(DEFAULT_COA_TEMPLATES).toHaveLength(9);
+
+    // Auto-suggestion by product prefix, item_type, OEM partner, and test_kind
+    expect(suggestCoaTemplateKey(cfg, { item_code: "SOL-TEAA-01M", item_type: "SEMI_FINISHED" })).toBe("SELF_PREP");
+    expect(suggestCoaTemplateKey(cfg, { item_code: "PC-CTRL-01", item_name: "Chứng dương chuẩn" })).toBe("POSITIVE_CONTROL");
+    expect(suggestCoaTemplateKey(cfg, { item_code: "CHEM-TRIS", item_type: "REAGENT", test_kind: "IQC" })).toBe("RAW_MATERIAL");
+    expect(suggestCoaTemplateKey(cfg, { item_code: "SQH-001", item_name: "Kit gia công Celltek", item_type: "FINISHED_KIT" })).toBe("OEM_CELLTEK");
+    expect(suggestCoaTemplateKey(cfg, { item_code: "SQH-001", item_type: "FINISHED_KIT", test_kind: "FQC" })).toBe("STANDARD");
+
+    // 6a. OEM template renders OEM Contract No. & custom OEM conclusion text
+    const oemModel = prepareCoaCertificateModel(
+      {
+        code: "COA-OEM-01",
+        product_code: "OEM-CTK-01",
+        product_name: "Kit OEM Celltek",
+        lot_code: "B261101",
+        mfg_date: "2026-11-01",
+        expiry_date: "2027-11-01",
+        good_qty: 50,
+        uom: "KIT",
+        tccs_code: "TCCS 09:2025/ABTLH",
+        template_key: "OEM_CELLTEK",
+        custom_fields: { contract_no: "08/2026/HĐGC-CELLTEK", oem_partner: "Công ty Celltek" },
+        qc_results_snapshot: [],
+      },
+      cfg,
+      "VI"
+    );
+    expect(oemModel.formCode).toBe("BM-QC-COA-OEM-CTK");
+    expect(oemModel.contractNo).toBe("08/2026/HĐGC-CELLTEK");
+    expect(oemModel.conclusionBody).toContain("Celltek");
+    const oemHtml = buildCoaCertificateHtml(
+      {
+        code: "COA-OEM-01",
+        product_code: "OEM-CTK-01",
+        product_name: "Kit OEM Celltek",
+        lot_code: "B261101",
+        template_key: "OEM_CELLTEK",
+        custom_fields: { contract_no: "08/2026/HĐGC-CELLTEK", oem_partner: "Công ty Celltek" },
+      },
+      cfg,
+      "VI"
+    );
+    expect(oemHtml).toContain("08/2026/HĐGC-CELLTEK");
+    expect(oemHtml).toContain("Số hợp đồng gia công:");
+
+    // 6b. Self-prepared template hides TCCS and displays Volume, Concentration & Sequence
+    const selfPrepModel = prepareCoaCertificateModel(
+      {
+        code: "COA-PREP-01",
+        product_code: "SOL-TEAA-01M",
+        product_name: "Dung dịch đệm 0.1M TEAA pH 7.0",
+        lot_code: "P261101",
+        tccs_code: "SHOULD-BE-HIDDEN",
+        template_key: "SELF_PREP",
+        custom_fields: { volume: "500 mL", concentration: "0.1 M", sequence: "ATCGATCG53" },
+        qc_results_snapshot: [],
+      },
+      cfg,
+      "VI"
+    );
+    expect(selfPrepModel.hideTccs).toBe(true);
+    expect(selfPrepModel.volumeText).toBe("500 mL");
+    expect(selfPrepModel.concentrationText).toBe("0.1 M");
+    expect(selfPrepModel.sequenceText).toBe("ATCGATCG53");
+    const selfPrepHtml = buildCoaCertificateHtml(
+      {
+        code: "COA-PREP-01",
+        product_code: "SOL-TEAA-01M",
+        product_name: "Dung dịch đệm 0.1M TEAA pH 7.0",
+        lot_code: "P261101",
+        tccs_code: "SHOULD-BE-HIDDEN",
+        template_key: "SELF_PREP",
+        custom_fields: { volume: "500 mL", concentration: "0.1 M", sequence: "ATCGATCG53" },
+      },
+      cfg,
+      "VI"
+    );
+    expect(selfPrepHtml).not.toContain("SHOULD-BE-HIDDEN");
+    expect(selfPrepHtml).toContain("500 mL");
+    expect(selfPrepHtml).toContain("0.1 M");
+    expect(selfPrepHtml).toContain("ATCGATCG53");
+
+    // 6c. Positive Control template shows Kit TCCS, Volume, Concentration & Standard Ct
+    const pcHtml = buildCoaCertificateHtml(
+      {
+        code: "COA-PC-01",
+        product_code: "PC-001",
+        product_name: "Chứng dương tổng hợp",
+        lot_code: "PC261101",
+        template_key: "POSITIVE_CONTROL",
+        custom_fields: {
+          volume: "100 µL",
+          concentration: "10^4 copies/µL",
+          ct_standard: "Ct 26.5 ± 1.5",
+          kit_tccs_code: "TCCS 15:2025/ABTLH",
+        },
+      },
+      cfg,
+      "VI"
+    );
+    expect(pcHtml).toContain("Ct 26.5 ± 1.5");
+    expect(pcHtml).toContain("TCCS 15:2025/ABTLH");
+
+    // 6d. Raw Material template (1 material lot - 1 COA)
+    const rmTpl = resolveCoaTemplate(cfg, "RAW_MATERIAL");
+    expect(rmTpl.show_raw_material_lot).toBe(true);
+    expect(rmTpl.hide_tccs).toBe(true);
   });
 });
