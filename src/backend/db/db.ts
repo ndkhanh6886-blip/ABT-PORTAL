@@ -385,6 +385,22 @@ async function runIntegrityMigrations() {
     // D2b: ensure sales_contracts has extra_data JSONB, unique index on contract_code, and syncs with app_storage.sales_contracts
     await step("dedupe_and_sync_sales_contracts", async () => {
       await client.query("ALTER TABLE sales_contracts ADD COLUMN IF NOT EXISTS extra_data JSONB DEFAULT '{}'::jsonb");
+      // extra_data must never hold a nested copy of itself: each save used to wrap the previous copy one level
+      // deeper until a contract reached several MB. The trigger strips the nested key on every write, whatever the path.
+      await client.query(`
+        CREATE OR REPLACE FUNCTION strip_contract_nested_extra() RETURNS trigger AS $f$
+        BEGIN
+          IF NEW.extra_data IS NOT NULL AND jsonb_typeof(NEW.extra_data) = 'object' AND NEW.extra_data ? 'extra_data' THEN
+            NEW.extra_data := NEW.extra_data - 'extra_data';
+          END IF;
+          RETURN NEW;
+        END
+        $f$ LANGUAGE plpgsql;
+        DROP TRIGGER IF EXISTS trg_strip_contract_nested_extra ON sales_contracts;
+        CREATE TRIGGER trg_strip_contract_nested_extra BEFORE INSERT OR UPDATE ON sales_contracts
+          FOR EACH ROW EXECUTE FUNCTION strip_contract_nested_extra();
+      `);
+      await client.query("UPDATE sales_contracts SET extra_data = extra_data - 'extra_data' WHERE extra_data ? 'extra_data'");
       if (!(await indexExists("sales_contracts_contract_code_uidx")) && !(await indexExists("sales_contracts_contract_code_key"))) {
         await client.query("BEGIN");
         try {
@@ -442,7 +458,7 @@ async function runIntegrityMigrations() {
              extra_data = COALESCE(sales_contracts.extra_data, '{}'::jsonb) || EXCLUDED.extra_data,
              items = CASE WHEN jsonb_array_length(COALESCE(sales_contracts.items, '[]'::jsonb)) = 0 THEN EXCLUDED.items ELSE sales_contracts.items END,
              contract_files = CASE WHEN jsonb_array_length(COALESCE(sales_contracts.contract_files, '[]'::jsonb)) = 0 THEN EXCLUDED.contract_files ELSE sales_contracts.contract_files END`,
-          [code, custName, repName, title, totalVal, status, notes, JSON.stringify(files), JSON.stringify(items), JSON.stringify(sc)]
+          [code, custName, repName, title, totalVal, status, notes, JSON.stringify(files), JSON.stringify(items), JSON.stringify((({ extra_data: _nested, ...flat }: any) => flat)(sc || {}))]
         );
       }
     });

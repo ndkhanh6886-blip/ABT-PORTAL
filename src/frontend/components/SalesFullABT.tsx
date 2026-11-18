@@ -13806,12 +13806,47 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     // ===== HELPER LUỒNG PHIẾU GIAO HÀNG THEO ĐỢT =====
     const getItemCode = (it: any) => String(it?.productCode || it?.product_code || it?.code || "").trim();
 
+    // Chỉ mục tra cứu nhanh cho Tab Đơn hàng (500+ đơn × 1.000+ phiếu giao). Trước đây mỗi lần tìm phiếu của một đơn
+    // phải quét toàn bộ phiếu giao, và với mỗi phiếu lại quét toàn bộ đơn — mỗi lần bấm lọc mất hàng trăm triệu phép so sánh.
+    const factoryOrderById = useMemo(() => {
+        const m = new Map<string, any>();
+        (factoryOrders || []).forEach((fo: any) => {
+            const k = String(fo?.id);
+            if (!m.has(k)) m.set(k, fo);
+        });
+        return m;
+    }, [factoryOrders]);
+    const slipIndex = useMemo(() => {
+        const byId = new Map<string, number[]>();
+        const byCode = new Map<string, number[]>();
+        const push = (m: Map<string, number[]>, k: string, i: number) => {
+            const arr = m.get(k);
+            if (arr) arr.push(i); else m.set(k, [i]);
+        };
+        (deliverySlips || []).forEach((s: any, i: number) => {
+            if (!s) return;
+            const id = String(s.orderId || "");
+            const code = String(s.orderCode || "");
+            if (id) push(byId, id, i);
+            if (code) push(byCode, code, i);
+        });
+        return { byId, byCode };
+    }, [deliverySlips]);
+    const productByCodeLc = useMemo(() => {
+        const m = new Map<string, any>();
+        (allSalesProducts || []).forEach((p: any) => {
+            const k = String(p?.code || "").trim().toLowerCase();
+            if (!m.has(k)) m.set(k, p);
+        });
+        return m;
+    }, [allSalesProducts]);
+
     // Tìm đơn gốc (factoryOrders) từ đơn ở Tab Đơn hàng hoặc dòng lịch sử ở Tab Khách hàng
     const resolveFactoryOrder = (ord: any): any => {
         if (!ord) return null;
-        if (ord.raw_order) return factoryOrders.find(fo => String(fo.id) === String(ord.raw_order.id)) || ord.raw_order;
+        if (ord.raw_order) return factoryOrderById.get(String(ord.raw_order.id)) || ord.raw_order;
         const key = String(ord.order_id ?? ord.id ?? "");
-        return factoryOrders.find(fo => String(fo.id) === key)
+        return factoryOrderById.get(key)
             || (ord.raw_code ? factoryOrders.find(fo => fo.linkedSalesOrderId === ord.raw_code || fo.id === ord.raw_code) : null)
             || (ord.order_id === undefined && ord.id ? ord : null);
     };
@@ -13845,13 +13880,19 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const foId = String(fo?.id || ord.order_id || ord.id || "");
         const soCode = String(fo?.linkedSalesOrderId || ord.raw_code || "");
         const oCode = String(ord.order_code || "");
-        const list = (deliverySlips || []).filter((s: any) => {
+        // Chỉ xét các phiếu có mã đơn / mã SO khớp (tra theo chỉ mục), giữ đúng thứ tự gốc của danh sách phiếu
+        const candidateIdx = new Set<number>();
+        const addIdx = (arr?: number[]) => { if (arr) arr.forEach((i) => candidateIdx.add(i)); };
+        if (foId) addIdx(slipIndex.byId.get(foId));
+        if (soCode) { addIdx(slipIndex.byCode.get(soCode)); addIdx(slipIndex.byId.get(soCode)); }
+        if (oCode) addIdx(slipIndex.byCode.get(oCode));
+        const list = Array.from(candidateIdx).sort((a, b) => a - b).map((i) => (deliverySlips || [])[i]).filter((s: any) => {
             if (!s || s.isDraftPreview) return false;
             const sId = String(s.orderId || "");
             const sCode = String(s.orderCode || "");
             if (foId && sId === foId) return true;
             // Phiếu đã gắn với 1 đơn khác thì không tính
-            if (sId && sId !== foId && factoryOrders.some(o => String(o.id) === sId)) return false;
+            if (sId && sId !== foId && factoryOrderById.has(sId)) return false;
             return Boolean((soCode && (sCode === soCode || sId === soCode)) || (oCode && sCode === oCode));
         });
         const filtered = includeCancelled ? list : list.filter((s: any) => getSlipStatus(s, fo) !== "CANCELLED");
@@ -14323,7 +14364,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const remainingQty = Math.max(0, orderQty - Math.max(deliveredQty, allocatedQty));
 
             // Dịch vụ sửa chữa / bảo trì / hiệu chuẩn không có tồn kho vật lý, chỉ phát sinh theo thực tế khi sửa chữa
-            const matchedCatProd = allSalesProducts.find(p => String(p.code || "").trim().toLowerCase() === code.toLowerCase());
+            const matchedCatProd = productByCodeLc.get(code.toLowerCase());
             const isSvcItem = isServiceProduct({
                 code,
                 name: it.productName || it.name || matchedCatProd?.name || "",
@@ -27032,7 +27073,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 onClose={() => setPartialInvoiceModalSlip(null)}
                 title={`XUẤT HÓA ĐƠN VAT THEO PHIẾU GIAO HÀNG: ${partialInvoiceModalSlip?.slip?.id || ""}`}
                 size="3xl"
-            >
+            >{() => (<>
                 {partialInvoiceModalSlip && (() => {
                     const ord = partialInvoiceModalSlip.order;
                     const sl = partialInvoiceModalSlip.slip;
@@ -27477,7 +27518,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </form>
                     );
                 })()}
-            </Modal>
+            </>)}</Modal>
 
             {/* TAB CONTENT: EVALUATION & KPI ANALYTICS */}
             {activeTab === "evaluation" && (
@@ -27500,7 +27541,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 onClose={() => setIsCommercialModalOpen(false)}
                 title={editingCommercialProduct ? `CHỈNH SỬA HÀNG HÓA: ${editingCommercialProduct.code}` : "THÊM HÀNG HÓA THƯƠNG MẠI MỚI"}
                 size="5xl"
-            >
+            >{() => (<>
                 <form onSubmit={handleSaveCommercialProduct} className="space-y-4 p-2 text-slate-100">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
@@ -28047,7 +28088,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </button>
                     </div>
                 </form>
-            </Modal>
+            </>)}</Modal>
 
             {/* MODALS */}
 
@@ -28061,7 +28102,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 }} 
                 title={editingQuoteId ? `CHỈNH SỬA BÁO GIÁ - ${editingQuoteId}` : "LẬP BÁO GIÁ MỚI"} 
                 size="6xl"
-            >
+            >{() => (<>
                 <form onSubmit={handleCreateQuotation} className="space-y-4 p-2 text-slate-100">
                     <DraftBanner draft={quoteDraft} />
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -29293,7 +29334,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                     </div>
                 </form>
-            </Modal>
+            </>)}</Modal>
 
             {/* MODAL: CẤU HÌNH SỐ ĐIỆN THOẠI, VỊ TRÍ & LIÊN HỆ NVKD */}
             <Modal
@@ -29301,7 +29342,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 onClose={() => setIsStaffContactModalOpen(false)}
                 title="CẤU HÌNH NHÂN SỰ & PHÂN QUYỀN VỊ TRÍ PHÒNG KINH DOANH"
                 size="5xl"
-            >
+            >{() => (<>
                 <div className="space-y-4 p-2 text-slate-100">
                     <div className="bg-indigo-950/40 p-3.5 rounded-xl border border-indigo-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
                         <div className="space-y-1">
@@ -29560,7 +29601,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </button>
                     </div>
                 </div>
-            </Modal>
+            </>)}</Modal>
 
             {/* 6. CONTRACT MODAL */}
             <Modal 
@@ -29573,7 +29614,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 }} 
                 title={editingContractId ? `CHỈNH SỬA HỢP ĐỒNG - ${editingContractId}` : (selectedQuoteForContract ? "THÀNH LẬP HỢP ĐỒNG TỪ BÁO GIÁ" : "LẬP HỢP ĐỒNG MỚI (TRỰC TIẾP)")} 
                 size="4xl"
-            >
+            >{() => (<>
                 <form onSubmit={handleCreateContract} className="space-y-4 p-2 text-slate-100">
                     <DraftBanner draft={contractDraft} />
 
@@ -30302,7 +30343,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </button>
                     </div>
                 </form>
-            </Modal>
+            </>)}</Modal>
 
             {/* 6.5. PRINCIPLE CONTRACT CALL-OFF ORDER MODAL (TẠO ĐỢT ĐẶT HÀNG TỪ HĐ NGUYÊN TẮC) */}
             <Modal
@@ -30310,7 +30351,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 onClose={() => setIsPrincipleCallOffModalOpen(false)}
                 title={`TẠO ĐỢT ĐẶT HÀNG (CALL-OFF SO) TỪ HỢP ĐỒNG NGUYÊN TẮC: ${selectedPrincipleContract?.id || ""}`}
                 size="4xl"
-            >
+            >{() => (<>
                 <div className="space-y-4 p-2 text-slate-100 text-xs">
                     {/* Contract & Call-off Header Intelligence Box */}
                     <div className="bg-amber-950/30 border border-amber-500/40 rounded-xl p-3.5 space-y-3">
@@ -30557,7 +30598,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         );
                     })()}
                 </div>
-            </Modal>
+            </>)}</Modal>
 
             <Modal isOpen={isFactoryOrderModalOpen} onClose={() => {
                 setIsFactoryOrderModalOpen(false);
@@ -30572,7 +30613,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 setFactoryOrderFulfillmentSource("AUTO");
                 setFactoryOrderItems([{ productCode: "", quantity: 1, unitPrice: 0, targetAllocations: [], needsInvoice: true }]);
                 setProductSearchQueries({});
-            }} title={editingFactoryOrderId ? `CHỈNH SỬA YÊU CẦU ĐẶT HÀNG: ${editingFactoryOrderId}` : (isStockOrder ? "📦 YÊU CẦU ĐẶT HÀNG GỐI ĐẦU / LƯU KHO DỰ PHÒNG (SO STOCK)" : "YÊU CẦU ĐẶT HÀNG NCC / HÃNG (SO)")} size="4xl">
+            }} title={editingFactoryOrderId ? `CHỈNH SỬA YÊU CẦU ĐẶT HÀNG: ${editingFactoryOrderId}` : (isStockOrder ? "📦 YÊU CẦU ĐẶT HÀNG GỐI ĐẦU / LƯU KHO DỰ PHÒNG (SO STOCK)" : "YÊU CẦU ĐẶT HÀNG NCC / HÃNG (SO)")} size="4xl">{() => (<>
                 <form onSubmit={handleCreateFactoryOrder} className="space-y-4 p-2 text-slate-100">
                     <DraftBanner draft={factoryOrderDraft} />
                     {/* ── Order Category Switch: Commercial SO vs SO Stock ── */}
@@ -32005,7 +32046,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </button>
                     </div>
                 </form>
-            </Modal>
+            </>)}</Modal>
 
             {/* MODAL: XÁC NHẬN GỘP ĐƠN & GỬI ĐẶT HÀNG CHO XƯỞNG SẢN XUẤT VÀ MUA NGOÀI */}
             <Modal
@@ -32013,7 +32054,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 onClose={() => setIsCombineOrderModalOpen(false)}
                 title="XÁC NHẬN GỘP ĐƠN & PHÂN LUỒNG ĐẶT HÀNG (ĐẶT HÃNG / MUA NGOÀI)"
                 size="5xl"
-            >
+            >{() => (<>
                 {(() => {
                     const selectedReqs = (factoryOrders || []).filter(r => (selectedFactoryOrdersForCombine || []).includes(r.id));
                     const mergedItemsMap: Record<string, { productCode: string; productName: string; quantity: number; sourceType: string; brand: string; specification: string; sourceOrderCodes: string[] }> = {};
@@ -32313,7 +32354,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </form>
                     );
                 })()}
-            </Modal>
+            </>)}</Modal>
 
             {/* MODAL: ĐƠN LẺ GỬI ĐẶT HÀNG HÃNG */}
             <Modal
@@ -32321,7 +32362,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 onClose={() => setSingleMfgTargetOrder(null)}
                 title="TẠO ĐƠN ĐẶT HÀNG HÃNG / NHÀ CUNG CẤP"
                 size="4xl"
-            >
+            >{() => (<>
                 {singleMfgTargetOrder && (() => {
                     const mfgItems = (singleMfgTargetOrder.items || []).filter((it: any) => it?.sourceType !== "COMMERCIAL");
                     const displayItems = mfgItems.length > 0 ? mfgItems : (singleMfgTargetOrder.items || []);
@@ -32510,7 +32551,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </form>
                     );
                 })()}
-            </Modal>
+            </>)}</Modal>
 
             {/* MODAL: XEM CHI TIẾT MẶT HÀNG & NGUỒN GỐC CỦA ĐƠN ĐẶT HÀNG */}
             <Modal
@@ -32518,7 +32559,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 onClose={() => setViewingFactoryOrderItems(null)}
                 title={`CHI TIẾT MẶT HÀNG, ĐƠN GIÁ & NGUỒN GỐC - ${viewingFactoryOrderItems?.id || ""}`}
                 size="4xl"
-            >
+            >{() => (<>
                 {viewingFactoryOrderItems && (
                     <div className="space-y-4 text-slate-200 text-xs">
                         {/* Order Header Summary */}
@@ -33330,7 +33371,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                     </div>
                 )}
-            </Modal>
+            </>)}</Modal>
 
             {/* ===== Yêu cầu trả hàng (RMA): lập phiếu (Slide 10: gộp đầy đủ số lượng các lô đã xuất của cùng mã hàng) ===== */}
             <Modal
@@ -33338,7 +33379,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 onClose={() => !isSubmittingRma && setIsCreateRmaModalOpen(false)}
                 title={`YÊU CẦU TRẢ HÀNG (RMA) — ĐƠN ${rmaTargetOrder?.order_code || rmaTargetOrder?.id || ""}`}
                 size="3xl"
-            >
+            >{() => (<>
                 {rmaTargetOrder && (() => {
                     const orderCode = rmaTargetOrder.order_code || rmaTargetOrder.id;
                     const skuLotsInfo = getOrderSkuDeliveredLotsInfo(rmaTargetOrder);
@@ -33554,7 +33595,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </form>
                     );
                 })()}
-            </Modal>
+            </>)}</Modal>
 
             {/* ===== Danh sách phiếu trả hàng (Slide 11: Thao tác Duyệt & Nhập Lại Kho / Hủy phiếu trả trực tiếp) ===== */}
             <Modal
@@ -33562,7 +33603,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 onClose={() => setIsRmaListModalOpen(false)}
                 title={rmaListOrderCode ? `PHIẾU TRẢ HÀNG — ĐƠN ${rmaListOrderCode}` : "DANH SÁCH PHIẾU TRẢ HÀNG"}
                 size="3xl"
-            >
+            >{() => (<>
                 {(() => {
                     const list = rmaListOrderCode ? rmaList.filter((r: any) => r.order_code === rmaListOrderCode) : rmaList;
                     const ST: Record<string, { label: string; cls: string }> = {
@@ -33652,7 +33693,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                     );
                 })()}
-            </Modal>
+            </>)}</Modal>
 
 
             {/* MODAL: ĐƠN LẺ ĐỀ XUẤT MUA HÀNG (PR - PURCHASE REQUEST) */}
@@ -33661,7 +33702,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 onClose={() => setSingleProcureTargetOrder(null)}
                 title="TẠO ĐỀ XUẤT MUA HÀNG (PR - PURCHASE REQUEST)"
                 size="4xl"
-            >
+            >{() => (<>
                 {singleProcureTargetOrder && (() => {
                     const commItems = (singleProcureTargetOrder.items || []).filter((it: any) => it?.sourceType === "COMMERCIAL");
                     const displayItems = commItems.length > 0 ? commItems : (singleProcureTargetOrder.items || []);
@@ -33989,10 +34030,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </form>
                     );
                 })()}
-            </Modal>
+            </>)}</Modal>
 
             {/* 8. DELIVERY MODAL (TẠO PHIẾU GIAO HÀNG VỚI SỐ LOT; MÃ PXYYMM-xxxx DO MÁY CHỦ CẤP) */}
-            <Modal isOpen={isDeliveryModalOpen} onClose={() => { setIsDeliveryModalOpen(false); setEditingDeliverySlip(null); setOpenDeliveryLotDropdownIndex(null); }} title={editingDeliverySlip ? `SỬA PHIẾU GIAO HÀNG ${editingDeliverySlip.id} - ĐỢT ${deliveryBatchNumber}` : `LẬP PHIẾU GIAO HÀNG - ĐỢT GIAO SỐ ${deliveryBatchNumber}`} size="5xl">
+            <Modal isOpen={isDeliveryModalOpen} onClose={() => { setIsDeliveryModalOpen(false); setEditingDeliverySlip(null); setOpenDeliveryLotDropdownIndex(null); }} title={editingDeliverySlip ? `SỬA PHIẾU GIAO HÀNG ${editingDeliverySlip.id} - ĐỢT ${deliveryBatchNumber}` : `LẬP PHIẾU GIAO HÀNG - ĐỢT GIAO SỐ ${deliveryBatchNumber}`} size="5xl">{() => (<>
                 <form onSubmit={handleCreateDeliverySlip} className="space-y-4 p-2 text-slate-100">
                     {deliveryTargetOrder && (
                         <div className="bg-slate-900/50 p-3 rounded-lg border border-slate-800 text-xs space-y-2">
@@ -35030,7 +35071,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                     </div>
                 </form>
-            </Modal>
+            </>)}</Modal>
 
             {/* MODAL: XEM VÀ IN PHIẾU GIAO HÀNG & BIÊN BẢN BÀN GIAO (A4 PREVIEW) */}
             <Modal
@@ -35038,7 +35079,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 onClose={() => setIsViewDeliverySlipModalOpen(false)}
                 title={selectedViewDeliverySlip?.isDraftPreview ? `XEM TRƯỚC PHIẾU GIAO HÀNG: ${selectedViewDeliverySlip?.id || ""}` : `PHIẾU GIAO HÀNG & BIÊN BẢN BÀN GIAO: ${selectedViewDeliverySlip?.id || ""}`}
                 size="3xl"
-            >
+            >{() => (<>
                 {selectedViewDeliverySlip && (
                     <div className="space-y-4 p-4 text-slate-800 bg-white rounded-xl shadow-2xl font-sans">
                         <style dangerouslySetInnerHTML={{ __html: `
@@ -35548,7 +35589,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                     </div>
                 )}
-            </Modal>
+            </>)}</Modal>
 
             {/* THU TIỀN KHÁCH HÀNG: ghi sổ thanh toán, giảm công nợ (máy chủ chặn thu vượt và chống ghi trùng) */}
             <Modal
@@ -35556,7 +35597,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 onClose={() => setCustomerPaymentTarget(null)}
                 title={`GHI NHẬN THU TIỀN: ${customerPaymentTarget?.order_code || ""}`}
                 size="xl"
-            >
+            >{() => (<>
                 {customerPaymentTarget && (
                     <form
                         className="space-y-3 p-1 text-sm text-slate-100"
@@ -35740,7 +35781,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                     </form>
                 )}
-            </Modal>
+            </>)}</Modal>
 
             {/* 8. CONFIRM DELIVERY & PROOF OF DELIVERY (POD) MODAL */}
             <Modal
@@ -35750,7 +35791,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     ? `✅ NVKD XÁC NHẬN ĐÃ GIAO – PHIẾU ${confirmDeliveryTargetSlip.id} (Đợt ${confirmDeliveryTargetSlip.batchNumber || 1}) – ĐƠN ${confirmDeliveryTargetOrder?.order_code || ""}`
                     : `📸 CẬP NHẬT THÔNG TIN GIAO HÀNG & HÓA ĐƠN: ${confirmDeliveryTargetOrder?.order_code || ""}`}
                 size="xl"
-            >
+            >{() => (<>
                 {confirmDeliveryTargetOrder && (
                     <form onSubmit={handleExecuteConfirmDelivery} className="space-y-4 p-2 text-slate-100">
                         {/* Order Header Summary */}
@@ -36071,7 +36112,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                     </form>
                 )}
-            </Modal>
+            </>)}</Modal>
 
             {/* LIGHTBOX MODAL: XEM CHI TIẾT BẰNG CHỨNG NHẬN HÀNG (POD LIGHTBOX) */}
             <Modal
@@ -36079,7 +36120,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 onClose={() => setIsPodLightboxOpen(false)}
                 title={`📸 BẰNG CHỨNG NHẬN HÀNG (POD) - ${podLightboxData?.orderCode || ""}`}
                 size="xl"
-            >
+            >{() => (<>
                 {podLightboxData && (
                     <div className="space-y-4 p-2 text-slate-100">
                         {/* Top info badge */}
@@ -36209,10 +36250,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                     </div>
                 )}
-            </Modal>
+            </>)}</Modal>
 
             {/* 9. TARGET MODAL */}
-            <Modal isOpen={isTargetModalOpen} onClose={() => setIsTargetModalOpen(false)} title="PHÂN BỔ CHỈ TIÊU DOANH SỐ" size="xl">
+            <Modal isOpen={isTargetModalOpen} onClose={() => setIsTargetModalOpen(false)} title="PHÂN BỔ CHỈ TIÊU DOANH SỐ" size="xl">{() => (<>
                 <form onSubmit={handleSetSalesTarget} className="space-y-4 p-2 text-slate-100">
                     {/* Mode Switcher: Single vs Bulk */}
                     <div className="flex items-center gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
@@ -36520,10 +36561,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </button>
                     </div>
                 </form>
-            </Modal>
+            </>)}</Modal>
 
             {/* COMPANY & CONTRACT TEMPLATE CONFIG MODAL */}
-            <Modal isOpen={isCompanyConfigModalOpen} onClose={() => setIsCompanyConfigModalOpen(false)} title="CẤU HÌNH DOANH NGHIỆP & MẪU HỢP ĐỒNG / BÁO GIÁ (IN ẤN)" size="3xl">
+            <Modal isOpen={isCompanyConfigModalOpen} onClose={() => setIsCompanyConfigModalOpen(false)} title="CẤU HÌNH DOANH NGHIỆP & MẪU HỢP ĐỒNG / BÁO GIÁ (IN ẤN)" size="3xl">{() => (<>
                 <form onSubmit={handleSaveCompanyConfig} className="space-y-4 p-2 text-slate-100">
                     <p className="text-xs text-slate-400">
                         Thông tin doanh nghiệp và các điều khoản giao hàng, thanh toán, điều khoản chung (Điều 6) tại đây được lưu làm <strong>Mẫu Chuẩn</strong> cố định, tự động áp dụng khi tạo và in ấn Hợp đồng / Báo giá. Khi cần thay đổi mẫu hợp đồng, bạn có thể chỉnh sửa trực tiếp tại đây.
@@ -36807,10 +36848,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </button>
                     </div>
                 </form>
-            </Modal>
+            </>)}</Modal>
 
             {/* 10. SPECIALIZED PLAN MODAL */}
-            <Modal isOpen={isSpecializedPlanModalOpen} onClose={() => setIsSpecializedPlanModalOpen(false)} title="LẬP KẾ HOẠCH CHUYÊN ĐỀ" size="4xl">
+            <Modal isOpen={isSpecializedPlanModalOpen} onClose={() => setIsSpecializedPlanModalOpen(false)} title="LẬP KẾ HOẠCH CHUYÊN ĐỀ" size="4xl">{() => (<>
                 <form onSubmit={handleCreateSpecializedPlan} className="space-y-4 p-2 text-slate-100">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div>
@@ -37280,10 +37321,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </button>
                     </div>
                 </form>
-            </Modal>
+            </>)}</Modal>
 
             {/* 11. PLAN PROGRESS TRACKING MODAL */}
-            <Modal isOpen={!!selectedPlanForProgress} onClose={() => setSelectedPlanForProgress(null)} title="TIẾN ĐỘ THỰC HIỆN KẾ HOẠCH CHUYÊN ĐỀ" size="7xl">
+            <Modal isOpen={!!selectedPlanForProgress} onClose={() => setSelectedPlanForProgress(null)} title="TIẾN ĐỘ THỰC HIỆN KẾ HOẠCH CHUYÊN ĐỀ" size="7xl">{() => (<>
                 {selectedPlanForProgress && (() => {
                     const plan = selectedPlanForProgress;
                     const isForm1 = plan.type === "MarketDevelopment";
@@ -37959,10 +38000,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                     );
                 })()}
-            </Modal>
+            </>)}</Modal>
 
             {/* 1. TASK MODAL (CREATE / EDIT) */}
-            <Modal isOpen={isTaskModalOpen} onClose={() => setIsTaskModalOpen(false)} title={editingTask ? "Chi Tiết Công Việc & Nhật Ký Tiến Độ" : "Tạo Công Việc Mới"} size="5xl">
+            <Modal isOpen={isTaskModalOpen} onClose={() => setIsTaskModalOpen(false)} title={editingTask ? "Chi Tiết Công Việc & Nhật Ký Tiến Độ" : "Tạo Công Việc Mới"} size="5xl">{() => (<>
                 <form onSubmit={handleSaveTask} className="space-y-4 p-2 text-slate-100">
                     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                         {/* Cột trái: Thông tin cơ bản */}
@@ -38440,7 +38481,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </button>
                     </div>
                 </form>
-            </Modal>
+            </>)}</Modal>
 
             {/* MODAL: PHÊ DUYỆT / YÊU CẦU CHỈNH SỬA KẾ HOẠCH TUẦN */}
             <Modal 
@@ -38448,7 +38489,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 onClose={() => { setIsReviewWeeklyModalOpen(false); setReviewingApproval(null); }} 
                 title={reviewDecision === "approve" ? `PHÊ DUYỆT KẾ HOẠCH TUẦN ${reviewingApproval?.week}` : `YÊU CẦU CHỈNH SỬA KẾ HOẠCH TUẦN ${reviewingApproval?.week}`}
                 size="md"
-            >
+            >{() => (<>
                 {reviewingApproval && (
                     <form onSubmit={handleExecuteReview} className="space-y-4 p-2 text-slate-100">
                         <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800 space-y-1.5 text-xs">
@@ -38540,10 +38581,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                     </form>
                 )}
-            </Modal>
+            </>)}</Modal>
 
             {/* 2. WEEKLY PLANNER MODAL */}
-            <Modal isOpen={isPlanModalOpen} onClose={() => setIsPlanModalOpen(false)} title={`THÊM LỊCH TRÌNH TUẦN ${selectedWeek}`} size="3xl">
+            <Modal isOpen={isPlanModalOpen} onClose={() => setIsPlanModalOpen(false)} title={`THÊM LỊCH TRÌNH TUẦN ${selectedWeek}`} size="3xl">{() => (<>
                 <form onSubmit={handleSavePlan} className="space-y-4 p-2 text-slate-100">
 
                     {/* 1. NGƯỜI THỰC HIỆN KẾ HOẠCH */}
@@ -38956,10 +38997,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </button>
                     </div>
                 </form>
-            </Modal>
+            </>)}</Modal>
 
             {/* 3. DAILY LOG MODAL */}
-            <Modal isOpen={isLogModalOpen} onClose={() => setIsLogModalOpen(false)} title="BÁO CÁO NHẬT KÝ DAILY" size="xl">
+            <Modal isOpen={isLogModalOpen} onClose={() => setIsLogModalOpen(false)} title="BÁO CÁO NHẬT KÝ DAILY" size="xl">{() => (<>
                 <form onSubmit={handleSaveLog} className="space-y-4 p-2 text-slate-100">
 
                     <div className="bg-slate-900/90 border border-slate-800 rounded-lg p-3 flex items-center justify-between">
@@ -39013,10 +39054,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </button>
                     </div>
                 </form>
-            </Modal>
+            </>)}</Modal>
 
             {/* 4. CUSTOMER MODAL (CREATE / EDIT) */}
-            <Modal isOpen={isCustomerModalOpen} onClose={() => setIsCustomerModalOpen(false)} title={editingCustomer ? "SỬA THÔNG TIN KHÁCH HÀNG" : "THÊM KHÁCH HÀNG MỚI"} size="3xl">
+            <Modal isOpen={isCustomerModalOpen} onClose={() => setIsCustomerModalOpen(false)} title={editingCustomer ? "SỬA THÔNG TIN KHÁCH HÀNG" : "THÊM KHÁCH HÀNG MỚI"} size="3xl">{() => (<>
                 <form onSubmit={handleSaveCustomer} className="space-y-4 p-2 text-slate-100">
 
                     {/* SECTION 1: THÔNG TIN KHÁCH HÀNG / ĐƠN VỊ */}
@@ -39510,7 +39551,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </button>
                     </div>
                 </form>
-            </Modal>
+            </>)}</Modal>
 
             {/* MODAL: THÊM / SỬA NGƯỜI LIÊN HỆ */}
             <Modal
@@ -39518,7 +39559,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 onClose={() => setIsContactModalOpen(false)}
                 title={editingContactIndex !== null ? "CHỈNH SỬA THÔNG TIN LIÊN HỆ" : "THÊM NGƯỜI LIÊN HỆ MỚI"}
                 size="xl"
-            >
+            >{() => (<>
                 <form onSubmit={handleSaveContactModal} className="space-y-4 p-2 text-slate-100">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="sm:col-span-2">
@@ -39658,7 +39699,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </button>
                     </div>
                 </form>
-            </Modal>
+            </>)}</Modal>
 
             {/* MODAL: QUẢN LÝ PHÂN NHÓM NGÀNH HÀNG KHÁCH HÀNG */}
             <Modal
@@ -39669,7 +39710,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 }}
                 title={editingIndustryGroup ? "CHỈNH SỬA PHÂN NHÓM NGÀNH HÀNG" : "QUẢN LÝ PHÂN NHÓM NGÀNH HÀNG KHÁCH HÀNG"}
                 size="3xl"
-            >
+            >{() => (<>
                 <div className="space-y-5 p-2 text-slate-100">
                     {/* Form thêm / sửa nhóm ngành */}
                     <form onSubmit={handleSaveIndustryGroup} className="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-4">
@@ -39919,7 +39960,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </button>
                     </div>
                 </div>
-            </Modal>
+            </>)}</Modal>
 
             {/* MODAL: XEM CHI TIẾT PHỤ KIỆN / BOM CỦA SẢN PHẨM & ĐIỀU KIỆN BẢO QUẢN */}
             <Modal
@@ -39927,7 +39968,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 onClose={() => setViewingProductComponents(null)}
                 title="CHI TIẾT PHỤ KIỆN / BOM & ĐIỀU KIỆN BẢO QUẢN"
                 size="4xl"
-            >
+            >{() => (<>
                 {viewingProductComponents && (() => {
                     const prod = viewingProductComponents.product;
                     const comps = viewingProductComponents.components;
@@ -40095,7 +40136,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                     );
                 })()}
-            </Modal>
+            </>)}</Modal>
 
             {/* MODAL: TẠO PHIẾU NHẬP KHO 13B (HÀNG THƯƠNG MẠI & SẢN XUẤT) */}
             <Modal
@@ -40103,7 +40144,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 onClose={() => setIsInboundModalOpen(false)}
                 title={inboundType === "commercial" ? "TẠO PHIẾU NHẬP KHO HÀNG THƯƠNG MẠI (kho trung tâm)" : "TẠO PHIẾU NHẬP KHO HÀNG SẢN XUẤT MES (13B)"}
                 size="3xl"
-            >
+            >{() => (<>
                 <form onSubmit={handleCreateInbound} className="space-y-4 p-2 text-slate-100">
                     {/* Choose Inbound Type */}
                     <div className="flex gap-2 p-1 bg-slate-950 border border-slate-800 rounded-lg">
@@ -40355,7 +40396,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </button>
                     </div>
                 </form>
-            </Modal>
+            </>)}</Modal>
 
             {/* MODAL: LỊCH SỬ NHẬP KHO 13B */}
             <Modal
@@ -40363,7 +40404,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 onClose={() => setShowInboundHistoryModal(false)}
                 title="LỊCH SỬ NHẬP kho trung tâm"
                 size="4xl"
-            >
+            >{() => (<>
                 <div className="space-y-4 p-2 text-slate-100">
                     <div className="flex items-center justify-between gap-4 pb-2 border-b border-slate-800">
                         <div className="relative flex-1 max-w-sm">
@@ -40472,10 +40513,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </button>
                     </div>
                 </div>
-            </Modal>
+            </>)}</Modal>
 
             {/* Modal Bàn giao Stock cho NVKD */}
-            <Modal isOpen={isGiveStockModalOpen} onClose={() => setIsGiveStockModalOpen(false)} title="BÀN GIAO STOCK KÝ GỬI CHO NVKD" size="xl">
+            <Modal isOpen={isGiveStockModalOpen} onClose={() => setIsGiveStockModalOpen(false)} title="BÀN GIAO STOCK KÝ GỬI CHO NVKD" size="xl">{() => (<>
                 <form onSubmit={handleGiveStock} className="space-y-4 p-2 text-slate-100">
                     <div>
                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Nhân viên nhận hàng *</label>
@@ -40610,10 +40651,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </button>
                     </div>
                 </form>
-            </Modal>
+            </>)}</Modal>
 
             {/* Modal Báo cáo Bán lẻ mới (Nhiều sản phẩm + Chọn khách từ CRM) */}
-            <Modal isOpen={isRetailSaleModalOpen} onClose={() => setIsRetailSaleModalOpen(false)} title="BÁO CÁO GIAO KHÁCH LẺ THỰC TẾ" size="3xl">
+            <Modal isOpen={isRetailSaleModalOpen} onClose={() => setIsRetailSaleModalOpen(false)} title="BÁO CÁO GIAO KHÁCH LẺ THỰC TẾ" size="3xl">{() => (<>
                 <form onSubmit={handleRetailSale} className="space-y-4 p-2 text-slate-100">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-4 border-b border-slate-800">
                         <div>
@@ -40934,10 +40975,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                     </div>
                 </form>
-            </Modal>
+            </>)}</Modal>
 
             {/* Modal Quản lý / Đăng ký Khách hàng CRM */}
-            <Modal isOpen={isNvkdCustomerModalOpen} onClose={() => setIsNvkdCustomerModalOpen(false)} title={editingNvkdCustomer ? "CẬP NHẬT THÔNG TIN KHÁCH HÀNG" : "ĐĂNG KÝ KHÁCH HÀNG MỚI"} size="2xl">
+            <Modal isOpen={isNvkdCustomerModalOpen} onClose={() => setIsNvkdCustomerModalOpen(false)} title={editingNvkdCustomer ? "CẬP NHẬT THÔNG TIN KHÁCH HÀNG" : "ĐĂNG KÝ KHÁCH HÀNG MỚI"} size="2xl">{() => (<>
                 <form onSubmit={handleSaveNvkdCustomer} className="space-y-4 p-2 text-slate-100">
                     <div>
                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Mã khách hàng *</label>
@@ -41130,7 +41171,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </button>
                     </div>
                 </form>
-            </Modal>
+            </>)}</Modal>
 
             {/* MODAL: TẠO PHIẾU YÊU CẦU PHỐI HỢP APPLICATION */}
             <Modal
@@ -41138,7 +41179,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 onClose={() => setIsAppRequestModalOpen(false)}
                 title="TẠO PHIẾU YÊU CẦU PHỐI HỢP APPLICATION (TAB 7)"
                 size="3xl"
-            >
+            >{() => (<>
                 <form onSubmit={handleSaveAppRequest} className="space-y-4 p-2 text-slate-200">
                     <div className="bg-purple-950/30 border border-purple-500/20 rounded-xl p-3.5 flex items-start gap-3">
                         <Sparkles className="w-5 h-5 text-purple-400 shrink-0 mt-0.5" />
@@ -41399,7 +41440,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </button>
                     </div>
                 </form>
-            </Modal>
+            </>)}</Modal>
 
             {/* MODAL: XEM CHI TIẾT & BÁO CÁO PHỐI HỢP APPLICATION */}
             {selectedAppRequestDetail && (
@@ -41408,7 +41449,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     onClose={() => setSelectedAppRequestDetail(null)}
                     title={`PHIẾU YÊU CẦU PHỐI HỢP: ${selectedAppRequestDetail.id}`}
                     size="3xl"
-                >
+                >{() => (<>
                     <div className="space-y-6 p-2 text-slate-200">
                         {/* Status Header */}
                         <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 flex justify-between items-center flex-wrap gap-3">
@@ -41539,7 +41580,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </button>
                         </div>
                     </div>
-                </Modal>
+                </>)}</Modal>
             )}
 
             {/* MODAL: KẾ TOÁN MỞ KHÓA CÔNG NỢ (Stage 1 - Requirement 10 & 11) */}
@@ -41549,7 +41590,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     onClose={() => setUnblockingOrder(null)}
                     title={`MỞ KHÓA ĐƠN HÀNG DO CÔNG NỢ - ${unblockingOrder.id}`}
                     size="lg"
-                >
+                >{() => (<>
                     <div className="space-y-4 p-2 text-slate-100">
                         <div className="p-3.5 bg-rose-950/40 border border-rose-500/50 rounded-xl space-y-2">
                             <div className="flex items-center gap-2 text-rose-400 font-bold text-xs">
@@ -41626,7 +41667,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </button>
                         </div>
                     </div>
-                </Modal>
+                </>)}</Modal>
             )}
 
             {/* MODAL: DANH SÁCH GIỮ CHỖ HÀNG CHO SALES (Requirement 6 & 7) */}
@@ -41636,7 +41677,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     onClose={() => setIsReservationsModalOpen(false)}
                     title="QUẢN LÝ GIỮ CHỖ HÀNG CHO SALES (INVENTORY RESERVATIONS & ATP)"
                     size="4xl"
-                >
+                >{() => (<>
                     <div className="space-y-4 p-2 text-slate-100">
                         {/* Top Summary Metrics */}
                         {(() => {
@@ -41907,7 +41948,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </button>
                         </div>
                     </div>
-                </Modal>
+                </>)}</Modal>
             )}
 
         </div>

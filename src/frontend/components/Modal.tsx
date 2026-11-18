@@ -9,7 +9,8 @@ interface ModalProps {
     isOpen: boolean;
     onClose: () => void;
     title: string;
-    children: ReactNode;
+    /** Có thể truyền một hàm: nội dung chỉ được tính khi khung đang mở (trang có nhiều khung nặng chạy nhanh hơn). */
+    children: ReactNode | (() => ReactNode);
     size?: "md" | "lg" | "xl" | "2xl" | "3xl" | "4xl" | "5xl" | "6xl" | "7xl" | "full";
 }
 
@@ -146,7 +147,7 @@ export const Modal = ({ isOpen, onClose, title, children, size = "md" }: ModalPr
                                 </div>
                             </div>
                             <div className={cn("p-5 sm:p-6 overflow-y-auto overflow-x-hidden custom-scrollbar", maximized ? "flex-1 min-h-0" : "max-h-[calc(100vh-120px)]")}>
-                                {children}
+                                {typeof children === "function" ? (children as () => ReactNode)() : children}
                             </div>
                         </motion.div>
                     </div>
