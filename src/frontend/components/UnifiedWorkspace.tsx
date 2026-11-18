@@ -88,7 +88,13 @@ import { cn } from "@/backend/services/utils";
 import { todayVN, toVNDateString, nowVNDateTime, formatVNDate, formatVNDateTime } from "@/backend/services/dates";
 import { AttachmentPicker, AttachmentList, uploadSingleFileSmart } from "@/frontend/components/AttachmentPicker";
 import { DateInputVN, formatDayVN, toISODate } from "@/frontend/components/DateInputVN";
-import { ProposalsApprovalView, ProposalItem, isProposalWaitingForUser } from "@/frontend/components/ProposalsApprovalView";
+import {
+  ProposalsApprovalView,
+  ProposalItem,
+  isProposalWaitingForUser,
+  isPersonDeptHeadOrDeputy,
+  normalizeProposalStepsForRequester
+} from "@/frontend/components/ProposalsApprovalView";
 import { Pager, usePaged } from "@/frontend/components/Pager";
 import type { HubProject, HubWeeklyPlanEvent, HubWorkItem } from "@/factory/workhub/service";
 
@@ -1916,11 +1922,13 @@ export const UnifiedWorkspace: React.FC = () => {
       userRole.includes("lead") ||
       userRole.includes("manager") ||
       userRole.includes("trưởng phòng") ||
+      userRole.includes("phó trưởng phòng") ||
       userRole.includes("phó phòng") ||
       userRole.includes("quản đốc") ||
-      userRole.includes("chủ nhiệm")
+      userRole.includes("chủ nhiệm") ||
+      isPersonDeptHeadOrDeputy(currentStaffName, rawUserDept)
     );
-  }, [isDirector, userRole]);
+  }, [isDirector, userRole, currentStaffName, rawUserDept]);
 
   // Tạo / sửa / xóa quy trình mẫu: Ban Giám Đốc, Trưởng/Phó phòng hoặc người được cấp quyền "Quản lý quy trình phối hợp mẫu"
   const canManageTemplates = Boolean(
@@ -3632,8 +3640,25 @@ export const UnifiedWorkspace: React.FC = () => {
   // đè cả danh sách đơn chung. Thông báo không có ngày nghỉ nên đơn dựng lại bị gán ngày nghỉ = ngày dựng lại (6 đơn DXNP
   // thành "nghỉ 11/11", sai bảng chấm công). Không dựng đơn từ thông báo nữa: chỉ đánh dấu các đơn phục hồi cũ thiếu ngày.
   const reconcileProposalsWithNotifications = useCallback((baseList: ProposalItem[], _extraNotif?: any): { list: ProposalItem[]; added: boolean } => {
-    return { list: sanitizeProposalList<ProposalItem>(baseList), added: false };
-  }, []);
+    const sanitized = sanitizeProposalList<ProposalItem>(baseList);
+    let anyChanged = false;
+    const normalized = sanitized.map((p) => {
+      if (!p || (p.status !== "PENDING" && p.status !== "DRAFT" && p.status !== "RETURNED")) return p;
+      const norm = normalizeProposalStepsForRequester(
+        p.steps || [],
+        p.requesterDept || "Kinh Doanh",
+        p.requesterName || "",
+        personnelList
+      );
+      if (!norm.changed) return p;
+      anyChanged = true;
+      return {
+        ...p,
+        steps: norm.steps
+      };
+    });
+    return { list: normalized, added: anyChanged };
+  }, [personnelList]);
 
   // Deep-link opener for notifications ("Đi tới xem ↗") -> opens specific Task or Workflow Detail Modal
   const openWorkspaceItemFromNotification = useCallback((rawPayload: any): boolean => {

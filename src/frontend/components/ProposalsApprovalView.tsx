@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import { needsLeaveDates } from "@/frontend/utils/recoveredProposals";
-import { isSameWorkspaceDept, defaultConcreteDeptForScope } from "@/frontend/utils/workspaceScope";
+import { isSameWorkspaceDept, defaultConcreteDeptForScope, normalizeWorkspaceDept, WORKSPACE_BLOCKS } from "@/frontend/utils/workspaceScope";
+import { canonicalDepartment, isDepartmentLeaderPosition } from "@/backend/services/permissions";
 import {
   isDatesMode, parseLeaveDays, normalizeLeaveDays, serializeLeaveDays, expandWeekdays, sumLeaveDays, isOnLeaveOn,
   formatLeaveDays, weekdayOf, SESSION_LABEL, WEEKDAY_LABELS, type LeaveDay, type LeaveSession
@@ -654,6 +655,382 @@ export function getStatusMeta(status: ProposalStatus) {
   }
 }
 
+function cleanStaffDisplayName(raw: any): string {
+  return String(raw || "").replace(/\s*\(.*?\)/g, "").trim();
+}
+
+function isDeputyPositionTitle(posStr?: string | null): boolean {
+  const pos = String(posStr || "").toLowerCase().normalize("NFC");
+  return /\bphó\b/.test(pos);
+}
+
+/**
+ * Danh sách Trưởng phòng / Phó trưởng phòng (khi phòng không có Trưởng phòng thì Phó trưởng phòng có vai trò như Trưởng phòng)
+ * theo cơ cấu tổ chức ABT. Dùng làm fallback khi danh sách nhân sự chưa tải xong.
+ */
+const DEFAULT_DEPT_LEADER_FALLBACKS: Record<string, { name: string; position: string; isDeputy: boolean } | null> = {
+  "R&D": { name: "Nguyễn Quốc Bảo", position: "Trưởng phòng R&D", isDeputy: false },
+  "Tổng hợp Oligo": { name: "Nguyễn Thanh Tùng", position: "Trưởng phòng Tổng hợp Oligo", isDeputy: false },
+  "Hành chính": { name: "Nguyễn Văn Hiếu", position: "Trưởng phòng Hành chính", isDeputy: false },
+  "QC/QA": { name: "Phan Thị Thảo Trinh", position: "Phó Trưởng phòng QC-QA", isDeputy: true },
+  "Sản xuất": { name: "Đoàn Hồng Sơn", position: "Phó Trưởng phòng Sản xuất", isDeputy: true },
+  "Kinh Doanh": { name: "Huỳnh Thị Ngọc Huyền", position: "Phó Trưởng phòng kinh doanh", isDeputy: true },
+  "APP": { name: "Trần Tài", position: "Phó Trưởng phòng Ứng dụng", isDeputy: true },
+  "KTCN": null, // Không có Trưởng/Phó phòng; Giám đốc (Nguyễn Văn Tùng) trực tiếp phụ trách & phê duyệt
+  "Cung ứng Kho": null, // Chưa có Trưởng/Phó phòng; PGĐ Kỹ thuật (Nguyễn Duy Khánh) phê duyệt
+  "IT": null, // Chưa có Trưởng/Phó phòng; PGĐ Kinh doanh (Đỗ Ngọc Diễm Trúc) phê duyệt
+  "Marketing": null // Chưa có Trưởng/Phó phòng; PGĐ Kinh doanh (Đỗ Ngọc Diễm Trúc) phê duyệt
+};
+
+const KNOWN_DEPT_LEADERS_AND_DEPUTIES = [
+  "Nguyễn Quốc Bảo",
+  "Nguyễn Thanh Tùng",
+  "Nguyễn Văn Hiếu",
+  "Tô Khánh Nhựt",
+  "Phan Thị Thảo Trinh",
+  "Đoàn Hồng Sơn",
+  "Huỳnh Thị Ngọc Huyền",
+  "Trần Tài"
+];
+
+/**
+ * Tìm người đứng đầu phòng ban:
+ * 1. Ưu tiên Trưởng phòng / Trưởng bộ phận.
+ * 2. Nếu phòng ban không có Trưởng phòng thì Phó trưởng phòng có vai trò như Trưởng phòng.
+ */
+export function resolveDeptLeaderInfo(
+  deptName: string,
+  personnelList?: any[]
+): { name: string; position: string; isDeputy: boolean } | null {
+  const canonDept = canonicalDepartment(deptName);
+  const deptMembers = (personnelList || []).filter((p: any) => {
+    const pDept = String(p?.department || "").trim();
+    if (!pDept) return false;
+    if (canonDept && canonicalDepartment(pDept) === canonDept) return true;
+    return isSameWorkspaceDept(pDept, deptName);
+  });
+
+  // 1. Tìm Trưởng phòng (không có chữ Phó)
+  const primaryHead = deptMembers.find((p: any) => {
+    const pos = String(p?.position || "");
+    return isDepartmentLeaderPosition(pos) && !isDeputyPositionTitle(pos);
+  });
+  if (primaryHead?.full_name || primaryHead?.name) {
+    return {
+      name: cleanStaffDisplayName(primaryHead.full_name || primaryHead.name),
+      position: String(primaryHead.position || "Trưởng phòng"),
+      isDeputy: false
+    };
+  }
+
+  // 2. Nếu phòng không có Trưởng phòng -> Phó trưởng phòng đảm nhiệm vai trò Trưởng phòng
+  const deputyHead = deptMembers.find((p: any) => {
+    const pos = String(p?.position || "");
+    return isDepartmentLeaderPosition(pos) && isDeputyPositionTitle(pos);
+  });
+  if (deputyHead?.full_name || deputyHead?.name) {
+    return {
+      name: cleanStaffDisplayName(deputyHead.full_name || deputyHead.name),
+      position: String(deputyHead.position || "Phó Trưởng phòng"),
+      isDeputy: true
+    };
+  }
+
+  // 3. Fallback theo danh mục chuẩn của công ty
+  if (canonDept && Object.prototype.hasOwnProperty.call(DEFAULT_DEPT_LEADER_FALLBACKS, canonDept)) {
+    return DEFAULT_DEPT_LEADER_FALLBACKS[canonDept];
+  }
+  return null;
+}
+
+/**
+ * Xác định Lãnh đạo Ban Giám Đốc phụ trách trực tiếp phòng ban / khối:
+ * - Phòng Kỹ thuật Công nghệ (KTCN / Kỹ Thuật – Thiết Bị): Giám đốc (GĐ) — Nguyễn Văn Tùng duyệt.
+ * - Các phòng còn lại thuộc Khối Kỹ thuật (R&D, Sản xuất, Tổng hợp Oligo, QC/QA, Cung ứng Kho): PGĐ Kỹ thuật — Nguyễn Duy Khánh duyệt.
+ * - Các phòng thuộc Khối Kinh doanh & Văn phòng (Kinh Doanh, APP, Marketing, IT, Hành chính - Kế toán - Nhân sự): PGĐ Kinh doanh — Đỗ Ngọc Diễm Trúc duyệt.
+ */
+export function getSupervisingBodForDept(
+  deptName: string,
+  personnelList?: any[]
+): { approverName: string; roleTitle: string; dept: string } {
+  const canonDept = canonicalDepartment(deptName);
+  const normDept = normalizeWorkspaceDept(deptName);
+  const dLower = String(deptName || "").toLowerCase().normalize("NFC");
+
+  const isKtcn =
+    canonDept === "KTCN" ||
+    normDept === "Kỹ Thuật – Thiết Bị" ||
+    dLower.includes("ktcn") ||
+    dLower.includes("kỹ thuật công nghệ") ||
+    dLower.includes("thiết bị");
+
+  if (isKtcn) {
+    const gd = (personnelList || []).find((p: any) => {
+      const pos = String(p?.position || "").toLowerCase().normalize("NFC").trim();
+      return (pos === "giám đốc" || pos.startsWith("tổng giám đốc")) && !pos.includes("phó");
+    });
+    return {
+      approverName: cleanStaffDisplayName(gd?.full_name || gd?.name) || "Nguyễn Văn Tùng",
+      roleTitle: "Giám đốc",
+      dept: "Ban Giám Đốc"
+    };
+  }
+
+  const isTechBlock =
+    canonDept === "R&D" ||
+    canonDept === "Sản xuất" ||
+    canonDept === "Tổng hợp Oligo" ||
+    canonDept === "QC/QA" ||
+    canonDept === "Cung ứng Kho" ||
+    WORKSPACE_BLOCKS.BLOCK_TECHNICAL.depts.has(normDept);
+
+  if (isTechBlock) {
+    const pgdKt = (personnelList || []).find((p: any) => {
+      const pos = String(p?.position || "").toLowerCase().normalize("NFC");
+      return (pos.includes("phó giám đốc") || pos.includes("pgđ")) && pos.includes("kỹ thuật");
+    });
+    return {
+      approverName: cleanStaffDisplayName(pgdKt?.full_name || pgdKt?.name) || "Nguyễn Duy Khánh",
+      roleTitle: "PGĐ Kỹ thuật",
+      dept: "Ban Giám Đốc"
+    };
+  }
+
+  const pgdKd = (personnelList || []).find((p: any) => {
+    const pos = String(p?.position || "").toLowerCase().normalize("NFC");
+    return (pos.includes("phó giám đốc") || pos.includes("pgđ")) && pos.includes("kinh doanh");
+  });
+  return {
+    approverName: cleanStaffDisplayName(pgdKd?.full_name || pgdKd?.name) || "Đỗ Ngọc Diễm Trúc",
+    roleTitle: "PGĐ Kinh doanh",
+    dept: "Ban Giám Đốc"
+  };
+}
+
+/**
+ * Kiểm tra nhân sự có phải là Trưởng phòng hoặc Phó trưởng phòng (cấp lãnh đạo phòng ban) hay không.
+ */
+export function isPersonDeptHeadOrDeputy(
+  personName: string,
+  deptName?: string,
+  personnelList?: any[]
+): boolean {
+  const clean = cleanStaffDisplayName(personName);
+  if (!clean) return false;
+  const matchedPerson = (personnelList || []).find((p: any) =>
+    isSamePerson(p?.full_name || p?.name, clean)
+  );
+  if (matchedPerson) {
+    if (isDepartmentLeaderPosition(matchedPerson.position)) return true;
+    const r = String(matchedPerson.role || "").toLowerCase();
+    if (
+      r.endsWith("_head") ||
+      r.endsWith("_lead") ||
+      r.includes("trưởng phòng") ||
+      r.includes("phó trưởng phòng") ||
+      r.includes("phó phòng")
+    ) {
+      return true;
+    }
+  }
+  if (KNOWN_DEPT_LEADERS_AND_DEPUTIES.some((n) => isSamePerson(n, clean))) {
+    return true;
+  }
+  if (deptName) {
+    const deptLeader = resolveDeptLeaderInfo(deptName, personnelList);
+    if (deptLeader && isSamePerson(deptLeader.name, clean)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function isGenericRoleApproverLabel(label: any): boolean {
+  const s = String(label || "").toLowerCase().normalize("NFC").trim();
+  if (!s) return true;
+  return (
+    s === "trưởng bộ phận" ||
+    s === "ban giám đốc" ||
+    s === "kế toán trưởng" ||
+    s === "hành chính nhân sự" ||
+    s === "kế toán" ||
+    s === "pháp chế" ||
+    s.startsWith("trưởng phòng") ||
+    s.startsWith("phó trưởng phòng") ||
+    s.startsWith("trưởng bộ phận") ||
+    s.startsWith("trưởng kho") ||
+    s.startsWith("thủ kho") ||
+    s.startsWith("trưởng cung ứng") ||
+    s.startsWith("phụ trách")
+  );
+}
+
+export function formatEscalatedStepName(rawStepName: string, bodRoleTitle: string): string {
+  const s = String(rawStepName || "").trim();
+  if (!s) return `${bodRoleTitle} phê duyệt`;
+  if (s.toLowerCase().startsWith(bodRoleTitle.toLowerCase())) return s;
+  const replaced = s
+    .replace(/^Trưởng phòng Khối Kỹ Thuật\s*\([^)]*\)/i, bodRoleTitle)
+    .replace(/^Trưởng phòng chuyên môn\s*\([^)]*\)/i, bodRoleTitle)
+    .replace(
+      /^Trưởng\s*\/?\s*(?:Phó\s+)?(?:bộ phận|phòng)(?:\s+[A-Za-zÀ-ỹ0-9/–\-\s]+?(?=\s+(?:duyệt|xác nhận|thẩm định|kiểm tra|phê duyệt)))?/i,
+      bodRoleTitle
+    )
+    .replace(/^Trưởng\s+(?:bộ phận|phòng)(?:\s+(?:Kinh doanh|Application|QA\/QC|R&D|Sản xuất|KTCN))?/i, bodRoleTitle);
+  if (replaced !== s) return replaced;
+  return `${bodRoleTitle} — ${s}`;
+}
+
+/**
+ * Chuẩn hóa luồng bước duyệt của một đề xuất dựa theo người đề xuất và phòng ban:
+ * - Nhân viên đề xuất -> Trưởng phòng (hoặc Phó trưởng phòng nếu phòng không có Trưởng phòng) duyệt.
+ * - Phó/Trưởng phòng đề xuất (hoặc phòng không có Trưởng/Phó phòng như KTCN) -> nâng cấp bước DEPT_HEAD lên
+ *   PGĐ phụ trách khối (PGĐ Kỹ thuật Nguyễn Duy Khánh cho Khối Kỹ thuật, PGĐ Kinh doanh Đỗ Ngọc Diễm Trúc cho Khối Kinh doanh),
+ *   riêng phòng Kỹ thuật Công nghệ (KTCN) do Giám đốc Nguyễn Văn Tùng duyệt.
+ */
+export function normalizeProposalStepsForRequester(
+  steps: ProposalStepInstance[],
+  requesterDept: string,
+  requesterName: string,
+  personnelList?: any[]
+): { steps: ProposalStepInstance[]; changed: boolean } {
+  if (!Array.isArray(steps) || steps.length === 0) return { steps: [], changed: false };
+  const resolvedReqDept = requesterDept && requesterDept !== "all" ? requesterDept : "Kinh Doanh";
+  const reqIsLeader = isPersonDeptHeadOrDeputy(requesterName, resolvedReqDept, personnelList);
+  let changed = false;
+
+  const mapped = steps.map((st) => {
+    // Không tự ý đổi các bước đã duyệt xong
+    if (st.status === "APPROVED" || st.status === "REJECTED" || st.status === "SKIPPED") {
+      return st;
+    }
+
+    const isGenericOwnDeptStep =
+      String(st.approverName || "").trim() === "Trưởng bộ phận" ||
+      /^trưởng\s+bộ\s+phận/i.test(String(st.stepName || "").trim());
+    const stepTargetDept =
+      !st.dept || st.dept === "Theo phòng người tạo" || isGenericOwnDeptStep ? resolvedReqDept : st.dept;
+    const isOwnDeptStep =
+      isGenericOwnDeptStep ||
+      isSameWorkspaceDept(stepTargetDept, resolvedReqDept) ||
+      (Boolean(canonicalDepartment(stepTargetDept)) &&
+        canonicalDepartment(stepTargetDept) === canonicalDepartment(resolvedReqDept));
+
+    const isDeptHeadStep =
+      st.roleType === "DEPT_HEAD" ||
+      String(st.approverName || "").trim() === "Trưởng bộ phận" ||
+      /^trưởng\s+(bộ phận|phòng)/i.test(String(st.stepName || "").trim());
+
+    if (isDeptHeadStep && st.roleType !== "REVIEWER" && st.roleType !== "EXECUTOR") {
+      const deptLeader = resolveDeptLeaderInfo(stepTargetDept, personnelList);
+      const shouldEscalateToBod =
+        (isOwnDeptStep && reqIsLeader) ||
+        !deptLeader ||
+        isSamePerson(deptLeader.name, requesterName) ||
+        isSamePerson(st.approverName, requesterName);
+
+      if (shouldEscalateToBod) {
+        const bod = getSupervisingBodForDept(
+          isOwnDeptStep ? resolvedReqDept : stepTargetDept,
+          personnelList
+        );
+        const nextStepName = formatEscalatedStepName(st.stepName, bod.roleTitle);
+        if (
+          st.roleType !== "DIRECTOR" ||
+          st.dept !== bod.dept ||
+          st.approverName !== bod.approverName ||
+          st.stepName !== nextStepName
+        ) {
+          changed = true;
+          return {
+            ...st,
+            stepName: nextStepName,
+            roleType: "DIRECTOR" as const,
+            dept: bod.dept,
+            approverName: bod.approverName
+          };
+        }
+        return st;
+      }
+
+      // Nhân viên thường trình -> gán đích danh Trưởng phòng hoặc Phó trưởng phòng phụ trách phòng đó
+      if (deptLeader && isGenericRoleApproverLabel(st.approverName)) {
+        if (st.approverName !== deptLeader.name) {
+          changed = true;
+          return {
+            ...st,
+            approverName: deptLeader.name
+          };
+        }
+      }
+      return st;
+    }
+
+    if (st.roleType === "DIRECTOR" || st.dept === "Ban Giám Đốc") {
+      if (isGenericRoleApproverLabel(st.approverName)) {
+        const bod = getSupervisingBodForDept(resolvedReqDept, personnelList);
+        if (st.approverName !== bod.approverName || st.dept !== "Ban Giám Đốc") {
+          changed = true;
+          return {
+            ...st,
+            dept: "Ban Giám Đốc",
+            approverName: bod.approverName
+          };
+        }
+      }
+      return st;
+    }
+
+    // Bước REVIEWER / EXECUTOR có nhãn chung (VD: "Trưởng phòng QA/QC", "Kế toán trưởng", "Hành Chính Nhân Sự")
+    if (isGenericRoleApproverLabel(st.approverName)) {
+      const deptLeader = resolveDeptLeaderInfo(stepTargetDept, personnelList);
+      if (deptLeader) {
+        let resolvedName = deptLeader.name;
+        if (isSamePerson(resolvedName, requesterName) && canonicalDepartment(stepTargetDept) === "Hành chính") {
+          resolvedName = "Tô Khánh Nhựt";
+        }
+        if (st.approverName !== resolvedName) {
+          changed = true;
+          return {
+            ...st,
+            approverName: resolvedName
+          };
+        }
+      }
+    }
+
+    return st;
+  });
+
+  // Khử bước DIRECTOR trùng lặp liên tiếp (khi bước 1 đã nâng cấp lên đúng PGĐ/GĐ của bước kế tiếp)
+  const deduped: ProposalStepInstance[] = [];
+  for (const st of mapped) {
+    const prev = deduped[deduped.length - 1];
+    if (
+      prev &&
+      prev.roleType === "DIRECTOR" &&
+      st.roleType === "DIRECTOR" &&
+      isSamePerson(prev.approverName, st.approverName) &&
+      prev.status !== "APPROVED" &&
+      st.status === "WAITING"
+    ) {
+      changed = true;
+      continue;
+    }
+    deduped.push(st);
+  }
+
+  const reindexed = deduped.map((st, idx) => {
+    if (st.stepOrder !== idx + 1) {
+      changed = true;
+      return { ...st, stepOrder: idx + 1 };
+    }
+    return st;
+  });
+
+  return { steps: reindexed, changed };
+}
+
 export function isProposalWaitingForUser(
   p: ProposalItem,
   currentStaffName: string,
@@ -664,10 +1041,30 @@ export function isProposalWaitingForUser(
   if (!p || p.status !== "PENDING") return false;
   const activeStep = (p.steps || []).find((s) => s.status === "PENDING_NOW") || p.steps?.[p.currentStepIndex];
   if (!activeStep) return false;
+  // Người đề xuất không tự duyệt bước Trưởng bộ phận của chính mình
+  if (activeStep.roleType === "DEPT_HEAD" && isSamePerson(p.requesterName, currentStaffName)) {
+    return false;
+  }
   if (isSamePerson(activeStep.approverName, currentStaffName)) return true;
   if (userDept && canonName(activeStep.approverName) === canonName(userDept)) return true;
-  if (isDirector && (activeStep.roleType === "DIRECTOR" || activeStep.dept === "Ban Giám Đốc")) return true;
-  if (isManager && (activeStep.roleType === "DEPT_HEAD" || canonName(activeStep.approverName) === "truong bo phan") && canonName(activeStep.dept) === canonName(userDept)) {
+  if (isDirector && (activeStep.roleType === "DIRECTOR" || activeStep.dept === "Ban Giám Đốc")) {
+    // Nếu bước duyệt đã chỉ định đích danh 1 thành viên BGĐ cụ thể thì ưu tiên đúng thành viên đó (hoặc Quản trị viên)
+    if (!isGenericRoleApproverLabel(activeStep.approverName)) {
+      const isRootAdmin = canonName(currentStaffName).includes("quan tri vien");
+      return isRootAdmin || isSamePerson(activeStep.approverName, currentStaffName);
+    }
+    return true;
+  }
+  const sameDept =
+    canonName(activeStep.dept) === canonName(userDept) ||
+    isSameWorkspaceDept(activeStep.dept, userDept) ||
+    (Boolean(canonicalDepartment(activeStep.dept)) &&
+      canonicalDepartment(activeStep.dept) === canonicalDepartment(userDept));
+  if (
+    (isManager || isPersonDeptHeadOrDeputy(currentStaffName, userDept)) &&
+    (activeStep.roleType === "DEPT_HEAD" || isGenericRoleApproverLabel(activeStep.approverName)) &&
+    sameDept
+  ) {
     return true;
   }
   return false;
@@ -883,30 +1280,29 @@ export function ProposalsApprovalView({
     return Array.from(names);
   }, [personnelList, currentStaffName]);
 
-  // Tìm Trưởng bộ phận mặc định theo phòng ban (hỗ trợ cả Khối Kinh Doanh & Khối Kỹ Thuật)
+  // Tìm Trưởng bộ phận (hoặc Phó trưởng phòng khi phòng không có Trưởng phòng) mặc định theo phòng ban
   const getDefaultDeptHead = (deptName: string): string => {
-    const d = String(deptName || "").toLowerCase();
-    const matchedLead = (personnelList || []).find((p: any) => {
-      const pDept = String(p?.department || "").toLowerCase();
-      const pos = String(p?.position || "").toLowerCase();
-      return pDept && d && pDept.includes(d) && (pos.includes("trưởng") || pos.includes("head") || pos.includes("lead") || pos.includes("quản lý") || pos.includes("quản đốc") || pos.includes("giám đốc"));
-    });
-    if (matchedLead?.full_name) {
-      return String(matchedLead.full_name).replace(/\s*\(.*?\)/g, "").trim();
+    const leader = resolveDeptLeaderInfo(deptName, personnelList);
+    if (leader?.name) {
+      return leader.name;
     }
+    const bod = getSupervisingBodForDept(deptName, personnelList);
+    if (bod?.approverName) {
+      return bod.approverName;
+    }
+    const d = String(deptName || "").toLowerCase();
     if (d.includes("kho nhà máy")) return "Trưởng Kho Nhà Máy";
     if (d.includes("kho")) return "Trưởng Kho Kinh Doanh";
     if (d.includes("cung ứng kỹ thuật")) return "Trưởng Cung Ứng Kỹ Thuật";
     if (d.includes("cung ứng") || d.includes("mua")) return "Trưởng Cung Ứng Kinh Doanh";
-    if (d.includes("r&d") || d.includes("nghiên cứu")) return "Trưởng phòng R&D";
-    if (d.includes("sản xuất kit")) return "Trưởng phòng Sản Xuất Kit";
-    if (d.includes("oligo")) return "Trưởng phòng Tổng Hợp Oligo";
-    if (d.includes("thiết bị")) return "Trưởng phòng Kỹ Thuật – Thiết Bị";
-    if (d.includes("qa") || d.includes("qc")) return "Trưởng phòng QA/QC";
-    if (d.includes("application") || d.includes("ứng dụng")) return "Trưởng phòng Application";
-    if (d.includes("kinh doanh") || d.includes("sales")) return "Trưởng phòng Kinh Doanh";
-    if (d.includes("kế toán")) return "Kế toán trưởng";
-    if (d.includes("pháp chế")) return "Trưởng phòng Pháp chế";
+    if (d.includes("r&d") || d.includes("nghiên cứu")) return "Nguyễn Quốc Bảo";
+    if (d.includes("sản xuất")) return "Đoàn Hồng Sơn";
+    if (d.includes("oligo")) return "Nguyễn Thanh Tùng";
+    if (d.includes("thiết bị") || d.includes("ktcn")) return "Nguyễn Văn Tùng";
+    if (d.includes("qa") || d.includes("qc")) return "Phan Thị Thảo Trinh";
+    if (d.includes("application") || d.includes("ứng dụng") || d === "app") return "Trần Tài";
+    if (d.includes("kinh doanh") || d.includes("sales")) return "Huỳnh Thị Ngọc Huyền";
+    if (d.includes("kế toán") || d.includes("hành chính") || d.includes("nhân sự") || d.includes("pháp chế")) return "Nguyễn Văn Hiếu";
     return "Trưởng bộ phận";
   };
 
@@ -955,7 +1351,12 @@ export function ProposalsApprovalView({
   );
 
   // Build steps from template + current requester dept + total amount
-  const buildStepsFromTemplate = (tmpl: ProposalTemplate, reqDept: string, amount: number): ProposalStepInstance[] => {
+  const buildStepsFromTemplate = (
+    tmpl: ProposalTemplate,
+    reqDept: string,
+    amount: number,
+    reqName: string = currentStaffName
+  ): ProposalStepInstance[] => {
     const resolvedDept = reqDept && reqDept !== "all" ? reqDept : userDept || "Kinh Doanh";
     const filteredSteps = (tmpl.defaultSteps || []).filter((st) => {
       if (st.conditionMinAmount && amount > 0 && amount < st.conditionMinAmount) {
@@ -964,7 +1365,7 @@ export function ProposalsApprovalView({
       return true;
     });
     const baseList = filteredSteps.length > 0 ? filteredSteps : tmpl.defaultSteps;
-    return baseList.map((st, idx) => {
+    const rawSteps: ProposalStepInstance[] = baseList.map((st, idx) => {
       const stepDept = st.defaultDept === "Theo phòng người tạo" ? resolvedDept : st.defaultDept;
       const stepApprover =
         st.defaultApprover === "Trưởng bộ phận"
@@ -983,7 +1384,42 @@ export function ProposalsApprovalView({
         attachmentLabel: st.attachmentLabel || ""
       };
     });
+    return normalizeProposalStepsForRequester(rawSteps, resolvedDept, reqName, personnelList).steps;
   };
+
+  // Tự động chuẩn hóa các đề xuất đang chờ duyệt (PENDING / DRAFT / RETURNED) nếu trước đó gán nhãn chung
+  // (VD: "Trưởng phòng QA/QC") hoặc do Phó/Trưởng phòng đề xuất cần chuyển lên PGĐ phụ trách nhóm / GĐ duyệt
+  useEffect(() => {
+    if (!Array.isArray(proposals) || proposals.length === 0) return;
+    let anyChanged = false;
+    const nextList = proposals.map((p) => {
+      if (!p || (p.status !== "PENDING" && p.status !== "DRAFT" && p.status !== "RETURNED")) return p;
+      const norm = normalizeProposalStepsForRequester(
+        p.steps || [],
+        p.requesterDept || "Kinh Doanh",
+        p.requesterName || "",
+        personnelList
+      );
+      if (!norm.changed) return p;
+      anyChanged = true;
+      const activeIdx =
+        norm.steps.findIndex((s) => s.status === "PENDING_NOW") >= 0
+          ? norm.steps.findIndex((s) => s.status === "PENDING_NOW")
+          : Math.min(p.currentStepIndex || 0, Math.max(0, norm.steps.length - 1));
+      return {
+        ...p,
+        steps: norm.steps,
+        currentStepIndex: activeIdx
+      };
+    });
+    if (anyChanged) {
+      onSaveProposals(nextList);
+      if (selectedProposal) {
+        const updatedSel = nextList.find((x) => x.id === selectedProposal.id);
+        if (updatedSel) setSelectedProposal(updatedSel);
+      }
+    }
+  }, [proposals, personnelList]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const generateProposalCode = (tmpl: ProposalTemplate) => {
     const year = new Date().getFullYear();
@@ -1340,13 +1776,14 @@ export function ProposalsApprovalView({
     const reqDept = existing?.requesterDept || defaultConcreteDeptForScope(selectedDept, userDept);
     const reqName = existing?.requesterName || currentStaffName;
 
-    // Chuẩn hóa luồng bước duyệt
-    let stepsList = formState.steps.length > 0
+    // Chuẩn hóa luồng bước duyệt (tự động phân luồng Trưởng/Phó phòng hoặc PGĐ phụ trách nhóm / GĐ)
+    const initialStepsList = formState.steps.length > 0
       ? formState.steps.map((s, i) => ({
           ...s,
           stepOrder: i + 1
         }))
-      : buildStepsFromTemplate(activeTemplate, reqDept, formState.totalAmount);
+      : buildStepsFromTemplate(activeTemplate, reqDept, formState.totalAmount, reqName);
+    let stepsList = normalizeProposalStepsForRequester(initialStepsList, reqDept, reqName, personnelList).steps;
 
     // Nếu Gửi duyệt lại từ trạng thái RETURNED hoặc DRAFT -> đặt bước đầu tiên chưa APPROVED thành PENDING_NOW
     let activeIdx = 0;
@@ -4001,7 +4438,10 @@ export function ProposalsApprovalView({
                         stepName: `Bước duyệt ${prev.steps.length + 1}`,
                         roleType: "DIRECTOR",
                         dept: "Ban Giám Đốc",
-                        approverName: "Nguyễn Văn Hưng",
+                        approverName: getSupervisingBodForDept(
+                          defaultConcreteDeptForScope(selectedDept, userDept),
+                          personnelList
+                        ).approverName,
                         status: "WAITING",
                         slaHours: 8
                       }

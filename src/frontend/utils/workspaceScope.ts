@@ -84,6 +84,10 @@ function normalizeWorkspaceDeptUncached(raw: string): string {
   const l = s.toLowerCase();
   // 1. Phân biệt rõ Kho Nhà Máy và Cung Ứng Kỹ Thuật (xét trước Kho & Cung ứng chung)
   if (
+    l === "cung ứng kho" ||
+    l === "p-kho" ||
+    l.includes("cung ứng - kho") ||
+    l.includes("cung ứng – kho") ||
     l.includes("kho nhà máy") ||
     l.includes("kho kỹ thuật") ||
     l.includes("kho tổng nhà máy") ||
@@ -110,9 +114,22 @@ function normalizeWorkspaceDeptUncached(raw: string): string {
   if (l === "it" || l === "p-it" || l.startsWith("phòng it") || l.includes("công nghệ thông tin")) return "IT";
   if (l.includes("đơn nội bộ") || l.includes("điều phối sản xuất") || l.includes("điều phối đơn")) return "Đơn Nội Bộ";
   if (l.includes("r&d") || l.includes("nghiên cứu") || l === "p-rd") return "Nghiên Cứu R&D";
-  if (l.includes("sản xuất kit") || l.includes("sx kit") || l === "p-kit") return "Sản Xuất Kit";
   if (l.includes("oligo") || l === "p-oligo") return "Tổng Hợp Oligo";
-  if (l.includes("thiết bị") || l.includes("cơ điện") || l === "p-tb") return "Kỹ Thuật – Thiết Bị";
+  if (
+    l === "ktcn" ||
+    l === "p-device" ||
+    l.includes("kỹ thuật công nghệ") ||
+    l.includes("kỹ thuật - công nghệ") ||
+    l.includes("kỹ thuật – công nghệ") ||
+    l.includes("thiết bị") ||
+    l.includes("cơ điện") ||
+    l === "p-tb"
+  ) {
+    return "Kỹ Thuật – Thiết Bị";
+  }
+  if (l.includes("sản xuất kit") || l.includes("sx kit") || l === "p-kit" || l === "sản xuất" || l === "phòng sản xuất") {
+    return "Sản Xuất Kit";
+  }
   if (l.includes("qa") || l.includes("qc") || l.includes("chất lượng") || l === "p-qaqc") return "QA/QC";
   // 3. Các phòng ban thuộc Khối Kinh Doanh & Văn Phòng
   if (l.includes("sales admin")) return "Sales Admin";
