@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect, useMemo } from "react";
+import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, CheckCircle2, AlertCircle, Info, Bell, CheckSquare, Calendar, FileText, Truck, Package, FlaskConical, FileCheck2 } from "lucide-react";
 import { cn } from "@/backend/services/utils";
@@ -546,6 +546,9 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
         }
         return [];
     });
+    // Current list for the 25 s poll to compare against without re-rendering
+    const allNotificationsRef = useRef(allNotifications);
+    allNotificationsRef.current = allNotifications;
 
     const [personnelList, setPersonnelList] = useState<PersonnelItem[]>(TBR_PERSONNEL);
 
@@ -577,9 +580,13 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             if (!res.ok) return;
             const data = await res.json();
             if (data && Array.isArray(data.notifications)) {
+                // Polled every 25 s: keep the same array when nothing changed, otherwise every component using
+                // useNotification (Kinh doanh, Cung ứng, Application, Cấu hình… even hidden tabs) re-renders each time.
+                const nextJson = JSON.stringify(data.notifications);
+                if (JSON.stringify(allNotificationsRef.current) === nextJson) return;
                 setAllNotifications(data.notifications);
                 try {
-                    localStorage.setItem("tbr_activity_notifications", JSON.stringify(data.notifications));
+                    localStorage.setItem("tbr_activity_notifications", nextJson);
                 } catch {}
             }
         } catch {}
@@ -1274,29 +1281,37 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
         }
     }, [user, filteredNotifications, selectedEmployeeFilter]);
 
+    // Same object while nothing in it changed: a toast or an unrelated provider state change no longer re-renders
+    // every consumer (including the big modules kept mounted in hidden tabs).
+    const contextValue = useMemo(
+        () => ({
+            showToast,
+            notifications: allNotifications,
+            filteredNotifications,
+            unreadCount,
+            totalCount: filteredNotifications.length,
+            addNotification,
+            notifyActivity,
+            markAsRead,
+            markAllAsRead,
+            deleteNotification,
+            clearAllNotifications,
+            selectedEmployeeFilter,
+            setSelectedEmployeeFilter,
+            personnelList,
+            navigateTo,
+            notificationMatrix: matrixSettings,
+            updateNotificationMatrix,
+            resetNotificationMatrix,
+            testTriggerNotification,
+        }),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [showToast, allNotifications, filteredNotifications, unreadCount, addNotification, notifyActivity, markAsRead, markAllAsRead, deleteNotification, clearAllNotifications, selectedEmployeeFilter, setSelectedEmployeeFilter, personnelList, navigateTo, matrixSettings, updateNotificationMatrix, resetNotificationMatrix, testTriggerNotification]
+    );
+
     return (
         <NotificationContext.Provider
-            value={{
-                showToast,
-                notifications: allNotifications,
-                filteredNotifications,
-                unreadCount,
-                totalCount: filteredNotifications.length,
-                addNotification,
-                notifyActivity,
-                markAsRead,
-                markAllAsRead,
-                deleteNotification,
-                clearAllNotifications,
-                selectedEmployeeFilter,
-                setSelectedEmployeeFilter,
-                personnelList,
-                navigateTo,
-                notificationMatrix: matrixSettings,
-                updateNotificationMatrix,
-                resetNotificationMatrix,
-                testTriggerNotification
-            }}
+            value={contextValue}
         >
             {children}
 

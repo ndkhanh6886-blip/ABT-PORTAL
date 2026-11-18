@@ -10,15 +10,17 @@ import { DataSyncGate } from "@/frontend/components/DataSyncGate";
 import { AccountSecurityModal } from "@/frontend/components/AccountSecurityModal";
 import { BUSINESS_TABS, BusinessTabs, TECHNICAL_TABS, TechnicalTabs, SETTINGS_TABS, SettingsTabs } from "@/frontend/components/GroupTabs";
 
-const SalesFullABT = dynamic(() => import("@/frontend/components/SalesFullABT").then(m => m.SalesFullABT), { ssr: false });
-const WarehouseModule = dynamic(() => import("@/frontend/components/WarehouseModule").then(m => m.WarehouseModule), { ssr: false });
-const ApplicationFullABT = dynamic(() => import("@/frontend/components/ApplicationFullABT").then(m => m.ApplicationFullABT), { ssr: false });
-const ProcurementModule = dynamic(() => import("@/frontend/components/ProcurementModule").then(m => m.ProcurementModule), { ssr: false });
-const LegalModule = dynamic(() => import("@/frontend/components/LegalModule").then(m => m.LegalModule), { ssr: false });
-const SettingsModule = dynamic(() => import("@/frontend/components/SettingsModule").then(m => m.SettingsModule), { ssr: false });
-const UnifiedWorkspace = dynamic(() => import("@/frontend/components/UnifiedWorkspace").then(m => m.UnifiedWorkspace), { ssr: false });
-const EnterpriseChatModule = dynamic(() => import("@/frontend/components/EnterpriseChatModule").then(m => m.EnterpriseChatModule), { ssr: false });
-const ZaloOperationsHub = dynamic(() => import("@/frontend/components/ZaloOperationsHub").then(m => m.ZaloOperationsHub), { ssr: false });
+// Modules kept mounted in hidden tabs (visitedTabs): React.memo so switching the main tab does not re-render every
+// visited module (Kinh doanh ~42k lines, Điều hành ~19k…). They still re-render on their own state / context changes.
+const SalesFullABT = React.memo(dynamic(() => import("@/frontend/components/SalesFullABT").then(m => m.SalesFullABT), { ssr: false }));
+const WarehouseModule = React.memo(dynamic(() => import("@/frontend/components/WarehouseModule").then(m => m.WarehouseModule), { ssr: false }));
+const ApplicationFullABT = React.memo(dynamic(() => import("@/frontend/components/ApplicationFullABT").then(m => m.ApplicationFullABT), { ssr: false }));
+const ProcurementModule = React.memo(dynamic(() => import("@/frontend/components/ProcurementModule").then(m => m.ProcurementModule), { ssr: false }));
+const LegalModule = React.memo(dynamic(() => import("@/frontend/components/LegalModule").then(m => m.LegalModule), { ssr: false }));
+const SettingsModule = React.memo(dynamic(() => import("@/frontend/components/SettingsModule").then(m => m.SettingsModule), { ssr: false }));
+const UnifiedWorkspace = React.memo(dynamic(() => import("@/frontend/components/UnifiedWorkspace").then(m => m.UnifiedWorkspace), { ssr: false }));
+const EnterpriseChatModule = React.memo(dynamic(() => import("@/frontend/components/EnterpriseChatModule").then(m => m.EnterpriseChatModule), { ssr: false }));
+const ZaloOperationsHub = React.memo(dynamic(() => import("@/frontend/components/ZaloOperationsHub").then(m => m.ZaloOperationsHub), { ssr: false }));
 const FloatingChatWidget = dynamic(() => import("@/frontend/components/FloatingChatWidget").then(m => m.FloatingChatWidget), { ssr: false });
 
 const FactoryWarehouseModule = dynamic(() => import("@/frontend/factory/warehouse/FactoryWarehouseModule").then(m => m.FactoryWarehouseModule), { ssr: false });
