@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback, useDeferredValue } from "react";
 import { sanitizeProposalList } from "@/frontend/utils/recoveredProposals";
-import { BufferedField } from "./BufferedField";
+import { BufferedField, FastInput, FastTextarea } from "./BufferedField";
 import {
   WORKSPACE_BLOCKS,
   isWorkspaceBlockKey,
@@ -1169,7 +1169,7 @@ const SearchablePersonnelSelect: React.FC<SearchablePersonnelSelectProps> = ({
           )}
           <div className="p-2 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2 bg-slate-50/50 dark:bg-slate-950/50">
             <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-            <input
+            <FastInput
               type="text"
               autoFocus
               placeholder="Gõ tìm tên, mã NV, chức vụ..."
@@ -8796,7 +8796,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           {/* Search Bar */}
           <div className="relative flex-1 min-w-[200px] max-w-sm">
             <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
+            <FastInput
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -9406,7 +9406,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     <>
                       <div className="fixed inset-0 z-40" onClick={() => setQuickLaunchOpen(false)} />
                       <div className="absolute z-50 left-0 mt-1 w-[min(92vw,460px)] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl p-2 space-y-1.5">
-                        <input
+                        <FastInput
                           autoFocus
                           value={quickLaunchQuery}
                           onChange={(e) => setQuickLaunchQuery(e.target.value)}
@@ -11410,7 +11410,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                         <div className="text-[10px] font-bold text-purple-700 dark:text-purple-300">
                                           + Thêm công việc mới vào Giai đoạn {sIdx + 1}:
                                         </div>
-                                        <input
+                                        <FastInput
                                           type="text"
                                           value={quickStageTaskForm.title}
                                           onChange={(e) => setQuickStageTaskForm({ ...quickStageTaskForm, title: e.target.value })}
@@ -11428,7 +11428,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                               <option key={d.id} value={d.id}>🏢 {d.id}</option>
                                             ))}
                                           </select>
-                                          <input
+                                          <FastInput
                                             type="text"
                                             value={quickStageTaskForm.assignee}
                                             onChange={(e) => setQuickStageTaskForm({ ...quickStageTaskForm, assignee: e.target.value })}
@@ -12116,7 +12116,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
                     Nội dung tổng hợp hoặc bổ sung thêm trong ngày:
                   </label>
-                  <textarea
+                  <FastTextarea
                     rows={2}
                     value={dailyForm.work_content}
                     onChange={(e) => setDailyForm({ ...dailyForm, work_content: e.target.value })}
@@ -12187,7 +12187,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     <label className="block font-bold text-slate-600 dark:text-slate-400 mb-1 text-xs">
                       Kế hoạch trọng tâm ngày mai
                     </label>
-                    <input
+                    <FastInput
                       type="text"
                       value={dailyTomorrowPlan}
                       onChange={(e) => setDailyTomorrowPlan(e.target.value)}
@@ -12459,7 +12459,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                 </span>
                               </div>
                               <div className="flex gap-1.5">
-                                <input
+                                <FastInput
                                   type="text"
                                   value={currentFeedbackState.managerText || ""}
                                   onChange={(e) => setFeedbackInput(prev => ({
@@ -12523,7 +12523,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               {log.staff_feedback ? "Cập nhật phản hồi chỉ đạo:" : "Nhân viên phản hồi tiếp thu chỉ đạo:"}
                             </span>
                             <div className="flex gap-1.5">
-                              <input
+                              <FastInput
                                 type="text"
                                 value={currentFeedbackState.staffText || ""}
                                 onChange={(e) => setFeedbackInput(prev => ({
@@ -14432,7 +14432,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
           <div>
             <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Tiêu đề yêu cầu phối hợp *</label>
-            <input
+            <FastInput
               type="text"
               required
               value={wfForm.title}
@@ -14931,7 +14931,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
           <div>
             <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mô tả yêu cầu chi tiết</label>
-            <textarea
+            <FastTextarea
               rows={3}
               value={wfForm.description}
               onChange={(e) => setWfForm({ ...wfForm, description: e.target.value })}
@@ -15000,7 +15000,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Tên quy trình phối hợp *</label>
-              <input
+              <FastInput
                 type="text"
                 required
                 value={templateForm.name}
@@ -15012,7 +15012,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mã quy trình (viết tắt)</label>
-              <input
+              <FastInput
                 type="text"
                 value={templateForm.code}
                 onChange={(e) => setTemplateForm({ ...templateForm, code: e.target.value })}
@@ -15054,7 +15054,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
           <div>
             <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mục đích &amp; Hướng dẫn phối hợp</label>
-            <textarea
+            <FastTextarea
               rows={2}
               value={templateForm.description}
               onChange={(e) => setTemplateForm({ ...templateForm, description: e.target.value })}
@@ -15423,7 +15423,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
               Ghi chú kết quả &amp; Nội dung nghiệm thu bước này *
             </label>
-            <textarea
+            <FastTextarea
               rows={3}
               required
               value={advanceStepData.stepResult}
@@ -15940,7 +15940,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Người lập báo cáo / Người ghi nhận *
                 </label>
-                <input
+                <FastInput
                   type="text"
                   required
                   value={recordResultForm.reporter_name}
@@ -15990,7 +15990,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   </button>
                 </div>
               </div>
-              <textarea
+              <FastTextarea
                 rows={4}
                 required
                 value={recordResultForm.results_summary}
@@ -16693,7 +16693,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     </div>
 
                     {/* Ô tìm kiếm nhân sự nhanh */}
-                    <input
+                    <FastInput
                       type="text"
                       value={attendeeSearchQuery}
                       onChange={(e) => setAttendeeSearchQuery(e.target.value)}
@@ -16863,7 +16863,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
                 {(personalWorkItems.length > 0 || deptWorkItems.length > 0 || scheduleWorkSearch) && (
                   <div className="relative">
-                    <input
+                    <FastInput
                       type="text"
                       value={scheduleWorkSearch}
                       onChange={(e) => setScheduleWorkSearch(e.target.value)}
@@ -17151,7 +17151,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   </div>
 
                   {/* Ô gõ thời gian tự do linh hoạt */}
-                  <input
+                  <FastInput
                     type="text"
                     required
                     value={scheduleForm.time}
@@ -17213,7 +17213,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                       {isMeetingMode ? "4. Chủ đề / Tiêu đề cuộc họp *" : "4. Tiêu đề & Nội dung công tác *"}
                     </label>
-                    <input
+                    <FastInput
                       type="text"
                       required
                       value={scheduleForm.title}
@@ -17230,7 +17230,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                       {isMeetingMode ? "Phòng họp / Địa điểm họp" : "Địa điểm / Phòng Lab / Xưởng / Khách hàng"}
                     </label>
-                    <input
+                    <FastInput
                       type="text"
                       value={scheduleForm.location}
                       onChange={(e) => setScheduleForm({ ...scheduleForm, location: e.target.value })}
@@ -17251,7 +17251,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       <label className="block font-bold text-slate-700 dark:text-slate-300">
                         🔗 Link họp trực tuyến (Google Meet / Zoom / Teams)
                       </label>
-                      <input
+                      <FastInput
                         type="text"
                         value={scheduleForm.meetingLink || ""}
                         onChange={(e) => setScheduleForm({ ...scheduleForm, meetingLink: e.target.value })}
@@ -17266,7 +17266,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       <label className="block font-bold text-slate-700 dark:text-slate-300">
                         📝 Nội dung chương trình họp &amp; Yêu cầu chuẩn bị (Agenda)
                       </label>
-                      <textarea
+                      <FastTextarea
                         rows={2}
                         value={scheduleForm.meetingAgenda || ""}
                         onChange={(e) => setScheduleForm({ ...scheduleForm, meetingAgenda: e.target.value })}
@@ -17367,7 +17367,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     </div>
 
                     <div className="md:col-span-7">
-                      <input
+                      <FastInput
                         type="text"
                         value={scheduleForm.customNotifyMessage || ""}
                         onChange={(e) => setScheduleForm({ ...scheduleForm, customNotifyMessage: e.target.value })}
@@ -17551,7 +17551,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mã dự án / chuyên đề *</label>
-                <input
+                <FastInput
                   type="text"
                   required
                   value={labProjectForm.id}
@@ -17682,7 +17682,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Tên dự án / Nhóm công việc *
                 </label>
-                <input
+                <FastInput
                   type="text"
                   required
                   value={labProjectForm.name}
@@ -17696,7 +17696,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Phân loại / Nhóm chuyên đề (Tùy chỉnh)
                 </label>
-                <input
+                <FastInput
                   type="text"
                   value={labProjectForm.typeName}
                   onChange={(e) => setLabProjectForm({ ...labProjectForm, typeName: e.target.value })}
@@ -17724,7 +17724,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   🔗 Khách hàng / Mã liên kết nghiệp vụ
                 </label>
-                <input
+                <FastInput
                   type="text"
                   value={labProjectForm.customerOrRef || ""}
                   onChange={(e) => setLabProjectForm({ ...labProjectForm, customerOrRef: e.target.value })}
@@ -17770,7 +17770,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Ngân sách / Nguồn lực (Nếu có)</label>
-                <input
+                <FastInput
                   type="text"
                   value={labProjectForm.budget}
                   onChange={(e) => setLabProjectForm({ ...labProjectForm, budget: e.target.value })}
@@ -17782,7 +17782,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mục tiêu &amp; Tiêu chí nghiệm thu (Deliverables)</label>
-              <textarea
+              <FastTextarea
                 rows={2}
                 value={labProjectForm.description}
                 onChange={(e) => setLabProjectForm({ ...labProjectForm, description: e.target.value })}
@@ -18161,7 +18161,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
         <form onSubmit={handleSaveSalesTarget} className="space-y-3 p-1 text-xs">
           <div>
             <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Khách hàng / Bệnh viện / Viện mục tiêu *</label>
-            <input
+            <FastInput
               type="text"
               required
               value={salesTargetForm.customer}
@@ -18174,7 +18174,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mục tiêu doanh số (VNĐ) *</label>
-              <input
+              <FastInput
                 type="text"
                 required
                 value={salesTargetForm.amount}
@@ -18228,7 +18228,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
           <div>
             <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Nội dung gói thầu / Sản phẩm trọng điểm</label>
-            <textarea
+            <FastTextarea
               rows={3}
               value={salesTargetForm.description}
               onChange={(e) => setSalesTargetForm({ ...salesTargetForm, description: e.target.value })}
@@ -18378,7 +18378,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
                 Số hiệu văn bản *
               </label>
-              <input
+              <FastInput
                 type="text"
                 required
                 value={announcementForm.docCode}
@@ -18421,7 +18421,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Người ký / Ban hành *
               </label>
-              <input
+              <FastInput
                 type="text"
                 required
                 value={announcementForm.issuerName}
@@ -18433,7 +18433,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Chức vụ / Thẩm quyền
               </label>
-              <input
+              <FastInput
                 type="text"
                 value={announcementForm.issuerRole}
                 onChange={(e) => setAnnouncementForm({ ...announcementForm, issuerRole: e.target.value })}
@@ -18536,7 +18536,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 3. Tiêu đề Thông báo / Quyết định *
               </label>
-              <input
+              <FastInput
                 type="text"
                 required
                 value={announcementForm.title}
@@ -18550,7 +18550,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Trích yếu / Tóm tắt ngắn gọn (Hiển thị nổi bật ngoài bảng tin &amp; tin nhắn Chat)
               </label>
-              <input
+              <FastInput
                 type="text"
                 value={announcementForm.summary}
                 onChange={(e) => setAnnouncementForm({ ...announcementForm, summary: e.target.value })}
@@ -18563,7 +18563,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 4. Nội dung toàn văn (Các Điều 1, Điều 2, Điều 3... hoặc nội dung thông báo chi tiết) *
               </label>
-              <textarea
+              <FastTextarea
                 rows={6}
                 required
                 value={announcementForm.content}
@@ -18914,7 +18914,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   </div>
                 )}
                 <form onSubmit={handleAddAnnouncementComment} className="flex items-center gap-2">
-                  <input
+                  <FastInput
                     type="text"
                     value={announcementCommentText}
                     onChange={(e) => setAnnouncementCommentText(e.target.value)}
