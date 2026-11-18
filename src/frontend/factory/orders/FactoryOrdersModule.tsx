@@ -1021,6 +1021,20 @@ function OrderPanel({ id, onClose }: { id: string; onClose: () => void }) {
     me.data?.permissions.includes("intake.shipment.post") &&
     o &&
     ["ACCEPTED", "IN_PRODUCTION", "READY", "PARTIALLY_DELIVERED"].includes(o.status);
+  const canDeleteOrder = Boolean(me.data?.is_root || me.data?.permissions.includes("intake.order.manage"));
+
+  const deleteOrderMut = useMutation({
+    mutationFn: () =>
+      api(`/api/factory/intake/orders/${id}`, {
+        method: "DELETE",
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["factory", "internal-orders"] });
+      qc.invalidateQueries({ queryKey: ["factory", "device", "workflow"] });
+      qc.invalidateQueries({ queryKey: ["factory", "device", "orders"] });
+      onClose();
+    },
+  });
 
   const navigateToModule = (tabKey: string, oligoOrderId?: string, devicePoId?: string) => {
     if (typeof window !== "undefined") {
@@ -1104,12 +1118,32 @@ function OrderPanel({ id, onClose }: { id: string; onClose: () => void }) {
     <Card
       title={o ? `Chi tiết Đơn nội bộ ${o.code} — PO Kinh doanh: ${o.kd_po_code}` : "Đơn nội bộ"}
       actions={
-        <Button variant="ghost" onClick={onClose}>
-          Đóng
-        </Button>
+        <div className="flex items-center gap-2">
+          {canDeleteOrder && o && (
+            <button
+              type="button"
+              disabled={deleteOrderMut.isPending}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    `Bạn có chắc chắn muốn xóa Đơn Nội Bộ ${o.code} (${o.kd_po_code}) và các lệnh sản xuất nháp liên kết?`
+                  )
+                ) {
+                  deleteOrderMut.mutate();
+                }
+              }}
+              className="px-2.5 py-1 rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 text-rose-700 dark:text-rose-300 font-bold text-xs cursor-pointer"
+            >
+              🗑️ Xóa đơn
+            </button>
+          )}
+          <Button variant="ghost" onClick={onClose}>
+            Đóng
+          </Button>
+        </div>
       }
     >
-      <ErrorNote error={order.error ?? moveDate.error ?? saveNotesMut.error ?? dispatchProdMut.error} />
+      <ErrorNote error={order.error ?? moveDate.error ?? saveNotesMut.error ?? dispatchProdMut.error ?? deleteOrderMut.error} />
       {toast && (
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/50 px-3.5 py-2 text-xs font-semibold text-emerald-800 dark:text-emerald-200">
           <span>{toast.msg}</span>
@@ -1676,6 +1710,9 @@ function OrderPanel({ id, onClose }: { id: string; onClose: () => void }) {
 
 /** "Đơn nội bộ": purchase orders of Kinh doanh received by the 3 production departments (Kit, Oligo, Device). */
 export function FactoryOrdersModule() {
+  const qc = useQueryClient();
+  const me = useFactoryMe();
+  const canDeleteOrder = Boolean(me.data?.is_root || me.data?.permissions.includes("intake.order.manage"));
   const [status, setStatus] = useState("");
   const [moduleFilter, setModuleFilter] = useState<"" | "KIT" | "OLIGO" | "DEVICE">("");
   const [selected, setSelected] = useState<string | null>(() => {
@@ -1689,6 +1726,19 @@ export function FactoryOrdersModule() {
     return null;
   });
   const [creating, setCreating] = useState(false);
+
+  const deleteRowMut = useMutation({
+    mutationFn: (orderId: string) =>
+      api(`/api/factory/intake/orders/${orderId}`, {
+        method: "DELETE",
+      }),
+    onSuccess: (_res, deletedId) => {
+      if (selected === deletedId) setSelected(null);
+      qc.invalidateQueries({ queryKey: ["factory", "internal-orders"] });
+      qc.invalidateQueries({ queryKey: ["factory", "device", "workflow"] });
+      qc.invalidateQueries({ queryKey: ["factory", "device", "orders"] });
+    },
+  });
 
   useEffect(() => {
     const pendingId = window.sessionStorage.getItem("factory_open_internal_order_id");
@@ -2001,6 +2051,25 @@ export function FactoryOrdersModule() {
                       >
                         Điều phối / Chi tiết →
                       </button>
+                      {canDeleteOrder && (
+                        <button
+                          type="button"
+                          disabled={deleteRowMut.isPending}
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                `Bạn có chắc chắn muốn xóa Đơn Nội Bộ ${r.code} (${r.kd_po_code}) và các lệnh sản xuất nháp liên kết?`
+                              )
+                            ) {
+                              deleteRowMut.mutate(r.id);
+                            }
+                          }}
+                          title="Xóa Đơn Nội Bộ này"
+                          className="px-2 py-1 rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/50 hover:bg-rose-100 text-rose-700 dark:text-rose-300 font-bold text-[11px] cursor-pointer"
+                        >
+                          🗑️ Xóa
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

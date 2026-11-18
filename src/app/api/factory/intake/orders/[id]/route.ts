@@ -1,5 +1,5 @@
 import { allowedActionsFor, factoryRoute } from "@/factory/http";
-import { getOrder, orderMachine, updateInternalOrderNotes } from "@/factory/intake/orders";
+import { deleteInternalOrder, getOrder, orderMachine, updateInternalOrderNotes } from "@/factory/intake/orders";
 
 export const GET = factoryRoute(async (tx, { actor, params }) => {
   const order = await getOrder(tx, actor, params.id);
@@ -8,4 +8,8 @@ export const GET = factoryRoute(async (tx, { actor, params }) => {
 
 export const PATCH = factoryRoute((tx, { actor, params, body }) =>
   updateInternalOrderNotes(tx, actor, params.id, body)
+);
+
+export const DELETE = factoryRoute((tx, { actor, params }) =>
+  deleteInternalOrder(tx, actor, params.id)
 );

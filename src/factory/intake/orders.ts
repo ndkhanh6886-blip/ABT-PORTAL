@@ -2,7 +2,7 @@ import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
 import { authorize, hasFactoryPermission, type AuthzActor } from "../core/authz";
 import { vnToday } from "../core/dates";
-import { invalid, notFound } from "../core/errors";
+import { forbidden, invalid, notFound } from "../core/errors";
 import { notifyUsers, usersWithPermission } from "../core/notifications";
 import { nextNumber } from "../core/numbering";
 import { enqueueEvent } from "../core/outbox";
@@ -341,4 +341,118 @@ export async function notifyNewOrder(tx: Tx, order: { id: string; code: string; 
     link: "/?tab=factory-orders",
     sourceKey: `order:${order.id}`,
   });
+}
+
+/** Cho phép Quản trị viên (Admin) hoặc người có quyền quản lý đơn nội bộ xóa Đơn nội bộ và các lệnh nháp liên kết. */
+export async function deleteInternalOrder(tx: Tx, actor: AuthzActor, id: string) {
+  const order = (await tx.query("SELECT * FROM intake.internal_order WHERE id = $1 FOR UPDATE", [id])).rows[0];
+  if (!order) throw notFound("đơn nội bộ");
+  if (!actor.isRootAdmin && !(await hasFactoryPermission(tx, actor, "intake.order.manage", order.org_unit_id))) {
+    throw forbidden("Chỉ Quản trị viên (Admin) hoặc người có quyền Quản lý Đơn nội bộ mới được xóa đơn hàng.");
+  }
+
+  const lineIds = (
+    await tx.query("SELECT id FROM intake.internal_order_line WHERE order_id = $1", [id])
+  ).rows.map((r) => r.id as string);
+
+  // 1. Dọn dẹp các Lệnh lắp ráp Thiết bị (device.device_order) liên kết với dòng đơn này
+  if (lineIds.length > 0) {
+    const devOrderIds = (
+      await tx.query("SELECT id FROM device.device_order WHERE internal_order_line_id = ANY($1::uuid[])", [lineIds])
+    ).rows.map((r) => r.id as string);
+    if (devOrderIds.length > 0) {
+      const unitIds = (
+        await tx.query("SELECT id FROM device.device_unit WHERE order_id = ANY($1::uuid[])", [devOrderIds])
+      ).rows.map((r) => r.id as string);
+      if (unitIds.length > 0) {
+        await tx.query("DELETE FROM device.service_ticket WHERE unit_id = ANY($1::uuid[])", [unitIds]);
+        await tx.query("DELETE FROM device.service_schedule WHERE unit_id = ANY($1::uuid[])", [unitIds]);
+        await tx.query("DELETE FROM device.burn_in_run WHERE unit_id = ANY($1::uuid[])", [unitIds]);
+        await tx.query("DELETE FROM device.device_unit_component WHERE unit_id = ANY($1::uuid[])", [unitIds]);
+        await tx.query("DELETE FROM device.device_unit WHERE id = ANY($1::uuid[])", [unitIds]);
+      }
+      await tx.query("UPDATE device.subcontract_order SET device_order_id = NULL WHERE device_order_id = ANY($1::uuid[])", [devOrderIds]);
+      await tx.query("DELETE FROM device.device_order WHERE id = ANY($1::uuid[])", [devOrderIds]);
+    }
+  }
+
+  // 2. Dọn dẹp hoặc ngắt liên kết các Lệnh sản xuất Kit (kit.production_order)
+  if (lineIds.length > 0) {
+    const kitOrderIds = (
+      await tx.query("SELECT id FROM kit.production_order WHERE internal_order_line_id = ANY($1::uuid[])", [lineIds])
+    ).rows.map((r) => r.id as string);
+    await tx.query(
+      "UPDATE kit.production_order SET internal_order_line_id = NULL WHERE internal_order_line_id = ANY($1::uuid[])",
+      [lineIds]
+    );
+    if (kitOrderIds.length > 0) {
+      await tx.query("UPDATE kit.lot_genealogy SET production_order_id = NULL WHERE production_order_id = ANY($1::uuid[])", [kitOrderIds]);
+      await tx.query("UPDATE kit.retain_sample SET production_order_id = NULL WHERE production_order_id = ANY($1::uuid[])", [kitOrderIds]);
+      await tx.query(
+        `DELETE FROM kit.production_order
+          WHERE id = ANY($1::uuid[])
+            AND NOT EXISTS (SELECT 1 FROM kit.coa c WHERE c.production_order_id = kit.production_order.id)
+            AND NOT EXISTS (SELECT 1 FROM kit.rework_order r WHERE r.production_order_id = kit.production_order.id)`,
+        [kitOrderIds]
+      );
+    }
+  }
+
+  // 3. Dọn dẹp hoặc ngắt liên kết các Đơn Tổng hợp Oligo (oligo.oligo_order)
+  const oligoOrderIds = (
+    await tx.query("SELECT id FROM oligo.oligo_order WHERE internal_order_id = $1", [id])
+  ).rows.map((r) => r.id as string);
+  await tx.query("UPDATE oligo.oligo_order SET internal_order_id = NULL WHERE internal_order_id = $1", [id]);
+  if (oligoOrderIds.length > 0) {
+    const deletableOligoIds = (
+      await tx.query(
+        `SELECT o.id
+           FROM oligo.oligo_order o
+          WHERE o.id = ANY($1::uuid[])
+            AND NOT EXISTS (
+              SELECT 1 FROM oligo.oligo_sequence s
+              JOIN oligo.synthesis_batch_item bi ON bi.sequence_id = s.id
+              WHERE s.order_id = o.id
+            )`,
+        [oligoOrderIds]
+      )
+    ).rows.map((r) => r.id as string);
+    if (deletableOligoIds.length > 0) {
+      const seqIds = (
+        await tx.query("SELECT id FROM oligo.oligo_sequence WHERE order_id = ANY($1::uuid[])", [deletableOligoIds])
+      ).rows.map((r) => r.id as string);
+      if (seqIds.length > 0) {
+        await tx.query("DELETE FROM oligo.post_process WHERE sequence_id = ANY($1::uuid[])", [seqIds]);
+        await tx.query("DELETE FROM oligo.oligo_pool_member WHERE sequence_id = ANY($1::uuid[])", [seqIds]);
+        await tx.query("UPDATE oligo.oligo_sequence SET parent_sequence_id = NULL WHERE parent_sequence_id = ANY($1::uuid[])", [seqIds]);
+        await tx.query("DELETE FROM oligo.oligo_sequence WHERE id = ANY($1::uuid[])", [seqIds]);
+      }
+      await tx.query("DELETE FROM oligo.oligo_order WHERE id = ANY($1::uuid[])", [deletableOligoIds]);
+    }
+  }
+
+  // 4. Xóa các dòng giao hàng, phiếu giao hàng, dòng đơn nội bộ và chính đơn nội bộ
+  if (lineIds.length > 0) {
+    await tx.query(
+      "DELETE FROM intake.shipment_line WHERE order_line_id = ANY($1::uuid[]) OR shipment_id IN (SELECT id FROM intake.shipment WHERE order_id = $2)",
+      [lineIds, id]
+    );
+  } else {
+    await tx.query(
+      "DELETE FROM intake.shipment_line WHERE shipment_id IN (SELECT id FROM intake.shipment WHERE order_id = $1)",
+      [id]
+    );
+  }
+  await tx.query("DELETE FROM intake.shipment WHERE order_id = $1", [id]);
+  await tx.query("DELETE FROM intake.internal_order_line WHERE order_id = $1", [id]);
+  await tx.query("DELETE FROM intake.internal_order WHERE id = $1", [id]);
+
+  await writeAudit(tx, actor, {
+    entityType: "internal_order",
+    entityId: id,
+    action: "delete",
+    changes: { code: [order.code, null], kd_po_code: [order.kd_po_code, null] },
+  });
+
+  return { deleted: true, id, code: order.code, kd_po_code: order.kd_po_code };
 }

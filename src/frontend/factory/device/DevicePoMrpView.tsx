@@ -12,7 +12,7 @@ import {
   ShoppingCart,
   Wrench,
 } from "lucide-react";
-import { api, fmtDate, fmtQty, fmtVnd } from "../api";
+import { api, fmtDate, fmtQty, fmtVnd, useFactoryMe } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { STATION_LABELS, useDeviceOptions } from "./shared";
 import { LotSerialField } from "./LotSerialField";
@@ -108,6 +108,8 @@ export function DevicePoMrpView({
   onNavigateTab?: (tab: "assembly" | "subcontract", targetId?: string) => void;
 }) {
   const qc = useQueryClient();
+  const me = useFactoryMe();
+  const canDeletePo = Boolean(me.data?.is_root || me.data?.permissions.includes("intake.order.manage"));
   const opts = useDeviceOptions();
 
   const poQuery = useQuery({
@@ -153,7 +155,20 @@ export function DevicePoMrpView({
     qc.invalidateQueries({ queryKey: ["factory", "device", "orders"] });
     qc.invalidateQueries({ queryKey: ["factory", "device", "subcontracts"] });
     qc.invalidateQueries({ queryKey: ["factory", "prs"] });
+    qc.invalidateQueries({ queryKey: ["factory", "internal-orders"] });
   };
+
+  const deletePoMut = useMutation({
+    mutationFn: (poId: string) =>
+      api(`/api/factory/intake/orders/${poId}`, {
+        method: "DELETE",
+      }),
+    onSuccess: (_res, deletedId) => {
+      if (selectedPoId === deletedId) setSelectedPoId(null);
+      setActionBanner("Đã xóa đơn hàng PO thiết bị và các lệnh sản xuất nháp liên kết.");
+      refreshAll();
+    },
+  });
 
   const createPoMut = useMutation({
     mutationFn: () =>
@@ -378,7 +393,28 @@ export function DevicePoMrpView({
                         <span className="font-mono text-xs font-bold text-sky-700 dark:text-sky-400">
                           {po.kd_po_code} <span className="text-slate-400 font-normal">({po.code})</span>
                         </span>
-                        <StatusBadge status={badge[0]} label={badge[1]} />
+                        <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                          <StatusBadge status={badge[0]} label={badge[1]} />
+                          {canDeletePo && (
+                            <button
+                              type="button"
+                              disabled={deletePoMut.isPending}
+                              onClick={() => {
+                                if (
+                                  window.confirm(
+                                    `Bạn có chắc chắn muốn xóa PO ${po.kd_po_code} (${po.code}) và các lệnh lắp ráp liên kết?`
+                                  )
+                                ) {
+                                  deletePoMut.mutate(po.id);
+                                }
+                              }}
+                              title="Xóa PO Thiết bị này"
+                              className="px-2 py-0.5 rounded-md border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 text-rose-700 dark:text-rose-300 font-bold text-[10px] cursor-pointer"
+                            >
+                              🗑️ Xóa
+                            </button>
+                          )}
+                        </div>
                       </div>
 
                       {firstLine && (
@@ -435,14 +471,34 @@ export function DevicePoMrpView({
             <Card
               title={`Đơn hàng PO: ${selectedPo.kd_po_code} — Phân tích Vật tư BOM (MRP) & Điều độ SX`}
               actions={
-                <StatusBadge
-                  status={PO_STATUS_BADGE[selectedPo.status]?.[0] ?? "PENDING_QC"}
-                  label={PO_STATUS_BADGE[selectedPo.status]?.[1] ?? selectedPo.status}
-                />
+                <div className="flex items-center gap-2">
+                  <StatusBadge
+                    status={PO_STATUS_BADGE[selectedPo.status]?.[0] ?? "PENDING_QC"}
+                    label={PO_STATUS_BADGE[selectedPo.status]?.[1] ?? selectedPo.status}
+                  />
+                  {canDeletePo && (
+                    <button
+                      type="button"
+                      disabled={deletePoMut.isPending}
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            `Bạn có chắc chắn muốn xóa PO ${selectedPo.kd_po_code} (${selectedPo.code}) và các lệnh lắp ráp liên kết?`
+                          )
+                        ) {
+                          deletePoMut.mutate(selectedPo.id);
+                        }
+                      }}
+                      className="px-2.5 py-1 rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 text-rose-700 dark:text-rose-300 font-bold text-xs cursor-pointer"
+                    >
+                      🗑️ Xóa PO
+                    </button>
+                  )}
+                </div>
               }
             >
               <ErrorNote
-                error={convertToWoMut.error || proposePrMut.error || createSubcontractMut.error}
+                error={convertToWoMut.error || proposePrMut.error || createSubcontractMut.error || deletePoMut.error}
               />
 
               <div className="flex flex-col gap-4 text-xs">
