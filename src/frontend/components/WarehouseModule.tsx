@@ -1888,11 +1888,25 @@ export const WarehouseModule: React.FC = () => {
       };
     }
 
-    // 5. PRODUCTS (Sản phẩm & Bảng giá)
+    // 5. PRODUCTS (Sản phẩm & Bảng giá hoặc chỉ Sheet Phụ kiện BOM)
     const isProduct =
-      keys.some(k => k.includes("mã sku") || k.includes("giá niêm yết") || k.includes("giá đại lý") || (k.includes("giá vốn") && !k.includes("công nợ"))) ||
-      fName.includes("banggia") || fName.includes("bang_gia") || fName.includes("sanpham") || fName.includes("san_pham") ||
-      sNames.some(s => s.includes("bang_gia") || s.includes("san_pham"));
+      keys.some(
+        k =>
+          k.includes("mã sku") ||
+          k.includes("sku cha") ||
+          k.includes("mã phụ kiện") ||
+          k.includes("định mức theo bộ") ||
+          k.includes("giá niêm yết") ||
+          k.includes("giá đại lý") ||
+          (k.includes("giá vốn") && !k.includes("công nợ"))
+      ) ||
+      fName.includes("banggia") ||
+      fName.includes("bang_gia") ||
+      fName.includes("sanpham") ||
+      fName.includes("san_pham") ||
+      fName.includes("phu_kien") ||
+      fName.includes("phukien") ||
+      sNames.some(s => s.includes("bang_gia") || s.includes("san_pham") || s.includes("phu_kien") || s.includes("bom"));
 
     if (isProduct) {
       return {
@@ -1902,7 +1916,12 @@ export const WarehouseModule: React.FC = () => {
         badgeClass: "bg-purple-950 text-purple-300 border border-purple-800",
         sheet1Title: "Sheet 1: Sản Phẩm & Bảng Giá",
         sheet2Title: "Sheet 2: Định Mức Phụ Kiện (BOM)",
-        confirmBtnText: (c1: number, c2: number) => c2 > 0 ? `Xác Nhận Nạp ${c1} Sản Phẩm & ${c2} Phụ Kiện BOM` : `Xác Nhận Nạp ${c1} Sản Phẩm & Bảng Giá`
+        confirmBtnText: (c1: number, c2: number) =>
+          c1 === 0 && c2 > 0
+            ? `Xác Nhận Nạp Bổ Sung ${c2} Phụ Kiện Định Mức (BOM)`
+            : c2 > 0
+            ? `Xác Nhận Nạp ${c1} Sản Phẩm & ${c2} Phụ Kiện BOM`
+            : `Xác Nhận Nạp ${c1} Sản Phẩm & Bảng Giá`
       };
     }
 
@@ -1935,7 +1954,7 @@ export const WarehouseModule: React.FC = () => {
   };
 
   const handleConfirmImportExcel = async () => {
-    if (previewImportRows.length === 0) return;
+    if (previewImportRows.length === 0 && previewContactRows.length === 0) return;
     setIsImportingExcel(true);
     try {
       const res = await fetch("/api/inventory?action=import_excel", {
@@ -1997,14 +2016,31 @@ export const WarehouseModule: React.FC = () => {
         const wb = XLSX.read(bstr, { type: "binary" });
         const wsName = wb.SheetNames[0];
         const ws = wb.Sheets[wsName];
-        const rawJson: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" }).map((r: any) => normalizeExcelRowDates(r));
-        setPreviewImportRows(rawJson);
+        let rawJson: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" }).map((r: any) => normalizeExcelRowDates(r));
 
-        const classification = classifyExcelTemplate(file.name, wb.SheetNames, rawJson[0] || {});
+        const isFirstSheetBomOnly =
+          rawJson.length > 0 &&
+          Object.keys(rawJson[0] || {}).some((k) => {
+            const kl = k.toLowerCase();
+            return kl.includes("sku cha") || kl.includes("mã phụ kiện") || kl.includes("parent_product_code");
+          });
+
+        const sampleForClassify = rawJson[0] || (() => {
+          for (const s of wb.SheetNames.slice(1)) {
+            const rows = XLSX.utils.sheet_to_json<Record<string, any>>(wb.Sheets[s], { defval: "" });
+            if (rows.length > 0) return rows[0];
+          }
+          return {};
+        })();
+
+        const classification = classifyExcelTemplate(file.name, wb.SheetNames, sampleForClassify);
         setDetectedImportClassification(classification);
 
         let secondaryJson: any[] = [];
-        if (wb.SheetNames.length > 1) {
+        if (isFirstSheetBomOnly && classification.type === "PRODUCTS") {
+          secondaryJson = rawJson;
+          rawJson = [];
+        } else if (wb.SheetNames.length > 1) {
           let secondarySheetName = "";
           if (classification.type === "CUSTOMERS") {
             secondarySheetName = wb.SheetNames.find(s => {
@@ -2036,11 +2072,16 @@ export const WarehouseModule: React.FC = () => {
             secondaryJson = XLSX.utils.sheet_to_json(secWs, { defval: "" }).map((r: any) => normalizeExcelRowDates(r));
           }
         }
+        setPreviewImportRows(rawJson);
         setPreviewContactRows(secondaryJson);
-        setActivePreviewSheetTab("customers");
+        setActivePreviewSheetTab(rawJson.length === 0 && secondaryJson.length > 0 ? "contacts" : "customers");
 
         const contactMsg = secondaryJson.length > 0 ? ` kèm ${secondaryJson.length} dòng ở ${classification.sheet2Title || "Sheet 2"}` : "";
-        setActionNotice(`📊 Đã nhận diện [${classification.badge}] từ file ${file.name}: ${rawJson.length} dòng dữ liệu${contactMsg}.`);
+        setActionNotice(
+          rawJson.length === 0 && secondaryJson.length > 0
+            ? `📊 Đã nhận diện [${classification.badge}] từ file ${file.name}: ${secondaryJson.length} dòng định mức phụ kiện ở ${classification.sheet2Title || "Sheet 2"} (Chế độ nạp bổ sung chỉ Sheet Phụ kiện BOM).`
+            : `📊 Đã nhận diện [${classification.badge}] từ file ${file.name}: ${rawJson.length} dòng dữ liệu${contactMsg}.`
+        );
       } catch (err) {
         console.error(err);
         alert("Lỗi khi đọc file Excel!");
@@ -7088,7 +7129,7 @@ export const WarehouseModule: React.FC = () => {
             </div>
 
             {/* Preview Table */}
-            {previewImportRows.length > 0 && (
+            {(previewImportRows.length > 0 || previewContactRows.length > 0) && (
               <div className="space-y-3 pt-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-2 flex-wrap">

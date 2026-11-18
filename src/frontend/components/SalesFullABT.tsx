@@ -10566,7 +10566,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     if (rows.length > 0) primarySheets.push({ name: sName, rows });
                 }
 
-                if (primarySheets.length === 0 && workbook.SheetNames.length > 0) {
+                if (primarySheets.length === 0 && secondaryRows.length === 0 && workbook.SheetNames.length > 0) {
                     const fallbackName = workbook.SheetNames[0];
                     const ws = workbook.Sheets[fallbackName];
                     if (ws) primarySheets.push({ name: fallbackName, rows: readSheetRowsSmart(ws) });
@@ -10579,7 +10579,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     }
                 }
 
-                if (json.length === 0) {
+                if (json.length === 0 && secondaryRows.length === 0) {
                     showToast("File Excel không có dữ liệu hợp lệ!", "warning");
                     return;
                 }
@@ -10890,7 +10890,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     const resData = await res.json().catch(() => ({}));
                     if (res.ok && resData.success) {
                         const secMsg = secondaryRows.length > 0 ? ` kèm ${secondaryRows.length} phụ kiện định mức (BOM)` : "";
-                        showToast(`Đã import thành công ${imported.length} sản phẩm${secMsg} vào cơ sở dữ liệu!`, "success");
+                        showToast(
+                            imported.length === 0 && secondaryRows.length > 0
+                                ? `Đã nạp bổ sung thành công ${secondaryRows.length} phụ kiện định mức (BOM) vào cơ sở dữ liệu!`
+                                : `Đã import thành công ${imported.length} sản phẩm${secMsg} vào cơ sở dữ liệu!`,
+                            "success"
+                        );
                         fetch("/api/inventory?action=overview", { headers: { "x-no-cache": "1" } })
                             .then(r => r.json())
                             .then(ov => {

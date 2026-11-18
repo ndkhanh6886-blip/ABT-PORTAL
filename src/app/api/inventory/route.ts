@@ -1635,7 +1635,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Không có dữ liệu hợp lệ để nạp" }, { status: 400 });
       }
 
-      const sample = rows[0] || {};
+      const sample = safeRows[0] || safeContactRows[0] || {};
       const keys = Object.keys(sample).map(k => k.toLowerCase().trim());
 
       // 1. Precise Detection Engine: Prioritize Personnel/Accounts over other entities
@@ -1653,7 +1653,7 @@ export async function POST(req: NextRequest) {
         keys.some(k => k.includes("mã nhà cung cấp") || k.includes("mã ncc") || k.includes("tên nhà cung cấp") || k.includes("supplier_code"));
 
       const isProduct = 
-        keys.some(k => k.includes("mã sku") || k.includes("giá niêm yết") || k.includes("giá đại lý") || (k.includes("giá vốn") && !k.includes("công nợ")));
+        keys.some(k => k.includes("mã sku") || k.includes("sku cha") || k.includes("mã phụ kiện") || k.includes("định mức theo bộ") || k.includes("giá niêm yết") || k.includes("giá đại lý") || (k.includes("giá vốn") && !k.includes("công nợ")));
 
       const isCustomer = 
         keys.some(k => k.includes("khách hàng") || k.includes("customer") || k.includes("mã kh") || k.includes("hạn mức công nợ"));
@@ -2125,18 +2125,24 @@ export async function POST(req: NextRequest) {
 
         await syncCatalogSuppliersAndProducts();
 
-        const auditMsg = componentsImportedCount > 0 
-          ? `Nạp thành công ${importedCount} sản phẩm & ${componentsImportedCount} định mức phụ kiện (BOM) từ Excel`
-          : `Nạp thành công ${importedCount} sản phẩm & bảng giá từ Excel`;
+        const auditMsg =
+          importedCount === 0 && componentsImportedCount > 0
+            ? `Nạp bổ sung thành công ${componentsImportedCount} định mức phụ kiện (BOM) từ Excel`
+            : componentsImportedCount > 0
+            ? `Nạp thành công ${importedCount} sản phẩm & ${componentsImportedCount} định mức phụ kiện (BOM) từ Excel`
+            : `Nạp thành công ${importedCount} sản phẩm & bảng giá từ Excel`;
         await logAudit("IMPORT_EXCEL", "PRODUCTS", auditMsg);
 
         return NextResponse.json({ 
           success: true, 
           imported_count: importedCount, 
           components_count: componentsImportedCount,
-          message: componentsImportedCount > 0 
-            ? `Nạp thành công ${importedCount} sản phẩm cùng ${componentsImportedCount} phụ kiện định mức (BOM)!` 
-            : `Nạp thành công ${importedCount} sản phẩm & bảng giá!`
+          message:
+            importedCount === 0 && componentsImportedCount > 0
+              ? `Đã nạp bổ sung thành công ${componentsImportedCount} phụ kiện định mức (BOM) vào danh mục sản phẩm!`
+              : componentsImportedCount > 0 
+              ? `Nạp thành công ${importedCount} sản phẩm cùng ${componentsImportedCount} phụ kiện định mức (BOM)!` 
+              : `Nạp thành công ${importedCount} sản phẩm & bảng giá!`
         });
       } else if (detectedType === "INBOUND_LOT") {
         const parsedInbound: any[] = [];
