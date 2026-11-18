@@ -101,7 +101,8 @@ function grantAppliesToDept(grant: Grant, permCode: string, deptUnitKey: string 
   if ((grant.scope_module_key === "WH" || grant.scope_module_key === "PURCHASE") && WH_CROSS_DEPT_SET.has(permCode)) {
     return true;
   }
-  if ((grant.scope_module_key === "DEVICE" || grant.scope_module_key === "IT") && permCode.startsWith("rd.")) {
+  // KTCN works on R&D projects; Phòng IT (Khối Kinh doanh) uses its own it.* permissions, never rd.*
+  if (grant.scope_module_key === "DEVICE" && permCode.startsWith("rd.")) {
     return true;
   }
   if (
@@ -573,13 +574,6 @@ export function FactoryAccessSection({
   );
 }
 
-const KTCN_SHARED_RD_PERM_CODES = [
-  "rd.project.manage",
-  "rd.project.edit",
-  "rd.project.delete",
-  "rd.gate.review",
-  "rd.software.release",
-];
 
 /**
  * Interactive feature list of Khối Kỹ thuật – Nhà máy in "Phân Quyền Tính Năng Chi Tiết Trong Từng Phân Hệ".
@@ -785,14 +779,10 @@ export function FactoryFeatureGroups({
         if (!allDeptPerms.length) return null;
         const deptSearchContext = `${d.short} ${d.name}`;
         const visiblePerms = isFiltering ? allDeptPerms.filter((p) => matchesFilter(p, deptSearchContext)) : allDeptPerms;
-        const allSharedKtcn = d.key === "it" ? catalogue.filter((p) => KTCN_SHARED_RD_PERM_CODES.includes(p.code)) : [];
-        const visibleSharedKtcn = isFiltering
-          ? allSharedKtcn.filter((p) => matchesFilter(p, `${deptSearchContext} Dự án Stage-Gate KTCN Phần mềm R&D`))
-          : allSharedKtcn;
-        if (isFiltering && visiblePerms.length === 0 && visibleSharedKtcn.length === 0) return null;
+        if (isFiltering && visiblePerms.length === 0) return null;
 
         const activeCount = allDeptPerms.filter((p) => isPermActiveInDept(p.code, d.unit, isRootAdmin)).length;
-        const bulkTargetCodes = [...visiblePerms, ...visibleSharedKtcn].map((p) => p.code);
+        const bulkTargetCodes = visiblePerms.map((p) => p.code);
 
         return (
           <div key={d.key} className="bg-teal-50/30 dark:bg-slate-800/30 rounded-2xl border border-teal-200/70 dark:border-teal-900/60 p-4 space-y-3">
@@ -842,16 +832,6 @@ export function FactoryFeatureGroups({
             {visiblePerms.length > 0 && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                 {visiblePerms.map((p) => renderPermCard(p, d.unit))}
-              </div>
-            )}
-            {visibleSharedKtcn.length > 0 && (
-              <div className="pt-3 mt-1 border-t border-dashed border-teal-200 dark:border-teal-800/70 space-y-2">
-                <div className="text-[11px] font-bold text-teal-800 dark:text-teal-300 flex items-center gap-1.5">
-                  <span>🔗 Quyền Dự án Stage-Gate &amp; Phần mềm KTCN (Dùng chung hạ tầng R&amp;D / KTCN)</span>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                  {visibleSharedKtcn.map((p) => renderPermCard(p, d.unit))}
-                </div>
               </div>
             )}
           </div>

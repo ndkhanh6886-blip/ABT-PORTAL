@@ -1,6 +1,6 @@
 import { z } from "zod/v3";
 import type { Tx } from "./db";
-import { authorize, getPermission, grantablePermissions, hasFactoryPermission, isQaCrossDeptPermission, type AuthzActor } from "./authz";
+import { authorize, getPermission, grantablePermissions, hasFactoryPermission, isItOrgUnit, isQaCrossDeptPermission, type AuthzActor } from "./authz";
 import { invalid } from "./errors";
 import { insertRecord, parseInput } from "./records";
 
@@ -70,12 +70,15 @@ export async function heldPermissions(tx: Tx, actor: AuthzActor): Promise<string
       isGlobal ||
       !ownerMod ||
       r.module_key === ownerMod ||
-      (mod === "rd" && (r.module_key === "DEVICE" || r.module_key === "IT")) ||
+      // KTCN works on R&D projects; Phòng IT does not (Khối Kinh doanh, its own it.* permissions)
+      (mod === "rd" && r.module_key === "DEVICE") ||
       (r.module_key === "QA" && isQaCrossDeptPermission(code));
     if (isAllowedInScope) codes.add(code);
   }
-  // Every signed-in internal user (including Khối Kinh Doanh) can view and track internal orders transferred to production
-  codes.add("intake.order.view");
+  // Every signed-in internal user (including Khối Kinh Doanh) can view and track internal orders transferred to production,
+  // except Phòng IT staff: IT is kept out of Khối Kỹ thuật – Nhà máy entirely
+  const profileUnit = (await tx.query("SELECT org_unit_id FROM core.user_profile WHERE user_id = $1", [actor.userId])).rows[0]?.org_unit_id;
+  if (!profileUnit || !(await isItOrgUnit(tx, profileUnit))) codes.add("intake.order.view");
   for (const code of ["core.org.manage", "core.role.manage", "core.sequence.manage", "core.setting.manage", "core.audit.view", "master.warehouse.manage"]) {
     if (getPermission(code)?.bootstrapAdmin && (await hasFactoryPermission(tx, actor, code))) codes.add(code);
   }

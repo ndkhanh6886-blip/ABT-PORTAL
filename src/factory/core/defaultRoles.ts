@@ -95,7 +95,9 @@ export const DEFAULT_ROLES: { code: string; name: string; description: string; p
     code: "BAN_GIAM_DOC",
     name: "Ban giám đốc",
     description: "Duyệt đề nghị mua vượt ngưỡng (ký điện tử), xem đề nghị và đơn mua.",
-    permissions: ["rd.software.release", "rd.project.edit", "rd.project.delete", "rd.eln.edit", "rd.eln.delete", "master.data.view", "inv.stock.view", "purchase.pr.view", "purchase.pr.approve", "purchase.pr.approve_bod", "purchase.po.view", "qms.qc.view", "qms.ncr.approve_bod", "rd.view", "rd.idea.evaluate", "rd.idea.approve", "rd.gate.review", "rd.transfer.accept", "device.view", "device.eco.approve", "kit.view", "kit.bom.approve", "kit.order.release"],
+    permissions: ["rd.software.release", "rd.project.edit", "rd.project.delete", "rd.eln.edit", "rd.eln.delete", "master.data.view", "inv.stock.view", "purchase.pr.view", "purchase.pr.approve", "purchase.pr.approve_bod", "purchase.po.view", "qms.qc.view", "qms.ncr.approve_bod", "rd.view", "rd.idea.evaluate", "rd.idea.approve", "rd.gate.review", "rd.transfer.accept", "device.view", "device.eco.approve", "kit.view", "kit.bom.approve", "kit.order.release",
+      // Phòng IT (Khối Kinh doanh) has its own permissions: BGĐ reviews its gates and signs its software releases
+      "it.view", "it.gate.review", "it.software.release", "it.project.edit", "it.project.delete"],
   },
   {
     code: "KIT_NHAN_VIEN",

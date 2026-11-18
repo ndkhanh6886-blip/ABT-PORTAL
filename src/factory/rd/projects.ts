@@ -1,7 +1,7 @@
 import { z } from "zod/v3";
 import type { Tx } from "../core/db";
 import { diffChanges, writeAudit } from "../core/audit";
-import { authorize, authorizeAnywhere, hasFactoryPermission, type AuthzActor } from "../core/authz";
+import { authorize, authorizeAnywhere, authorizeAnywhereOneOf, hasFactoryPermission, isItOrgUnit, type AuthzActor } from "../core/authz";
 import { vnToday } from "../core/dates";
 import { conflict, invalid, notFound } from "../core/errors";
 import { readAttachment, saveAttachment } from "../core/files";
@@ -311,6 +311,8 @@ async function authorizeGateTemplateManage(tx: Tx, actor: AuthzActor): Promise<v
   for (const perm of perms) {
     if (await hasFactoryPermission(tx, actor, perm, null)) return;
     for (const u of units) {
+      // Gate templates are Khối Kỹ thuật configuration: an IT permission (answered on P-IT) does not open them
+      if (await isItOrgUnit(tx, u.id)) continue;
       if (await hasFactoryPermission(tx, actor, perm, u.id)) return;
     }
   }
@@ -360,7 +362,7 @@ async function insertProjectGatesFromTemplateItems(tx: Tx, projectId: string, tp
 }
 
 export async function listGateTemplates(tx: Tx, actor: AuthzActor) {
-  await authorizeAnywhere(tx, actor, "rd.view");
+  await authorizeAnywhereOneOf(tx, actor, ["rd.view", "it.view"]);
   const templates = (
     await tx.query(
       `SELECT t.*,
@@ -1397,7 +1399,7 @@ export async function saveMilestone(tx: Tx, actor: AuthzActor, projectId: string
 
 /** Exports all active roadmap milestones visible to the user as an RFC 5545 `.ics` calendar string. */
 export async function exportRoadmapIcs(tx: Tx, actor: AuthzActor, projectId?: string): Promise<string> {
-  await authorizeAnywhere(tx, actor, "rd.view");
+  await authorizeAnywhereOneOf(tx, actor, ["rd.view", "it.view"]);
   const rows = (
     await tx.query(
       `SELECT m.id, m.title, m.due_date::text AS due_date, m.status, m.notes, p.code AS project_code, p.name AS project_name, p.owner_org_unit_id
@@ -1444,7 +1446,7 @@ export interface ListProjectsFilter {
 const normName = (s?: string | null) => (s || "").trim().replace(/\s+/g, " ").toLowerCase();
 
 export async function listProjects(tx: Tx, actor: AuthzActor, domainOrFilter?: string | ListProjectsFilter) {
-  await authorizeAnywhere(tx, actor, "rd.view");
+  await authorizeAnywhereOneOf(tx, actor, ["rd.view", "it.view"]);
   const filter: ListProjectsFilter =
     typeof domainOrFilter === "string" ? { domain: domainOrFilter } : domainOrFilter ?? {};
   const domain = filter.domain || null;

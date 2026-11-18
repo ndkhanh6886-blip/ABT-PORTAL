@@ -10,7 +10,8 @@ import { SoftwareLifecycleView } from "../device/SoftwareLifecycleView";
 /**
  * Phòng IT (Khối Kinh Doanh): IT chung và nghiên cứu – phát triển phần mềm.
  * Vòng đời phần mềm (IEC 62304), dự án phần mềm (Stage-Gate) và bản phát hành phần mềm.
- * Dữ liệu và quyền dùng chung hạ tầng phần mềm của phân hệ Kỹ thuật – Thiết bị (ownerModule = DEVICE).
+ * Tách hẳn khỏi Khối Kỹ thuật: chỉ dùng quyền it.*; máy chủ chỉ trả dữ liệu do P-IT sở hữu
+ * (bản ghi P-IT kiểm tra quyền it.*, xem IT_PERMISSION_FOR trong factory/core/authz).
  */
 export function FactoryItModule() {
   const me = useFactoryMe();
@@ -30,12 +31,12 @@ export function FactoryItModule() {
       <ProjectsView
         domainLock="SOFTWARE"
         ownerModule="IT"
-        canManage={perms.has("rd.project.manage")}
-        canReviewGate={perms.has("rd.gate.review")}
-        canEdit={Boolean(me.data?.is_root || perms.has("rd.project.edit"))}
-        canDelete={Boolean(me.data?.is_root || perms.has("rd.project.delete"))}
+        canManage={perms.has("it.project.manage")}
+        canReviewGate={perms.has("it.gate.review")}
+        canEdit={Boolean(me.data?.is_root || perms.has("it.project.edit"))}
+        canDelete={Boolean(me.data?.is_root || perms.has("it.project.delete"))}
       />
-      <TransferView section="software" canManage={perms.has("rd.transfer.manage")} canAccept={false} />
+      <TransferView section="software" canManage={perms.has("it.transfer.manage")} canAccept={false} />
     </div>
   );
 }
