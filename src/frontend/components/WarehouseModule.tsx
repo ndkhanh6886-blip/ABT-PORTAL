@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import { FastInput, FastTextarea } from "./BufferedField";
 import {
   Package,
   Plus,
@@ -4142,7 +4143,7 @@ export const WarehouseModule: React.FC = () => {
               {/* Search Bar */}
               <div className="relative flex-1 max-w-md">
                 <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-                <input
+                <FastInput
                   type="text"
                   placeholder="Tìm theo mã hàng, tên sinh phẩm, số LOT, vị trí kệ..."
                   value={searchQuery}
@@ -5201,14 +5202,14 @@ export const WarehouseModule: React.FC = () => {
                 </button>
               ))}
             </div>
-            <input
+            <FastInput
               type="text"
               value={txSearch}
               onChange={(e) => setTxSearch(e.target.value)}
               placeholder="Tìm mã phiếu, PO / SO, mã hàng, số lô, người thực hiện..."
               className="flex-1 min-w-[220px] max-w-md px-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
             />
-            <input
+            <FastInput
               type="text"
               value={txPartnerFilter}
               onChange={(e) => setTxPartnerFilter(e.target.value)}
@@ -5852,7 +5853,7 @@ export const WarehouseModule: React.FC = () => {
                 </label>
                 <div className="relative">
                   <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
-                  <input
+                  <FastInput
                     type="text"
                     placeholder="Mã SKU, Lô, tên SP..."
                     value={valSearchQuery}
@@ -7324,7 +7325,7 @@ export const WarehouseModule: React.FC = () => {
               {/* Tìm kiếm */}
               <div className="relative">
                 <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
-                <input
+                <FastInput
                   type="text"
                   value={bomSearchQuery}
                   onChange={(e) => setBomSearchQuery(e.target.value)}
@@ -7634,7 +7635,7 @@ export const WarehouseModule: React.FC = () => {
                 <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
                   Lý do chi tiết &amp; Khuyến nghị xử lý *
                 </label>
-                <textarea
+                <FastTextarea
                   rows={3}
                   required
                   value={recallReason}
@@ -8013,7 +8014,7 @@ export const WarehouseModule: React.FC = () => {
                   </div>
                   <div>
                     <label className="block text-slate-600 dark:text-slate-400 font-bold mb-1">Số Hóa Đơn VAT</label>
-                    <input
+                    <FastInput
                       type="text"
                       value={excelInboundDetails.vat_invoice_no}
                       onChange={(e) => setExcelInboundDetails({ ...excelInboundDetails, vat_invoice_no: e.target.value })}
@@ -8056,7 +8057,7 @@ export const WarehouseModule: React.FC = () => {
                   </div>
                   <div>
                     <label className="block text-slate-600 dark:text-slate-400 font-bold mb-1">Thủ kho tiếp nhận *</label>
-                    <input
+                    <FastInput
                       type="text"
                       value={excelInboundDetails.performed_by}
                       onChange={(e) => setExcelInboundDetails({ ...excelInboundDetails, performed_by: e.target.value })}
@@ -8226,7 +8227,7 @@ export const WarehouseModule: React.FC = () => {
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mã Phiếu Nhập (PNK) *</label>
-                    <input
+                    <FastInput
                       type="text"
                       value={inboundForm.transaction_code}
                       onChange={(e) => setInboundForm((prev: any) => ({ ...prev, transaction_code: e.target.value }))}
@@ -8349,7 +8350,7 @@ export const WarehouseModule: React.FC = () => {
                   </div>
                   <div>
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Số Hóa Đơn VAT / Tờ Khai Hải Quan</label>
-                    <input
+                    <FastInput
                       type="text"
                       value={inboundForm.vat_invoice_no}
                       onChange={(e) => setInboundForm((prev: any) => ({ ...prev, vat_invoice_no: e.target.value }))}
@@ -8497,7 +8498,7 @@ export const WarehouseModule: React.FC = () => {
                   </div>
                   <div>
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Đơn Vị Vận Chuyển / Giao Hàng</label>
-                    <input
+                    <FastInput
                       type="text"
                       value={inboundForm.shipping_unit}
                       onChange={(e) => setInboundForm((prev: any) => ({ ...prev, shipping_unit: e.target.value }))}
@@ -9151,7 +9152,7 @@ export const WarehouseModule: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mã Đơn Bán Hàng (SO) / Mục Đích *</label>
-                  <input
+                  <FastInput
                     type="text"
                     value={outboundForm.reference_code}
                     onChange={(e) => setOutboundForm({ ...outboundForm, reference_code: e.target.value })}
@@ -9161,7 +9162,7 @@ export const WarehouseModule: React.FC = () => {
                 </div>
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Khách Hàng / Bệnh Viện Tiếp Nhận</label>
-                  <input
+                  <FastInput
                     type="text"
                     value={outboundForm.customer_name || ""}
                     onChange={(e) => setOutboundForm({ ...outboundForm, customer_name: e.target.value })}
@@ -9303,7 +9304,7 @@ export const WarehouseModule: React.FC = () => {
 
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Ghi Chú Xuất Kho</label>
-                <textarea
+                <FastTextarea
                   rows={2}
                   value={outboundForm.notes || ""}
                   onChange={(e) => setOutboundForm({ ...outboundForm, notes: e.target.value })}
@@ -9418,7 +9419,7 @@ export const WarehouseModule: React.FC = () => {
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Ghi chú điều phối gửi phòng Cung Ứng
                 </label>
-                <textarea
+                <FastTextarea
                   rows={2}
                   value={prFormData.notes}
                   onChange={(e) => setPRFormData({ ...prFormData, notes: e.target.value })}
@@ -9514,7 +9515,7 @@ export const WarehouseModule: React.FC = () => {
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Phương án điều phối ưu tiên
                 </label>
-                <input
+                <FastInput
                   type="text"
                   value={pushSalesFormData.priorityStrategy}
                   onChange={(e) => setPushSalesFormData({ ...pushSalesFormData, priorityStrategy: e.target.value })}
@@ -9526,7 +9527,7 @@ export const WarehouseModule: React.FC = () => {
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Nội dung gửi Phòng Kinh Doanh &amp; Ứng Dụng
                 </label>
-                <textarea
+                <FastTextarea
                   rows={2}
                   value={pushSalesFormData.notes}
                   onChange={(e) => setPushSalesFormData({ ...pushSalesFormData, notes: e.target.value })}
@@ -9677,7 +9678,7 @@ export const WarehouseModule: React.FC = () => {
                   <span className="font-bold text-slate-900 dark:text-white uppercase text-[11px] tracking-wide">
                     Danh Sách Mặt Hàng Trong Phiếu ({dq ? `${shown.length}/` : ""}{allIts.length} mặt hàng):
                   </span>
-                  <input
+                  <FastInput
                     type="text"
                     value={txDetailSearch}
                     onChange={(e) => setTxDetailSearch(e.target.value)}
@@ -10082,7 +10083,7 @@ export const WarehouseModule: React.FC = () => {
                   <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
                     Ghi chú / Mục đích giữ chỗ
                   </label>
-                  <textarea
+                  <FastTextarea
                     rows={2}
                     value={reserveFormData.notes}
                     onChange={(e) => setReserveFormData({ ...reserveFormData, notes: e.target.value })}
@@ -10166,7 +10167,7 @@ export const WarehouseModule: React.FC = () => {
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                     Mã Thành Phần Con (Child SKU) *
                   </label>
-                  <input
+                  <FastInput
                     type="text"
                     value={componentFormData.component_code}
                     onChange={(e) => setComponentFormData({ ...componentFormData, component_code: e.target.value })}
@@ -10180,7 +10181,7 @@ export const WarehouseModule: React.FC = () => {
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Tên Thành Phần / Phụ Kiện Đính Kèm *
                 </label>
-                <input
+                <FastInput
                   type="text"
                   value={componentFormData.component_name}
                   onChange={(e) => setComponentFormData({ ...componentFormData, component_name: e.target.value })}
@@ -10194,7 +10195,7 @@ export const WarehouseModule: React.FC = () => {
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                     Quy Cách Kỹ Thuật
                   </label>
-                  <input
+                  <FastInput
                     type="text"
                     value={componentFormData.specification}
                     onChange={(e) => setComponentFormData({ ...componentFormData, specification: e.target.value })}
@@ -10207,7 +10208,7 @@ export const WarehouseModule: React.FC = () => {
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                     Đơn Vị Tính (ĐVT)
                   </label>
-                  <input
+                  <FastInput
                     type="text"
                     value={componentFormData.unit}
                     onChange={(e) => setComponentFormData({ ...componentFormData, unit: e.target.value })}
@@ -10283,7 +10284,7 @@ export const WarehouseModule: React.FC = () => {
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Ghi Chú Kỹ Thuật / Lưu Ý Sử Dụng
                 </label>
-                <textarea
+                <FastTextarea
                   rows={2}
                   value={componentFormData.notes}
                   onChange={(e) => setComponentFormData({ ...componentFormData, notes: e.target.value })}
@@ -10797,7 +10798,7 @@ export const WarehouseModule: React.FC = () => {
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                     Số lô (Lot No) *
                   </label>
-                  <input
+                  <FastInput
                     type="text"
                     value={editStockForm.lot_number}
                     onChange={(e) => setEditStockForm({ ...editStockForm, lot_number: e.target.value })}
@@ -10866,7 +10867,7 @@ export const WarehouseModule: React.FC = () => {
                   <option value="CUSTOM">Khác (Tùy chỉnh nhiệt độ bảo quản...)</option>
                 </select>
                 {editStockForm.storage_condition === "CUSTOM" && (
-                  <input
+                  <FastInput
                     type="text"
                     value={editStockForm.custom_storage_condition}
                     onChange={(e) => setEditStockForm({ ...editStockForm, custom_storage_condition: e.target.value })}
@@ -10901,7 +10902,7 @@ export const WarehouseModule: React.FC = () => {
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                     Vị trí Tủ / Kệ lưu trữ
                   </label>
-                  <input
+                  <FastInput
                     type="text"
                     value={editStockForm.shelf_position}
                     onChange={(e) => setEditStockForm({ ...editStockForm, shelf_position: e.target.value })}

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import { FastInput, FastTextarea } from "./BufferedField";
 import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import {
   isPcrKitProduct,
@@ -4265,7 +4266,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             <div className="flex flex-wrap items-center gap-2.5 flex-1 max-w-2xl">
               <div className="relative flex-1 min-w-[220px]">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
+                <FastInput
                   type="text"
                   placeholder="Tìm theo mã PO, tên NCC hoặc sản phẩm..."
                   value={orderSearch}
@@ -4343,9 +4344,9 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             <label className="flex items-center gap-1 text-slate-500">đến
               <DateInputVN value={orderTo} onChange={(e) => setOrderTo(e.target.value)} className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white" />
             </label>
-            <input value={orderInvoiceSearch} onChange={(e) => setOrderInvoiceSearch(e.target.value)} placeholder="Số hóa đơn..."
+            <FastInput value={orderInvoiceSearch} onChange={(e) => setOrderInvoiceSearch(e.target.value)} placeholder="Số hóa đơn..."
               className="w-36 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono" />
-            <input value={orderProductSearch} onChange={(e) => setOrderProductSearch(e.target.value)} placeholder="Mã hàng..."
+            <FastInput value={orderProductSearch} onChange={(e) => setOrderProductSearch(e.target.value)} placeholder="Mã hàng..."
               className="w-36 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono" />
             {(orderFrom || orderTo || orderInvoiceSearch || orderProductSearch) && (
               <button type="button" onClick={() => { setOrderFrom(""); setOrderTo(""); setOrderInvoiceSearch(""); setOrderProductSearch(""); }}
@@ -5060,7 +5061,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               {prViewMode === "pr" && (
               <div className="relative shrink-0">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
+                <FastInput
                   type="text"
                   placeholder="Tìm mã PR, sản phẩm, người gửi..."
                   value={prSearch}
@@ -5608,7 +5609,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             <div className="flex items-center gap-2 flex-wrap">
               <div className="relative">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
+                <FastInput
                   type="text"
                   placeholder="Tìm NCC, mã, người liên hệ..."
                   value={supplierSearch}
@@ -5921,7 +5922,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             <label className="flex items-center gap-1 text-slate-500">Đến
               <DateInputVN value={payableTo} onChange={(e) => setPayableTo(e.target.value)} className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
             </label>
-            <input
+            <FastInput
               value={payableSearch}
               onChange={(e) => setPayableSearch(e.target.value)}
               placeholder="Mã PO, tên NCC, mã hàng..."
@@ -6114,7 +6115,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             <div className="space-y-2">
               {invoiceEditRows.map((r, i) => (
                 <div key={i} className="flex items-center gap-2">
-                  <input
+                  <FastInput
                     value={r.invoice_no}
                     onChange={(e) => setInvoiceEditRows(prev => prev.map((x, k) => k === i ? { ...x, invoice_no: e.target.value } : x))}
                     placeholder="Số hóa đơn"
@@ -6253,7 +6254,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 <div className="flex flex-wrap items-center gap-2 text-xs">
                   <div className="relative">
                     <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
+                    <FastInput
                       type="text"
                       value={restockSearch}
                       onChange={(e) => setRestockSearch(e.target.value)}
@@ -6510,7 +6511,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
                 <div>
                   <label className="block font-bold text-slate-500 dark:text-slate-400 mb-0.5 text-[10px] uppercase">Mã PO</label>
-                  <input
+                  <FastInput
                     type="text"
                     value={poForm.po_code}
                     placeholder="Cấp khi lưu"
@@ -7019,7 +7020,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Ghi chú đơn hàng / Hợp đồng mua bán</label>
-                <textarea
+                <FastTextarea
                   rows={2}
                   value={poForm.notes}
                   onChange={(e) => setPOForm({ ...poForm, notes: e.target.value })}
@@ -7438,7 +7439,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   </div>
                   <div>
                     <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Số Hóa Đơn VAT / Tờ Khai HQ</label>
-                    <input
+                    <FastInput
                       type="text"
                       value={receiveHeader.vat_invoice_no}
                       onChange={(e) => setReceiveHeader(prev => ({ ...prev, vat_invoice_no: e.target.value }))}
@@ -7456,7 +7457,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   </div>
                   <div>
                     <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Thủ Kho / Người Tiếp Nhận *</label>
-                    <input
+                    <FastInput
                       type="text"
                       value={receiveHeader.received_by}
                       onChange={(e) => setReceiveHeader(prev => ({ ...prev, received_by: e.target.value }))}
@@ -7466,7 +7467,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   </div>
                   <div>
                     <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Đơn Vị Vận Chuyển / Giao Hàng</label>
-                    <input
+                    <FastInput
                       type="text"
                       value={receiveHeader.shipping_unit}
                       onChange={(e) => setReceiveHeader(prev => ({ ...prev, shipping_unit: e.target.value }))}
@@ -7482,7 +7483,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[260px]">
                   <div className="relative flex-1 max-w-md min-w-[220px]">
                     <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                    <input
+                    <FastInput
                       type="text"
                       value={receiveSearchQuery}
                       onChange={(e) => setReceiveSearchQuery(e.target.value)}
@@ -7858,7 +7859,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             </select>
                           </td>
                           <td className="p-2">
-                            <input
+                            <FastInput
                               type="text"
                               disabled={!isSelected}
                               value={l.shelf_position || ""}
@@ -7881,7 +7882,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             </select>
                           </td>
                           <td className="p-2">
-                            <input
+                            <FastInput
                               type="text"
                               disabled={!isSelected}
                               value={l.notes}
@@ -8032,7 +8033,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
                 <div className="md:col-span-6">
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">3. Ghi chú chung phiếu nhập kho (PNK)</label>
-                  <input type="text" value={receiveNotes} onChange={(e) => setReceiveNotes(e.target.value)} placeholder="Tình trạng thùng bảo ôn / đá khô khi nhận, biên bản giao nhận kèm theo..."
+                  <FastInput type="text" value={receiveNotes} onChange={(e) => setReceiveNotes(e.target.value)} placeholder="Tình trạng thùng bảo ôn / đá khô khi nhận, biên bản giao nhận kèm theo..."
                     className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
                 </div>
                 <div className="md:col-span-6 flex flex-wrap items-center justify-end gap-4 p-2.5 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/70 dark:border-emerald-800/60">
@@ -8099,7 +8100,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mã NCC</label>
-                  <input
+                  <FastInput
                     type="text"
                     value={supplierForm.supplier_code}
                     onChange={(e) => setSupplierForm({ ...supplierForm, supplier_code: e.target.value })}
@@ -8124,7 +8125,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="flex flex-col justify-between">
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Tên Đầy Đủ NCC / Hãng Sản Xuất</label>
-                  <input
+                  <FastInput
                     type="text"
                     placeholder="Ví dụ: Công ty TNHH Giải Pháp Y Sinh ABT..."
                     value={supplierForm.name}
@@ -8134,7 +8135,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 </div>
                 <div className="flex flex-col justify-between">
                   <label className="block font-bold text-orange-600 dark:text-orange-400 mb-1">Tên Viết Tắt / Brand (Hiện trên Báo giá)</label>
-                  <input
+                  <FastInput
                     type="text"
                     placeholder="Ví dụ: ABT, Phù Sa, Bioer..."
                     value={supplierForm.short_name || ""}
@@ -8147,7 +8148,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Người Liên Hệ Đại Diện</label>
-                  <input
+                  <FastInput
                     type="text"
                     placeholder="Họ và tên"
                     value={supplierForm.contact_person}
@@ -8157,7 +8158,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 </div>
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Số Điện Thoại</label>
-                  <input
+                  <FastInput
                     type="text"
                     placeholder="Hotline / SĐT"
                     value={supplierForm.phone}
@@ -8170,7 +8171,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Email Liên Hệ</label>
-                  <input
+                  <FastInput
                     type="text"
                     inputMode="email"
                     placeholder="sales@supplier.com, order@supplier.com"
@@ -8181,7 +8182,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 </div>
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Điều Khoản Thanh Toán</label>
-                  <input
+                  <FastInput
                     type="text"
                     placeholder="Ví dụ: Công nợ 30 ngày"
                     value={supplierForm.payment_terms}
@@ -8193,7 +8194,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Ngành Hàng Cung Ứng</label>
-                <input
+                <FastInput
                   type="text"
                   placeholder="Ví dụ: Thiết bị Real-time PCR, Kít sinh học phân tử..."
                   value={supplierForm.product_lines}
@@ -8204,7 +8205,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Địa Chỉ Doanh Nghiệp</label>
-                <input
+                <FastInput
                   type="text"
                   placeholder="Số nhà, đường, quận, thành phố"
                   value={supplierForm.address}
@@ -8345,7 +8346,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3">
               <div className="relative flex-1 max-w-sm">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
+                <FastInput
                   type="text"
                   placeholder="Tìm mã hàng, tên sản phẩm..."
                   value={supplierProductSearch}
@@ -8651,7 +8652,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mã Hàng (*)</label>
-                  <input
+                  <FastInput
                     type="text"
                     placeholder="Mã sản phẩm / SKU"
                     value={productForm.product_code}
@@ -8661,7 +8662,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 </div>
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Đơn Vị Tính</label>
-                  <input
+                  <FastInput
                     type="text"
                     placeholder="Hộp, Cái, Lọ, Bộ..."
                     value={productForm.unit}
@@ -8673,7 +8674,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Tên Mặt Hàng (*)</label>
-                <input
+                <FastInput
                   type="text"
                   placeholder="Tên đầy đủ của sản phẩm / hóa chất / vật tư"
                   value={productForm.product_name}
@@ -8684,7 +8685,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Quy Cách / Đóng Gói</label>
-                <input
+                <FastInput
                   type="text"
                   placeholder="Ví dụ: 50 test/hộp, 250ml/chai, 96 giếng/đĩa..."
                   value={productForm.specification}
@@ -8706,7 +8707,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Ghi Chú Bảng Giá</label>
-                <input
+                <FastInput
                   type="text"
                   placeholder="Chính sách giá, số lượng đặt tối thiểu..."
                   value={productForm.notes}
@@ -8854,7 +8855,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   ))}
                 </div>
 
-                <textarea
+                <FastTextarea
                   rows={2}
                   placeholder="Chi tiết lý do điều chỉnh đơn giá mua (bắt buộc)..."
                   value={priceAdjustmentReason}
@@ -9182,7 +9183,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Số UNC / Chứng Từ <span className="font-normal text-slate-400">(không bắt buộc)</span></label>
-                  <input
+                  <FastInput
                     type="text"
                     value={paymentForm.reference_doc}
                     onChange={(e) => setPaymentForm({ ...paymentForm, reference_doc: e.target.value })}
@@ -9201,7 +9202,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Ghi Chú Kế Toán</label>
-                <input
+                <FastInput
                   type="text"
                   value={paymentForm.payment_notes}
                   onChange={(e) => setPaymentForm({ ...paymentForm, payment_notes: e.target.value })}
@@ -9259,7 +9260,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               {/* Title */}
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Tiêu Đề Đề Xuất *</label>
-                <input
+                <FastInput
                   type="text"
                   placeholder="Ví dụ: Đề xuất mua bổ sung Kít chẩn đoán Real-time PCR và Sinh phẩm..."
                   value={prForm.title}
@@ -9394,7 +9395,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             </label>
                             <div className="relative">
                               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                              <input
+                              <FastInput
                                 type="text"
                                 value={prItemSearchQueries[idx] || ""}
                                 onChange={(e) => setPrItemSearchQueries(prev => ({ ...prev, [idx]: e.target.value }))}
@@ -9649,7 +9650,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               {/* Reason / Notes */}
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Lý Do Đề Xuất / Khách Hàng Mục Tiêu</label>
-                <textarea
+                <FastTextarea
                   rows={2}
                   value={prForm.description}
                   onChange={(e) => setPRForm({ ...prForm, description: e.target.value })}
@@ -10436,7 +10437,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1 text-[10px] uppercase font-mono">
                   Ghi chú đơn đặt mua tổng hợp (PO):
                 </label>
-                <textarea
+                <FastTextarea
                   rows={2}
                   value={consolidateNotes}
                   onChange={(e) => setConsolidateNotes(e.target.value)}

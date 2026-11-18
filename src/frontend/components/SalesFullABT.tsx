@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef, useDeferredValue } from "react";
+import { FastInput, FastTextarea } from "./BufferedField";
 import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import { isServiceProduct, isOligoMtoProduct, isLegacyDemoOligoCode, isNonPricedPipelineStatus } from "@/backend/services/catalogRules";
 import {
@@ -8786,7 +8787,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <label className="block text-[10px] font-bold uppercase text-emerald-300 mb-1">
                             Tên Mồi / Probe *
                         </label>
-                        <input
+                        <FastInput
                             type="text"
                             value={oligoSeqName}
                             onChange={(e) => setOligoSeqName(e.target.value)}
@@ -9124,7 +9125,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     <span className="text-[10px] font-bold uppercase text-cyan-300">
                         + Phối hợp thêm mã khác (130 mã):
                     </span>
-                    <input
+                    <FastInput
                         type="text"
                         value={oligoExtraSearch}
                         onChange={(e) => setOligoExtraSearch(e.target.value)}
@@ -20101,7 +20102,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     <label className="text-[10px] font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
                                                         <FileText className="w-3.5 h-3.5 text-indigo-400" /> Ô nhập nhanh kết quả thực thi
                                                     </label>
-                                                    <textarea
+                                                    <FastTextarea
                                                         rows={2}
                                                         placeholder="Nhập kết quả đạt được, số liệu hoặc vướng mắc phát sinh..."
                                                         value={quickResults[plan.plan_id] || ""}
@@ -20621,7 +20622,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
                                 <Search className="w-3.5 h-3.5 text-slate-500" />
                             </span>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={searchCustomerQuery}
                                 onChange={(e) => setSearchCustomerQuery(e.target.value)}
@@ -21385,7 +21386,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             {isContactsSectionOpen && (
                                                                 <div className="relative min-w-[180px]">
                                                                     <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                                                                    <input
+                                                                    <FastInput
                                                                         type="text"
                                                                         value={custContactSearch}
                                                                         onChange={(e) => setCustContactSearch(e.target.value)}
@@ -22299,7 +22300,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                             <div className="relative">
                                 <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5 pointer-events-none" />
-                                <input
+                                <FastInput
                                     type="text"
                                     placeholder="Tìm mã báo giá..."
                                     value={filterQuoteCode}
@@ -23331,7 +23332,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <div className="relative">
                                 <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5 pointer-events-none" />
-                                <input
+                                <FastInput
                                     type="text"
                                     placeholder="Tìm mã hợp đồng..."
                                     value={filterContractCode}
@@ -24147,7 +24148,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             {/* Factory Orders Search Bar */}
                             <div className="flex w-full sm:max-w-xs items-center gap-2 bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1 focus-within:border-indigo-500 transition-colors">
                                 <Search className="w-3.5 h-3.5 text-slate-500" />
-                                <input
+                                <FastInput
                                     type="text"
                                     placeholder="Tìm kiếm theo mã, khách hàng..."
                                     value={searchFactoryOrderQuery}
@@ -25969,7 +25970,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
                                     <div className="relative">
                                         <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-500" />
-                                        <input
+                                        <FastInput
                                             type="text"
                                             placeholder="Tìm mã SKU, tên hàng, model..."
                                             value={commercialSearchQuery}
@@ -26702,7 +26703,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
                                     <Search className="w-3.5 h-3.5 text-slate-500" />
                                 </span>
-                                <input
+                                <FastInput
                                     type="text"
                                     value={invoiceSearchQuery}
                                     onChange={(e) => setInvoiceSearchQuery(e.target.value)}
@@ -27610,7 +27611,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                 <div>
                                     <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Số Hóa Đơn Điện Tử VAT *</label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         required
                                         value={partialInvNo}
@@ -27705,7 +27706,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Mã Hàng Hóa (SKU) *</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 required
                                 value={commCode}
@@ -27717,7 +27718,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Tên Hàng Hóa Thương Mại *</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 required
                                 value={commName}
@@ -27762,7 +27763,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Nhóm hàng con</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={commSubCategory}
                                 onChange={(e) => setCommSubCategory(e.target.value)}
@@ -27773,7 +27774,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Đơn vị tính (ĐVT) *</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 required
                                 value={commUnit}
@@ -27787,7 +27788,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Hãng sản xuất (Brand)</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={commBrand}
                                 onChange={(e) => setCommBrand(e.target.value)}
@@ -27798,7 +27799,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Xuất xứ</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={commOrigin}
                                 onChange={(e) => setCommOrigin(e.target.value)}
@@ -27809,7 +27810,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Quy cách / Model</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={commSpecification}
                                 onChange={(e) => setCommSpecification(e.target.value)}
@@ -27867,7 +27868,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Bảo hành</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={commWarranty}
                                 onChange={(e) => setCommWarranty(e.target.value)}
@@ -27899,7 +27900,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 Điều kiện bảo quản chuẩn ❄️
                             </label>
                             <div className="relative">
-                                <input
+                                <FastInput
                                     type="text"
                                     list="storageConditionPresets"
                                     value={commStorageCondition}
@@ -27919,7 +27920,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Nhà cung cấp chính</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={commSupplier}
                                 onChange={(e) => setCommSupplier(e.target.value)}
@@ -27976,7 +27977,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             Hình ảnh thiết bị (Hiển thị trực tiếp trên Bản in & Xuất PDF Báo giá)
                                         </label>
                                         <div className="flex gap-2">
-                                            <input
+                                            <FastInput
                                                 type="text"
                                                 value={commImageUrl}
                                                 onChange={(e) => setCommImageUrl(e.target.value)}
@@ -28035,7 +28036,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                         Thông số kỹ thuật nổi bật của Thiết bị (In trực tiếp dưới tên máy trong báo giá)
                                     </label>
-                                    <textarea
+                                    <FastTextarea
                                         value={commTechSpecs}
                                         onChange={(e) => setCommTechSpecs(e.target.value)}
                                         placeholder="VD: • Công suất: 96 giếng x 0.2 ml...\n• Hệ quang học: 4 kênh huỳnh quang FAM, VIC, ROX, CY5...\n• Màn hình cảm ứng màu 10.4 inch..."
@@ -28223,7 +28224,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                     <div>
                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Ghi chú thêm</label>
-                        <textarea
+                        <FastTextarea
                             value={commNotes}
                             onChange={(e) => setCommNotes(e.target.value)}
                             className="w-full h-16 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white outline-none resize-none"
@@ -28339,7 +28340,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <option value="__CUSTOM__">✏️ Nhập tên người lập khác...</option>
                                 </select>
                                 {isCustomQuoteCreator && (
-                                    <input
+                                    <FastInput
                                         type="text"
                                         required
                                         value={customQuoteCreatorName}
@@ -28428,7 +28429,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-indigo-300 mb-1">
                                 📞 Số điện thoại NVKD (In lên báo giá)
                             </label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={quoteRepPhone}
                                 onChange={(e) => setQuoteRepPhone(e.target.value)}
@@ -28440,7 +28441,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-indigo-300 mb-1">
                                 ✉️ Email NVKD (In lên báo giá)
                             </label>
-                            <input
+                            <FastInput
                                 type="email"
                                 value={quoteRepEmail}
                                 onChange={(e) => setQuoteRepEmail(e.target.value)}
@@ -29363,7 +29364,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Hiệu lực báo giá</label>
-                                <input
+                                <FastInput
                                     type="text"
                                     value={quoteValidityTerms}
                                     onChange={(e) => setQuoteValidityTerms(e.target.value)}
@@ -29372,7 +29373,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Điều khoản giao hàng</label>
-                                <input
+                                <FastInput
                                     type="text"
                                     value={quoteDeliveryTerms}
                                     onChange={(e) => setQuoteDeliveryTerms(e.target.value)}
@@ -29381,7 +29382,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                             <div className="md:col-span-2">
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Điều khoản thanh toán</label>
-                                <input
+                                <FastInput
                                     type="text"
                                     value={quotePaymentTerms}
                                     onChange={(e) => setQuotePaymentTerms(e.target.value)}
@@ -29409,7 +29410,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         );
                                     })()}
                                 </div>
-                                <textarea
+                                <FastTextarea
                                     rows={2}
                                     value={quoteNoteTerms}
                                     onChange={(e) => setQuoteNoteTerms(e.target.value)}
@@ -30138,7 +30139,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Tiêu đề hợp đồng *</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={contractTitle}
                                 onChange={(e) => setContractTitle(e.target.value)}
@@ -30165,7 +30166,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </h4>
                             <div>
                                 <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Tên doanh nghiệp *</label>
-                                <input
+                                <FastInput
                                     type="text"
                                     required
                                     value={contractPartyAName}
@@ -30176,7 +30177,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div className="grid grid-cols-2 gap-2">
                                 <div>
                                     <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Người đại diện Bên A *</label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         required
                                         value={contractPartyARepresentative}
@@ -30186,7 +30187,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                                 <div>
                                     <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Chức vụ Bên A *</label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         required
                                         value={contractPartyARole}
@@ -30197,7 +30198,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                             <div>
                                 <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Địa chỉ văn phòng *</label>
-                                <input
+                                <FastInput
                                     type="text"
                                     required
                                     value={contractPartyAAddress}
@@ -30208,7 +30209,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div className="grid grid-cols-3 gap-2">
                                 <div>
                                     <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Số điện thoại *</label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         required
                                         value={contractPartyAPhone}
@@ -30218,7 +30219,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                                 <div>
                                     <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Email *</label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         inputMode="email"
                                         required
@@ -30229,7 +30230,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                                 <div>
                                     <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Mã số thuế Bên A</label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         value={contractPartyATaxCode}
                                         onChange={(e) => setContractPartyATaxCode(e.target.value)}
@@ -30291,7 +30292,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </h4>
                             <div>
                                 <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Tên khách hàng / Đơn vị *</label>
-                                <input
+                                <FastInput
                                     type="text"
                                     required
                                     value={contractPartyBName}
@@ -30302,7 +30303,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div className="grid grid-cols-2 gap-2">
                                 <div>
                                     <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Người đại diện Bên B</label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         placeholder="Ông/Bà Nguyễn Văn A"
                                         value={contractPartyBRepresentative}
@@ -30312,7 +30313,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                                 <div>
                                     <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Chức vụ Bên B</label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         placeholder="Ví dụ: Đại diện pháp luật"
                                         value={contractPartyBRole}
@@ -30324,7 +30325,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div className="grid grid-cols-3 gap-2">
                                 <div className="col-span-2">
                                     <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Địa chỉ Bên B</label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         placeholder="Địa chỉ..."
                                         value={contractPartyBAddress}
@@ -30334,7 +30335,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                                 <div>
                                     <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Mã số thuế Bên B</label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         placeholder="MST..."
                                         value={contractPartyBTaxCode}
@@ -30346,7 +30347,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div className="grid grid-cols-2 gap-2">
                                 <div>
                                     <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Số điện thoại Bên B</label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         placeholder="SĐT..."
                                         value={contractPartyBPhone}
@@ -30356,7 +30357,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                                 <div>
                                     <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Email Bên B</label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         inputMode="email"
                                         placeholder="Email (có thể nhập nhiều email cách nhau dấu phẩy)..."
@@ -30574,7 +30575,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-amber-300/80 mb-1">
                                     📝 Ghi chú đợt đặt hàng (Call-off Notes)
                                 </label>
-                                <input
+                                <FastInput
                                     type="text"
                                     value={principleCallOffNotes}
                                     onChange={(e) => setPrincipleCallOffNotes(e.target.value)}
@@ -30988,7 +30989,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                 <div>
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Người liên hệ nhận hàng</label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         value={factoryOrderContactPerson}
                                         onChange={(e) => setFactoryOrderContactPerson(e.target.value)}
@@ -30998,7 +30999,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                                 <div>
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">SĐT người liên hệ</label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         value={factoryOrderContactPhone}
                                         onChange={(e) => setFactoryOrderContactPhone(e.target.value)}
@@ -31008,7 +31009,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                                 <div>
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-emerald-400 mb-1">Địa chỉ giao/nhận hàng (In trên Phiếu giao)</label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         value={factoryOrderDeliveryAddress}
                                         onChange={(e) => setFactoryOrderDeliveryAddress(e.target.value)}
@@ -31023,7 +31024,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                             Ghi chú đơn hàng {factoryOrderQuoteId ? <span className="normal-case font-normal text-slate-500">(lấy từ ghi chú báo giá {factoryOrderQuoteId})</span> : null}
                         </label>
-                        <textarea
+                        <FastTextarea
                             rows={2}
                             value={factoryOrderNotes}
                             onChange={(e) => setFactoryOrderNotes(e.target.value)}
@@ -31130,7 +31131,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 {contractDropdownOpen && (
                                     <div className="absolute z-50 left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl max-h-60 flex flex-col">
                                         <div className="p-2 border-b border-slate-700">
-                                            <input
+                                            <FastInput
                                                 autoFocus
                                                 type="text"
                                                 placeholder="🔍 Tìm hợp đồng..."
@@ -31230,7 +31231,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             {quoteDropdownOpen && (
                                 <div className="absolute z-50 left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl max-h-60 flex flex-col">
                                     <div className="p-2 border-b border-slate-700">
-                                        <input
+                                        <FastInput
                                             autoFocus
                                             type="text"
                                             placeholder="🔍 Tìm báo giá..."
@@ -32047,7 +32048,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                                 <div>
                                     <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Mã vận đơn / Số chuyến xe</label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         placeholder="VD: TBR-EXP-2026-088, Ahamove #98234..."
                                         value={trackingCode}
@@ -32095,7 +32096,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                         <div>
                                             <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Tên công ty / Bệnh viện xuất hóa đơn</label>
-                                            <input
+                                            <FastInput
                                                 type="text"
                                                 placeholder="VD: Bệnh viện Đa khoa Quốc tế..."
                                                 value={vatCompanyName}
@@ -32105,7 +32106,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         </div>
                                         <div>
                                             <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Mã số thuế (MST)</label>
-                                            <input
+                                            <FastInput
                                                 type="text"
                                                 placeholder="VD: 0312345678"
                                                 value={vatTaxCode}
@@ -32117,7 +32118,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                         <div>
                                             <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Địa chỉ đăng ký hóa đơn *</label>
-                                            <input
+                                            <FastInput
                                                 type="text"
                                                 placeholder="Số nhà, đường, phường, quận..."
                                                 value={vatAddress}
@@ -32129,7 +32130,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
                                                 Email nhận hóa đơn điện tử <span className="text-[9px] font-normal normal-case text-slate-500">(nhập nhiều email cách nhau bằng dấu phẩy , hoặc chấm phẩy ;)</span>
                                             </label>
-                                            <input
+                                            <FastInput
                                                 type="text"
                                                 inputMode="email"
                                                 placeholder="VD: ketoan@benhvien.vn, thumua@benhvien.vn"
@@ -32146,7 +32147,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <label className="block text-[10px] font-bold uppercase text-sky-300 mb-1">
                                     🧾 Ghi chú xuất hóa đơn (dành cho Kế toán)
                                 </label>
-                                <input
+                                <FastInput
                                     type="text"
                                     placeholder="VD: Xuất hóa đơn gộp khi giao đủ hàng / Xuất VAT 5% thiết bị y tế / Lưu ý nội dung hóa đơn..."
                                     value={invoiceNotes}
@@ -32336,7 +32337,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     </div>
                                                                 </td>
                                                                 <td className="p-2.5">
-                                                                    <input
+                                                                    <FastInput
                                                                         type="text"
                                                                         placeholder="Ghi chú đóng gói, dán nhãn, số lô..."
                                                                         value={combineMfgItemNotes[it.productCode] || ""}
@@ -32367,7 +32368,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         <span>📝 Ghi chú chung gửi Hãng / NCC</span>
                                                         <span className="text-[10px] text-slate-400 font-normal font-sans">(Tùy chọn)</span>
                                                     </label>
-                                                    <input
+                                                    <FastInput
                                                         type="text"
                                                         value={combineMfgNotes}
                                                         onChange={(e) => setCombineMfgNotes(e.target.value)}
@@ -32443,7 +32444,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     </div>
                                                                 </td>
                                                                 <td className="p-2.5">
-                                                                    <input
+                                                                    <FastInput
                                                                         type="text"
                                                                         placeholder="Hãng, CO/CQ, hạn dùng yêu cầu..."
                                                                         value={combineProcureItemNotes[it.productCode] || ""}
@@ -32474,7 +32475,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         <span>📝 Ghi chú chung gửi Nhà cung cấp / Cung ứng</span>
                                                         <span className="text-[10px] text-slate-400 font-normal font-sans">(Tùy chọn)</span>
                                                     </label>
-                                                    <input
+                                                    <FastInput
                                                         type="text"
                                                         value={combineProcureNotes}
                                                         onChange={(e) => setCombineProcureNotes(e.target.value)}
@@ -32629,7 +32630,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             x{it?.quantity || 1}
                                                         </td>
                                                         <td className="p-2.5">
-                                                            <input
+                                                            <FastInput
                                                                 type="text"
                                                                 placeholder="Lưu ý đóng gói, dán tem nhãn, số lô..."
                                                                 value={singleMfgItemNotes[it?.productCode] !== undefined ? singleMfgItemNotes[it?.productCode] : (it?.notes || "")}
@@ -32680,7 +32681,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <span>📝 Ghi chú chung gửi Hãng / NCC</span>
                                         <span className="text-[10px] text-slate-400 font-normal font-sans">(Tùy chọn)</span>
                                     </label>
-                                    <textarea
+                                    <FastTextarea
                                         rows={2}
                                         value={singleMfgNotes}
                                         onChange={(e) => setSingleMfgNotes(e.target.value)}
@@ -33688,7 +33689,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         />
                                                     </td>
                                                     <td className="p-2 space-y-1">
-                                                        <input
+                                                        <FastInput
                                                             type="text"
                                                             disabled={!sel.selected}
                                                             placeholder="Số lô trả (VD: 010326...)"
@@ -33696,7 +33697,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             onChange={(e) => setRmaSelectedItems(prev => ({ ...prev, [k]: { ...sel, lotNumber: e.target.value } }))}
                                                             className="w-full min-w-[140px] bg-slate-950 border border-slate-700 rounded px-1.5 py-1 text-[11px] font-mono text-amber-200 disabled:opacity-40"
                                                         />
-                                                        <input
+                                                        <FastInput
                                                             type="text"
                                                             disabled={!sel.selected}
                                                             placeholder="Lý do trả chi tiết..."
@@ -33740,7 +33741,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                             <label className="block">
                                 <span className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Ghi chú</span>
-                                <textarea rows={2} value={rmaNotes} onChange={(e) => setRmaNotes(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-white" />
+                                <FastTextarea rows={2} value={rmaNotes} onChange={(e) => setRmaNotes(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-white" />
                             </label>
                             <div className="flex items-center justify-between pt-2 border-t border-slate-800">
                                 <span>Tổng giá trị trả: <strong className="text-emerald-300 font-mono">{fmt(total)} đ</strong></span>
@@ -34126,7 +34127,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     />
                                                                 </td>
                                                                 <td className="p-2.5">
-                                                                    <input
+                                                                    <FastInput
                                                                         type="text"
                                                                         placeholder="Hãng, CO/CQ, hạn dùng yêu cầu..."
                                                                         value={singleProcureItemNotes[lineKey] !== undefined ? singleProcureItemNotes[lineKey] : (singleProcureItemNotes[it?.productCode] !== undefined ? singleProcureItemNotes[it?.productCode] : (it?.notes || ""))}
@@ -34161,7 +34162,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <span>📝 Ghi chú & Yêu cầu gửi phòng Cung Ứng</span>
                                     <span className="text-[10px] text-slate-400 font-normal font-sans">(Tùy chọn)</span>
                                 </label>
-                                <textarea
+                                <FastTextarea
                                     rows={2}
                                     value={singleProcureNotes}
                                     onChange={(e) => setSingleProcureNotes(e.target.value)}
@@ -34263,7 +34264,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                         📍 Địa điểm xuất hàng *
                                     </label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         required
                                         value={deliveryDispatchLocation}
@@ -34276,7 +34277,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                         🚚 Người giao hàng
                                     </label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         value={deliveryDispatcherName}
                                         onChange={(e) => setDeliveryDispatcherName(e.target.value)}
@@ -34288,7 +34289,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                         ✍️ Người lập phiếu
                                     </label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         value={deliveryCreatorName}
                                         onChange={(e) => setDeliveryCreatorName(e.target.value)}
@@ -34357,7 +34358,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                                     ✍️ Họ tên người nhận hàng *
                                                 </label>
-                                                <input
+                                                <FastInput
                                                     type="text"
                                                     required
                                                     value={deliveryReceiverName}
@@ -34370,7 +34371,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                                     📞 SĐT / Bộ phận người nhận
                                                 </label>
-                                                <input
+                                                <FastInput
                                                     type="text"
                                                     value={deliveryReceiverPhone}
                                                     onChange={(e) => setDeliveryReceiverPhone(e.target.value)}
@@ -35126,7 +35127,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                     <div>
                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Ghi chú giao nhận / Biên bản bàn giao</label>
-                        <textarea
+                        <FastTextarea
                             rows={2}
                             placeholder="Nhập thông tin người nhận, số xe giao, tình trạng tem niêm phong..."
                             value={deliveryNotes}
@@ -35929,7 +35930,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </label>
                         </div>
                         <label className="block text-[11px] font-bold text-slate-400">Số chứng từ / UNC / ghi chú
-                            <input type="text" value={customerPaymentRef} onChange={(e) => setCustomerPaymentRef(e.target.value)} placeholder="VD: UNC 0123 ngày 20/10"
+                            <FastInput type="text" value={customerPaymentRef} onChange={(e) => setCustomerPaymentRef(e.target.value)} placeholder="VD: UNC 0123 ngày 20/10"
                                 className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white" />
                         </label>
                         <div className="flex justify-end gap-2 pt-1">
@@ -36090,7 +36091,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                         SĐT / Chức Danh Người Nhận
                                     </label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         value={confirmDeliveryReceiverPhone}
                                         onChange={(e) => setConfirmDeliveryReceiverPhone(e.target.value)}
@@ -36240,7 +36241,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                 Ghi Chú Giao Nhận & Biên Bản
                             </label>
-                            <textarea
+                            <FastTextarea
                                 rows={2}
                                 value={confirmDeliveryNotes}
                                 onChange={(e) => setConfirmDeliveryNotes(e.target.value)}
@@ -36731,7 +36732,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     <div className="space-y-3">
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Tên doanh nghiệp (Bên Bán)</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={companyName}
                                 onChange={(e) => setCompanyName(e.target.value)}
@@ -36741,7 +36742,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Địa chỉ văn phòng</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={companyAddress}
                                 onChange={(e) => setCompanyAddress(e.target.value)}
@@ -36752,7 +36753,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div className="grid grid-cols-3 gap-3">
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Số điện thoại liên hệ</label>
-                                <input
+                                <FastInput
                                     type="text"
                                     value={companyPhone}
                                     onChange={(e) => setCompanyPhone(e.target.value)}
@@ -36762,7 +36763,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Email liên hệ</label>
-                                <input
+                                <FastInput
                                     type="email"
                                     value={companyEmail}
                                     onChange={(e) => setCompanyEmail(e.target.value)}
@@ -36772,7 +36773,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Mã số thuế</label>
-                                <input
+                                <FastInput
                                     type="text"
                                     value={companyTaxCode}
                                     onChange={(e) => setCompanyTaxCode(e.target.value)}
@@ -36784,7 +36785,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div className="grid grid-cols-2 gap-3">
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Họ tên người đại diện</label>
-                                <input
+                                <FastInput
                                     type="text"
                                     value={companyRepresentative}
                                     onChange={(e) => setCompanyRepresentative(e.target.value)}
@@ -36794,7 +36795,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Chức vụ đại diện</label>
-                                <input
+                                <FastInput
                                     type="text"
                                     value={companyRepresentativeRole}
                                     onChange={(e) => setCompanyRepresentativeRole(e.target.value)}
@@ -36811,7 +36812,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
                                     <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Hiệu lực báo giá mặc định *</label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         value={defaultQuoteValidityTerms}
                                         onChange={(e) => setDefaultQuoteValidityTerms(e.target.value)}
@@ -36821,7 +36822,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                                 <div>
                                     <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Điều khoản giao hàng mặc định *</label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         value={defaultQuoteDeliveryTerms}
                                         onChange={(e) => setDefaultQuoteDeliveryTerms(e.target.value)}
@@ -36833,7 +36834,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
                                     <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Điều khoản thanh toán mặc định *</label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         value={defaultQuotePaymentTerms}
                                         onChange={(e) => setDefaultQuotePaymentTerms(e.target.value)}
@@ -36843,7 +36844,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                                 <div>
                                     <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Ghi chú bổ sung mặc định *</label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         value={defaultQuoteNoteTerms}
                                         onChange={(e) => setDefaultQuoteNoteTerms(e.target.value)}
@@ -36889,7 +36890,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         Khôi phục Điều 2
                                     </button>
                                 </div>
-                                <textarea
+                                <FastTextarea
                                     rows={3}
                                     value={defaultQualityTerms}
                                     onChange={(e) => setDefaultQualityTerms(e.target.value)}
@@ -36912,7 +36913,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         Khôi phục Điều 3
                                     </button>
                                 </div>
-                                <textarea
+                                <FastTextarea
                                     rows={3}
                                     value={defaultDeliveryTerms}
                                     onChange={(e) => setDefaultDeliveryTerms(e.target.value)}
@@ -36935,7 +36936,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         Khôi phục Điều 4
                                     </button>
                                 </div>
-                                <textarea
+                                <FastTextarea
                                     rows={3}
                                     value={defaultPaymentTerms}
                                     onChange={(e) => setDefaultPaymentTerms(e.target.value)}
@@ -36958,7 +36959,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         Khôi phục Điều 5
                                     </button>
                                 </div>
-                                <textarea
+                                <FastTextarea
                                     rows={3}
                                     value={defaultResponsibilityTerms}
                                     onChange={(e) => setDefaultResponsibilityTerms(e.target.value)}
@@ -36981,7 +36982,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         Khôi phục Điều 6
                                     </button>
                                 </div>
-                                <textarea
+                                <FastTextarea
                                     rows={6}
                                     value={defaultGeneralTerms}
                                     onChange={(e) => setDefaultGeneralTerms(e.target.value)}
@@ -37030,7 +37031,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Tên kế hoạch *</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 placeholder="Ví dụ: Kế hoạch tiếp cận Bệnh viện đa khoa Tỉnh A"
                                 value={planTitle}
@@ -37161,7 +37162,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Khu vực trọng điểm</label>
-                                    <textarea
+                                    <FastTextarea
                                         rows={2}
                                         placeholder="Ví dụ: Miền Tây Nam Bộ"
                                         value={planRegion}
@@ -37171,7 +37172,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                                 <div>
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Đối thủ cạnh tranh chính</label>
-                                    <textarea
+                                    <FastTextarea
                                         rows={2}
                                         placeholder="Ví dụ: Roche, Abbott, Sansure"
                                         value={planCompetitors}
@@ -37181,7 +37182,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                                 <div className="md:col-span-2">
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Chiến lược tiếp cận thị trường</label>
-                                    <textarea
+                                    <FastTextarea
                                         rows={2}
                                         placeholder="Mô tả kế hoạch chào hàng, demo sản phẩm..."
                                         value={planStrategy}
@@ -37191,7 +37192,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                                 <div className="md:col-span-2">
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Chỉ tiêu KPI dự kiến (Doanh số/SL Kit)</label>
-                                    <textarea
+                                    <FastTextarea
                                         rows={2}
                                         placeholder="Ví dụ: Đạt doanh số 500tr hoặc 300 Kit/tháng"
                                         value={planKPIs}
@@ -37207,7 +37208,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div className="md:col-span-2">
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Đối tượng hướng tới *</label>
-                                    <textarea
+                                    <FastTextarea
                                         rows={2}
                                         placeholder="Ví dụ: Bác sĩ trưởng khoa Xét nghiệm, KTV..."
                                         value={planAudience}
@@ -37218,7 +37219,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                                 <div className="md:col-span-2">
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Mục tiêu cụ thể *</label>
-                                    <textarea
+                                    <FastTextarea
                                         rows={2}
                                         placeholder="Mục tiêu của sự kiện hoặc đợt chăm sóc khách hàng này..."
                                         value={planObjectives}
@@ -37235,7 +37236,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div className="md:col-span-2">
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Mục tiêu thu thập thông tin *</label>
-                                    <textarea
+                                    <FastTextarea
                                         rows={2}
                                         placeholder="Ví dụ: Tìm hiểu mức độ hài lòng về Kit HBV mới và khảo sát giá của Roche..."
                                         value={planObjectives}
@@ -37246,7 +37247,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                                 <div>
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Đối thủ cạnh tranh cần khảo sát *</label>
-                                    <textarea
+                                    <FastTextarea
                                         rows={2}
                                         placeholder="Ví dụ: Roche, Abbott, Sansure"
                                         value={planCompetitors}
@@ -37257,7 +37258,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                                 <div>
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Nguồn thông tin khảo sát</label>
-                                    <textarea
+                                    <FastTextarea
                                         rows={2}
                                         placeholder="Ví dụ: Thầu công khai, website bệnh viện, khảo sát trực tiếp KTV"
                                         value={planSources}
@@ -37267,7 +37268,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                                 <div>
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Phương pháp khảo sát *</label>
-                                    <textarea
+                                    <FastTextarea
                                         rows={2}
                                         placeholder="Ví dụ: Phát phiếu câu hỏi, Phỏng vấn sâu..."
                                         value={planMethods}
@@ -37278,7 +37279,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                                 <div>
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Kết quả đầu ra kỳ vọng *</label>
-                                    <textarea
+                                    <FastTextarea
                                         rows={2}
                                         placeholder="Ví dụ: Báo cáo phân tích giá thầu và 50 phiếu khảo sát sạch"
                                         value={planExpected}
@@ -37442,7 +37443,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Địa điểm thực hiện</label>
-                                    <textarea
+                                    <FastTextarea
                                         rows={2}
                                         placeholder="Ví dụ: Khách sạn Rex, Quận 1 hoặc Phòng Lab ABT"
                                         value={planLocation}
@@ -38031,14 +38032,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <div className="pt-3 border-t border-slate-800/80 space-y-2.5">
                                                 <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Ghi nhận báo cáo giai đoạn mới:</span>
                                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                                                    <input
+                                                    <FastInput
                                                         type="text"
                                                         placeholder="Tên giai đoạn / nhiệm vụ..."
                                                         value={stageReportName}
                                                         onChange={(e) => setStageReportName(e.target.value)}
                                                         className="sm:col-span-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
                                                     />
-                                                    <input
+                                                    <FastInput
                                                         type="text"
                                                         placeholder="Nội dung báo cáo chi tiết..."
                                                         value={stageReportText}
@@ -38073,7 +38074,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             ) : (
                                                 plan.status === "Approved" && (
                                                     <div className="space-y-2.5">
-                                                        <textarea
+                                                        <FastTextarea
                                                             rows={3}
                                                             placeholder="Nhập báo cáo tổng kết chi tiết kết quả thực hiện kế hoạch chuyên đề..."
                                                             value={finalSummaryText}
@@ -38137,7 +38138,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <div className="pt-3 border-t border-slate-800/80 space-y-2">
                                             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Thêm tài liệu cho bước hiện tại:</span>
                                             <div className="flex gap-2">
-                                                <input
+                                                <FastInput
                                                     type="text"
                                                     placeholder="Tên biên bản / tài liệu đính kèm..."
                                                     value={attachmentName}
@@ -38173,7 +38174,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Tiêu đề công việc *</label>
-                                <input
+                                <FastInput
                                     type="text"
                                     required
                                     value={taskTitle}
@@ -38185,7 +38186,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Mô tả chi tiết</label>
-                                <textarea
+                                <FastTextarea
                                     value={taskDesc}
                                     onChange={(e) => setTaskDesc(e.target.value)}
                                     className="w-full h-20 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none resize-y"
@@ -38357,7 +38358,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <div className="space-y-2.5 bg-slate-950/70 p-3.5 rounded-2xl border border-slate-800/80">
                                             <div className="space-y-1">
                                                 <label className="text-[10px] font-bold text-slate-400 uppercase">Tóm tắt kết quả</label>
-                                                <textarea
+                                                <FastTextarea
                                                     value={newTaskLogResult}
                                                     onChange={(e) => setNewTaskLogResult(e.target.value)}
                                                     rows={2}
@@ -38508,7 +38509,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1 flex items-center gap-1">
                                             🎯 Mục tiêu công việc
                                         </label>
-                                        <textarea
+                                        <FastTextarea
                                             value={taskObjective}
                                             onChange={(e) => setTaskObjective(e.target.value)}
                                             className="w-full h-20 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-indigo-500 outline-none resize-y"
@@ -38520,7 +38521,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1 flex items-center gap-1">
                                             🛠️ Phương pháp / Cách thức thực hiện
                                         </label>
-                                        <textarea
+                                        <FastTextarea
                                             value={taskMethodology}
                                             onChange={(e) => setTaskMethodology(e.target.value)}
                                             className="w-full h-20 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-indigo-500 outline-none resize-y"
@@ -38532,7 +38533,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1 flex items-center gap-1">
                                             📊 Kết quả thu được
                                         </label>
-                                        <textarea
+                                        <FastTextarea
                                             value={taskResults}
                                             onChange={(e) => setTaskResults(e.target.value)}
                                             className="w-full h-24 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-indigo-500 outline-none resize-y"
@@ -38561,7 +38562,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1 flex items-center gap-1">
                                             💡 Kết luận / Khuyến nghị
                                         </label>
-                                        <textarea
+                                        <FastTextarea
                                             value={taskConclusion}
                                             onChange={(e) => setTaskConclusion(e.target.value)}
                                             className="w-full h-20 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-indigo-500 outline-none resize-y"
@@ -38710,7 +38711,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
                                 {reviewDecision === "approve" ? "Ý kiến chỉ đạo / Nhận xét (Tùy chọn)" : "Lý do / Nội dung cần bổ sung, chỉnh sửa *"}
                             </label>
-                            <textarea
+                            <FastTextarea
                                 rows={3}
                                 required={reviewDecision === "reject"}
                                 value={reviewFeedback}
@@ -38815,7 +38816,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                 Nhập khung giờ tự do *
                             </label>
-                            <input
+                            <FastInput
                                 type="text"
                                 required
                                 value={customTime}
@@ -38947,7 +38948,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <div className="grid grid-cols-1 gap-2 pt-2 border-t border-slate-850">
                                         <div>
                                             <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Tên Dự án / Nhóm công việc</label>
-                                            <input
+                                            <FastInput
                                                 type="text"
                                                 value={planProjectName}
                                                 onChange={(e) => setPlanProjectName(e.target.value)}
@@ -38956,7 +38957,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         </div>
                                         <div>
                                             <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Nội dung công việc</label>
-                                            <input
+                                            <FastInput
                                                 type="text"
                                                 required
                                                 value={planTaskName}
@@ -39043,7 +39044,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             </div>
 
                                             {isCustomSpecializedSubtask ? (
-                                                <input
+                                                <FastInput
                                                     type="text"
                                                     required
                                                     value={planTaskName}
@@ -39084,7 +39085,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                         <div>
                                             <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Tên Dự án / Chuyên đề</label>
-                                            <input
+                                            <FastInput
                                                 type="text"
                                                 value={planProjectName}
                                                 onChange={(e) => setPlanProjectName(e.target.value)}
@@ -39104,7 +39105,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                     Tên Dự án / Nhóm công việc *
                                 </label>
-                                <input
+                                <FastInput
                                     type="text"
                                     required
                                     value={planProjectName}
@@ -39117,7 +39118,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                     Nội dung công việc cụ thể *
                                 </label>
-                                <input
+                                <FastInput
                                     type="text"
                                     required
                                     value={planTaskName}
@@ -39132,7 +39133,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     {/* 5. GHI CHÚ THÊM */}
                     <div>
                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Ghi chú thêm</label>
-                        <textarea
+                        <FastTextarea
                             value={planNotes}
                             onChange={(e) => setPlanNotes(e.target.value)}
                             className="w-full h-20 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none resize-none"
@@ -39178,7 +39179,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                     <div>
                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Kết quả đạt được hôm nay *</label>
-                        <textarea
+                        <FastTextarea
                             required
                             value={logContent}
                             onChange={(e) => setLogContent(e.target.value)}
@@ -39189,7 +39190,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                     <div>
                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Khó khăn / Vướng mắc cần hỗ trợ</label>
-                        <textarea
+                        <FastTextarea
                             value={logIssues}
                             onChange={(e) => setLogIssues(e.target.value)}
                             className="w-full h-20 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none resize-none"
@@ -39228,7 +39229,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div className="grid grid-cols-2 gap-4">
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Mã khách hàng *</label>
-                                <input
+                                <FastInput
                                     type="text"
                                     required
                                     value={custCode}
@@ -39240,7 +39241,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Tên khách hàng *</label>
-                                <input
+                                <FastInput
                                     type="text"
                                     required
                                     value={custName}
@@ -39320,7 +39321,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Địa chỉ thuế (xuất hóa đơn)</label>
-                                <input
+                                <FastInput
                                     type="text"
                                     value={custTaxAddress}
                                     onChange={(e) => setCustTaxAddress(e.target.value)}
@@ -39330,7 +39331,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Địa chỉ kinh doanh / Trụ sở</label>
-                                <input
+                                <FastInput
                                     type="text"
                                     value={custAddress}
                                     onChange={(e) => setCustAddress(e.target.value)}
@@ -39342,7 +39343,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-emerald-400 mb-1">
                                     🚚 Địa chỉ giao/nhận hàng (Ưu tiên trên Phiếu giao)
                                 </label>
-                                <input
+                                <FastInput
                                     type="text"
                                     value={custDeliveryAddress}
                                     onChange={(e) => setCustDeliveryAddress(e.target.value)}
@@ -39355,7 +39356,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div className="grid grid-cols-2 gap-4">
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Số điện thoại</label>
-                                <input
+                                <FastInput
                                     type="text"
                                     value={custPhone}
                                     onChange={(e) => setCustPhone(e.target.value)}
@@ -39366,7 +39367,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Email</label>
-                                <input
+                                <FastInput
                                     type="text"
                                     inputMode="email"
                                     value={custEmail}
@@ -39380,7 +39381,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div className="grid grid-cols-3 gap-4">
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Mã số thuế</label>
-                                <input
+                                <FastInput
                                     type="text"
                                     value={custTaxCode}
                                     onChange={(e) => setCustTaxCode(e.target.value)}
@@ -39422,7 +39423,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                     Nhóm khách hàng (Phân loại)
                                 </label>
-                                <input
+                                <FastInput
                                     type="text"
                                     value={custClassification}
                                     onChange={(e) => setCustClassification(e.target.value)}
@@ -39452,7 +39453,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div className="grid grid-cols-2 gap-4">
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Người đại diện liên hệ</label>
-                                <input
+                                <FastInput
                                     type="text"
                                     value={custContact}
                                     onChange={(e) => setCustContact(e.target.value)}
@@ -39463,7 +39464,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Vị trí / Chức vụ</label>
-                                <input
+                                <FastInput
                                     type="text"
                                     value={custContactPosition}
                                     onChange={(e) => setCustContactPosition(e.target.value)}
@@ -39503,7 +39504,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Quê quán</label>
-                                <input
+                                <FastInput
                                     type="text"
                                     value={custContactHometown}
                                     onChange={(e) => setCustContactHometown(e.target.value)}
@@ -39725,7 +39726,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                 Họ và tên <span className="text-rose-400">*</span>
                             </label>
-                            <input
+                            <FastInput
                                 type="text"
                                 required
                                 value={contactFormName}
@@ -39739,7 +39740,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                 Chức danh / Chức vụ
                             </label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={contactFormPosition}
                                 onChange={(e) => setContactFormPosition(e.target.value)}
@@ -39752,7 +39753,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                 Khoa / Phòng ban
                             </label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={contactFormDepartment}
                                 onChange={(e) => setContactFormDepartment(e.target.value)}
@@ -39797,7 +39798,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                 Số điện thoại
                             </label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={contactFormPhone}
                                 onChange={(e) => setContactFormPhone(e.target.value)}
@@ -39810,7 +39811,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                 Email
                             </label>
-                            <input
+                            <FastInput
                                 type="text"
                                 inputMode="email"
                                 value={contactFormEmail}
@@ -39824,7 +39825,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                 Ghi chú thêm
                             </label>
-                            <textarea
+                            <FastTextarea
                                 rows={2}
                                 value={contactFormNotes}
                                 onChange={(e) => setContactFormNotes(e.target.value)}
@@ -39902,7 +39903,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                     Tên nhóm ngành <span className="text-rose-400">*</span>
                                 </label>
-                                <input
+                                <FastInput
                                     type="text"
                                     required
                                     value={industryFormName}
@@ -39917,7 +39918,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     Biểu tượng (Icon)
                                 </label>
                                 <div className="flex items-center gap-1.5">
-                                    <input
+                                    <FastInput
                                         type="text"
                                         maxLength={4}
                                         value={industryFormBadge}
@@ -39982,7 +39983,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                     Mô tả phạm vi / Ghi chú
                                 </label>
-                                <input
+                                <FastInput
                                     type="text"
                                     value={industryFormDesc}
                                     onChange={(e) => setIndustryFormDesc(e.target.value)}
@@ -40422,7 +40423,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                 Nhà cung cấp / Hãng giao hàng *
                             </label>
-                            <input
+                            <FastInput
                                 type="text"
                                 required
                                 value={inboundSupplier}
@@ -40437,7 +40438,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                 Số hóa đơn / Phiếu giao hàng NCC
                             </label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={inboundInvoiceNo}
                                 onChange={(e) => setInboundInvoiceNo(e.target.value)}
@@ -40451,7 +40452,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                 Số lô (Lot No) / Số Serial thiết bị
                             </label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={inboundLotOrSerial}
                                 onChange={(e) => setInboundLotOrSerial(e.target.value)}
@@ -40530,7 +40531,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                             Ghi chú nhập kho / Tình trạng hàng
                         </label>
-                        <textarea
+                        <FastTextarea
                             rows={2}
                             value={inboundNotes}
                             onChange={(e) => setInboundNotes(e.target.value)}
@@ -40568,7 +40569,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     <div className="flex items-center justify-between gap-4 pb-2 border-b border-slate-800">
                         <div className="relative flex-1 max-w-sm">
                             <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
-                            <input
+                            <FastInput
                                 type="text"
                                 placeholder="Tìm theo mã phiếu, mã hàng, tên NCC..."
                                 value={searchInboundHistoryQuery}
@@ -40769,7 +40770,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                 Khách hàng dự kiến giữ cho (Tùy chọn)
                             </label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={giveStockCustomerName}
                                 onChange={(e) => setGiveStockCustomerName(e.target.value)}
@@ -40888,14 +40889,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             ) : (
                                 <div className="space-y-2 bg-slate-950 p-2.5 rounded-lg border border-slate-800 mt-1">
                                     <div className="grid grid-cols-2 gap-2">
-                                        <input
+                                        <FastInput
                                             type="text"
                                             placeholder="Tên khách hàng..."
                                             value={retailSaleCustomerPhone}
                                             onChange={(e) => setRetailSaleCustomerPhone(e.target.value)}
                                             className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-slate-200 outline-none"
                                         />
-                                        <input
+                                        <FastInput
                                             type="text"
                                             placeholder="SĐT..."
                                             value={retailSaleCustomer}
@@ -41141,7 +41142,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 <form onSubmit={handleSaveNvkdCustomer} className="space-y-4 p-2 text-slate-100">
                     <div>
                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Mã khách hàng *</label>
-                        <input
+                        <FastInput
                             type="text"
                             required
                             value={nvkdCustCode}
@@ -41155,7 +41156,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     <div className="grid grid-cols-2 gap-4">
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Tên đơn vị / Khách hàng *</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 required
                                 value={nvkdCustName}
@@ -41166,7 +41167,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Người đại diện liên hệ</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={nvkdCustContactPerson}
                                 onChange={(e) => setNvkdCustContactPerson(e.target.value)}
@@ -41179,7 +41180,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     <div className="grid grid-cols-2 gap-4">
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Số điện thoại liên hệ</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={nvkdCustPhone}
                                 onChange={(e) => setNvkdCustPhone(e.target.value)}
@@ -41189,7 +41190,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Email liên hệ</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 inputMode="email"
                                 value={nvkdCustEmail}
@@ -41203,7 +41204,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     <div className="grid grid-cols-3 gap-4">
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Địa chỉ thuế (xuất hóa đơn)</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={nvkdCustTaxAddress}
                                 onChange={(e) => setNvkdCustTaxAddress(e.target.value)}
@@ -41213,7 +41214,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Địa chỉ giao hàng</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={nvkdCustAddress}
                                 onChange={(e) => setNvkdCustAddress(e.target.value)}
@@ -41223,7 +41224,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Mã số thuế</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={nvkdCustTaxCode}
                                 onChange={(e) => setNvkdCustTaxCode(e.target.value)}
@@ -41251,7 +41252,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Vị trí / Chức vị</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={nvkdCustPosition}
                                 onChange={(e) => setNvkdCustPosition(e.target.value)}
@@ -41277,7 +41278,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                         <div>
                             <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Quê quán</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={nvkdCustHometown}
                                 onChange={(e) => setNvkdCustHometown(e.target.value)}
@@ -41350,7 +41351,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                     <div className="space-y-1">
                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Tiêu đề yêu cầu / Mục tiêu công việc *</label>
-                        <input
+                        <FastInput
                             type="text"
                             required
                             placeholder="Ví dụ: Demo Kit PCR Lao (TB) cho BV Đa Khoa Hoàn Mỹ Sài Gòn..."
@@ -41523,7 +41524,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                         <div className="space-y-1">
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Số Lot / Model thiết bị</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 placeholder="Ví dụ: LOT-TB-PCR-202607..."
                                 value={appReqProductLot}
@@ -41560,7 +41561,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                         <div className="space-y-1">
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Thông tin mẫu thử / Số lượng mẫu (nếu có)</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 placeholder="Ví dụ: 15 mẫu đờm âm/dương tính bảo quản -20°C..."
                                 value={appReqSampleInfo}
@@ -41572,7 +41573,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                     <div className="space-y-1">
                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Ghi chú chi tiết yêu cầu & Kỳ vọng kết quả *</label>
-                        <textarea
+                        <FastTextarea
                             required
                             rows={3}
                             placeholder="Mô tả cụ thể bối cảnh của khách hàng, điều kiện test, yêu cầu đặc biệt của Bác sĩ/Lab trưởng..."
@@ -41772,7 +41773,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <label className="block text-xs font-bold text-slate-300 mb-1.5 uppercase font-mono">
                                 Lý do xác nhận bảo lãnh / ngoại lệ mở khóa <span className="text-rose-400">*</span>:
                             </label>
-                            <textarea
+                            <FastTextarea
                                 rows={3}
                                 value={unblockReason}
                                 onChange={(e) => setUnblockReason(e.target.value)}
@@ -41913,7 +41914,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div className="flex items-center gap-2 flex-1 max-w-md">
                                 <div className="relative flex-1">
                                     <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
-                                    <input
+                                    <FastInput
                                         type="text"
                                         placeholder="Tìm mã phiếu, mã SP, tên khách, Sales..."
                                         value={reservationSearchQuery}

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
+import { FastInput, FastTextarea } from "./BufferedField";
 import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import { uploadSingleFileSmart } from "@/frontend/components/AttachmentPicker";
 import {
@@ -3448,7 +3449,7 @@ export function ApplicationFullABT() {
                                         {/* Sample Filters & Search */}
                                         <div className="flex flex-wrap gap-3">
                                             <div className="relative">
-                                                <input
+                                                <FastInput
                                                     type="text"
                                                     value={sampleSearchQuery}
                                                     onChange={(e) => setSampleSearchQuery(e.target.value)}
@@ -3827,7 +3828,7 @@ export function ApplicationFullABT() {
                                                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
                                                         <FileText className="w-3.5 h-3.5 text-primary" /> Nhập kết quả thử nghiệm
                                                     </label>
-                                                    <textarea
+                                                    <FastTextarea
                                                         rows={2}
                                                         placeholder="Nhập tóm tắt kết quả (ví dụ: Chạy PCR mẻ #01, Ct = 18.5, đạt độ nhạy LOD 10 copies...)"
                                                         value={quickResults[item.id] || ""}
@@ -3955,7 +3956,7 @@ export function ApplicationFullABT() {
                                             <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Tìm kiếm tự do:</span>
                                             <div className="relative">
                                                 <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                                                <input
+                                                <FastInput
                                                     type="text"
                                                     placeholder="Tìm kiếm theo mã SP, tên SP, lô, khách hàng..."
                                                     value={searchIssueQuery}
@@ -5131,7 +5132,7 @@ export function ApplicationFullABT() {
                                                             <div className="space-y-2">
                                                                 <label className="text-xs font-bold text-slate-500 uppercase">Dự đoán nguyên nhân có thể xảy ra</label>
                                                                 <div className="flex gap-2">
-                                                                    <input
+                                                                    <FastInput
                                                                         type="text"
                                                                         placeholder="Nhập nguyên nhân kỹ thuật giả định..."
                                                                         value={newPredictedCauseText}
@@ -5693,7 +5694,7 @@ export function ApplicationFullABT() {
                             </button>
                         </div>
                         {isCustomTaskName ? (
-                            <input
+                            <FastInput
                                 required
                                 type="text"
                                 value={planTaskName}
@@ -5731,7 +5732,7 @@ export function ApplicationFullABT() {
                         </div>
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Chỉ số/Mục tiêu đạt</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={planMetric}
                                 onChange={(e) => setPlanMetric(e.target.value)}
@@ -5744,7 +5745,7 @@ export function ApplicationFullABT() {
                     {planTimeSlot === "Tự nhập khoảng thời gian (Khác)" && (
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Nhập thời gian tự do *</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 required
                                 value={customTime}
@@ -5757,7 +5758,7 @@ export function ApplicationFullABT() {
 
                     <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-500 uppercase">Ghi chú thêm</label>
-                        <textarea
+                        <FastTextarea
                             value={planNotes}
                             onChange={(e) => setPlanNotes(e.target.value)}
                             rows={2}
@@ -5789,7 +5790,7 @@ export function ApplicationFullABT() {
                 <form onSubmit={handleCreateTask} className="space-y-6 text-slate-300">
                     <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-500 uppercase">Tên công việc / Yêu cầu</label>
-                        <input
+                        <FastInput
                             required
                             type="text"
                             value={newTaskTitle}
@@ -5801,7 +5802,7 @@ export function ApplicationFullABT() {
 
                     <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-500 uppercase">Mô tả chi tiết</label>
-                        <textarea
+                        <FastTextarea
                             value={newTaskDesc}
                             onChange={(e) => setNewTaskDesc(e.target.value)}
                             rows={3}
@@ -5980,7 +5981,7 @@ export function ApplicationFullABT() {
                                         })}
 
                                         <div className="flex gap-2 mt-3 pt-2">
-                                            <input
+                                            <FastInput
                                                 type="text"
                                                 value={newSubtaskTitle}
                                                 onChange={(e) => setNewSubtaskTitle(e.target.value)}
@@ -6007,7 +6008,7 @@ export function ApplicationFullABT() {
                                     <form onSubmit={handleAddTaskLog} className="space-y-3 bg-white/5 p-4 rounded-2xl border border-white/5">
                                         <div className="space-y-1">
                                             <label className="text-[10px] font-bold text-slate-500 uppercase">Tóm tắt kết quả</label>
-                                            <textarea
+                                            <FastTextarea
                                                 required
                                                 value={newTaskLogResult}
                                                 onChange={(e) => setNewTaskLogResult(e.target.value)}
@@ -6272,7 +6273,7 @@ export function ApplicationFullABT() {
                                         <>
                                             <div className="space-y-1">
                                                 <label className="text-[10px] font-bold text-slate-500 uppercase">Mã sản phẩm</label>
-                                                <input
+                                                <FastInput
                                                     type="text"
                                                     disabled={isProtocolLocked}
                                                     value={detailProductCode}
@@ -6283,7 +6284,7 @@ export function ApplicationFullABT() {
                                             </div>
                                             <div className="space-y-1">
                                                 <label className="text-[10px] font-bold text-slate-500 uppercase">Lô sản phẩm</label>
-                                                <input
+                                                <FastInput
                                                     type="text"
                                                     disabled={isProtocolLocked}
                                                     value={detailProductLot}
@@ -6296,7 +6297,7 @@ export function ApplicationFullABT() {
                                     ) : (
                                         <div className="space-y-1 col-span-2">
                                             <label className="text-[10px] font-bold text-slate-500 uppercase">Thông tin thiết bị liên quan</label>
-                                            <input
+                                            <FastInput
                                                 type="text"
                                                 disabled={isProtocolLocked}
                                                 value={detailDeviceInfo}
@@ -6361,7 +6362,7 @@ export function ApplicationFullABT() {
                                                 Mục tiêu thử nghiệm
                                             </h4>
                                         </div>
-                                        <textarea
+                                        <FastTextarea
                                             disabled={isProtocolLocked}
                                             value={detailObjective}
                                             onChange={(e) => setDetailObjective(e.target.value)}
@@ -6442,7 +6443,7 @@ export function ApplicationFullABT() {
                                                             ))}
                                                         </select>
                                                     </div>
-                                                    <textarea
+                                                    <FastTextarea
                                                         disabled={isProtocolLocked}
                                                         value={detailMaterials}
                                                         onChange={(e) => setDetailMaterials(e.target.value)}
@@ -6454,7 +6455,7 @@ export function ApplicationFullABT() {
 
                                                 <div className="space-y-2">
                                                     <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Chuẩn bị mẫu (Sample Prep)</label>
-                                                    <textarea
+                                                    <FastTextarea
                                                         disabled={isProtocolLocked}
                                                         value={detailSamplePrep}
                                                         onChange={(e) => setDetailSamplePrep(e.target.value)}
@@ -6467,7 +6468,7 @@ export function ApplicationFullABT() {
 
                                             <div className="space-y-2">
                                                 <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Phương pháp tiến hành</label>
-                                                <textarea
+                                                <FastTextarea
                                                     disabled={isProtocolLocked}
                                                     value={detailMethodology}
                                                     onChange={(e) => setDetailMethodology(e.target.value)}
@@ -6489,7 +6490,7 @@ export function ApplicationFullABT() {
                                                 Kết quả thu được
                                             </h4>
                                         </div>
-                                        <textarea
+                                        <FastTextarea
                                             disabled={isReportLocked}
                                             value={detailResults}
                                             onChange={(e) => setDetailResults(e.target.value)}
@@ -6509,7 +6510,7 @@ export function ApplicationFullABT() {
                                                 Kết luận cuối cùng
                                             </h4>
                                         </div>
-                                        <textarea
+                                        <FastTextarea
                                             disabled={isReportLocked}
                                             value={detailConclusion}
                                             onChange={(e) => setDetailConclusion(e.target.value)}
@@ -6592,7 +6593,7 @@ export function ApplicationFullABT() {
 
                     <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-500 uppercase">Mục đích sử dụng</label>
-                        <input
+                        <FastInput
                             required
                             type="text"
                             value={bookingPurpose}
@@ -6707,7 +6708,7 @@ export function ApplicationFullABT() {
 
                     <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-500 uppercase">3. Lý do yêu cầu</label>
-                        <textarea
+                        <FastTextarea
                             value={materialReason}
                             onChange={(e) => setMaterialReason(e.target.value)}
                             rows={3}
@@ -6739,7 +6740,7 @@ export function ApplicationFullABT() {
                     <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Mã Barcode (Tùy chọn)</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={sampleBarcode}
                                 onChange={(e) => setSampleBarcode(e.target.value)}
@@ -6770,7 +6771,7 @@ export function ApplicationFullABT() {
                     <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Tên Mẫu</label>
-                            <input
+                            <FastInput
                                 required
                                 type="text"
                                 value={sampleName}
@@ -6781,7 +6782,7 @@ export function ApplicationFullABT() {
                         </div>
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Gene đích / Tác nhân</label>
-                            <input
+                            <FastInput
                                 required
                                 type="text"
                                 value={sampleTarget}
@@ -6854,7 +6855,7 @@ export function ApplicationFullABT() {
                                     ✨ Sinh nhanh 5 mẫu thử
                                 </button>
                             </div>
-                            <textarea
+                            <FastTextarea
                                 value={batchSpecimensText}
                                 onChange={(e) => setBatchSpecimensText(e.target.value)}
                                 placeholder="Mã_mẫu,Mã_BN,Kết_quả_hoặc_Ct,Thể_tích&#10;Ví dụ:&#10;CL-SARS-006,BN-906,Dương tính (Ct=22.4),0.5&#10;CL-SARS-007,BN-907,Âm tính,0.3"
@@ -6868,7 +6869,7 @@ export function ApplicationFullABT() {
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-2">
                                     <label className="text-xs font-bold text-slate-500 uppercase">Nồng độ mẫu</label>
-                                    <input
+                                    <FastInput
                                         type="text"
                                         value={sampleConcentration}
                                         onChange={(e) => setSampleConcentration(e.target.value)}
@@ -6922,7 +6923,7 @@ export function ApplicationFullABT() {
                     <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Nguồn gốc/Bệnh viện gửi</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={sampleSource}
                                 onChange={(e) => setSampleSource(e.target.value)}
@@ -6932,7 +6933,7 @@ export function ApplicationFullABT() {
                         </div>
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Vị trí lưu trữ trong tủ</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={sampleLocation}
                                 onChange={(e) => setSampleLocation(e.target.value)}
@@ -7100,7 +7101,7 @@ export function ApplicationFullABT() {
                         </div>
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Người thực hiện</label>
-                            <input
+                            <FastInput
                                 required
                                 type="text"
                                 value={actionPerformer}
@@ -7113,7 +7114,7 @@ export function ApplicationFullABT() {
 
                     <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-500 uppercase">Mô tả cấy chuyền tăng sinh</label>
-                        <textarea
+                        <FastTextarea
                             value={actionDetails}
                             onChange={(e) => setActionDetails(e.target.value)}
                             rows={3}
@@ -7156,7 +7157,7 @@ export function ApplicationFullABT() {
                         </div>
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Người thực hiện</label>
-                            <input
+                            <FastInput
                                 required
                                 type="text"
                                 value={actionPerformer}
@@ -7169,7 +7170,7 @@ export function ApplicationFullABT() {
 
                     <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-500 uppercase">Lý do/Mục đích tiêu thụ</label>
-                        <textarea
+                        <FastTextarea
                             value={actionDetails}
                             onChange={(e) => setActionDetails(e.target.value)}
                             rows={3}
@@ -7201,7 +7202,7 @@ export function ApplicationFullABT() {
                 <form onSubmit={handleAddEquipment} className="space-y-6 text-slate-300">
                     <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-500 uppercase">Tên thiết bị</label>
-                        <input
+                        <FastInput
                             required
                             type="text"
                             value={addEqName}
@@ -7213,7 +7214,7 @@ export function ApplicationFullABT() {
                     <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Model / Hãng sản xuất</label>
-                            <input
+                            <FastInput
                                 required
                                 type="text"
                                 value={addEqModel}
@@ -7224,7 +7225,7 @@ export function ApplicationFullABT() {
                         </div>
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Vị trí lắp đặt (Phòng Lab)</label>
-                            <input
+                            <FastInput
                                 required
                                 type="text"
                                 value={addEqLocation}
@@ -7236,7 +7237,7 @@ export function ApplicationFullABT() {
                     </div>
                     <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-500 uppercase">Số Serial (S/N)</label>
-                        <input
+                        <FastInput
                             type="text"
                             value={addEqSerial}
                             onChange={(e) => setAddEqSerial(e.target.value)}
@@ -7267,7 +7268,7 @@ export function ApplicationFullABT() {
                 <form onSubmit={handleCreateMaterial} className="space-y-6 text-slate-300">
                     <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-500 uppercase">Tên hóa chất / vật tư</label>
-                        <input
+                        <FastInput
                             required
                             type="text"
                             value={addMatName}
@@ -7279,7 +7280,7 @@ export function ApplicationFullABT() {
                     <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Mã hóa chất / vật tư</label>
-                            <input
+                            <FastInput
                                 required
                                 type="text"
                                 value={addMatCode}
@@ -7290,7 +7291,7 @@ export function ApplicationFullABT() {
                         </div>
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Số lô sản xuất (Lot)</label>
-                            <input
+                            <FastInput
                                 required
                                 type="text"
                                 value={addMatLot}
@@ -7317,7 +7318,7 @@ export function ApplicationFullABT() {
                         </div>
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Nhà cung cấp</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={addMatSupplier}
                                 onChange={(e) => setAddMatSupplier(e.target.value)}
@@ -7391,7 +7392,7 @@ export function ApplicationFullABT() {
                 <form onSubmit={handleSaveEditEquipment} className="space-y-6 text-slate-300">
                     <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-500 uppercase">Tên thiết bị</label>
-                        <input
+                        <FastInput
                             required
                             type="text"
                             value={editEqName}
@@ -7402,7 +7403,7 @@ export function ApplicationFullABT() {
                     <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Model</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={editEqModel}
                                 onChange={(e) => setEditEqModel(e.target.value)}
@@ -7411,7 +7412,7 @@ export function ApplicationFullABT() {
                         </div>
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Vị trí lắp đặt</label>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={editEqLocation}
                                 onChange={(e) => setEditEqLocation(e.target.value)}
@@ -7421,7 +7422,7 @@ export function ApplicationFullABT() {
                     </div>
                     <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-500 uppercase">Số Serial (S/N)</label>
-                        <input
+                        <FastInput
                             type="text"
                             value={editEqSerial}
                             onChange={(e) => setEditEqSerial(e.target.value)}
@@ -7452,7 +7453,7 @@ export function ApplicationFullABT() {
                     <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Tên hóa chất / vật tư</label>
-                            <input
+                            <FastInput
                                 required
                                 type="text"
                                 value={editMatName}
@@ -7462,7 +7463,7 @@ export function ApplicationFullABT() {
                         </div>
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Mã danh mục</label>
-                            <input
+                            <FastInput
                                 required
                                 type="text"
                                 value={editMatCode}
@@ -7474,7 +7475,7 @@ export function ApplicationFullABT() {
                     <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Số lô sản xuất (Lot)</label>
-                            <input
+                            <FastInput
                                 required
                                 type="text"
                                 value={editMatLot}
@@ -7539,7 +7540,7 @@ export function ApplicationFullABT() {
                     </div>
                     <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-500 uppercase">Nhà cung cấp</label>
-                        <input
+                        <FastInput
                             type="text"
                             value={editMatSupplier}
                             onChange={(e) => setEditMatSupplier(e.target.value)}
@@ -7588,7 +7589,7 @@ export function ApplicationFullABT() {
                     </div>
                     <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-500 uppercase">Lý do / Mục đích xuất kho</label>
-                        <textarea
+                        <FastTextarea
                             required
                             value={exportMatReason}
                             onChange={(e) => setExportMatReason(e.target.value)}
@@ -7809,7 +7810,7 @@ export function ApplicationFullABT() {
                             </label>
                             <span className="text-[10px] text-slate-500 font-normal">Có thể chỉnh sửa</span>
                         </div>
-                        <input
+                        <FastInput
                             required
                             type="text"
                             value={newIssueProductName}
@@ -7910,7 +7911,7 @@ export function ApplicationFullABT() {
                                 </label>
                                 <span className="text-[10px] text-slate-500 font-normal">BS, SĐT, Email</span>
                             </div>
-                            <input
+                            <FastInput
                                 type="text"
                                 value={newIssueContactInfo}
                                 onChange={(e) => setNewIssueContactInfo(e.target.value)}
@@ -7923,7 +7924,7 @@ export function ApplicationFullABT() {
                     {/* Mô tả chi tiết */}
                     <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-400 uppercase">MÔ TẢ CHI TIẾT SỰ CỐ BAN ĐẦU *</label>
-                        <textarea
+                        <FastTextarea
                             required
                             rows={3}
                             value={newIssueDesc}

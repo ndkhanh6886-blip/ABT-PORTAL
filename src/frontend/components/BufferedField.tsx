@@ -98,4 +98,46 @@ export function BufferedField(props: InputProps | TextareaProps) {
   return multiline ? <textarea {...(shared as React.TextareaHTMLAttributes<HTMLTextAreaElement>)} /> : <input {...(shared as React.InputHTMLAttributes<HTMLInputElement>)} />;
 }
 
+/**
+ * Drop-in replacements for `<input value onChange>` / `<textarea value onChange>` inside very large components
+ * (Kinh doanh, Kho, Cung ứng, Application, Điều hành): same props, but `onChange` runs when typing pauses, on blur and
+ * on Enter instead of on every keystroke. The handler receives an event whose `target.value` / `currentTarget.value` is
+ * the typed text, which is all the converted handlers read.
+ */
+type ChangeLike = { target: { value: string }; currentTarget: { value: string } };
+const changeEvent = (value: string) => ({ target: { value }, currentTarget: { value } }) as ChangeLike as React.ChangeEvent<any>;
+
+type FastInputProps = Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange"> & {
+  value?: string | number | readonly string[] | null;
+  onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  delay?: number;
+};
+
+export function FastInput({ value, onChange, ...rest }: FastInputProps) {
+  return (
+    <BufferedField
+      {...rest}
+      value={value == null ? "" : String(value)}
+      onCommit={(v) => onChange?.(changeEvent(v))}
+    />
+  );
+}
+
+type FastTextareaProps = Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "onChange"> & {
+  value?: string | number | readonly string[] | null;
+  onChange?: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
+  delay?: number;
+};
+
+export function FastTextarea({ value, onChange, ...rest }: FastTextareaProps) {
+  return (
+    <BufferedField
+      {...rest}
+      multiline
+      value={value == null ? "" : String(value)}
+      onCommit={(v) => onChange?.(changeEvent(v))}
+    />
+  );
+}
+
 export default BufferedField;
