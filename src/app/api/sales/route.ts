@@ -392,6 +392,14 @@ function normalizeContractRow(r: any) {
     extra = typeof r.extra_data === "string" ? JSON.parse(r.extra_data || "{}") : (r.extra_data || {});
   } catch (e) { extra = {}; }
   extra = extra && typeof extra === "object" ? extra : {};
+  // Không trả về cột extra_data (và extra_data lồng bên trong) cùng hợp đồng: trình duyệt gửi lại cả hợp đồng về
+  // /api/storage, máy chủ ghi nguyên đối tượng vào extra_data -> mỗi vòng đồng bộ lồng thêm 1 lớp bản sao
+  // (11/2026: mỗi hợp đồng phình ~3,5 MB, app_storage.sales_contracts ~13,8 MB).
+  const { extra_data: _nestedExtra, ...extraFlat } = extra as any;
+  const { extra_data: _rowExtra, ...rowFlat } = r as any;
+  void _nestedExtra; void _rowExtra;
+  extra = extraFlat;
+  r = rowFlat;
   const rawStatus = String(r.status || extra.status || "ACTIVE").trim();
   const normalizedStatus = (rawStatus === "ACTIVE" || rawStatus === "Signed") ? "Signed" : ((rawStatus === "DRAFT" || rawStatus === "Draft") ? "Draft" : rawStatus);
   const rawItems = Array.isArray(r.items) ? r.items : (typeof r.items === 'string' ? (() => { try { return JSON.parse(r.items || '[]'); } catch { return []; } })() : (Array.isArray(extra.items) ? extra.items : []));

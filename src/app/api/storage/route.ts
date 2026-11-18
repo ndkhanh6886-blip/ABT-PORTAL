@@ -93,6 +93,17 @@ function keepStoredCosts(current: any, upserts: any[]): any[] {
 }
 
 
+/** Bỏ extra_data lồng bên trong từng hợp đồng (bản sao cũ của chính hợp đồng, phình theo mỗi vòng đồng bộ). */
+function stripNestedContractExtra(list: any): any {
+  if (!Array.isArray(list)) return list;
+  return list.map((c: any) => {
+    if (!c || typeof c !== "object" || !("extra_data" in c)) return c;
+    const { extra_data: _nested, ...flat } = c;
+    void _nested;
+    return flat;
+  });
+}
+
 async function syncSalesContractsTable(rawList: any) {
   if (!Array.isArray(rawList) || rawList.length === 0) return;
   try {
@@ -125,7 +136,8 @@ async function syncSalesContractsTable(rawList: any) {
            items = CASE WHEN jsonb_array_length(EXCLUDED.items) > 0 THEN EXCLUDED.items ELSE sales_contracts.items END,
            contract_files = CASE WHEN jsonb_array_length(EXCLUDED.contract_files) > 0 THEN EXCLUDED.contract_files ELSE sales_contracts.contract_files END,
            extra_data = COALESCE(sales_contracts.extra_data, '{}'::jsonb) || EXCLUDED.extra_data`,
-        [code, custName, repName, title, totalVal, dbStatus, itemsJson, filesJson, JSON.stringify(c)]
+        // extra_data chỉ giữ các trường của hợp đồng, bỏ extra_data lồng bên trong (tránh mỗi lần lưu lồng thêm 1 lớp)
+        [code, custName, repName, title, totalVal, dbStatus, itemsJson, filesJson, JSON.stringify((({ extra_data: _nested, ...flat }: any) => flat)(c || {}))]
       );
     }
   } catch (err) {
@@ -240,7 +252,8 @@ export async function POST(request: NextRequest) {
           // Danh sách đơn từ: không cho một lần lưu xóa hàng loạt đơn (trình duyệt có danh sách sai đã xóa sạch đơn thật)
           if (key === PROTECTED_PROPOSAL_KEY) droppedDeletes = limitProposalDeletes(patch);
         }
-        const next = applyStoragePatch(current, patch);
+        let next = applyStoragePatch(current, patch);
+        if (key === "sales_contracts") next = stripNestedContractExtra(next);
         let recoded: Array<[string, string, string]> = [];
         if (key === PROTECTED_PROPOSAL_KEY && Array.isArray(next)) {
           const existingIds = new Set((Array.isArray(current) ? current : []).map((p: any) => String(itemIdentity(p))));
@@ -294,6 +307,7 @@ export async function POST(request: NextRequest) {
     if (data === undefined) {
       return NextResponse.json({ error: "Data is required" }, { status: 400 });
     }
+    if (key === "sales_contracts") data = stripNestedContractExtra(data);
 
     // Optimistic Concurrency Control (OCC): Check version if provided
     const expectedVersion = (isEnvelope ? (body.expectedVersion ?? body.version) : undefined)
