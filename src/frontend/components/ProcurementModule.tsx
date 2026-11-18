@@ -2937,10 +2937,10 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     // Fallback check if product_info matches a catalog product directly
     if (normalizedItems.length === 0 && pr.product_info) {
       const infoStr = String(pr.product_info).trim();
-      // mã hàng trước; tên chỉ dùng khi đúng một sản phẩm mang tên đó
-      const byInfoCode = mergedCatalogProducts.find(
-        (p: any) => p.code && infoStr.toUpperCase().includes(String(p.code).trim().toUpperCase())
-      );
+      // Ưu tiên khớp mã dài nhất trước (tránh mã ngắn như "cồn 96" ăn nhầm vào chuỗi "cồn 96 - 1L")
+      const byInfoCode = [...mergedCatalogProducts]
+        .filter((p: any) => p.code && infoStr.toUpperCase().includes(String(p.code).trim().toUpperCase()))
+        .sort((a: any, b: any) => String(b.code || "").trim().length - String(a.code || "").trim().length)[0];
       const byInfoName = byInfoCode ? [] : mergedCatalogProducts.filter(
         (p: any) => p.name && infoStr.toLowerCase().includes(String(p.name).trim().toLowerCase())
       );

@@ -4833,7 +4833,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         if (!isDirectPO) return false;
                         const containsItem = Array.isArray(po.items) && po.items.some((poi: any) => {
                             const pcode = (poi.product_code || poi.code || "").trim().toLowerCase();
-                            return pcode && (pcode === icode || pcode.includes(icode) || icode.includes(pcode));
+                            return pcode && (pcode === icode);
                         });
                         return containsItem;
                     });
@@ -14127,7 +14127,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const isDone = po.status === "COMPLETED" || po.status === "Received" || po.status === "DELIVERED";
             (po.items || []).forEach((poi: any, pIdx: number) => {
                 const pcode = String(poi?.product_code || poi?.code || "").trim().toLowerCase();
-                if (pcode && (pcode === cleanCode || pcode.includes(cleanCode) || cleanCode.includes(pcode))) {
+                if (pcode && (pcode === cleanCode)) {
                     const ordQ = Number(poi?.quantity || 0);
                     const recQ = isDone ? ordQ : Number(po.received_qty?.[pIdx] ?? po.received_qty?.[String(pIdx)] ?? 0);
                     poOrderedQty += ordQ;
@@ -14151,7 +14151,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 } catch {}
                 const matchedPrItems = parsed.filter((prit: any) => {
                     const pcode = String(prit?.product_code || prit?.code || "").trim().toLowerCase();
-                    return pcode && (pcode === cleanCode || pcode.includes(cleanCode) || cleanCode.includes(pcode));
+                    return pcode && (pcode === cleanCode);
                 });
                 if (matchedPrItems.length > 0) {
                     prTargetQty = matchedPrItems.reduce((s: number, prit: any) => s + (Number(prit?.quantity) || 0), 0);
@@ -14420,7 +14420,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     ? po.items.some((poi: any, pIdx: number) => {
                         const pcode = (poi.product_code || poi.code || "").trim().toLowerCase();
                         const icode = code.toLowerCase();
-                        if (!(pcode && icode && (pcode === icode || pcode.includes(icode) || icode.includes(pcode)))) return false;
+                        if (!(pcode && icode && (pcode === icode))) return false;
                         // Nếu dòng hàng này trong PO đã nhập đủ (kể cả khi PO chung đang PARTIALLY_RECEIVED) thì không còn là đang chờ về
                         const recQty = Number(po.received_qty?.[pIdx] ?? po.received_qty?.[String(pIdx)] ?? 0);
                         const ordQty = Number(poi.quantity || 1);
@@ -14441,7 +14441,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 (po.items || []).forEach((poi: any, pIdx: number) => {
                     const pcode = (poi.product_code || poi.code || "").trim().toLowerCase();
                     const icode = code.toLowerCase();
-                    if (pcode && icode && (pcode === icode || pcode.includes(icode) || icode.includes(pcode))) {
+                    if (pcode && icode && (pcode === icode)) {
                         const recQty = Number(po.received_qty?.[pIdx] ?? po.received_qty?.[String(pIdx)] ?? 0);
                         const remOnPO = Math.max(0, Number(poi.quantity || 1) - recQty);
                         incomingQty += remOnPO;
@@ -14524,7 +14524,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     if (!isDirectPO) return false;
                     const containsAndReceivedItem = Array.isArray(po.items) && po.items.some((poi: any, pIdx: number) => {
                         const pcode = (poi.product_code || poi.code || "").trim().toLowerCase();
-                        if (!(pcode && (pcode === icode || pcode.includes(icode) || icode.includes(pcode)))) return false;
+                        if (!(pcode && (pcode === icode))) return false;
                         if (isDone) return true;
                         const recQty = Number(po.received_qty?.[pIdx] ?? po.received_qty?.[String(pIdx)] ?? 0);
                         return recQty >= Number(poi.quantity || 1);
@@ -14904,7 +14904,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 (po.items || []).forEach((poi: any) => {
                     const pcode = (poi.product_code || poi.code || "").trim().toLowerCase();
                     const icode = code.toLowerCase();
-                    if (pcode && icode && (pcode === icode || pcode.includes(icode) || icode.includes(pcode))) {
+                    if (pcode && icode && (pcode === icode)) {
                         incomingQty += Number(poi.quantity || 1);
                     }
                 });
@@ -32804,7 +32804,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         if (itemStat && itemStat.lineStatus === "IN_STOCK") return false;
                                         return po.items.some((poi: any) => {
                                             const pcode = (poi.product_code || poi.code || "").trim().toLowerCase();
-                                            return pcode && (pcode === icode || pcode.includes(icode) || icode.includes(pcode));
+                                            return pcode && (pcode === icode);
                                         });
                                     });
                                 }
@@ -33141,7 +33141,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 if (vIsStock) return false;
                                                                 return (po.items || []).some((poi: any) => {
                                                                     const pcode = (poi.product_code || poi.code || "").toLowerCase();
-                                                                    return pcode && itCodeLower && (pcode === itCodeLower || pcode.includes(itCodeLower) || itCodeLower.includes(pcode));
+                                                                    return pcode && itCodeLower && (pcode === itCodeLower);
                                                                 });
                                                             });
 

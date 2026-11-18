@@ -451,6 +451,56 @@ export async function GET(req: NextRequest) {
           ON CONFLICT (product_code) DO NOTHING
         `).catch(() => {});
 
+        // Tự động chuyển tồn kho lô bị kẹt ở mã hàng cũ sang mã hàng mới khi phiếu nhập kho (PNK) đã được chỉnh sửa mã hàng
+        await query(`
+          WITH inb AS (
+            SELECT TRIM(COALESCE(e->>'product_code', e->>'productCode')) AS pcode,
+                   TRIM(COALESCE(e->>'lot_number', e->>'lotNumber')) AS lot,
+                   SUM(COALESCE(NULLIF(e->>'quantity', ''), '0')::numeric) AS in_qty
+              FROM inventory_transactions t
+              CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(t.items) = 'array' THEN t.items ELSE '[]'::jsonb END) e
+             WHERE t.transaction_type = 'INBOUND'
+               AND TRIM(COALESCE(e->>'lot_number', e->>'lotNumber', '')) NOT IN ('', 'NO-LOT')
+             GROUP BY 1, 2
+          ),
+          orphaned AS (
+            SELECT l.id AS old_lot_id, l.product_code AS old_code, l.lot_number, l.warehouse_location,
+                   l.quantity_on_hand AS old_qty, l.expiry_date, COALESCE(l.unit_cost, 0) AS unit_cost,
+                   target.pcode AS new_code
+              FROM inventory_lots l
+              LEFT JOIN inb cur ON LOWER(cur.pcode) = LOWER(TRIM(l.product_code)) AND LOWER(cur.lot) = LOWER(TRIM(l.lot_number))
+              JOIN LATERAL (
+                SELECT i.pcode
+                  FROM inb i
+                  LEFT JOIN (
+                    SELECT product_code, lot_number, SUM(quantity_on_hand) AS lot_qty
+                      FROM inventory_lots
+                     GROUP BY product_code, lot_number
+                  ) cur_lot ON LOWER(TRIM(cur_lot.product_code)) = LOWER(i.pcode) AND LOWER(TRIM(cur_lot.lot_number)) = LOWER(i.lot)
+                 WHERE LOWER(i.lot) = LOWER(TRIM(l.lot_number))
+                   AND LOWER(i.pcode) <> LOWER(TRIM(l.product_code))
+                   AND i.in_qty >= COALESCE(cur_lot.lot_qty, 0) + l.quantity_on_hand
+                 ORDER BY i.in_qty DESC
+                 LIMIT 1
+              ) target ON TRUE
+             WHERE l.quantity_on_hand > 0
+               AND TRIM(COALESCE(l.lot_number, '')) NOT IN ('', 'NO-LOT')
+               AND cur.pcode IS NULL
+          ),
+          upserted AS (
+            INSERT INTO inventory_lots (product_code, lot_number, expiry_date, warehouse_location, quantity_on_hand, unit_cost)
+            SELECT o.new_code, o.lot_number, o.expiry_date, o.warehouse_location, o.old_qty, o.unit_cost
+              FROM orphaned o
+            ON CONFLICT (product_code, lot_number, warehouse_location) DO UPDATE
+              SET quantity_on_hand = inventory_lots.quantity_on_hand + EXCLUDED.quantity_on_hand,
+                  expiry_date = COALESCE(inventory_lots.expiry_date, EXCLUDED.expiry_date),
+                  unit_cost = CASE WHEN COALESCE(inventory_lots.unit_cost, 0) > 0 THEN inventory_lots.unit_cost ELSE EXCLUDED.unit_cost END,
+                  last_updated = now()
+            RETURNING product_code
+          )
+          DELETE FROM inventory_lots WHERE id IN (SELECT old_lot_id FROM orphaned)
+        `).catch(() => {});
+
         await query(`
           UPDATE inventory_items i
              SET quantity_on_hand = COALESCE(s.total_qty, 0),
@@ -1036,18 +1086,22 @@ export async function POST(req: NextRequest) {
             );
           }
 
-          // Match with an old item line (by _orig_product_code + _orig_lot_number or product_code)
+          // Match with an old item line ONLY when product_code did NOT change (if product_code changed, e.g. from "cồn 96" to "cồn 96 - 1L",
+          // treat the new code as a new stock addition and let the old code be deducted in the removed-items loop below)
           const origCode = String(item._orig_product_code || pCode).trim();
           const origLot = String(item._orig_lot_number ?? "").trim();
-          let matchedOldIdx = oldItems.findIndex((o, idx) =>
-            !matchedOldIndices.has(idx) &&
-            String(o.product_code || o.productCode || "").trim() === origCode &&
-            String(o.lot_number || o.lotNumber || "").trim() === origLot
-          );
-          if (matchedOldIdx === -1) {
+          const isSameCode = origCode.toLowerCase() === pCode.toLowerCase();
+          let matchedOldIdx = isSameCode
+            ? oldItems.findIndex((o, idx) =>
+                !matchedOldIndices.has(idx) &&
+                String(o.product_code || o.productCode || "").trim().toLowerCase() === pCode.toLowerCase() &&
+                String(o.lot_number || o.lotNumber || "").trim() === origLot
+              )
+            : -1;
+          if (isSameCode && matchedOldIdx === -1) {
             matchedOldIdx = oldItems.findIndex((o, idx) =>
               !matchedOldIndices.has(idx) &&
-              String(o.product_code || o.productCode || "").trim() === origCode
+              String(o.product_code || o.productCode || "").trim().toLowerCase() === pCode.toLowerCase()
             );
           }
 
