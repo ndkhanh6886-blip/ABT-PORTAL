@@ -13,6 +13,7 @@ import { createItem, getItem, toBaseQty } from "../master/service";
 import { createRequest } from "../purchase/requests";
 import {
   allocateOrderSerials,
+  checkOrderBomShortages,
   resolveLotNo,
   deviceUnitMachine,
   getDeviceOrderDetail,
@@ -1232,6 +1233,26 @@ export async function convertPoToWorkOrder(
   const qty = input.qty
     ? Math.max(1, Math.round(Number(input.qty)))
     : Math.max(1, Math.round(Number(line.qty) - Number(line.qty_delivered)));
+
+  const { shortages } = await checkOrderBomShortages(tx, {
+    revisionId: model.current_revision_id,
+    warehouseId: devWh.id,
+    qty,
+  });
+  if (shortages.length > 0) {
+    const shortSummary = shortages
+      .slice(0, 6)
+      .map((s) => `${s.item_code} (cần ${s.total_required} ${s.uom}, tồn ${s.qty_available}, thiếu ${s.shortage})`)
+      .join("; ");
+    throw invalid(
+      `Không thể bắt đầu Lệnh lắp ráp (Đang lắp ráp) cho ${qty} máy ${model.code} vì kho đang thiếu ${shortages.length} mã linh kiện theo định mức BOM: ${shortSummary}${
+        shortages.length > 6 ? ` (+${shortages.length - 6} mã khác)` : ""
+      }. Vui lòng bấm "2. Đề xuất mua linh kiện thiếu từ PO (Tạo PR)" hoặc "3. Tạo Lệnh Gia Công Ngoài", hoàn tất nhận hàng & nhập kho IQC trước khi phát lệnh lắp ráp.`,
+      { shortages },
+      "BOM_SHORTAGE"
+    );
+  }
+
   const woCode = await nextNumber(tx, "DEVICE_ORDER");
 
   const order = await insertRecord<DeviceOrderRow>(tx, actor, "device.device_order", "device_order", {
@@ -1558,20 +1579,44 @@ export async function issueWorkOrderBomKitting(
   if (!order) throw notFound("Lệnh lắp ráp thiết bị");
   await authorize(tx, actor, "device.assembly.execute", order.org_unit_id);
 
-  // Ensure serials are allocated if order is APPROVED or RECEIVED
-  if (order.status === "RECEIVED") {
+  const { shortages } = await checkOrderBomShortages(tx, {
+    revisionId: order.model_revision_id,
+    warehouseId: order.warehouse_id,
+    qty: order.qty,
+    orderId: order.id,
+  });
+  if (shortages.length > 0) {
+    const shortSummary = shortages
+      .slice(0, 6)
+      .map((s) => `${s.item_code} (cần thêm ${s.shortage} ${s.uom})`)
+      .join("; ");
+    throw invalid(
+      `Không thể xuất kho Kitting & bắt đầu lắp ráp lệnh ${order.code} vì kho đang thiếu ${shortages.length} mã linh kiện theo BOM: ${shortSummary}${
+        shortages.length > 6 ? ` (+${shortages.length - 6} mã khác)` : ""
+      }. Hãy nhập kho IQC hoặc lập Đề nghị mua hàng (PR) / Lệnh gia công ngoài bổ sung đủ linh kiện trước.`,
+      { shortages },
+      "INSUFFICIENT_STOCK"
+    );
+  }
+
+  // Ensure serials are allocated and order enters IN_PRODUCTION only after BOM stock is verified
+  if (order.status === "RECEIVED" || order.status === "APPROVED") {
     await tx.query(
-      "UPDATE device.device_order SET status = 'APPROVED', approved_by = $2, approved_at = now(), version = version + 1 WHERE id = $1",
+      `UPDATE device.device_order
+          SET status = 'IN_PRODUCTION',
+              approved_by = COALESCE(approved_by, $2),
+              approved_at = COALESCE(approved_at, now()),
+              version = version + 1
+        WHERE id = $1`,
       [order.id, actor.userId]
     );
-    order.status = "APPROVED";
+    order.status = "IN_PRODUCTION";
   }
   let units = (
     await tx.query("SELECT * FROM device.device_unit WHERE order_id = $1 ORDER BY serial_no ASC FOR UPDATE", [order.id])
   ).rows as DeviceUnitRow[];
   if (units.length < order.qty) {
     await allocateOrderSerials(tx, actor, order);
-    await tx.query("UPDATE device.device_order SET status = 'IN_PRODUCTION', version = version + 1 WHERE id = $1", [order.id]);
     units = (
       await tx.query("SELECT * FROM device.device_unit WHERE order_id = $1 ORDER BY serial_no ASC FOR UPDATE", [order.id])
     ).rows as DeviceUnitRow[];

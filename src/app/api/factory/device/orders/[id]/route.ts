@@ -1,13 +1,14 @@
 import { factoryRoute } from "@/factory/http";
 import {
   allocateOrderSerials,
+  checkOrderBomShortages,
   getDeviceOrderDetail,
   updateDeviceUnitSerial,
   type DeviceOrderRow,
 } from "@/factory/device/assembly";
 import { issueWorkOrderBomKitting, progressWorkOrderStage } from "@/factory/device/workflow";
 import { authorize } from "@/factory/core/authz";
-import { notFound } from "@/factory/core/errors";
+import { invalid, notFound } from "@/factory/core/errors";
 
 export const GET = factoryRoute((tx, { actor, params }) => getDeviceOrderDetail(tx, actor, params.id));
 
@@ -26,6 +27,23 @@ export const POST = factoryRoute(async (tx, { actor, params, body }) => {
       | undefined;
     if (!order) throw notFound("lệnh lắp ráp thiết bị");
     await authorize(tx, actor, "device.order.manage", order.org_unit_id);
+    const { shortages } = await checkOrderBomShortages(tx, {
+      revisionId: order.model_revision_id,
+      warehouseId: order.warehouse_id,
+      qty: order.qty,
+      orderId: order.id,
+    });
+    if (shortages.length > 0) {
+      const shortList = shortages
+        .slice(0, 6)
+        .map((s) => `${s.item_code} (thiếu ${s.shortage} ${s.uom})`)
+        .join("; ");
+      throw invalid(
+        `Chưa đủ linh kiện theo định mức BOM (${shortages.length} mã thiếu: ${shortList}). Vui lòng nhập kho linh kiện trước khi cấp Serial & bắt đầu lắp ráp.`,
+        { shortages },
+        "BOM_SHORTAGE"
+      );
+    }
     await allocateOrderSerials(tx, actor, order, {
       serial_numbers: (b.serial_numbers as string[] | string | null | undefined) ?? null,
     });

@@ -63,6 +63,7 @@ export const POST = factoryRoute((tx, ctx) =>
       return convertPoToWorkOrder(tx, ctx.actor, {
         internal_order_id: String(b.internal_order_id),
         internal_order_line_id: b.internal_order_line_id ? String(b.internal_order_line_id) : undefined,
+        qty: b.qty ? Number(b.qty) : undefined,
         lot_no: b.lot_no ?? null,
         serial_numbers: b.serial_numbers ?? null,
         priority: b.priority ?? "HIGH",

@@ -135,6 +135,72 @@ export async function syncOrderStatusFromUnits(tx: Tx, orderId: string, actorId:
 }
 
 /**
+ * Checks BOM component availability for a Device Work Order (`device.device_order`) against released,
+ * non-quarantine stock in `warehouseId`.
+ */
+export async function checkOrderBomShortages(
+  tx: Tx,
+  params: {
+    revisionId: string;
+    warehouseId: string;
+    qty: number;
+    orderId?: string | null;
+  }
+) {
+  const bomLines = (
+    await tx.query(
+      `SELECT bl.*, bl.qty_per_unit::float AS qty_per_unit, it.code AS item_code, it.name AS item_name,
+              CASE
+                WHEN $2::uuid IS NULL THEN 0::float
+                ELSE COALESCE((
+                  SELECT sum(c.qty)::float
+                    FROM device.device_unit_component c
+                    JOIN device.device_unit du ON du.id = c.unit_id
+                   WHERE du.order_id = $2
+                     AND (c.bom_line_id = bl.id OR c.item_id = bl.component_item_id)
+                ), 0)
+              END AS qty_installed,
+              COALESCE((
+                SELECT sum(b.qty_on_hand - b.qty_reserved)::float
+                  FROM inv.stock_balance b
+                  JOIN inv.lot l ON l.id = b.lot_id
+                  JOIN master.location loc ON loc.id = b.location_id
+                 WHERE loc.warehouse_id = $3
+                   AND b.item_id = bl.component_item_id
+                   AND l.status = 'RELEASED'
+                   AND NOT loc.is_quarantine
+                   AND (b.qty_on_hand - b.qty_reserved) > 0
+              ), 0) AS qty_available
+         FROM device.model_bom_line bl
+         JOIN master.item it ON it.id = bl.component_item_id
+        WHERE bl.revision_id = $1 ORDER BY bl.line_no ASC`,
+      [params.revisionId, params.orderId ?? null, params.warehouseId]
+    )
+  ).rows;
+
+  let totalInstalled = 0;
+  const kittingSummary = bomLines.map((bl) => {
+    const totalRequired = Number((Number(bl.qty_per_unit) * Number(params.qty)).toFixed(4));
+    const qtyInstalled = Number(bl.qty_installed ?? 0);
+    totalInstalled += qtyInstalled;
+    const qtyAvailable = Number(bl.qty_available ?? 0);
+    const remainingToInstall = Math.max(0, Number((totalRequired - qtyInstalled).toFixed(4)));
+    const shortage = Math.max(0, Number((remainingToInstall - qtyAvailable).toFixed(4)));
+    return {
+      ...bl,
+      total_required: totalRequired,
+      qty_installed: qtyInstalled,
+      qty_available: qtyAvailable,
+      remaining_to_install: remainingToInstall,
+      shortage,
+    };
+  });
+
+  const shortages = kittingSummary.filter((k) => k.shortage > 0);
+  return { bomLines, kittingSummary, shortages, totalInstalled };
+}
+
+/**
  * Device Order state machine (docs/nha-may/02 §10.1):
  * RECEIVED → APPROVED ✍ → IN_PRODUCTION (assign_serials) → QC_TESTING → READY → DELIVERED
  * RECEIVED/APPROVED → CANCELLED 📝
@@ -169,6 +235,22 @@ export const deviceOrderMachine = defineMachine<DeviceOrderStatus, DeviceOrderRo
       from: "APPROVED",
       to: "IN_PRODUCTION",
       permission: "device.order.manage",
+      guards: [
+        {
+          code: "BOM_SHORTAGE",
+          message:
+            "Kho linh kiện chưa đủ định mức BOM cho số lượng máy của lệnh. Vui lòng nhập kho (IQC Đạt) hoặc lập Đề nghị mua hàng (PR) / Lệnh gia công ngoài đủ linh kiện trước khi bắt đầu lắp ráp.",
+          check: async ({ tx, row }) => {
+            const { shortages } = await checkOrderBomShortages(tx, {
+              revisionId: row.model_revision_id,
+              warehouseId: row.warehouse_id,
+              qty: row.qty,
+              orderId: row.id,
+            });
+            return shortages.length === 0;
+          },
+        },
+      ],
       effects: async ({ tx, actor, updated, payload }) => {
         await allocateOrderSerials(tx, actor, updated, {
           serial_numbers: (payload?.serial_numbers as string[] | string | null | undefined) ?? null,
@@ -732,6 +814,13 @@ export async function installUnitComponent(tx: Tx, actor: AuthzActor, unitId: st
   if (!unit) throw notFound("máy (serial)");
   const order = (await tx.query("SELECT * FROM device.device_order WHERE id = $1", [unit.order_id])).rows[0] as DeviceOrderRow;
   await authorize(tx, actor, "device.assembly.execute", order.org_unit_id);
+  if (order.status !== "IN_PRODUCTION") {
+    throw invalid(
+      `Lệnh lắp ráp ${order.code} chưa ở trạng thái Đang lắp ráp (hiện tại: ${order.status}). Vui lòng phê duyệt lệnh và đảm bảo kho đủ linh kiện theo BOM trước khi lắp đặt.`,
+      undefined,
+      "ORDER_NOT_IN_PRODUCTION"
+    );
+  }
   if (unit.status !== "IN_ASSEMBLY") {
     throw invalid(`Chỉ lắp linh kiện khi máy đang ở trạng thái IN_ASSEMBLY (hiện tại: ${unit.status}).`);
   }
@@ -952,7 +1041,23 @@ export async function listDeviceOrders(tx: Tx, actor: AuthzActor) {
   ).rows;
   const visible = [];
   for (const r of rows) {
-    if (await hasFactoryPermission(tx, actor, "device.view", r.org_unit_id)) visible.push(r);
+    if (!(await hasFactoryPermission(tx, actor, "device.view", r.org_unit_id))) continue;
+    const { shortages, totalInstalled } = await checkOrderBomShortages(tx, {
+      revisionId: r.model_revision_id,
+      warehouseId: r.warehouse_id,
+      qty: r.qty,
+      orderId: r.id,
+    });
+    if (r.status === "IN_PRODUCTION" && totalInstalled === 0 && shortages.length > 0) {
+      await tx.query("UPDATE device.device_order SET status = 'APPROVED' WHERE id = $1 AND status = 'IN_PRODUCTION'", [r.id]);
+      r.status = "APPROVED";
+    }
+    visible.push({
+      ...r,
+      shortage_count: shortages.length,
+      has_bom_shortage: shortages.length > 0,
+      installed_component_qty: totalInstalled,
+    });
   }
   return visible;
 }
@@ -990,52 +1095,29 @@ export async function getDeviceOrderDetail(tx: Tx, actor: AuthzActor, id: string
     )
   ).rows;
 
-  const bomLines = (
-    await tx.query(
-      `SELECT bl.*, bl.qty_per_unit::float AS qty_per_unit, it.code AS item_code, it.name AS item_name,
-              COALESCE((
-                SELECT sum(c.qty)::float
-                  FROM device.device_unit_component c
-                  JOIN device.device_unit du ON du.id = c.unit_id
-                 WHERE du.order_id = $2
-                   AND (c.bom_line_id = bl.id OR c.item_id = bl.component_item_id)
-              ), 0) AS qty_installed,
-              COALESCE((
-                SELECT sum(b.qty_on_hand - b.qty_reserved)::float
-                  FROM inv.stock_balance b
-                  JOIN inv.lot l ON l.id = b.lot_id
-                  JOIN master.location loc ON loc.id = b.location_id
-                 WHERE loc.warehouse_id = $3
-                   AND b.item_id = bl.component_item_id
-                   AND l.status = 'RELEASED'
-                   AND NOT loc.is_quarantine
-                   AND (b.qty_on_hand - b.qty_reserved) > 0
-              ), 0) AS qty_available
-         FROM device.model_bom_line bl
-         JOIN master.item it ON it.id = bl.component_item_id
-        WHERE bl.revision_id = $1 ORDER BY bl.line_no ASC`,
-      [order.model_revision_id, order.id, order.warehouse_id]
-    )
-  ).rows;
-
-  const kittingSummary = bomLines.map((bl) => {
-    const totalRequired = Number((Number(bl.qty_per_unit) * Number(order.qty)).toFixed(4));
-    const qtyInstalled = Number(bl.qty_installed ?? 0);
-    const qtyAvailable = Number(bl.qty_available ?? 0);
-    const remainingToInstall = Math.max(0, Number((totalRequired - qtyInstalled).toFixed(4)));
-    const shortage = Math.max(0, Number((remainingToInstall - qtyAvailable).toFixed(4)));
-    return {
-      ...bl,
-      total_required: totalRequired,
-      qty_installed: qtyInstalled,
-      qty_available: qtyAvailable,
-      remaining_to_install: remainingToInstall,
-      shortage,
-    };
+  const { bomLines, kittingSummary, shortages, totalInstalled } = await checkOrderBomShortages(tx, {
+    revisionId: order.model_revision_id,
+    warehouseId: order.warehouse_id,
+    qty: order.qty,
+    orderId: order.id,
   });
 
+  if (order.status === "IN_PRODUCTION" && totalInstalled === 0 && shortages.length > 0) {
+    await tx.query("UPDATE device.device_order SET status = 'APPROVED' WHERE id = $1 AND status = 'IN_PRODUCTION'", [order.id]);
+    order.status = "APPROVED";
+  }
+
   const actions = await listAllowedActions(tx, deviceOrderMachine, actor, order);
-  return { ...order, units, bom_lines: bomLines, kitting_summary: kittingSummary, actions };
+  return {
+    ...order,
+    units,
+    bom_lines: bomLines,
+    kitting_summary: kittingSummary,
+    shortage_count: shortages.length,
+    has_bom_shortage: shortages.length > 0,
+    installed_component_qty: totalInstalled,
+    actions,
+  };
 }
 
 export async function getDeviceUnitDetail(tx: Tx, actor: AuthzActor, unitId: string) {

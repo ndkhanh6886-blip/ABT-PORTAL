@@ -917,7 +917,17 @@ describe("Phase 4c — Module Phòng Kỹ thuật – Công nghệ / Thiết b�
     const subRes = await withTransaction((tx) => createSubcontractFromPo(tx, engineer, poRes.po_id));
     expect(subRes.subcontract_order_code).toMatch(/^(SCO|SUB|OPO)/);
 
-    // 5.5 Convert PO -> Work Order (for 2 units that we have stock for)
+    // 5.5 Attempting to convert full 4-unit PO -> Work Order while stock is only 2 units must fail with BOM_SHORTAGE
+    await expect(
+      withTransaction((tx) =>
+        convertPoToWorkOrder(tx, engineer, poRes.po_id, {
+          qty: 4,
+          lot_no: "E2E-990101-04",
+        })
+      )
+    ).rejects.toMatchObject({ code: "BOM_SHORTAGE" });
+
+    // Convert PO -> Work Order (for 2 units that we have stock for)
     const woRes = await withTransaction((tx) =>
       // a lot of its own: test 2 already used today's 2-unit serials
       convertPoToWorkOrder(tx, engineer, poRes.po_id, {

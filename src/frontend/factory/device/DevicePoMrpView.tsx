@@ -526,35 +526,64 @@ export function DevicePoMrpView({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      disabled={convertToWoMut.isPending}
-                      onClick={() => convertToWoMut.mutate(selectedPo.id)}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-sky-700 hover:bg-sky-800 text-white font-bold shadow-sm cursor-pointer disabled:opacity-50"
-                    >
-                      <Cpu className="w-4 h-4" />
-                      1. Chuyển tiếp từ PO ➔ Lệnh Lắp Ráp (WO &amp; Cấp Serial)
-                    </button>
+                    {(() => {
+                      const poShortages = (selectedPo.lines ?? []).flatMap((ln) =>
+                        (ln.mrp_lines ?? []).filter((m) => Number(m.shortage) > 0)
+                      );
+                      const hasShortage = poShortages.length > 0;
+                      return (
+                        <>
+                          <button
+                            type="button"
+                            disabled={convertToWoMut.isPending || hasShortage}
+                            title={
+                              hasShortage
+                                ? `Đang thiếu ${poShortages.length} mã linh kiện theo BOM — vui lòng tạo PR mua hàng / Lệnh gia công và nhập kho đủ trước khi bắt đầu lắp ráp`
+                                : undefined
+                            }
+                            onClick={() => convertToWoMut.mutate(selectedPo.id)}
+                            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-sky-700 hover:bg-sky-800 text-white font-bold shadow-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <Cpu className="w-4 h-4" />
+                            1. Chuyển tiếp từ PO ➔ Lệnh Lắp Ráp (WO &amp; Cấp Serial)
+                          </button>
 
-                    <button
-                      type="button"
-                      disabled={proposePrMut.isPending}
-                      onClick={() => proposePrMut.mutate(selectedPo.id)}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold shadow-sm cursor-pointer disabled:opacity-50"
-                    >
-                      <ShoppingCart className="w-4 h-4" />
-                      2. Đề xuất mua linh kiện thiếu từ PO (Tạo PR)
-                    </button>
+                          <button
+                            type="button"
+                            disabled={proposePrMut.isPending}
+                            onClick={() => proposePrMut.mutate(selectedPo.id)}
+                            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold shadow-sm cursor-pointer disabled:opacity-50"
+                          >
+                            <ShoppingCart className="w-4 h-4" />
+                            2. Đề xuất mua linh kiện thiếu từ PO (Tạo PR)
+                          </button>
 
-                    <button
-                      type="button"
-                      disabled={createSubcontractMut.isPending}
-                      onClick={() => createSubcontractMut.mutate(selectedPo.id)}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-bold shadow-sm cursor-pointer disabled:opacity-50"
-                    >
-                      <Hammer className="w-4 h-4" />
-                      3. Tạo Lệnh Gia Công Ngoài từ PO (CNC / PCB)
-                    </button>
+                          <button
+                            type="button"
+                            disabled={createSubcontractMut.isPending}
+                            onClick={() => createSubcontractMut.mutate(selectedPo.id)}
+                            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-bold shadow-sm cursor-pointer disabled:opacity-50"
+                          >
+                            <Hammer className="w-4 h-4" />
+                            3. Tạo Lệnh Gia Công Ngoài từ PO (CNC / PCB)
+                          </button>
+
+                          {hasShortage && (
+                            <div className="w-full mt-1 p-2.5 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50/90 dark:bg-rose-950/40 text-[11px] text-rose-800 dark:text-rose-200">
+                              <b>⚠️ Kho chưa đủ linh kiện theo định mức BOM (Thiếu {poShortages.length} mã linh kiện):</b>{" "}
+                              <span className="font-mono">
+                                {poShortages
+                                  .slice(0, 6)
+                                  .map((s) => `${s.item_code} (thiếu ${fmtQty(s.shortage)} ${s.uom})`)
+                                  .join(", ")}
+                                {poShortages.length > 6 ? ` (+${poShortages.length - 6} mã khác)` : ""}
+                              </span>
+                              . Hệ thống khóa nút <b>1. Chuyển tiếp sang Lệnh Lắp Ráp (Đang lắp ráp)</b> cho đến khi hoàn tất mua hàng (PR) / gia công ngoài và nhập kho (IQC Đạt) đủ linh kiện.
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
 

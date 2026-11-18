@@ -48,6 +48,9 @@ interface OrderRow {
   priority: string;
   due_date: string | null;
   status: string;
+  shortage_count?: number;
+  has_bom_shortage?: boolean;
+  installed_component_qty?: number;
   version: number;
 }
 
@@ -57,6 +60,7 @@ interface UnitSummary {
   status: string;
   firmware_version: string | null;
   fqc_passed: boolean | null;
+  fqc_summary?: string | null;
   component_count: number;
   passed_burn_in_hours: number | null;
   warranty_end: string | null;
@@ -512,7 +516,13 @@ export function AssemblyDhrView() {
             {orders.data && orders.data.length > 0 ? (
               <Table head={["Số lệnh", "Model / DMR & Số Serial", "SL máy", "Trạng thái"]}>
                 {orders.data.map((r) => {
-                  const st = ORDER_STATUS[r.status] ?? ["PENDING_QC", r.status];
+                  const blockedByShortage =
+                    Boolean(r.has_bom_shortage) &&
+                    Number(r.installed_component_qty ?? 0) === 0 &&
+                    !["DELIVERED", "CANCELLED", "READY"].includes(r.status);
+                  const st = blockedByShortage
+                    ? ["REJECTED", `Chờ đủ LK (Thiếu ${r.shortage_count ?? ""})`]
+                    : (ORDER_STATUS[r.status] ?? ["PENDING_QC", r.status]);
                   const snList = Array.isArray(r.serial_numbers) ? r.serial_numbers : [];
                   return (
                     <tr
@@ -599,7 +609,7 @@ export function AssemblyDhrView() {
                       🟢 DHR REVIEW-BY-EXCEPTION (RbE)
                     </span>
                     <span className="font-semibold text-slate-800 dark:text-slate-200">
-                      {d.units.filter((u) => u.fqc_passed !== false).length}/{d.units.length} máy đạt chuẩn thông số lắp ráp 4 trạm &amp; Burn-in {d.required_burn_in_hours}h
+                      {d.units.filter((u) => u.fqc_passed === true).length}/{d.units.length} máy đạt chuẩn thông số lắp ráp 4 trạm &amp; Burn-in {d.required_burn_in_hours}h
                     </span>
                   </div>
                   <div className="font-mono text-[11px] text-slate-600 dark:text-slate-300">
@@ -608,13 +618,41 @@ export function AssemblyDhrView() {
                   </div>
                 </div>
 
+                {(() => {
+                  const shortageLines = (d.kitting_summary ?? []).filter((k) => Number(k.shortage) > 0);
+                  if (shortageLines.length === 0) return null;
+                  return (
+                    <div className="p-3 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50/90 dark:bg-rose-950/40 text-xs text-rose-900 dark:text-rose-200 flex flex-col gap-1.5">
+                      <div className="font-bold flex items-center gap-1.5 text-rose-800 dark:text-rose-200">
+                        <span>⚠️ CHƯA ĐỦ LINH KIỆN THEO ĐỊNH MỨC BOM (THIẾU {shortageLines.length} MÃ LINH KIỆN) — TẠM KHÓA LẮP RÁP</span>
+                      </div>
+                      <div>
+                        Kho <b>{d.warehouse_code}</b> hiện đang thiếu:{" "}
+                        <span className="font-mono font-semibold">
+                          {shortageLines
+                            .slice(0, 6)
+                            .map((s) => `${s.item_code} (thiếu ${fmtQty(s.shortage)} ${s.uom})`)
+                            .join(", ")}
+                          {shortageLines.length > 6 ? ` (+${shortageLines.length - 6} mã khác)` : ""}
+                        </span>
+                        . Hệ thống đã khóa bước <b>Xuất kho Kitting &amp; Lắp đặt DHR</b> cho đến khi linh kiện được mua bổ sung (PR) / nhận gia công và nhập kho (IQC Đạt) đầy đủ.
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 <div className="p-3 rounded-2xl border border-sky-200 dark:border-sky-900/60 bg-sky-50/40 dark:bg-sky-950/20 flex flex-col gap-2">
                   <div className="text-[11px] font-bold uppercase tracking-wider text-sky-900 dark:text-sky-200">
                     Chuỗi thực thi Lệnh Lắp Ráp (WO) ➔ Xuất Kho Nguyên Liệu BOM ➔ Lão Hóa ➔ FQC ➔ Bàn Giao Giao Hàng
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <Button
-                      disabled={orderSerialMut.isPending}
+                      disabled={orderSerialMut.isPending || Boolean(d.has_bom_shortage)}
+                      title={
+                        d.has_bom_shortage
+                          ? "Kho chưa đủ linh kiện theo BOM — vui lòng nhập kho đủ linh kiện trước khi xuất Kitting"
+                          : undefined
+                      }
                       onClick={() => orderSerialMut.mutate({ operation: "kitting_issue" })}
                     >
                       📦 1. Xuất kho nguyên liệu theo BOM (Kitting FEFO/FIFO)
@@ -679,10 +717,16 @@ export function AssemblyDhrView() {
 
                 <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600 dark:text-slate-300">
                   <div className="flex flex-wrap items-center gap-3">
-                    <StatusBadge
-                      status={ORDER_STATUS[d.status]?.[0] ?? "PENDING_QC"}
-                      label={ORDER_STATUS[d.status]?.[1] ?? d.status}
-                    />
+                    {(() => {
+                      const blockedByShortage =
+                        Boolean(d.has_bom_shortage) &&
+                        Number(d.installed_component_qty ?? 0) === 0 &&
+                        !["DELIVERED", "CANCELLED", "READY"].includes(d.status);
+                      const st = blockedByShortage
+                        ? ["REJECTED", `Chờ đủ linh kiện (Thiếu ${d.shortage_count ?? ""} mã BOM)`]
+                        : (ORDER_STATUS[d.status] ?? ["PENDING_QC", d.status]);
+                      return <StatusBadge status={st[0]} label={st[1]} />;
+                    })()}
                     <span>
                       Kho xuất linh kiện: <strong>{d.warehouse_code}</strong>
                     </span>
@@ -696,7 +740,7 @@ export function AssemblyDhrView() {
                   {d.units.length < d.qty && d.status !== "CANCELLED" && (
                     <Button
                       variant="ghost"
-                      disabled={orderSerialMut.isPending}
+                      disabled={orderSerialMut.isPending || Boolean(d.has_bom_shortage)}
                       onClick={() => orderSerialMut.mutate({ operation: "assign_serials_now" })}
                     >
                       + Cấp ngay {d.qty - d.units.length} Số Serial trên lệnh
@@ -707,7 +751,19 @@ export function AssemblyDhrView() {
                 {d.units.length > 0 ? (
                   <Table head={["Số Serial (Bấm để mở DHR / Đổi S/N)", "Firmware", "Linh kiện DHR", "Burn-in", "FQC", "Bảo hành đến", "Trạng thái"]}>
                     {d.units.map((unit) => {
-                      const ust = UNIT_STATUS[unit.status] ?? ["PENDING_QC", unit.status];
+                      const unitBlockedByShortage =
+                        unit.status === "IN_ASSEMBLY" &&
+                        Number(unit.component_count ?? 0) === 0 &&
+                        Boolean(d.has_bom_shortage);
+                      const unitWaitingStart =
+                        unit.status === "IN_ASSEMBLY" &&
+                        Number(unit.component_count ?? 0) === 0 &&
+                        d.status !== "IN_PRODUCTION";
+                      const ust = unitBlockedByShortage
+                        ? ["REJECTED", "Chờ đủ linh kiện BOM (Chưa lắp)"]
+                        : unitWaitingStart
+                        ? ["PENDING_QC", "Đã cấp S/N — Chờ xuất Kitting"]
+                        : (UNIT_STATUS[unit.status] ?? ["PENDING_QC", unit.status]);
                       const canEditSerial = ["IN_ASSEMBLY", "BURN_IN"].includes(unit.status);
                       return (
                         <tr
@@ -767,7 +823,7 @@ export function AssemblyDhrView() {
                             {unit.passed_burn_in_hours != null ? `${fmtQty(unit.passed_burn_in_hours)}h PASS` : "Chưa chạy"}
                           </td>
                           <td className="py-2 pr-3">
-                            {unit.fqc_passed === true ? "ĐẠT" : unit.fqc_passed === false ? "KHÔNG ĐẠT" : "Chưa đo"}
+                            {unit.fqc_passed === true ? "ĐẠT" : unit.fqc_summary ? "KHÔNG ĐẠT" : "Chưa đo"}
                           </td>
                           <td className="py-2 pr-3">{fmtDate(unit.warranty_end)}</td>
                           <td className="py-2 pr-3">
@@ -789,7 +845,12 @@ export function AssemblyDhrView() {
                       </span>
                       <div className="flex flex-wrap items-center gap-2">
                         <Button
-                          disabled={orderSerialMut.isPending}
+                          disabled={orderSerialMut.isPending || Boolean(d.has_bom_shortage)}
+                          title={
+                            d.has_bom_shortage
+                              ? "Kho chưa đủ linh kiện theo BOM — vui lòng nhập kho đủ linh kiện trước khi xuất Kitting"
+                              : undefined
+                          }
                           onClick={() => orderSerialMut.mutate({ operation: "kitting_issue" })}
                         >
                           📦 Xuất kho nguyên liệu theo BOM (Kitting FEFO/FIFO &amp; Ghi DHR)
