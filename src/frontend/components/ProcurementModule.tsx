@@ -1564,6 +1564,18 @@ export const ProcurementModule: React.FC = () => {
     }
   };
 
+  const isValidSkuFormat = (raw: string): boolean => /^[A-Za-z0-9._/+-]+$/.test(String(raw || "").trim());
+  const suggestStandardSku = (raw: string): string =>
+    String(raw || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/đ/g, "d")
+      .replace(/Đ/g, "D")
+      .toUpperCase()
+      .replace(/[^A-Z0-9._/+-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "") || "SKU-MOI";
+
   // Save PO (H7: single atomic server transaction)
   const handleSavePO = async () => {
     if (!poForm.supplier_name || !poForm.items || poForm.items.length === 0) {
@@ -1574,6 +1586,21 @@ export const ProcurementModule: React.FC = () => {
     if (missingCodeIdx !== -1) {
       alert(`Dòng #${missingCodeIdx + 1} chưa chọn Mã hàng (SKU). Vui lòng chọn mã hàng cho tất cả các dòng.`);
       return;
+    }
+    for (let i = 0; i < (poForm.items || []).length; i++) {
+      const rawCode = String(poForm.items[i]?.product_code || "").trim();
+      const existsInCatalog = mergedCatalogProducts.some(
+        (p: any) => String(p.code || "").trim().toLowerCase() === rawCode.toLowerCase()
+      );
+      if (!existsInCatalog && !isValidSkuFormat(rawCode)) {
+        const suggested = suggestStandardSku(rawCode);
+        alert(
+          `⚠️ Mã hàng mới "${rawCode}" ở dòng #${i + 1} không đúng quy tắc đặt mã SKU!\n\n` +
+          `• Quy tắc bắt buộc: Không dấu tiếng Việt, không khoảng trắng, chỉ dùng chữ cái (A-Z), số (0-9) và ký tự nối (- _ . / +).\n` +
+          `• Gợi ý mã chuẩn: ${suggested}`
+        );
+        return;
+      }
     }
     const targetStatusUpper = String(poForm.status || "PENDING").toUpperCase();
     const selectedSupObj = suppliers.find(
@@ -2539,6 +2566,19 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       alert("Vui lòng nhập đầy đủ Mã hàng và Tên mặt hàng");
       return;
     }
+    const trimmedCode = String(productForm.product_code || "").trim();
+    const existsInCatalog = mergedCatalogProducts.some(
+      (p: any) => String(p.code || "").trim().toLowerCase() === trimmedCode.toLowerCase()
+    );
+    if (!existsInCatalog && !isValidSkuFormat(trimmedCode)) {
+      const suggested = suggestStandardSku(trimmedCode);
+      alert(
+        `⚠️ Mã hàng (SKU) "${trimmedCode}" không đúng quy tắc chuẩn!\n\n` +
+        `• Quy tắc bắt buộc: Không dấu tiếng Việt, không khoảng trắng, chỉ dùng chữ cái (A-Z), số (0-9) và ký tự nối (- _ . / +).\n` +
+        `• Gợi ý mã chuẩn: ${suggested}`
+      );
+      return;
+    }
     try {
       const res = await fetch("/api/procurement?action=save_supplier_product", {
         method: "POST",
@@ -2792,6 +2832,15 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       if (!it.is_custom && !catalogMatch) {
         alert(
           `⚠️ Không thể tạo PR (Lỗi ở dòng mặt hàng #${i + 1}): Mã sản phẩm "${rawCode}" không tồn tại trong Bảng mã sản xuất!\n\nVui lòng chọn đúng sản phẩm có trong Bảng mã sản xuất.`
+        );
+        return;
+      }
+      if (!catalogMatch && !isValidSkuFormat(rawCode)) {
+        const suggested = suggestStandardSku(rawCode);
+        alert(
+          `⚠️ Không thể tạo PR (Lỗi ở dòng mặt hàng #${i + 1}): Mã hàng mới "${rawCode}" không đúng quy tắc đặt mã SKU!\n\n` +
+          `• Quy tắc bắt buộc: Không dấu tiếng Việt, không khoảng trắng, chỉ dùng chữ cái (A-Z), số (0-9) và ký tự nối (- _ . / +).\n` +
+          `• Gợi ý mã chuẩn: ${suggested}`
         );
         return;
       }
@@ -8651,14 +8700,30 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mã Hàng (*)</label>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mã Hàng (*) <span className="text-[10px] font-normal text-slate-400">(Không dấu, không khoảng trắng)</span></label>
                   <FastInput
                     type="text"
-                    placeholder="Mã sản phẩm / SKU"
+                    placeholder="VD: CON-96-1L, KIT-PCR-01..."
                     value={productForm.product_code}
                     onChange={(e) => setProductForm({ ...productForm, product_code: e.target.value })}
-                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-mono font-bold text-slate-900 dark:text-white"
+                    className={`w-full p-2.5 rounded-xl border bg-white dark:bg-slate-800 font-mono font-bold text-slate-900 dark:text-white ${
+                      productForm.product_code?.trim() && !isValidSkuFormat(productForm.product_code.trim())
+                        ? "border-rose-500 focus:ring-rose-500"
+                        : "border-slate-200 dark:border-slate-700"
+                    }`}
                   />
+                  {productForm.product_code?.trim() && !isValidSkuFormat(productForm.product_code.trim()) && (
+                    <div className="mt-1 flex items-center justify-between gap-1.5 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 rounded-lg px-2 py-1 text-[11px] text-rose-700 dark:text-rose-300">
+                      <span>⚠️ Không dấu & không khoảng trắng</span>
+                      <button
+                        type="button"
+                        onClick={() => setProductForm({ ...productForm, product_code: suggestStandardSku(productForm.product_code) })}
+                        className="shrink-0 px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-mono font-bold text-[10px]"
+                      >
+                        Đổi: {suggestStandardSku(productForm.product_code)}
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Đơn Vị Tính</label>

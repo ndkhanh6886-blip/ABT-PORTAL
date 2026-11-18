@@ -863,6 +863,26 @@ export async function POST(req: NextRequest) {
       if (!supplier_id || !cleanCode) {
         return NextResponse.json({ error: "Thiếu supplier_id hoặc product_code" }, { status: 400 });
       }
+      if (!id && !/^[A-Za-z0-9._/+-]+$/.test(cleanCode)) {
+        const existingInMaster = await query("SELECT 1 FROM products WHERE LOWER(TRIM(code)) = LOWER(TRIM($1)) LIMIT 1", [cleanCode]);
+        if (existingInMaster.rows.length === 0) {
+          const suggested = cleanCode
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/đ/g, "d")
+            .replace(/Đ/g, "D")
+            .toUpperCase()
+            .replace(/[^A-Z0-9._/+-]+/g, "-")
+            .replace(/-+/g, "-")
+            .replace(/^-|-$/g, "") || "SKU-MOI";
+          return NextResponse.json(
+            {
+              error: `Mã hàng mới "${cleanCode}" không đúng quy tắc đặt mã SKU! Quy tắc bắt buộc: Không dấu tiếng Việt, không khoảng trắng, chỉ dùng chữ cái (A-Z), số (0-9) và ký tự nối (- _ . / +). Gợi ý mã chuẩn: ${suggested}`
+            },
+            { status: 400 }
+          );
+        }
+      }
 
       if (id) {
         const prevRes = await query("SELECT * FROM supplier_products WHERE id = $1", [id]);

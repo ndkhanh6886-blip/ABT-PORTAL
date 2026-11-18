@@ -908,6 +908,26 @@ export async function POST(req: NextRequest) {
         if (!pCode) {
           return NextResponse.json({ error: `Dòng hàng "${pName || "SP"}" thiếu Mã Hàng (*).` }, { status: 400 });
         }
+        if (!isReturnFromSlip && !/^[A-Za-z0-9._/+-]+$/.test(pCode)) {
+          const existingProd = await query("SELECT 1 FROM products WHERE LOWER(TRIM(code)) = LOWER(TRIM($1)) LIMIT 1", [pCode]);
+          if (existingProd.rows.length === 0) {
+            const suggested = pCode
+              .normalize("NFD")
+              .replace(/[\u0300-\u036f]/g, "")
+              .replace(/đ/g, "d")
+              .replace(/Đ/g, "D")
+              .toUpperCase()
+              .replace(/[^A-Z0-9._/+-]+/g, "-")
+              .replace(/-+/g, "-")
+              .replace(/^-|-$/g, "") || "SKU-MOI";
+            return NextResponse.json(
+              {
+                error: `Mã hàng mới "${pCode}" không đúng quy tắc đặt mã SKU! Quy tắc bắt buộc: Không dấu tiếng Việt, không khoảng trắng, chỉ dùng chữ cái (A-Z), số (0-9) và ký tự nối (- _ . / +). Gợi ý mã chuẩn: ${suggested}`
+              },
+              { status: 400 }
+            );
+          }
+        }
         it.product_name = pName;
         const qty = Number(it.quantity) || 0;
         if (!(qty > 0)) {
@@ -1068,6 +1088,26 @@ export async function POST(req: NextRequest) {
         const pName = String(it.product_name || it.name || pCode || "").trim();
         if (!pCode) {
           return NextResponse.json({ error: `Dòng hàng "${pName || "SP"}" thiếu Mã Hàng (*).` }, { status: 400 });
+        }
+        if (!/^[A-Za-z0-9._/+-]+$/.test(pCode)) {
+          const existingProd = await query("SELECT 1 FROM products WHERE LOWER(TRIM(code)) = LOWER(TRIM($1)) LIMIT 1", [pCode]);
+          if (existingProd.rows.length === 0) {
+            const suggested = pCode
+              .normalize("NFD")
+              .replace(/[\u0300-\u036f]/g, "")
+              .replace(/đ/g, "d")
+              .replace(/Đ/g, "D")
+              .toUpperCase()
+              .replace(/[^A-Z0-9._/+-]+/g, "-")
+              .replace(/-+/g, "-")
+              .replace(/^-|-$/g, "") || "SKU-MOI";
+            return NextResponse.json(
+              {
+                error: `Mã hàng mới "${pCode}" không đúng quy tắc đặt mã SKU! Quy tắc bắt buộc: Không dấu tiếng Việt, không khoảng trắng, chỉ dùng chữ cái (A-Z), số (0-9) và ký tự nối (- _ . / +). Gợi ý mã chuẩn: ${suggested}`
+              },
+              { status: 400 }
+            );
+          }
         }
         it.product_name = pName;
         const qty = Number(it.quantity) || 0;

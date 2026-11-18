@@ -2455,6 +2455,18 @@ export const WarehouseModule: React.FC = () => {
     setIsInboundModalOpen(true);
   };
 
+  const isValidSkuFormat = (raw: string): boolean => /^[A-Za-z0-9._/+-]+$/.test(String(raw || "").trim());
+  const suggestStandardSku = (raw: string): string =>
+    String(raw || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/đ/g, "d")
+      .replace(/Đ/g, "D")
+      .toUpperCase()
+      .replace(/[^A-Z0-9._/+-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "") || "SKU-MOI";
+
   const handleInboundSubmit = async () => {
     if (!inboundForm.transaction_code?.trim()) {
       alert("Vui lòng nhập Mã Phiếu Nhập (PNK) (*)");
@@ -2496,7 +2508,17 @@ export const WarehouseModule: React.FC = () => {
         alert(`Dòng hàng thứ ${i + 1} bắt buộc phải nhập đầy đủ Mã Hàng & Tên Sản Phẩm (*)`);
         return;
       }
-      const isNewMaster = !findCatalogProduct(it.product_code) || it.is_new_master_product;
+      const existingCatalogProd = findCatalogProduct(it.product_code);
+      if (!existingCatalogProd && !isValidSkuFormat(it.product_code.trim())) {
+        const suggested = suggestStandardSku(it.product_code);
+        alert(
+          `⚠️ Mã hàng mới "${it.product_code.trim()}" ở dòng thứ ${i + 1} không đúng quy tắc đặt mã SKU!\n\n` +
+          `• Quy tắc bắt buộc: Không dấu tiếng Việt, không khoảng trắng, chỉ dùng chữ cái (A-Z), số (0-9) và ký tự nối (- _ . / +).\n` +
+          `• Gợi ý mã chuẩn: ${suggested}`
+        );
+        return;
+      }
+      const isNewMaster = !existingCatalogProd || it.is_new_master_product;
       if (isNewMaster) {
         const catVal = it.category || "Kít Real-time PCR";
         const mfgVal = it.manufacturer ?? "TopSPEC";
@@ -8595,8 +8617,12 @@ export const WarehouseModule: React.FC = () => {
                               type="text"
                               value={item.product_code}
                               onChange={(e) => handleInboundItemChange(idx, "product_code", e.target.value)}
-                              placeholder="Mã SP"
-                              className="col-span-1 p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-bold text-xs"
+                              placeholder="Mã SP (không dấu)"
+                              className={`col-span-1 p-2 rounded-lg border bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-bold text-xs ${
+                                item.product_code?.trim() && !findCatalogProduct(item.product_code) && !isValidSkuFormat(item.product_code.trim())
+                                  ? "border-rose-500 focus:ring-rose-500"
+                                  : "border-slate-200 dark:border-slate-700"
+                              }`}
                             />
                             <input
                               type="text"
@@ -8606,6 +8632,18 @@ export const WarehouseModule: React.FC = () => {
                               className="col-span-2 p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold text-xs"
                             />
                           </div>
+                          {item.product_code?.trim() && !findCatalogProduct(item.product_code) && !isValidSkuFormat(item.product_code.trim()) && (
+                            <div className="mt-1 flex items-center justify-between gap-1.5 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 rounded-lg px-2 py-1 text-[10px] text-rose-700 dark:text-rose-300">
+                              <span>⚠️ Mã SKU mới không được có dấu hoặc khoảng trắng</span>
+                              <button
+                                type="button"
+                                onClick={() => handleInboundItemChange(idx, "product_code", suggestStandardSku(item.product_code))}
+                                className="shrink-0 px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-mono font-bold text-[10px]"
+                              >
+                                Đổi: {suggestStandardSku(item.product_code)}
+                              </button>
+                            </div>
+                          )}
                         </div>
 
                         <div className="sm:col-span-2">

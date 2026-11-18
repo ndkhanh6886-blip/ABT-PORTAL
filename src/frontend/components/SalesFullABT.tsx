@@ -10245,10 +10245,39 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setIsCommercialModalOpen(true);
     };
 
+    const isValidSkuFormat = (raw: string): boolean => /^[A-Za-z0-9._/+-]+$/.test(String(raw || "").trim());
+    const suggestStandardSku = (raw: string): string =>
+        String(raw || "")
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/đ/g, "d")
+            .replace(/Đ/g, "D")
+            .toUpperCase()
+            .replace(/[^A-Z0-9._/+-]+/g, "-")
+            .replace(/-+/g, "-")
+            .replace(/^-|-$/g, "") || "SKU-MOI";
+
     const handleSaveCommercialProduct = (e: React.FormEvent) => {
         e.preventDefault();
-        if (!commCode.trim() || !commName.trim()) {
+        const trimmedCode = commCode.trim();
+        if (!trimmedCode || !commName.trim()) {
             showToast("Vui lòng nhập đầy đủ mã và tên hàng hóa!", "warning");
+            return;
+        }
+        const isExistingUnchangedCode =
+            editingCommercialProduct &&
+            editingCommercialProduct.code.trim().toLowerCase() === trimmedCode.toLowerCase();
+        if (!isExistingUnchangedCode && !isValidSkuFormat(trimmedCode)) {
+            const suggested = suggestStandardSku(trimmedCode);
+            showToast(
+                `Mã hàng "${trimmedCode}" không hợp lệ! Quy tắc: viết liền KHÔNG dấu tiếng Việt, KHÔNG khoảng trắng (Gợi ý: ${suggested}).`,
+                "warning"
+            );
+            alert(
+                `⚠️ Mã hàng (SKU) "${trimmedCode}" không đúng quy tắc chuẩn!\n\n` +
+                `• Quy tắc bắt buộc: Không dấu tiếng Việt, không khoảng trắng, chỉ dùng chữ cái (A-Z), số (0-9) và ký tự nối (- _ . / +).\n` +
+                `• Gợi ý mã chuẩn: ${suggested}`
+            );
             return;
         }
 
@@ -27705,15 +27734,31 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 <form onSubmit={handleSaveCommercialProduct} className="space-y-4 p-2 text-slate-100">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Mã Hàng Hóa (SKU) *</label>
+                            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Mã Hàng Hóa (SKU) * <span className="text-[9px] font-normal text-slate-500 normal-case">(Không dấu, không khoảng trắng)</span></label>
                             <FastInput
                                 type="text"
                                 required
                                 value={commCode}
                                 onChange={(e) => setCommCode(e.target.value)}
-                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white font-mono uppercase focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
-                                placeholder="VD: EQ-PCR-01, CS-TIP-1000..."
+                                className={`w-full bg-slate-950 border rounded-lg px-3 py-2 text-xs text-white font-mono uppercase focus:ring-1 outline-none ${
+                                    commCode.trim() && !isValidSkuFormat(commCode.trim())
+                                        ? "border-rose-500 focus:ring-rose-500 focus:border-rose-500"
+                                        : "border-slate-800 focus:ring-indigo-500 focus:border-indigo-500"
+                                }`}
+                                placeholder="VD: EQ-PCR-01, CON-96-1L..."
                             />
+                            {commCode.trim() && !isValidSkuFormat(commCode.trim()) && (
+                                <div className="mt-1.5 flex items-center justify-between gap-2 bg-rose-950/60 border border-rose-500/40 rounded-lg px-2.5 py-1.5 text-[11px] text-rose-200">
+                                    <span>⚠️ Mã SKU không được có dấu tiếng Việt hoặc khoảng trắng.</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setCommCode(suggestStandardSku(commCode))}
+                                        className="shrink-0 px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-mono font-bold text-[10px]"
+                                    >
+                                        Đổi: {suggestStandardSku(commCode)}
+                                    </button>
+                                </div>
+                            )}
                         </div>
 
                         <div>

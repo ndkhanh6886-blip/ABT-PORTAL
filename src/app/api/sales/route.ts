@@ -2856,23 +2856,43 @@ export async function POST(req: NextRequest) {
 
     if (action === "product") {
       const { id, code, name, category, unit, specification, standard_price, cost_price, manufacturer, origin, min_stock_level } = body;
+      const cleanCode = String(code || "").trim();
+      const isValidSkuFormat = (raw: string): boolean => /^[A-Za-z0-9._/+-]+$/.test(String(raw || "").trim());
+      const suggestStandardSku = (raw: string): string =>
+        String(raw || "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .replace(/đ/g, "d")
+          .replace(/Đ/g, "D")
+          .toUpperCase()
+          .replace(/[^A-Z0-9._/+-]+/g, "-")
+          .replace(/-+/g, "-")
+          .replace(/^-|-$/g, "") || "SKU-MOI";
       if (id) {
         await query(
           `UPDATE products SET name=$1, category=$2, unit=$3, specification=$4, standard_price=$5, cost_price=$6, manufacturer=$7, origin=$8, min_stock_level=$9 WHERE id=$10`,
           [name, category, unit, specification, standard_price, cost_price, manufacturer, origin, min_stock_level, id]
         );
       } else {
-        const existing = await query("SELECT id FROM products WHERE code = $1", [code]);
+        const existing = await query("SELECT id FROM products WHERE LOWER(TRIM(code)) = LOWER(TRIM($1))", [cleanCode]);
         if (existing.rows.length > 0) {
           await query(
-            `UPDATE products SET name=$1, category=$2, unit=$3, specification=$4, standard_price=$5, cost_price=$6, manufacturer=$7, origin=$8, min_stock_level=$9 WHERE code=$10`,
-            [name, category, unit, specification, standard_price, cost_price, manufacturer, origin, min_stock_level, code]
+            `UPDATE products SET name=$1, category=$2, unit=$3, specification=$4, standard_price=$5, cost_price=$6, manufacturer=$7, origin=$8, min_stock_level=$9 WHERE id=$10`,
+            [name, category, unit, specification, standard_price, cost_price, manufacturer, origin, min_stock_level, existing.rows[0].id]
           );
         } else {
+          if (!isValidSkuFormat(cleanCode)) {
+            return NextResponse.json(
+              {
+                error: `Mã hàng mới "${cleanCode}" không đúng quy tắc SKU! Quy tắc bắt buộc: Không dấu tiếng Việt, không khoảng trắng, chỉ dùng chữ cái (A-Z), số (0-9) và ký tự nối (- _ . / +). Gợi ý mã chuẩn: ${suggestStandardSku(cleanCode)}`
+              },
+              { status: 400 }
+            );
+          }
           await query(
             `INSERT INTO products (code, name, category, unit, specification, standard_price, cost_price, manufacturer, origin, min_stock_level)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-            [code, name, category, unit, specification, standard_price, cost_price, manufacturer, origin, min_stock_level]
+            [cleanCode, name, category, unit, specification, standard_price, cost_price, manufacturer, origin, min_stock_level]
           );
         }
       }
