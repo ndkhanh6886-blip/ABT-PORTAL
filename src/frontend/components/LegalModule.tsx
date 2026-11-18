@@ -580,34 +580,8 @@ export const LegalModule: React.FC = () => {
         console.warn("Server upload failed, checking small file fallback:", err);
       }
 
-      // Only fallback to Base64 for tiny files (<= 256 KB) if offline
-      if (file.size <= 256 * 1024) {
-        await new Promise<void>(resolve => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            const result = reader.result as string;
-            const attached: AttachedFile = {
-              id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-              name: file.name,
-              size: sizeStr,
-              type: file.type || "application/pdf",
-              dataUrl: result,
-              uploadedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
-              note: "File đính kèm tải lên từ máy tính"
-            };
-            setNewContractForm(prev => ({
-              ...prev,
-              attachments: [...prev.attachments, attached]
-            }));
-            uploadedCount++;
-            resolve();
-          };
-          reader.onerror = () => resolve();
-          reader.readAsDataURL(file);
-        });
-      } else {
-        showToast("error", `Không thể tải lên tệp "${file.name}" lên máy chủ!`);
-      }
+      // Không lưu tệp nhúng base64 vào hợp đồng khi tải lỗi: tệp nhúng làm dữ liệu Pháp lý phình hàng chục MB
+      showToast("error", `Không thể tải lên tệp "${file.name}" lên máy chủ!`);
     }
 
     if (uploadedCount > 0) {
@@ -678,10 +652,18 @@ export const LegalModule: React.FC = () => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    Array.from(files).forEach(file => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = reader.result as string;
+    const fileList = Array.from(files);
+    e.target.value = "";
+    // Tệp lưu trên máy chủ (thư mục uploads), hồ sơ chỉ giữ đường dẫn. Trước đây tệp được nhúng base64 vào hồ sơ:
+    // 3 hồ sơ thầu đã nặng 22 MB và phải tải về mỗi lần mở tab Pháp lý.
+    (async () => {
+      let ok = 0;
+      for (const file of fileList) {
+        const up = await uploadSingleFileSmart(file).catch(() => null);
+        if (!up || !up.success || !up.url) {
+          showToast("error", `Không thể tải lên tệp "${file.name}" lên máy chủ!`);
+          continue;
+        }
         const attached: AttachedFile = {
           id: `att-doc-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
           name: file.name,
@@ -690,7 +672,7 @@ export const LegalModule: React.FC = () => {
               ? `${(file.size / (1024 * 1024)).toFixed(2)} MB`
               : `${Math.round(file.size / 1024)} KB`,
           type: file.type || "application/pdf",
-          dataUrl: result,
+          dataUrl: up.url,
           uploadedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
           note: "Văn bản pháp luật / biểu mẫu tải lên từ máy tính"
         };
@@ -698,10 +680,10 @@ export const LegalModule: React.FC = () => {
           ...prev,
           attachments: [...prev.attachments, attached]
         }));
-      };
-      reader.readAsDataURL(file);
-    });
-    showToast("success", `Đã tải lên ${files.length} tệp văn bản pháp luật!`);
+        ok++;
+      }
+      if (ok > 0) showToast("success", `Đã tải lên ${ok} tệp văn bản pháp luật!`);
+    })();
   };
 
   const handleCreateDocument = (e: React.FormEvent) => {
@@ -749,10 +731,18 @@ export const LegalModule: React.FC = () => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    Array.from(files).forEach(file => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = reader.result as string;
+    const fileList = Array.from(files);
+    e.target.value = "";
+    // Tệp lưu trên máy chủ (thư mục uploads), hồ sơ chỉ giữ đường dẫn. Trước đây tệp được nhúng base64 vào hồ sơ:
+    // 3 hồ sơ thầu đã nặng 22 MB và phải tải về mỗi lần mở tab Pháp lý.
+    (async () => {
+      let ok = 0;
+      for (const file of fileList) {
+        const up = await uploadSingleFileSmart(file).catch(() => null);
+        if (!up || !up.success || !up.url) {
+          showToast("error", `Không thể tải lên tệp "${file.name}" lên máy chủ!`);
+          continue;
+        }
         const attached: AttachedFile = {
           id: `att-tnd-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
           name: file.name,
@@ -761,7 +751,7 @@ export const LegalModule: React.FC = () => {
               ? `${(file.size / (1024 * 1024)).toFixed(2)} MB`
               : `${Math.round(file.size / 1024)} KB`,
           type: file.type || "application/pdf",
-          dataUrl: result,
+          dataUrl: up.url,
           uploadedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
           note: "Hồ sơ dự thầu tải lên"
         };
@@ -769,10 +759,10 @@ export const LegalModule: React.FC = () => {
           ...prev,
           attachments: [...prev.attachments, attached]
         }));
-      };
-      reader.readAsDataURL(file);
-    });
-    showToast("success", `Đã đính kèm ${files.length} tài liệu hồ sơ thầu!`);
+        ok++;
+      }
+      if (ok > 0) showToast("success", `Đã đính kèm ${ok} tài liệu hồ sơ thầu!`);
+    })();
   };
 
   const handleCreateTender = (e: React.FormEvent) => {
@@ -842,10 +832,18 @@ export const LegalModule: React.FC = () => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    Array.from(files).forEach(file => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = reader.result as string;
+    const fileList = Array.from(files);
+    e.target.value = "";
+    // Tệp lưu trên máy chủ (thư mục uploads), hồ sơ chỉ giữ đường dẫn. Trước đây tệp được nhúng base64 vào hồ sơ:
+    // 3 hồ sơ thầu đã nặng 22 MB và phải tải về mỗi lần mở tab Pháp lý.
+    (async () => {
+      let ok = 0;
+      for (const file of fileList) {
+        const up = await uploadSingleFileSmart(file).catch(() => null);
+        if (!up || !up.success || !up.url) {
+          showToast("error", `Không thể tải lên tệp "${file.name}" lên máy chủ!`);
+          continue;
+        }
         const attached: AttachedFile = {
           id: `att-lic-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
           name: file.name,
@@ -854,7 +852,7 @@ export const LegalModule: React.FC = () => {
               ? `${(file.size / (1024 * 1024)).toFixed(2)} MB`
               : `${Math.round(file.size / 1024)} KB`,
           type: file.type || "application/pdf",
-          dataUrl: result,
+          dataUrl: up.url,
           uploadedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
           note: "Bản scan số lưu hành / Giấy CFS"
         };
@@ -862,10 +860,10 @@ export const LegalModule: React.FC = () => {
           ...prev,
           attachments: [...prev.attachments, attached]
         }));
-      };
-      reader.readAsDataURL(file);
-    });
-    showToast("success", `Đã tải lên ${files.length} tệp giấy phép lưu hành!`);
+        ok++;
+      }
+      if (ok > 0) showToast("success", `Đã tải lên ${ok} tệp giấy phép lưu hành!`);
+    })();
   };
 
   const handleCreateLicense = (e: React.FormEvent) => {

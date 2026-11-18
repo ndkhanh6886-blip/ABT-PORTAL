@@ -550,6 +550,19 @@ const quotaWarned = new Set<string>();
 let lastEvictFailAt = 0;
 
 /**
+ * Bản sao trên máy của các danh sách lớn mà trang luôn tải lại từ máy chủ khi mở (đơn hàng, báo giá, phiếu giao,
+ * khách hàng, danh mục sản phẩm). Khi không đủ chỗ thì bỏ bản sao đó: giữ bản cũ sẽ làm lần mở sau hiện số liệu lỗi thời.
+ */
+const REBUILDABLE_LIST_KEYS = new Set([
+  "sales_factory_orders",
+  "sales_quotations",
+  "sales_delivery_slips",
+  "sales_custom_customers",
+  "sales_commercial_products",
+  "sales_cached_biolab_products",
+]);
+
+/**
  * Giải phóng chỗ khi localStorage đầy (~5MB): xoá bộ nhớ đệm đã có bản trên máy chủ (key đồng bộ đã migrate)
  * hoặc bộ nhớ đệm thuần (`*_cached_*`), ưu tiên mục lớn nhất. Không đụng tới khoá đang ghi, phiên đăng nhập, cờ migrate.
  */
@@ -559,7 +572,7 @@ function evictLocalStorageSpace(storage: Storage, protectedKey: string, bytesNee
     const k = storage.key(i);
     if (!k || k === protectedKey) continue;
     const isMigratedServerKey = SERVER_BACKED_SET.has(k) && storage.getItem(`tbr_srv_migrated_v1_${k}`) === "1";
-    const isPureCache = /_cached_|_cache$/.test(k);
+    const isPureCache = /_cached_|_cache$/.test(k) || REBUILDABLE_LIST_KEYS.has(k);
     if (!isMigratedServerKey && !isPureCache) continue;
     entries.push({ key: k, size: (storage.getItem(k) || "").length * 2 });
   }
@@ -591,7 +604,14 @@ function installLocalStorageGuards() {
           }
         } catch { lastEvictFailAt = Date.now(); }
       }
-      if (!saved && !quotaWarned.has(key)) {
+      if (!saved && this === window.localStorage && REBUILDABLE_LIST_KEYS.has(key)) {
+        // Danh sách này luôn được tải lại từ máy chủ: bỏ bản cũ (lỗi thời) thay vì giữ nó, không cần cảnh báo
+        try { Storage.prototype.removeItem.call(this, key); } catch { /* bỏ qua */ }
+        if (!quotaWarned.has(key)) {
+          quotaWarned.add(key);
+          console.info(`[storageSync] Không đủ chỗ lưu bản sao "${key}" (${Math.round((String(value).length * 2) / 1024)}KB) trên máy; dữ liệu vẫn tải từ máy chủ.`);
+        }
+      } else if (!saved && !quotaWarned.has(key)) {
         quotaWarned.add(key);
         let top = "";
         try {

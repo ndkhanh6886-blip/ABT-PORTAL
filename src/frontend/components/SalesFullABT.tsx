@@ -17036,25 +17036,27 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         if (!files || files.length === 0) return;
         setPodValidationWarning(null);
 
-        Array.from(files).forEach(file => {
-            const reader = new FileReader();
-            reader.onload = (event) => {
-                const dataUrl = event.target?.result as string;
-                setConfirmDeliveryPodImages(prev => [
-                    ...prev,
-                    {
-                        id: `pod_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-                        name: file.name,
-                        size: file.size,
-                        type: file.type || "image/jpeg",
-                        url: dataUrl,
-                        capturedAt: new Date().toISOString(),
-                        label: defaultLabel
-                    }
-                ]);
-                showToast(`Đã tải lên ảnh POD: ${file.name}`, "success");
-            };
-            reader.readAsDataURL(file);
+        // Ảnh lưu thành tệp trên máy chủ, đơn chỉ giữ đường dẫn. Trước đây ảnh được nhúng thẳng vào đơn (base64),
+        // mỗi ảnh vài trăm KB nằm trong danh sách đơn tải về mọi trình duyệt và làm localStorage đầy.
+        Array.from(files).forEach(async (file) => {
+            const up = await uploadSingleFileSmart(file);
+            if (!up.success || !up.url) {
+                showToast(`Không tải được ảnh "${file.name}" lên máy chủ: ${up.error || "lỗi kết nối"}. Vui lòng thử lại.`, "error");
+                return;
+            }
+            setConfirmDeliveryPodImages(prev => [
+                ...prev,
+                {
+                    id: `pod_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+                    name: up.name || file.name,
+                    size: up.size || file.size,
+                    type: file.type || up.type || "image/jpeg",
+                    url: up.url,
+                    capturedAt: new Date().toISOString(),
+                    label: defaultLabel
+                }
+            ]);
+            showToast(`Đã tải lên ảnh POD: ${file.name}`, "success");
         });
         e.target.value = "";
     };
@@ -17296,52 +17298,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const handleUploadInvoiceFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = e.target.files;
         if (!files || files.length === 0) return;
-        for (let i = 0; i < files.length; i++) {
-            const file = files[i];
-            try {
-                const formData = new FormData();
-                formData.append("file", file);
-                const res = await fetch("/api/upload", { method: "POST", body: formData });
-                const data = await res.json();
-                if (data && data.success) {
-                    setConfirmDeliveryInvoiceFiles(prev => [...prev, {
-                        name: data.name || file.name,
-                        size: data.size || file.size,
-                        url: data.url,
-                        type: file.type || (file.name.endsWith('.xml') ? 'application/xml' : file.name.endsWith('.pdf') ? 'application/pdf' : 'image'),
-                        uploadedAt: new Date().toISOString()
-                    }]);
-                    showToast(`Đã đính kèm tệp "${file.name}"`, "success");
-                } else {
-                    const reader = new FileReader();
-                    reader.onload = (re) => {
-                        setConfirmDeliveryInvoiceFiles(prev => [...prev, {
-                            name: file.name,
-                            size: file.size,
-                            url: re.target?.result as string,
-                            type: file.type || (file.name.endsWith('.xml') ? 'application/xml' : file.name.endsWith('.pdf') ? 'application/pdf' : 'image'),
-                            uploadedAt: new Date().toISOString()
-                        }]);
-                        showToast(`Đã lưu tệp "${file.name}"`, "success");
-                    };
-                    reader.readAsDataURL(file);
-                }
-            } catch (err) {
-                const reader = new FileReader();
-                reader.onload = (re) => {
-                    setConfirmDeliveryInvoiceFiles(prev => [...prev, {
-                        name: file.name,
-                        size: file.size,
-                        url: re.target?.result as string,
-                        type: file.type || (file.name.endsWith('.xml') ? 'application/xml' : file.name.endsWith('.pdf') ? 'application/pdf' : 'image'),
-                        uploadedAt: new Date().toISOString()
-                    }]);
-                    showToast(`Đã lưu tệp "${file.name}"`, "success");
-                };
-                reader.readAsDataURL(file);
+        const list = Array.from(files);
+        e.target.value = "";
+        for (const file of list) {
+            // Tải theo từng mảnh 2MB (tệp lớn không bị máy chủ / proxy từ chối). Không nhúng tệp vào đơn khi tải lỗi:
+            // tệp base64 nằm trong đơn làm danh sách đơn phình hàng MB.
+            const up = await uploadSingleFileSmart(file);
+            if (up.success && up.url) {
+                setConfirmDeliveryInvoiceFiles(prev => [...prev, {
+                    name: up.name || file.name,
+                    size: up.size || file.size,
+                    url: up.url,
+                    type: file.type || (file.name.endsWith('.xml') ? 'application/xml' : file.name.endsWith('.pdf') ? 'application/pdf' : 'image'),
+                    uploadedAt: new Date().toISOString()
+                }]);
+                showToast(`Đã đính kèm tệp "${file.name}"`, "success");
+            } else {
+                showToast(`Không tải được tệp "${file.name}" lên máy chủ: ${up.error || "lỗi kết nối"}. Vui lòng thử lại.`, "error");
             }
         }
-        e.target.value = "";
     };
 
     const handleDeleteInvoiceFile = (index: number) => {
@@ -28062,12 +28037,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     className="hidden"
                                                     onChange={(e) => {
                                                         const file = e.target.files?.[0];
+                                                        e.target.value = "";
                                                         if (file) {
-                                                            const reader = new FileReader();
-                                                            reader.onload = (re) => {
-                                                                setCommImageUrl(re.target?.result as string);
-                                                            };
-                                                            reader.readAsDataURL(file);
+                                                            // Lưu ảnh thành tệp trên máy chủ, sản phẩm chỉ giữ đường dẫn (không nhúng base64 vào danh mục)
+                                                            uploadSingleFileSmart(file).then((up) => {
+                                                                if (up.success && up.url) setCommImageUrl(up.url);
+                                                                else showToast(`Không tải được ảnh "${file.name}": ${up.error || "lỗi kết nối"}`, "error");
+                                                            });
                                                         }
                                                     }}
                                                 />
@@ -29154,12 +29130,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         className="hidden"
                                                                         onChange={(e) => {
                                                                             const file = e.target.files?.[0];
+                                                                            e.target.value = "";
                                                                             if (file) {
-                                                                                const reader = new FileReader();
-                                                                                reader.onload = (re) => {
-                                                                                    updateQuoteItemAt(index, { imageUrl: re.target?.result as string });
-                                                                                };
-                                                                                reader.readAsDataURL(file);
+                                                                                // Lưu ảnh thành tệp trên máy chủ, báo giá chỉ giữ đường dẫn
+                                                                                uploadSingleFileSmart(file).then((up) => {
+                                                                                    if (up.success && up.url) updateQuoteItemAt(index, { imageUrl: up.url });
+                                                                                    else showToast(`Không tải được ảnh "${file.name}": ${up.error || "lỗi kết nối"}`, "error");
+                                                                                });
                                                                             }
                                                                         }}
                                                                     />
