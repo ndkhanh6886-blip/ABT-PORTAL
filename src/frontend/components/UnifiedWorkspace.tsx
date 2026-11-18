@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { sanitizeProposalList } from "@/frontend/utils/recoveredProposals";
+import { BufferedField } from "./BufferedField";
 import {
   WORKSPACE_BLOCKS,
   isWorkspaceBlockKey,
@@ -5807,8 +5808,10 @@ export const UnifiedWorkspace: React.FC = () => {
   // Handle Post Task / Workflow Comment & Directive
   // Trao đổi 2 chiều & Chỉ đạo trực tiếp ngay trong cửa sổ Cập nhật công việc
   const [taskReplyText, setTaskReplyText] = useState("");
-  const handleTaskReply = async (wf?: any, options?: { reopenToInProgress?: boolean }) => {
-    const text = taskReplyText.trim();
+  // Ô trao đổi đang có chữ (kể cả phần chưa kịp đẩy vào taskReplyText): bật nút Gửi ngay khi bắt đầu gõ
+  const [replyDraftHasText, setReplyDraftHasText] = useState(false);
+  const handleTaskReply = async (wf?: any, options?: { reopenToInProgress?: boolean; text?: string }) => {
+    const text = (options?.text ?? taskReplyText).trim();
     if (!text) return;
     const isDirective = rolePerspective !== "staff" || Boolean(options?.reopenToInProgress);
 
@@ -13509,11 +13512,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
         <form onSubmit={handleSaveTask} className="space-y-3 p-1 text-xs">
           <div>
             <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Tiêu đề công việc *</label>
-            <input
+            <BufferedField
               type="text"
               required
               value={taskForm.title}
-              onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })}
+              onCommit={(v) => setTaskForm((f) => ({ ...f, title: v }))}
               placeholder="VD: Chuẩn bị hóa chất test đối chứng kit HPV..."
               className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
             />
@@ -13669,10 +13672,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
           <div>
             <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mô tả chi tiết</label>
-            <textarea
+            <BufferedField
+              multiline
               rows={3}
               value={taskForm.description}
-              onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })}
+              onCommit={(v) => setTaskForm((f) => ({ ...f, description: v }))}
               className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
             />
           </div>
@@ -13722,10 +13726,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               </div>
             </div>
 
-            <textarea
+            <BufferedField
+              multiline
               rows={3}
               value={taskForm.result || ""}
-              onChange={(e) => setTaskForm({ ...taskForm, result: e.target.value })}
+              onCommit={(v) => setTaskForm((f) => ({ ...f, result: v }))}
               placeholder="Nhập chi tiết kết quả xử lý công việc, số liệu thực tế, kết luận nghiệm thu..."
               className="w-full px-3 py-2 rounded-xl border border-emerald-200 dark:border-emerald-800/60 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium"
             />
@@ -13952,14 +13957,17 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
                 {/* Ô nhập nội dung trao đổi / chỉ đạo */}
                 <div className="space-y-2">
-                  <textarea
+                  <BufferedField
+                    multiline
                     rows={2}
                     value={taskReplyText}
-                    onChange={(e) => setTaskReplyText(e.target.value)}
+                    onCommit={setTaskReplyText}
+                    onEmptyChange={(empty) => setReplyDraftHasText(!empty)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey) {
                         e.preventDefault();
-                        handleTaskReply(wf);
+                        // the text is passed along: this handler still sees the state from before the keystroke flush
+                        handleTaskReply(wf, { text: e.currentTarget.value });
                       }
                     }}
                     placeholder={
@@ -13978,7 +13986,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         <button
                           type="button"
                           onClick={() => handleTaskReply(wf, { reopenToInProgress: true })}
-                          disabled={!taskReplyText.trim()}
+                          disabled={!taskReplyText.trim() && !replyDraftHasText}
                           className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold disabled:opacity-40 cursor-pointer shadow-2xs transition-colors flex items-center gap-1"
                           title="Gửi chỉ đạo và tự động chuyển trạng thái công việc từ Đã hoàn tất về Đang làm để nhân sự thực hiện tiếp"
                         >
@@ -13988,7 +13996,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       <button
                         type="button"
                         onClick={() => handleTaskReply(wf)}
-                        disabled={!taskReplyText.trim()}
+                        disabled={!taskReplyText.trim() && !replyDraftHasText}
                         className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold disabled:opacity-40 cursor-pointer shadow-2xs transition-colors flex items-center gap-1"
                       >
                         <Send className="w-3 h-3" />
