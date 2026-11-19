@@ -100,6 +100,7 @@ export interface ProposalTemplate {
   slaTotalHours: number;
   fields: ProposalFieldSchema[];
   defaultSteps: ProposalStepTemplate[];
+  defaultFollowers?: string[];
 }
 
 export interface ProposalStepInstance {
@@ -1181,7 +1182,8 @@ export function ProposalsApprovalView({
         { stepOrder: 1, stepName: "Trưởng bộ phận xác nhận", roleType: "DEPT_HEAD", defaultDept: "Theo phòng người tạo", defaultApprover: "Trưởng bộ phận", slaHours: 4 },
         { stepOrder: 2, stepName: "Phòng chuyên môn thẩm định", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Kế toán trưởng", slaHours: 8 },
         { stepOrder: 3, stepName: "Ban Giám Đốc phê duyệt", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Ban Giám Đốc", slaHours: 12, conditionMinAmount: 5000000 }
-      ]
+      ],
+      defaultFollowers: []
     });
     setIsTemplateBuilderOpen(true);
   };
@@ -1466,7 +1468,9 @@ export function ProposalsApprovalView({
         ? [{ id: `li-${Date.now()}`, itemName: "", specification: "", quantity: 1, unitPrice: 0, amount: 0 }]
         : [],
       steps: initialSteps,
-      followers: [],
+      followers: Array.isArray(tmpl.defaultFollowers)
+        ? Array.from(new Set(tmpl.defaultFollowers.map((n) => cleanStaffDisplayName(n)).filter(Boolean)))
+        : [],
       executorName: initialSteps[initialSteps.length - 1]?.approverName || "",
       attachments: [],
       sendChatNotify: true,
@@ -1501,7 +1505,10 @@ export function ProposalsApprovalView({
           tmpl.hasLineItems && prev.lineItems.length === 0
             ? [{ id: `li-${Date.now()}`, itemName: "", specification: "", quantity: 1, unitPrice: 0, amount: 0 }]
             : prev.lineItems,
-        steps: nextSteps
+        steps: nextSteps,
+        followers: Array.isArray(tmpl.defaultFollowers)
+          ? Array.from(new Set(tmpl.defaultFollowers.map((n) => cleanStaffDisplayName(n)).filter(Boolean)))
+          : []
       }));
     }
   };
@@ -6199,7 +6206,89 @@ export function ProposalsApprovalView({
                     </div>
                   </div>
                 ))}
+                <datalist id="approval-staff-datalist">
+                  {allStaffNames.map((n) => (
+                    <option key={n} value={n} />
+                  ))}
+                </datalist>
               </div>
+            </div>
+
+            {/* PHẦN 4: NGƯỜI THEO DÕI MẶC ĐỊNH CỦA BIỂU MẪU (DEFAULT FOLLOWERS / CC) */}
+            <div className="p-3.5 rounded-2xl bg-sky-50/70 dark:bg-sky-950/25 border border-sky-200 dark:border-sky-800/80 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <span className="font-extrabold uppercase text-sky-900 dark:text-sky-200 flex items-center gap-1.5">
+                    <Eye className="w-3.5 h-3.5 text-sky-600" />
+                    <span>
+                      4️⃣ Người Theo Dõi Mặc Định Của Biểu Mẫu — Chỉ Theo Dõi, Không Phê Duyệt ({(editingTemplate.defaultFollowers || []).length} người):
+                    </span>
+                  </span>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    Khi nhân viên lập đề xuất từ mẫu này, hệ thống sẽ tự động gắn sẵn những người dưới đây làm <strong>Người theo dõi (CC)</strong> để nhận thông báo &amp; xem tiến độ (không nằm trong luồng ký duyệt).
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      const picked = cleanStaffDisplayName(e.target.value);
+                      if (!picked) return;
+                      const cur = Array.isArray(editingTemplate.defaultFollowers) ? editingTemplate.defaultFollowers : [];
+                      if (cur.some((f) => isSamePerson(f, picked))) return;
+                      setEditingTemplate({
+                        ...editingTemplate,
+                        defaultFollowers: [...cur, picked]
+                      });
+                    }}
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold border border-sky-300 dark:border-sky-700 bg-white dark:bg-slate-900 text-sky-800 dark:text-sky-200 cursor-pointer"
+                  >
+                    <option value="">+ Chọn nhân sự theo dõi mặc định...</option>
+                    {allStaffNames
+                      .filter((n) => !(editingTemplate.defaultFollowers || []).some((f) => isSamePerson(f, n)))
+                      .map((n) => (
+                        <option key={n} value={n}>
+                          👁️ {n}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+
+              {(editingTemplate.defaultFollowers || []).length === 0 ? (
+                <div className="text-[11px] text-slate-500 italic bg-white/70 dark:bg-slate-900/60 px-3 py-2 rounded-xl border border-dashed border-sky-200 dark:border-sky-800/60">
+                  Chưa cài người theo dõi mặc định cho biểu mẫu này. Hãy chọn nhân sự ở ô <strong>&ldquo;+ Chọn nhân sự theo dõi mặc định...&rdquo;</strong> góc phải rồi bấm <strong>💾 Lưu Cấu Hình Mẫu</strong>.
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {(editingTemplate.defaultFollowers || []).map((fName) => (
+                    <span
+                      key={fName}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white dark:bg-slate-900 border border-sky-300 dark:border-sky-700 text-xs font-bold text-sky-800 dark:text-sky-200 shadow-2xs"
+                    >
+                      <Eye className="w-3 h-3 text-sky-600 shrink-0" />
+                      <span>{fName}</span>
+                      <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300">
+                        Mặc định theo dõi
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditingTemplate({
+                            ...editingTemplate,
+                            defaultFollowers: (editingTemplate.defaultFollowers || []).filter((x) => !isSamePerson(x, fName))
+                          })
+                        }
+                        className="text-slate-400 hover:text-rose-600 font-bold ml-0.5 cursor-pointer"
+                        title="Bỏ người theo dõi mặc định này"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Chân Modal: Xóa mẫu / Hủy / Lưu Cấu Hình */}

@@ -524,9 +524,13 @@ async function ensureApprovalTables() {
       has_line_items BOOLEAN NOT NULL DEFAULT FALSE,
       fields_schema JSONB NOT NULL DEFAULT '[]'::jsonb,
       default_stages JSONB NOT NULL DEFAULT '[]'::jsonb,
+      default_followers JSONB NOT NULL DEFAULT '[]'::jsonb,
       is_active BOOLEAN NOT NULL DEFAULT TRUE,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
+
+    ALTER TABLE portal_approval_templates
+      ADD COLUMN IF NOT EXISTS default_followers JSONB NOT NULL DEFAULT '[]'::jsonb;
 
     CREATE TABLE IF NOT EXISTS portal_approval_requests (
       id SERIAL PRIMARY KEY,
@@ -1603,10 +1607,14 @@ export async function POST(req: NextRequest) {
           conditional_on_threshold: Boolean(s.conditional_on_threshold),
         }));
 
+        const defaultFollowers = Array.isArray(body.default_followers)
+          ? Array.from(new Set(body.default_followers.map((x: any) => String(x || "").trim()).filter(Boolean)))
+          : [];
+
         const saved = await client.query(
           `INSERT INTO portal_approval_templates
-             (code, name, category, icon, description, sla_hours, bod_threshold_amount, has_line_items, fields_schema, default_stages, is_active, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, TRUE, CURRENT_TIMESTAMP)
+             (code, name, category, icon, description, sla_hours, bod_threshold_amount, has_line_items, fields_schema, default_stages, default_followers, is_active, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, TRUE, CURRENT_TIMESTAMP)
            ON CONFLICT (code) DO UPDATE SET
              name = EXCLUDED.name,
              category = EXCLUDED.category,
@@ -1617,6 +1625,7 @@ export async function POST(req: NextRequest) {
              has_line_items = EXCLUDED.has_line_items,
              fields_schema = EXCLUDED.fields_schema,
              default_stages = EXCLUDED.default_stages,
+             default_followers = EXCLUDED.default_followers,
              is_active = TRUE,
              updated_at = CURRENT_TIMESTAMP
            RETURNING *`,
@@ -1631,6 +1640,7 @@ export async function POST(req: NextRequest) {
             hasLineItems,
             JSON.stringify(fieldsSchema),
             JSON.stringify(normalizedStages),
+            JSON.stringify(defaultFollowers),
           ]
         );
         await logAudit("SAVE_APPROVAL_TEMPLATE", "APPROVALS", `Lưu thiết kế mẫu phê duyệt ${rawCode}: ${name}`);

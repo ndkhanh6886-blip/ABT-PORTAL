@@ -304,7 +304,7 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
     setJustification("");
     setAttachments([]);
     setStageApprovers({});
-    setFollowers([]);
+    setFollowers(Array.isArray(tpl?.default_followers) ? [...tpl.default_followers] : []);
     setResubmitNote("");
     setIsFormOpen(true);
   };
@@ -561,6 +561,7 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
       dept: string;
       conditional_on_threshold: boolean;
     }>;
+    default_followers: string[];
   }>({
     code: "",
     name: "",
@@ -592,6 +593,7 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
         conditional_on_threshold: false,
       },
     ],
+    default_followers: [],
   });
 
   const openNewTemplateDesigner = () => {
@@ -639,6 +641,7 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
           conditional_on_threshold: true,
         },
       ],
+      default_followers: [],
     });
     setIsTemplateDesignerOpen(true);
   };
@@ -647,6 +650,7 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
     setIsEditingExistingTemplate(!isClone);
     const existingFields = Array.isArray(tpl.fields_schema) ? tpl.fields_schema : [];
     const existingStages = Array.isArray(tpl.default_stages) ? tpl.default_stages : [];
+    const existingFollowers = Array.isArray(tpl.default_followers) ? tpl.default_followers : [];
     setTplForm({
       code: isClone ? `${tpl.code}_COPY` : tpl.code,
       name: isClone ? `${tpl.name} (Bản sao)` : tpl.name,
@@ -669,6 +673,7 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
         dept: s.dept || "REQUESTER_DEPT",
         conditional_on_threshold: Boolean(s.conditional_on_threshold),
       })),
+      default_followers: existingFollowers.map((x: any) => String(x || "").trim()).filter(Boolean),
     });
     setIsTemplateDesignerOpen(true);
   };
@@ -729,6 +734,7 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
           has_line_items: tplForm.has_line_items,
           fields_schema: cleanedFields,
           default_stages: tplForm.default_stages,
+          default_followers: tplForm.default_followers,
         }),
       });
       const data = await res.json();
@@ -3350,6 +3356,71 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
                 </div>
               ))}
             </div>
+          </div>
+
+          {/* Phần 4: Người theo dõi mặc định của biểu mẫu */}
+          <div className="p-3.5 rounded-xl border border-sky-200/80 dark:border-sky-900/50 bg-sky-50/40 dark:bg-sky-950/20 space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="font-extrabold text-sky-950 dark:text-sky-200 flex items-center gap-1.5">
+                  <Eye className="w-3.5 h-3.5 text-sky-600" />
+                  <span>4. Người Theo Dõi Mặc Định Của Biểu Mẫu ({tplForm.default_followers.length} người)</span>
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  Tự động gắn những nhân sự này làm Người theo dõi (CC — chỉ xem &amp; nhận thông báo, không nằm trong luồng ký duyệt) khi lập tờ trình từ mẫu này.
+                </div>
+              </div>
+              <select
+                value=""
+                onChange={(e) => {
+                  const picked = e.target.value.trim();
+                  if (!picked) return;
+                  setTplForm((p) => {
+                    if (p.default_followers.includes(picked)) return p;
+                    return { ...p, default_followers: [...p.default_followers, picked] };
+                  });
+                }}
+                className="px-3 py-1.5 rounded-xl text-xs font-bold border border-sky-300 dark:border-sky-700 bg-white dark:bg-slate-900 text-sky-800 dark:text-sky-200 cursor-pointer"
+              >
+                <option value="">+ Chọn nhân sự theo dõi mặc định...</option>
+                {staffDirectory
+                  .filter((u) => u.full_name && !tplForm.default_followers.includes(u.full_name))
+                  .map((u) => (
+                    <option key={u.id || u.full_name} value={u.full_name}>
+                      👁️ {u.full_name} ({u.department || "ABT"})
+                    </option>
+                  ))}
+              </select>
+            </div>
+            {tplForm.default_followers.length === 0 ? (
+              <div className="text-[11px] text-slate-500 italic">
+                Chưa cài đặt người theo dõi mặc định cho mẫu này.
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {tplForm.default_followers.map((fName) => (
+                  <span
+                    key={fName}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white dark:bg-slate-900 border border-sky-300 dark:border-sky-700 text-xs font-bold text-sky-800 dark:text-sky-200"
+                  >
+                    <Eye className="w-3 h-3 text-sky-600 shrink-0" />
+                    <span>{fName}</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setTplForm((p) => ({
+                          ...p,
+                          default_followers: p.default_followers.filter((x) => x !== fName),
+                        }))
+                      }
+                      className="text-slate-400 hover:text-rose-600 font-bold ml-0.5 cursor-pointer"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
