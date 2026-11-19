@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { FastInput, FastTextarea } from "./BufferedField";
 import {
   Package,
   Plus,
@@ -64,23 +63,6 @@ import { todayVN, toVNDateString, normalizeExcelDateToISO, normalizeExcelRowDate
 import { DateInputVN, formatDayVN, toISODate } from "@/frontend/components/DateInputVN";
 import { printWarehouseSlip, exportWarehouseSlipExcel, txPartnerName } from "@/frontend/components/warehouse/warehouseSlipDocs";
 import { packagingFormOfLot, isPcrKitProduct, PACKAGING_LABEL } from "@/frontend/utils/packagingForm";
-import { isOligoMtoProduct } from "@/backend/services/catalogRules";
-import { DEFAULT_ABT_KIT_BOM_COMPONENTS } from "@/shared/defaultKitBomComponents";
-
-function mergeKitBomComponents(apiRows: any[] | undefined): any[] {
-  const rows = Array.isArray(apiRows) ? [...apiRows] : [];
-  const seen = new Set(
-    rows.map((r) => `${String(r?.parent_product_code || "").trim().toUpperCase()}__${String(r?.component_code || "").trim().toUpperCase()}`)
-  );
-  for (const def of DEFAULT_ABT_KIT_BOM_COMPONENTS) {
-    const key = `${def.parent_product_code.toUpperCase()}__${def.component_code.toUpperCase()}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      rows.push(def);
-    }
-  }
-  return rows;
-}
 
 /**
  * Hỏi lại khi có dòng hàng mà hạn dùng ≤ ngày nhập kho (thường là gõ nhầm ngày sản xuất vào ô hạn dùng).
@@ -135,8 +117,16 @@ function txFinanceMeta(tx: any) {
   const inboundType = String(first.inbound_type || seg("Loại hình:") || "").trim();
   const shipping = String(first.shipping_unit || seg("Vận chuyển:") || "").trim();
   const hasPrice = its.some((i: any) => i?.unit_price !== undefined && i?.unit_price !== null);
-  const total = its.reduce((a: number, i: any) => a + (Number(i?.quantity) || 0) * (Number(i?.unit_price ?? i?.cost_price) || 0), 0);
-  return { supplier, invoice, inboundType, shipping: shipping === "N/A" ? "" : shipping, hasPrice, total };
+  const subtotal = its.reduce((a: number, i: any) => a + Math.round((Number(i?.quantity) || 0) * (Number(i?.unit_price ?? i?.cost_price) || 0)), 0);
+  const vatAmount = its.reduce((a: number, i: any) => {
+    const sub = Math.round((Number(i?.quantity) || 0) * (Number(i?.unit_price ?? i?.cost_price) || 0));
+    const vr = Math.max(0, Number(i?.vat_rate ?? i?.vat ?? 0) || 0);
+    return a + (i?.vat_amount !== undefined && i?.vat_amount !== null ? Math.round(Number(i.vat_amount) || 0) : Math.round(sub * (vr / 100)));
+  }, 0);
+  const totalAfterVat = subtotal + vatAmount;
+  const isIn = String(tx?.transaction_type || "").toUpperCase() === "INBOUND";
+  const total = isIn ? totalAfterVat : subtotal;
+  return { supplier, invoice, inboundType, shipping: shipping === "N/A" ? "" : shipping, hasPrice, total, subtotal, vatAmount, totalAfterVat };
 }
 
 /** Trích xuất nội dung ghi chú thực tế của người dùng trên phiếu kho (loại bỏ phần tiền tố hệ thống tự sinh). */
@@ -210,7 +200,7 @@ export const WarehouseModule: React.FC = () => {
   const [selectedBarcodeItem, setSelectedBarcodeItem] = useState<PrintableItem | null>(null);
 
   // Phase 4 States: BOM & Components for Kits & Multi-Unit Goods (Parent-Child Tracking)
-  const [productComponents, setProductComponents] = useState<any[]>(() => DEFAULT_ABT_KIT_BOM_COMPONENTS);
+  const [productComponents, setProductComponents] = useState<any[]>([]);
   const [selectedBomParent, setSelectedBomParent] = useState<string>("HI-612");
   const [bomSearchQuery, setBomSearchQuery] = useState("");
   const [bomTypeFilter, setBomTypeFilter] = useState<"all" | "kits_only" | "single">("kits_only");
@@ -325,7 +315,7 @@ export const WarehouseModule: React.FC = () => {
   const [prFormData, setPRFormData] = useState({
     requestedQty: 50,
     urgentLevel: "CAO - Cần gấp phòng ngừa đứt gãy hàng cung ứng",
-    notes: "Đề xuất phòng Cung Ứng lập PO khẩn cấp bổ sung tồn an toàn theo quy chuẩn định mức ABT."
+    notes: "Đề xuất phòng Cung Ứng lập PO khẩn cấp bổ sung tồn an toàn theo quy chuẩn định mức TBR."
   });
 
   const [isPushSalesModalOpen, setIsPushSalesModalOpen] = useState(false);
@@ -364,6 +354,7 @@ export const WarehouseModule: React.FC = () => {
         unit: "Hộp",
         quantity: 1,
         unit_price: 0,
+        vat_rate: 0,
         lot_number: "",
         manufacture_date: "",
         expiry_date: "",
@@ -470,34 +461,11 @@ export const WarehouseModule: React.FC = () => {
             }
           } catch { /* ignore */ }
         }
-        const mergedComps = mergeKitBomComponents(data.product_components);
-        const seenProdCodes = new Set(apiProds.map((p: any) => String(p?.code || "").trim().toUpperCase()));
-        for (const c of mergedComps) {
-          const pCode = String(c?.parent_product_code || "").trim();
-          if (!pCode || seenProdCodes.has(pCode.toUpperCase())) continue;
-          seenProdCodes.add(pCode.toUpperCase());
-          const basePrefix = pCode.split(".")[0].toUpperCase();
-          const baseMatch = apiProds.find(
-            (p: any) =>
-              String(p?.code || "").trim().toUpperCase() === basePrefix ||
-              String(p?.code || "").trim().toUpperCase().startsWith(basePrefix + ".")
-          );
-          apiProds.push({
-            code: pCode,
-            name: baseMatch?.name ? `${baseMatch.name} (${pCode})` : `Bộ Kit tách chiết ${pCode}`,
-            category: baseMatch?.category || "KIT TÁCH CHIẾT",
-            manufacturer: baseMatch?.manufacturer || "ABT",
-            origin: baseMatch?.origin || "Việt Nam",
-            specification: c.specification || baseMatch?.specification || "Hộp",
-            unit: c.unit || baseMatch?.unit || "Hộp",
-            cost_price: Number(baseMatch?.cost_price) || 0,
-            standard_price: Number(baseMatch?.standard_price) || 0,
-            storage_condition: c.storage_condition || baseMatch?.storage_condition || "2-8°C (Tủ mát chuyên dụng)",
-          });
-        }
         setProducts(apiProds);
         setReservations(data.reservations || []);
-        setProductComponents(mergedComps);
+        if (data.product_components) {
+          setProductComponents(data.product_components);
+        }
         if (data.personnel) {
           setPersonnelList(data.personnel);
         }
@@ -516,7 +484,7 @@ export const WarehouseModule: React.FC = () => {
     }
   };
 
-  // Real ABT Staff Mappings
+  // Real TBR Staff Mappings
   const salesStaff = useMemo(() => {
     const list = personnelList.filter(p => 
       p.department === "Kinh Doanh" || 
@@ -711,22 +679,47 @@ export const WarehouseModule: React.FC = () => {
     return productByCodeMap.get(c) || productByCodeMap.get(c.toLowerCase()) || null;
   };
 
+  /** Bổ sung Hãng SX (manufacturer) và Quy cách (specification) cho dòng hàng của chứng từ kho nếu phiếu cũ chưa lưu sẵn. */
+  const enrichTxItemInfo = (it: any) => {
+    if (!it) return { manufacturer: "", specification: "" };
+    const code = String(it.product_code || it.productCode || "").trim();
+    const catProd = findCatalogProduct(code);
+    const invItem = enrichedItems.find((x) => String(x.product_code || x.code || "").trim().toLowerCase() === code.toLowerCase());
+    const rawMfg = String(it.manufacturer || it.brand || catProd?.manufacturer || catProd?.brand || invItem?.manufacturer || "").trim();
+    const cleanMfg = (!rawMfg || rawMfg.toLowerCase() === "tbr phân phối" || rawMfg.toLowerCase() === "thương mại")
+      ? (String(catProd?.manufacturer || catProd?.brand || invItem?.manufacturer || "").trim() || (
+          code.toUpperCase().startsWith("HI") || code.toUpperCase().startsWith("HM") || code.toUpperCase().startsWith("HE") || code.toUpperCase().startsWith("SQH")
+            ? "ABT"
+            : rawMfg
+        ))
+      : rawMfg;
+    const rawSpec = String(it.specification || catProd?.specification || invItem?.specification || "").trim();
+    return {
+      ...it,
+      manufacturer: cleanMfg || "",
+      specification: rawSpec || "",
+      unit: it.unit || catProd?.unit || invItem?.unit || "Hộp",
+      storage_condition: it.storage_condition || it.storage_location || catProd?.storage_condition || invItem?.storage_condition || "Kho thường",
+    };
+  };
+
+  const enrichTransactionWithCatalog = (tx: any) => {
+    if (!tx) return tx;
+    const rawItems: any[] = Array.isArray(tx.items) ? tx.items : [];
+    return {
+      ...tx,
+      items: rawItems.map((it) => enrichTxItemInfo(it)),
+    };
+  };
+
   const componentsByParentMap = useMemo(() => {
     const map = new Map<string, any[]>();
     for (const c of productComponents) {
-      const parent = String(c?.parent_product_code || "").trim();
+      const parent = c?.parent_product_code;
       if (!parent) continue;
-      const upper = parent.toUpperCase();
-      const list = map.get(parent) || map.get(upper);
-      if (list) {
-        list.push(c);
-        map.set(parent, list);
-        map.set(upper, list);
-      } else {
-        const arr = [c];
-        map.set(parent, arr);
-        map.set(upper, arr);
-      }
+      const list = map.get(parent);
+      if (list) list.push(c);
+      else map.set(parent, [c]);
     }
     return map;
   }, [productComponents]);
@@ -740,7 +733,6 @@ export const WarehouseModule: React.FC = () => {
         const pCat = String(item.category || "").trim().toLowerCase();
         if (pCode === "DVSC" || pCode === "OLIGO-SVC" || pCode.startsWith("DV-") || pCode.startsWith("SVC-")) return false;
         if (pCat.includes("dịch vụ") || pName.startsWith("dịch vụ") || pName.includes("dịch vụ sửa chữa") || pName.includes("dịch vụ bảo trì") || pName.includes("dịch vụ hiệu chuẩn")) return false;
-        if (isOligoMtoProduct(item) && Number(item.stock_quantity ?? item.quantity ?? 0) <= 0) return false;
         return true;
       })
       .map((item) => {
@@ -873,7 +865,7 @@ export const WarehouseModule: React.FC = () => {
       const manufacturer = item.manufacturer || matchedCatalogProd?.manufacturer || (
         item.product_code?.startsWith("HI") || item.product_code?.startsWith("HM") || item.product_code?.startsWith("HE") ? "TopPURE (ABT)" :
         item.product_code?.startsWith("SQH") ? "TopSPEC (ABT)" :
-        item.product_code?.startsWith("EQ") ? "Bioer Technology" : "ABT Phân Phối"
+        item.product_code?.startsWith("EQ") ? "Bioer Technology" : "TBR Phân Phối"
       );
 
       return {
@@ -1023,7 +1015,7 @@ export const WarehouseModule: React.FC = () => {
       totalListVal += lVal;
 
       // 1. By Brand
-      const brand = it.manufacturer || "ABT Phân Phối";
+      const brand = it.manufacturer || "TBR Phân Phối";
       if (!byBrandMap[brand]) {
         byBrandMap[brand] = { brand, count: 0, totalQty: 0, costVal: 0, listVal: 0 };
       }
@@ -1176,7 +1168,7 @@ export const WarehouseModule: React.FC = () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          product_code: targetProd.product_code || "ABT-GENERIC",
+          product_code: targetProd.product_code || "TBR-GENERIC",
           product_name: targetProd.product_name || "Sản phẩm thu hồi",
           lot_number: targetLot,
           reason: recallReason,
@@ -1250,7 +1242,7 @@ export const WarehouseModule: React.FC = () => {
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.json_to_sheet(rows);
       XLSX.utils.book_append_sheet(wb, ws, "Danh_Sach_Thu_Hoi");
-      XLSX.writeFile(wb, `Danh_Sach_Thu_Hoi_Lo_${traceResult.lot_number || "ABT"}_${todayVN()}.xlsx`);
+      XLSX.writeFile(wb, `Danh_Sach_Thu_Hoi_Lo_${traceResult.lot_number || "TBR"}_${todayVN()}.xlsx`);
       setActionNotice("✅ Đã xuất thành công Bảng liên hệ thu hồi khách hàng ra file Excel!");
     } catch (e) {
       alert("Lỗi khi xuất file Excel thu hồi");
@@ -1423,7 +1415,7 @@ export const WarehouseModule: React.FC = () => {
     const productsData = products.length > 0 ? products.slice(0, 10).map((p) => ({
       "Mã SKU (*)": p.code,
       "Tên sản phẩm (*)": p.name,
-      "Hãng sản xuất (*)": p.manufacturer || (p.code?.startsWith("HI") || p.code?.startsWith("HM") || p.code?.startsWith("HE") ? "TopPURE (ABT)" : p.code?.startsWith("SQH") ? "TopSPEC (ABT)" : "ABT"),
+      "Hãng sản xuất (*)": p.manufacturer || (p.code?.startsWith("HI") || p.code?.startsWith("HM") || p.code?.startsWith("HE") ? "TopPURE (ABT)" : p.code?.startsWith("SQH") ? "TopSPEC (ABT)" : "TBR"),
       "Nhà cung cấp": "",
       "Nhóm ngành hàng (*)": p.category || "Hóa chất / Sinh phẩm",
       "Quy cách đóng gói": p.specification || "Tiêu chuẩn",
@@ -1575,7 +1567,7 @@ export const WarehouseModule: React.FC = () => {
     const firstProd = products[0] || { code: "HI-007.A (B32)", name: "TopPURE Maga Quick Genomic DNA/RNA Extraction Kit", cost_price: 1800000 };
     const sampleData = [
       {
-        "Mã đơn PO (*)": `PO-ABT-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
+        "Mã đơn PO (*)": `PO-TBR-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
         "Nhà cung cấp (*)": "Công ty TNHH Giải pháp Y Sinh ABT",
         "Ngày đặt hàng (*)": todayVN(),
         "Hạn giao dự kiến (*)": toVNDateString(new Date(Date.now() + 10 * 86400000)),
@@ -1730,7 +1722,7 @@ export const WarehouseModule: React.FC = () => {
         "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận Kho Vận",
         "Vai Trò Hệ Thống": "warehouse_lead",
         "Tên Tiếng Anh": "Warehouse Manager",
-        "Quyền Hạn & Phạm Vi Truy Cập": "Quản lý toàn diện kho ABT, ký duyệt phiếu xuất nhập kho, xem giá vốn lô nhập, điều chuyển vị trí kho lạnh, tạo PR mua bù tồn kho và quản lý cảnh báo HSD."
+        "Quyền Hạn & Phạm Vi Truy Cập": "Quản lý toàn diện kho TBR, ký duyệt phiếu xuất nhập kho, xem giá vốn lô nhập, điều chuyển vị trí kho lạnh, tạo PR mua bù tồn kho và quản lý cảnh báo HSD."
       },
       {
         "Phòng Ban": "Kho Vận",
@@ -1935,25 +1927,11 @@ export const WarehouseModule: React.FC = () => {
       };
     }
 
-    // 5. PRODUCTS (Sản phẩm & Bảng giá hoặc chỉ Sheet Phụ kiện BOM)
+    // 5. PRODUCTS (Sản phẩm & Bảng giá)
     const isProduct =
-      keys.some(
-        k =>
-          k.includes("mã sku") ||
-          k.includes("sku cha") ||
-          k.includes("mã phụ kiện") ||
-          k.includes("định mức theo bộ") ||
-          k.includes("giá niêm yết") ||
-          k.includes("giá đại lý") ||
-          (k.includes("giá vốn") && !k.includes("công nợ"))
-      ) ||
-      fName.includes("banggia") ||
-      fName.includes("bang_gia") ||
-      fName.includes("sanpham") ||
-      fName.includes("san_pham") ||
-      fName.includes("phu_kien") ||
-      fName.includes("phukien") ||
-      sNames.some(s => s.includes("bang_gia") || s.includes("san_pham") || s.includes("phu_kien") || s.includes("bom"));
+      keys.some(k => k.includes("mã sku") || k.includes("giá niêm yết") || k.includes("giá đại lý") || (k.includes("giá vốn") && !k.includes("công nợ"))) ||
+      fName.includes("banggia") || fName.includes("bang_gia") || fName.includes("sanpham") || fName.includes("san_pham") ||
+      sNames.some(s => s.includes("bang_gia") || s.includes("san_pham"));
 
     if (isProduct) {
       return {
@@ -1963,12 +1941,7 @@ export const WarehouseModule: React.FC = () => {
         badgeClass: "bg-purple-950 text-purple-300 border border-purple-800",
         sheet1Title: "Sheet 1: Sản Phẩm & Bảng Giá",
         sheet2Title: "Sheet 2: Định Mức Phụ Kiện (BOM)",
-        confirmBtnText: (c1: number, c2: number) =>
-          c1 === 0 && c2 > 0
-            ? `Xác Nhận Nạp Bổ Sung ${c2} Phụ Kiện Định Mức (BOM)`
-            : c2 > 0
-            ? `Xác Nhận Nạp ${c1} Sản Phẩm & ${c2} Phụ Kiện BOM`
-            : `Xác Nhận Nạp ${c1} Sản Phẩm & Bảng Giá`
+        confirmBtnText: (c1: number, c2: number) => c2 > 0 ? `Xác Nhận Nạp ${c1} Sản Phẩm & ${c2} Phụ Kiện BOM` : `Xác Nhận Nạp ${c1} Sản Phẩm & Bảng Giá`
       };
     }
 
@@ -2001,7 +1974,7 @@ export const WarehouseModule: React.FC = () => {
   };
 
   const handleConfirmImportExcel = async () => {
-    if (previewImportRows.length === 0 && previewContactRows.length === 0) return;
+    if (previewImportRows.length === 0) return;
     setIsImportingExcel(true);
     try {
       const res = await fetch("/api/inventory?action=import_excel", {
@@ -2063,31 +2036,14 @@ export const WarehouseModule: React.FC = () => {
         const wb = XLSX.read(bstr, { type: "binary" });
         const wsName = wb.SheetNames[0];
         const ws = wb.Sheets[wsName];
-        let rawJson: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" }).map((r: any) => normalizeExcelRowDates(r));
+        const rawJson: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" }).map((r: any) => normalizeExcelRowDates(r));
+        setPreviewImportRows(rawJson);
 
-        const isFirstSheetBomOnly =
-          rawJson.length > 0 &&
-          Object.keys(rawJson[0] || {}).some((k) => {
-            const kl = k.toLowerCase();
-            return kl.includes("sku cha") || kl.includes("mã phụ kiện") || kl.includes("parent_product_code");
-          });
-
-        const sampleForClassify = rawJson[0] || (() => {
-          for (const s of wb.SheetNames.slice(1)) {
-            const rows = XLSX.utils.sheet_to_json<Record<string, any>>(wb.Sheets[s], { defval: "" });
-            if (rows.length > 0) return rows[0];
-          }
-          return {};
-        })();
-
-        const classification = classifyExcelTemplate(file.name, wb.SheetNames, sampleForClassify);
+        const classification = classifyExcelTemplate(file.name, wb.SheetNames, rawJson[0] || {});
         setDetectedImportClassification(classification);
 
         let secondaryJson: any[] = [];
-        if (isFirstSheetBomOnly && classification.type === "PRODUCTS") {
-          secondaryJson = rawJson;
-          rawJson = [];
-        } else if (wb.SheetNames.length > 1) {
+        if (wb.SheetNames.length > 1) {
           let secondarySheetName = "";
           if (classification.type === "CUSTOMERS") {
             secondarySheetName = wb.SheetNames.find(s => {
@@ -2119,16 +2075,11 @@ export const WarehouseModule: React.FC = () => {
             secondaryJson = XLSX.utils.sheet_to_json(secWs, { defval: "" }).map((r: any) => normalizeExcelRowDates(r));
           }
         }
-        setPreviewImportRows(rawJson);
         setPreviewContactRows(secondaryJson);
-        setActivePreviewSheetTab(rawJson.length === 0 && secondaryJson.length > 0 ? "contacts" : "customers");
+        setActivePreviewSheetTab("customers");
 
         const contactMsg = secondaryJson.length > 0 ? ` kèm ${secondaryJson.length} dòng ở ${classification.sheet2Title || "Sheet 2"}` : "";
-        setActionNotice(
-          rawJson.length === 0 && secondaryJson.length > 0
-            ? `📊 Đã nhận diện [${classification.badge}] từ file ${file.name}: ${secondaryJson.length} dòng định mức phụ kiện ở ${classification.sheet2Title || "Sheet 2"} (Chế độ nạp bổ sung chỉ Sheet Phụ kiện BOM).`
-            : `📊 Đã nhận diện [${classification.badge}] từ file ${file.name}: ${rawJson.length} dòng dữ liệu${contactMsg}.`
-        );
+        setActionNotice(`📊 Đã nhận diện [${classification.badge}] từ file ${file.name}: ${rawJson.length} dòng dữ liệu${contactMsg}.`);
       } catch (err) {
         console.error(err);
         alert("Lỗi khi đọc file Excel!");
@@ -2303,12 +2254,12 @@ export const WarehouseModule: React.FC = () => {
   // Danh sách sản phẩm ở tab BOM: lọc sau khi ngừng gõ, đếm thành phần một lần, vẽ từng trang
   const bomSearchDebounced = useDebouncedValue(bomSearchQuery, 300);
   const bomFilteredProducts = useMemo(() => {
-    const withComps = new Set(productComponents.map((c: any) => String(c.parent_product_code || "").trim().toUpperCase()));
+    const withComps = new Set(productComponents.map((c: any) => c.parent_product_code));
     const q = bomSearchDebounced.toLowerCase();
     return products.filter((p: any) => {
       const matchesQuery = !q || String(p.code || "").toLowerCase().includes(q) || String(p.name || "").toLowerCase().includes(q);
       if (!matchesQuery) return false;
-      const hasComponents = withComps.has(String(p.code || "").trim().toUpperCase());
+      const hasComponents = withComps.has(p.code);
       if (bomTypeFilter === "kits_only") return hasComponents;
       if (bomTypeFilter === "single") return !hasComponents;
       return true;
@@ -2333,6 +2284,7 @@ export const WarehouseModule: React.FC = () => {
           unit: defaultProd.unit || "Hộp",
           quantity: 1,
           unit_price: defaultProd.cost_price || defaultProd.standard_price || 0,
+          vat_rate: 0,
           lot_number: "",
           manufacture_date: "",
           expiry_date: "",
@@ -2452,8 +2404,14 @@ export const WarehouseModule: React.FC = () => {
   const inboundSummary = useMemo(() => {
     const itms = inboundForm.items || [];
     const totalQty = itms.reduce((sum: number, it: any) => sum + (Number(it.quantity) || 0), 0);
-    const totalAmount = itms.reduce((sum: number, it: any) => sum + ((Number(it.quantity) || 0) * (Number(it.unit_price) || 0)), 0);
-    return { count: itms.length, totalQty, totalAmount };
+    const totalAmount = itms.reduce((sum: number, it: any) => sum + Math.round((Number(it.quantity) || 0) * (Number(it.unit_price) || 0)), 0);
+    const totalVatAmount = itms.reduce((sum: number, it: any) => {
+      const sub = Math.round((Number(it.quantity) || 0) * (Number(it.unit_price) || 0));
+      const vr = Math.max(0, Number(it.vat_rate ?? 0) || 0);
+      return sum + Math.round(sub * (vr / 100));
+    }, 0);
+    const totalAfterVat = totalAmount + totalVatAmount;
+    return { count: itms.length, totalQty, totalAmount, totalVatAmount, totalAfterVat };
   }, [inboundForm.items]);
 
   const handleOpenEditInboundTx = (tx: any) => {
@@ -2497,6 +2455,7 @@ export const WarehouseModule: React.FC = () => {
         unit: it.unit || matchedCatalogProd?.unit || "Hộp",
         quantity: Number(it.quantity) || 1,
         unit_price: Number(it.unit_price ?? it.cost_price ?? matchedCatalogProd?.cost_price ?? 0) || 0,
+        vat_rate: Math.max(0, Number(it.vat_rate ?? it.vat ?? 0) || 0),
         lot_number: it.lot_number || "",
         manufacture_date: it.manufacture_date || "",
         expiry_date: it.expiry_date || "",
@@ -2515,7 +2474,7 @@ export const WarehouseModule: React.FC = () => {
       inbound_type: inboundType,
       reference_code: tx.reference_code && tx.reference_code !== "N/A" ? tx.reference_code : "",
       vat_invoice_no: vatInvoiceNo,
-      supplier_name: (supplierName === "ABT Phân Phối" || supplierName === "TBR Phân Phối") ? "" : supplierName,
+      supplier_name: supplierName === "TBR Phân Phối" ? "" : supplierName,
       warehouse_name: tx.warehouse_name || "Kho Trung Tâm",
       performed_by: tx.performed_by || currentUserName,
       shipping_unit: shippingUnit,
@@ -2669,6 +2628,12 @@ export const WarehouseModule: React.FC = () => {
           const comps = ensureInboundComponents(it);
 
           const matchedCatalogProd = products.find((p) => p.code === it.product_code.trim());
+          const qtyVal = Number(it.quantity) || 1;
+          const unitPriceVal = Number(it.unit_price) || 0;
+          const vatRateVal = Math.max(0, Number(it.vat_rate ?? 0) || 0);
+          const lineSub = Math.round(qtyVal * unitPriceVal);
+          const lineVatAmt = Math.round(lineSub * (vatRateVal / 100));
+          const lineAfterVat = lineSub + lineVatAmt;
           return {
             _orig_product_code: it._orig_product_code,
             _orig_lot_number: it._orig_lot_number,
@@ -2676,17 +2641,21 @@ export const WarehouseModule: React.FC = () => {
             product_code: it.product_code.trim(),
             product_name: it.product_name.trim(),
             category: it.category || matchedCatalogProd?.category || "Hàng Thương Mại",
-            manufacturer: inboundForm.supplier_name?.trim() || it.manufacturer || matchedCatalogProd?.manufacturer || "ABT Phân Phối",
+            manufacturer: inboundForm.supplier_name?.trim() || it.manufacturer || matchedCatalogProd?.manufacturer || "TBR Phân Phối",
             supplier_name: inboundForm.supplier_name?.trim() || "",
             vat_invoice_no: inboundForm.vat_invoice_no?.trim() || "",
             shipping_unit: inboundForm.shipping_unit?.trim() || "",
             inbound_type: inboundForm.inbound_type || "",
             specification: it.specification || matchedCatalogProd?.specification || "",
             unit: it.unit || matchedCatalogProd?.unit || "Hộp",
-            quantity: Number(it.quantity) || 1,
-            unit_price: it.is_free_gift ? 0 : (Number(it.unit_price) || 0),
-            cost_price: it.is_free_gift ? 0 : (Number(it.unit_price) || 0),
-            is_free_gift: Boolean(it.is_free_gift || (Number(it.unit_price) || 0) === 0),
+            quantity: qtyVal,
+            unit_price: it.is_free_gift ? 0 : unitPriceVal,
+            cost_price: it.is_free_gift ? 0 : unitPriceVal,
+            is_free_gift: Boolean(it.is_free_gift || unitPriceVal === 0),
+            subtotal: lineSub,
+            vat_rate: vatRateVal,
+            vat_amount: lineVatAmt,
+            total_after_vat: lineAfterVat,
             standard_price: Number(it.standard_price) || Number(matchedCatalogProd?.standard_price) || 0,
             lot_number: it.lot_number || "",
             expiry_date: it.expiry_date || "",
@@ -2727,6 +2696,7 @@ export const WarehouseModule: React.FC = () => {
               quantity: it.quantity,
               unit_price: it.unit_price,
               is_free_gift: it.is_free_gift,
+              vat_rate: it.vat_rate,
               lot_number: it.lot_number,
               expiry_date: it.expiry_date,
               no_expiry: !it.expiry_date,
@@ -2803,15 +2773,22 @@ export const WarehouseModule: React.FC = () => {
       const payload = {
         ...outboundForm,
         transaction_code: outboundCodeRef.current,
-        items: outboundForm.items.map((it: any) => ({
-          ...it,
-          components: comps.map((c, i) => ({
-            ...c,
-            total_qty: (Number(c.quantity_per_kit) || 1) * qty,
-            serial_or_lot: c.tracking_type === "SERIAL" ? `SN-${c.component_code.replace(/[^a-zA-Z0-9]/g, '')}-00${i + 1}` : (it.lot_number || "LOT-STD"),
-            status: "Đạt chuẩn bàn giao"
-          }))
-        }))
+        items: outboundForm.items.map((it: any) => {
+          const catProd = findCatalogProduct(it.product_code);
+          return {
+            ...it,
+            manufacturer: it.manufacturer || catProd?.manufacturer || catProd?.brand || "",
+            specification: it.specification || catProd?.specification || "",
+            unit: it.unit || catProd?.unit || "Hộp",
+            storage_condition: it.storage_condition || catProd?.storage_condition || "Kho thường",
+            components: comps.map((c, i) => ({
+              ...c,
+              total_qty: (Number(c.quantity_per_kit) || 1) * qty,
+              serial_or_lot: c.tracking_type === "SERIAL" ? `SN-${c.component_code.replace(/[^a-zA-Z0-9]/g, '')}-00${i + 1}` : (it.lot_number || "LOT-STD"),
+              status: "Đạt chuẩn bàn giao"
+            }))
+          };
+        })
       };
 
       const res = await fetch("/api/inventory?action=outbound", {
@@ -3003,7 +2980,7 @@ export const WarehouseModule: React.FC = () => {
       order_code: outboundForm.reference_code || "SO-2026-088",
       customer_name: outboundForm.customer_name || "Bệnh viện Đa Khoa / Viện Nghiên Cứu",
       warehouse_name: outboundForm.warehouse_name || "Kho Trung Tâm",
-      performed_by: outboundForm.performed_by || "Thủ kho ABT",
+      performed_by: outboundForm.performed_by || "Thủ kho TBR",
       product_code: selectedProdCode,
       product_name: selectedProd?.name || outboundForm.items[0]?.product_name,
       quantity: qty,
@@ -3299,7 +3276,7 @@ export const WarehouseModule: React.FC = () => {
           const manufacturer =
             String(r["Nhãn hiệu"] || r["Hãng SX"] || r["Hãng sản xuất"] || r["manufacturer"] || r["brand"] || "").trim() ||
             matchedProd?.manufacturer ||
-            "ABT Phân Phối";
+            "TBR Phân Phối";
 
           const quantity =
             Number(
@@ -3769,7 +3746,7 @@ export const WarehouseModule: React.FC = () => {
           reservation_id: reservation.id,
           product_code: reservation.product_code,
           quantity_reserved: reservation.quantity_reserved,
-          actor: "Thủ kho ABT",
+          actor: "Thủ kho TBR",
           reason: "Thủ kho giải phóng lại cho tồn khả dụng chung"
         })
       });
@@ -3901,11 +3878,11 @@ export const WarehouseModule: React.FC = () => {
           <div className="flex items-center gap-2 text-orange-600 dark:text-orange-400">
             <Package className="w-6 h-6" />
             <h2 className="text-xl font-black tracking-tight text-slate-900 dark:text-white">
-              HỆ THỐNG QUẢN LÝ KHO ABT
+              HỆ THỐNG QUẢN LÝ KHO TBR
             </h2>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Phân hệ độc lập quản lý xuất nhập tồn hàng hóa, theo dõi rủi ro lô hạn và giữ chỗ tồn kho (ATP) ABT.
+            Phân hệ độc lập quản lý xuất nhập tồn hàng hóa, theo dõi rủi ro lô hạn và giữ chỗ tồn kho (ATP) TBR.
           </p>
         </div>
 
@@ -4253,7 +4230,7 @@ export const WarehouseModule: React.FC = () => {
               {/* Search Bar */}
               <div className="relative flex-1 max-w-md">
                 <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-                <FastInput
+                <input
                   type="text"
                   placeholder="Tìm theo mã hàng, tên sinh phẩm, số LOT, vị trí kệ..."
                   value={searchQuery}
@@ -4775,7 +4752,7 @@ export const WarehouseModule: React.FC = () => {
                       {isAtpViewMode && (
                         <td className="py-3 px-3">
                           <div className="font-bold text-indigo-600 dark:text-indigo-400">
-                            {item.manufacturer || "ABT"}
+                            {item.manufacturer || "TBR"}
                           </div>
                           <div className="text-[10px] text-slate-500 mt-0.5">
                             {item.category || "Sinh phẩm"}
@@ -5312,14 +5289,14 @@ export const WarehouseModule: React.FC = () => {
                 </button>
               ))}
             </div>
-            <FastInput
+            <input
               type="text"
               value={txSearch}
               onChange={(e) => setTxSearch(e.target.value)}
               placeholder="Tìm mã phiếu, PO / SO, mã hàng, số lô, người thực hiện..."
               className="flex-1 min-w-[220px] max-w-md px-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
             />
-            <FastInput
+            <input
               type="text"
               value={txPartnerFilter}
               onChange={(e) => setTxPartnerFilter(e.target.value)}
@@ -5487,7 +5464,7 @@ export const WarehouseModule: React.FC = () => {
                         )}
                       </td>
                       <td className="py-3.5 px-3 text-slate-700 dark:text-slate-300 max-w-[120px]">
-                        {tx.performed_by || "Thủ kho ABT"}
+                        {tx.performed_by || "Thủ kho TBR"}
                       </td>
                       <td className="py-3.5 px-3 font-mono text-slate-500 whitespace-nowrap">
                         {tx.date ? formatDayVN(tx.date) : ""}
@@ -5963,7 +5940,7 @@ export const WarehouseModule: React.FC = () => {
                 </label>
                 <div className="relative">
                   <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
-                  <FastInput
+                  <input
                     type="text"
                     placeholder="Mã SKU, Lô, tên SP..."
                     value={valSearchQuery}
@@ -6034,7 +6011,7 @@ export const WarehouseModule: React.FC = () => {
               </div>
               <p className="text-[10px] text-slate-500 mt-1.5 flex items-center justify-between">
                 <span>Biên lợi nhuận trung bình</span>
-                <span className="font-bold text-cyan-600">Đạt định mức ABT</span>
+                <span className="font-bold text-cyan-600">Đạt định mức TBR</span>
               </p>
             </div>
           </div>
@@ -6674,7 +6651,7 @@ export const WarehouseModule: React.FC = () => {
                           <div className="grid grid-cols-2 gap-2 text-[11px] pt-2 border-t border-slate-100 dark:border-slate-800/80">
                             <div>
                               <span className="text-slate-400 block text-[10px]">Hãng sản xuất:</span>
-                              <strong className="text-slate-800 dark:text-slate-200">{itm.manufacturer || "ABT / ABT"}</strong>
+                              <strong className="text-slate-800 dark:text-slate-200">{itm.manufacturer || "ABT / TBR"}</strong>
                             </div>
                             <div>
                               <span className="text-slate-400 block text-[10px]">Quy cách:</span>
@@ -6889,7 +6866,7 @@ export const WarehouseModule: React.FC = () => {
                               x{c.quantity}
                             </td>
                             <td className="py-3 px-3 text-[11px]">
-                              <div className="text-slate-300">{c.shipping_method || "Xe lạnh chuyên dụng ABT"}</div>
+                              <div className="text-slate-300">{c.shipping_method || "Xe lạnh chuyên dụng TBR"}</div>
                               <div className="text-[10px] font-mono text-sky-400 mt-0.5">{c.tracking_code || "—"}</div>
                             </td>
                             <td className="py-3 px-3 text-[11px] text-slate-300 font-sans">
@@ -7161,7 +7138,7 @@ export const WarehouseModule: React.FC = () => {
               <p className="text-[11px] text-slate-500 mb-3">
                 {isDraggingGeneralExcel
                   ? "Hệ thống sẽ tự động phân tích và nhận diện cấu trúc cột"
-                  : "Tự động nhận diện cấu trúc cột theo chuẩn biểu mẫu ABT"}
+                  : "Tự động nhận diện cấu trúc cột theo chuẩn biểu mẫu TBR"}
               </p>
               <button
                 type="button"
@@ -7176,7 +7153,7 @@ export const WarehouseModule: React.FC = () => {
             </div>
 
             {/* Preview Table */}
-            {(previewImportRows.length > 0 || previewContactRows.length > 0) && (
+            {previewImportRows.length > 0 && (
               <div className="space-y-3 pt-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -7435,7 +7412,7 @@ export const WarehouseModule: React.FC = () => {
               {/* Tìm kiếm */}
               <div className="relative">
                 <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
-                <FastInput
+                <input
                   type="text"
                   value={bomSearchQuery}
                   onChange={(e) => setBomSearchQuery(e.target.value)}
@@ -7517,7 +7494,7 @@ export const WarehouseModule: React.FC = () => {
                           {currentProduct?.name || activeParentCode}
                         </h3>
                         <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                          Quy cách: <strong>{currentProduct?.specification || "Tiêu chuẩn"}</strong> • ĐVT: <strong>{currentProduct?.unit || "Bộ"}</strong> • Hãng SX: <strong>{currentProduct?.manufacturer || "ABT"}</strong>
+                          Quy cách: <strong>{currentProduct?.specification || "Tiêu chuẩn"}</strong> • ĐVT: <strong>{currentProduct?.unit || "Bộ"}</strong> • Hãng SX: <strong>{currentProduct?.manufacturer || "TBR"}</strong>
                         </div>
                       </div>
 
@@ -7745,7 +7722,7 @@ export const WarehouseModule: React.FC = () => {
                 <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
                   Lý do chi tiết &amp; Khuyến nghị xử lý *
                 </label>
-                <FastTextarea
+                <textarea
                   rows={3}
                   required
                   value={recallReason}
@@ -7829,7 +7806,7 @@ export const WarehouseModule: React.FC = () => {
               <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <strong className="text-emerald-900 dark:text-emerald-300 block mb-0.5">
-                    Tải mẫu Excel nhập kho rút gọn 7 cột chuẩn ABT:
+                    Tải mẫu Excel nhập kho rút gọn 7 cột chuẩn TBR:
                   </strong>
                   <p className="text-emerald-800 dark:text-emerald-400 text-[11px] leading-relaxed">
                     Chỉ cần nhập <strong>7 cột cốt lõi</strong>: <code>Mã SP</code>, <code>Số Lô (Lot)</code>, <code>Hạn dùng (Date)</code>, <code>Số lượng</code>, <code>Giá trị / Đơn giá đầu kỳ</code>, <code>Nhiệt độ bảo quản</code>, <code>Khu vực / Vị trí kho</code>. <br />
@@ -8124,7 +8101,7 @@ export const WarehouseModule: React.FC = () => {
                   </div>
                   <div>
                     <label className="block text-slate-600 dark:text-slate-400 font-bold mb-1">Số Hóa Đơn VAT</label>
-                    <FastInput
+                    <input
                       type="text"
                       value={excelInboundDetails.vat_invoice_no}
                       onChange={(e) => setExcelInboundDetails({ ...excelInboundDetails, vat_invoice_no: e.target.value })}
@@ -8167,7 +8144,7 @@ export const WarehouseModule: React.FC = () => {
                   </div>
                   <div>
                     <label className="block text-slate-600 dark:text-slate-400 font-bold mb-1">Thủ kho tiếp nhận *</label>
-                    <FastInput
+                    <input
                       type="text"
                       value={excelInboundDetails.performed_by}
                       onChange={(e) => setExcelInboundDetails({ ...excelInboundDetails, performed_by: e.target.value })}
@@ -8282,7 +8259,7 @@ export const WarehouseModule: React.FC = () => {
       {/* MODAL INBOUND ĐẦY ĐỦ THÔNG TIN SẢN PHẨM */}
       {isInboundModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-5xl w-full my-auto flex flex-col max-h-[92vh] overflow-hidden animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-7xl w-full my-auto flex flex-col max-h-[92vh] overflow-hidden animate-fade-in">
             
             {/* Modal Header */}
             <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-800/60">
@@ -8337,7 +8314,7 @@ export const WarehouseModule: React.FC = () => {
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mã Phiếu Nhập (PNK) *</label>
-                    <FastInput
+                    <input
                       type="text"
                       value={inboundForm.transaction_code}
                       onChange={(e) => setInboundForm((prev: any) => ({ ...prev, transaction_code: e.target.value }))}
@@ -8415,6 +8392,7 @@ export const WarehouseModule: React.FC = () => {
                                     quantity: l.remaining,
                                     unit_price: l.is_free_gift ? 0 : Math.round((Number(l.unit_price) || Number(cat?.cost_price) || 0) * 1000) / 1000,
                                     is_free_gift: Boolean(l.is_free_gift || (l.unit_price !== undefined && Number(l.unit_price) === 0)),
+                                    vat_rate: Math.max(0, Number(l.vat_rate ?? l.vat ?? 0) || 0),
                                     lot_number: "",
                                     manufacture_date: "",
                                     expiry_date: "",
@@ -8460,7 +8438,7 @@ export const WarehouseModule: React.FC = () => {
                   </div>
                   <div>
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Số Hóa Đơn VAT / Tờ Khai Hải Quan</label>
-                    <FastInput
+                    <input
                       type="text"
                       value={inboundForm.vat_invoice_no}
                       onChange={(e) => setInboundForm((prev: any) => ({ ...prev, vat_invoice_no: e.target.value }))}
@@ -8608,7 +8586,7 @@ export const WarehouseModule: React.FC = () => {
                   </div>
                   <div>
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Đơn Vị Vận Chuyển / Giao Hàng</label>
-                    <FastInput
+                    <input
                       type="text"
                       value={inboundForm.shipping_unit}
                       onChange={(e) => setInboundForm((prev: any) => ({ ...prev, shipping_unit: e.target.value }))}
@@ -8813,135 +8791,185 @@ export const WarehouseModule: React.FC = () => {
                         </div>
                       )}
 
-                      {/* Line 2: Số Lô (LOT), Hạn dùng (EXP), Ngày SX (MFG), Số lượng, Đơn giá, Thành tiền */}
-                      <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5 bg-slate-50/60 dark:bg-slate-900/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-800">
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                            Số Lô (LOT / Batch) <span className="text-rose-500">*</span>
-                          </label>
-                          <input
-                            type="text"
-                            value={item.lot_number || ""}
-                            onChange={(e) => handleInboundItemChange(idx, "lot_number", e.target.value)}
-                            placeholder="LOT-2026-..."
-                            className={`w-full p-2 rounded-lg border bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-bold text-xs text-orange-600 dark:text-orange-400 ${
-                              !String(item.lot_number || "").trim()
-                                ? "border-rose-300 dark:border-rose-800/80"
-                                : "border-slate-200 dark:border-slate-700"
-                            }`}
-                          />
-                        </div>
-
-                        <div>
-                          <div className="flex items-center justify-between mb-1">
-                            <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400">
-                              Hạn Sử Dụng (EXP)
-                            </label>
-                            <label className="inline-flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer" title="Tích chọn hoặc để trống nếu lô không có hạn sử dụng">
+                      {/* Line 2: Số Lô (LOT), Hạn dùng (EXP), Ngày SX (MFG), Số lượng, Đơn giá, Thành tiền, %VAT, Tiền VAT, Thành tiền sau VAT */}
+                      {(() => {
+                        const lineSub = Math.round((Number(item.quantity) || 0) * (Number(item.unit_price) || 0));
+                        const lineVatRate = Math.max(0, Number(item.vat_rate ?? 0) || 0);
+                        const lineVatAmt = Math.round(lineSub * (lineVatRate / 100));
+                        const lineAfterVat = lineSub + lineVatAmt;
+                        return (
+                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-2.5 bg-slate-50/60 dark:bg-slate-900/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-800">
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                                Số Lô (LOT / Batch) <span className="text-rose-500">*</span>
+                              </label>
                               <input
-                                type="checkbox"
-                                checked={Boolean(item.no_expiry)}
-                                onChange={(e) => {
-                                  handleInboundItemChange(idx, "no_expiry", e.target.checked);
-                                  if (e.target.checked) handleInboundItemChange(idx, "expiry_date", "");
-                                }}
-                                className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                                type="text"
+                                value={item.lot_number || ""}
+                                onChange={(e) => handleInboundItemChange(idx, "lot_number", e.target.value)}
+                                placeholder="LOT-2026-..."
+                                className={`w-full p-2 rounded-lg border bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-bold text-xs text-orange-600 dark:text-orange-400 ${
+                                  !String(item.lot_number || "").trim()
+                                    ? "border-rose-300 dark:border-rose-800/80"
+                                    : "border-slate-200 dark:border-slate-700"
+                                }`}
                               />
-                              <span>K.HSD</span>
-                            </label>
-                          </div>
-                          <DateInputVN
-                            value={item.expiry_date || ""}
-                            disabled={Boolean(item.no_expiry)}
-                            onChange={(e) => {
-                              handleInboundItemChange(idx, "expiry_date", e.target.value);
-                              if (e.target.value) handleInboundItemChange(idx, "no_expiry", false);
-                            }}
-                            className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-bold text-xs text-emerald-600 dark:text-emerald-400 disabled:opacity-50"
-                          />
-                        </div>
+                            </div>
 
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                            Ngày Sản Xuất (MFG)
-                          </label>
-                          <DateInputVN
-                            value={item.manufacture_date || ""}
-                            onChange={(e) => handleInboundItemChange(idx, "manufacture_date", e.target.value)}
-                            className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono text-xs"
-                          />
-                        </div>
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400">
+                                  Hạn Sử Dụng (EXP)
+                                </label>
+                                <label className="inline-flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer" title="Tích chọn hoặc để trống nếu lô không có hạn sử dụng">
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(item.no_expiry)}
+                                    onChange={(e) => {
+                                      handleInboundItemChange(idx, "no_expiry", e.target.checked);
+                                      if (e.target.checked) handleInboundItemChange(idx, "expiry_date", "");
+                                    }}
+                                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                                  />
+                                  <span>K.HSD</span>
+                                </label>
+                              </div>
+                              <DateInputVN
+                                value={item.expiry_date || ""}
+                                disabled={Boolean(item.no_expiry)}
+                                onChange={(e) => {
+                                  handleInboundItemChange(idx, "expiry_date", e.target.value);
+                                  if (e.target.value) handleInboundItemChange(idx, "no_expiry", false);
+                                }}
+                                className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-bold text-xs text-emerald-600 dark:text-emerald-400 disabled:opacity-50"
+                              />
+                            </div>
 
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                            Số Lượng Nhập *
-                          </label>
-                          <input
-                            type="number"
-                            min="1"
-                            value={item.quantity}
-                            onChange={(e) => handleInboundItemChange(idx, "quantity", Math.max(1, parseInt(e.target.value) || 1))}
-                            className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-black text-xs text-emerald-600 dark:text-emerald-400"
-                          />
-                        </div>
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                                Ngày Sản Xuất (MFG)
+                              </label>
+                              <DateInputVN
+                                value={item.manufacture_date || ""}
+                                onChange={(e) => handleInboundItemChange(idx, "manufacture_date", e.target.value)}
+                                className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono text-xs"
+                              />
+                            </div>
 
-                        <div>
-                          <div className="flex items-center justify-between mb-1">
-                            <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400">
-                              Đơn Giá Nhập <span className="text-rose-500">*</span>
-                            </label>
-                            <label className="inline-flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold cursor-pointer" title="Tích chọn nếu là Hàng tặng / Hàng Demo 0 đồng từ hãng">
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                                Số Lượng Nhập *
+                              </label>
                               <input
-                                type="checkbox"
-                                checked={Boolean(item.is_free_gift)}
-                                onChange={(e) => {
-                                  const checked = e.target.checked;
-                                  handleInboundItemChange(idx, "is_free_gift", checked);
-                                  if (checked) handleInboundItemChange(idx, "unit_price", 0);
-                                }}
-                                className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                                type="number"
+                                min="1"
+                                value={item.quantity}
+                                onChange={(e) => handleInboundItemChange(idx, "quantity", Math.max(1, parseInt(e.target.value) || 1))}
+                                className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-black text-xs text-emerald-600 dark:text-emerald-400"
                               />
-                              <span>🎁 0đ</span>
-                            </label>
-                          </div>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.001"
-                            value={item.is_free_gift ? 0 : (item.unit_price ?? "")}
-                            placeholder={item.is_free_gift ? "0 (Tặng/Demo)" : "Nhập đơn giá..."}
-                            onChange={(e) => {
-                              const raw = e.target.value;
-                              if (raw === "0") {
-                                handleInboundItemChange(idx, "is_free_gift", true);
-                                handleInboundItemChange(idx, "unit_price", 0);
-                                return;
-                              }
-                              if (Number(raw) > 0 && item.is_free_gift) {
-                                handleInboundItemChange(idx, "is_free_gift", false);
-                              }
-                              handleInboundItemChange(idx, "unit_price", raw === "" ? "" : (/^\d*\.\d{0,3}$/.test(raw) ? raw : Math.max(0, Math.round((parseFloat(raw) || 0) * 1000) / 1000)));
-                            }}
-                            onBlur={() => handleInboundItemChange(idx, "unit_price", Math.max(0, Math.round((Number(item.unit_price) || 0) * 1000) / 1000))}
-                            className={`w-full p-2 rounded-lg border bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono text-xs font-semibold ${
-                              !(Number(item.unit_price) > 0) && !item.is_free_gift
-                                ? "border-rose-300 dark:border-rose-800/80"
-                                : item.is_free_gift
-                                ? "border-emerald-400 dark:border-emerald-600 text-emerald-700 dark:text-emerald-300"
-                                : "border-slate-200 dark:border-slate-700"
-                            }`}
-                          />
-                        </div>
+                            </div>
 
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                            Thành Tiền (VNĐ)
-                          </label>
-                          <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-xs truncate">
-                            {formatCurrency((Number(item.quantity) || 0) * (Number(item.unit_price) || 0))}
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400">
+                                  Đơn Giá Nhập <span className="text-rose-500">*</span>
+                                </label>
+                                <label className="inline-flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold cursor-pointer" title="Tích chọn nếu là Hàng tặng / Hàng Demo 0 đồng từ hãng">
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(item.is_free_gift)}
+                                    onChange={(e) => {
+                                      const checked = e.target.checked;
+                                      handleInboundItemChange(idx, "is_free_gift", checked);
+                                      if (checked) {
+                                        handleInboundItemChange(idx, "unit_price", 0);
+                                        handleInboundItemChange(idx, "vat_rate", 0);
+                                      }
+                                    }}
+                                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                                  />
+                                  <span>🎁 0đ</span>
+                                </label>
+                              </div>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.001"
+                                value={item.is_free_gift ? 0 : (item.unit_price ?? "")}
+                                placeholder={item.is_free_gift ? "0 (Tặng/Demo)" : "Nhập đơn giá..."}
+                                onChange={(e) => {
+                                  const raw = e.target.value;
+                                  if (raw === "0") {
+                                    handleInboundItemChange(idx, "is_free_gift", true);
+                                    handleInboundItemChange(idx, "unit_price", 0);
+                                    return;
+                                  }
+                                  if (Number(raw) > 0 && item.is_free_gift) {
+                                    handleInboundItemChange(idx, "is_free_gift", false);
+                                  }
+                                  handleInboundItemChange(idx, "unit_price", raw === "" ? "" : (/^\d*\.\d{0,3}$/.test(raw) ? raw : Math.max(0, Math.round((parseFloat(raw) || 0) * 1000) / 1000)));
+                                }}
+                                onBlur={() => handleInboundItemChange(idx, "unit_price", Math.max(0, Math.round((Number(item.unit_price) || 0) * 1000) / 1000))}
+                                className={`w-full p-2 rounded-lg border bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono text-xs font-semibold ${
+                                  !(Number(item.unit_price) > 0) && !item.is_free_gift
+                                    ? "border-rose-300 dark:border-rose-800/80"
+                                    : item.is_free_gift
+                                    ? "border-emerald-400 dark:border-emerald-600 text-emerald-700 dark:text-emerald-300"
+                                    : "border-slate-200 dark:border-slate-700"
+                                }`}
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                                Thành Tiền (VNĐ)
+                              </label>
+                              <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-xs truncate" title={formatCurrency(lineSub)}>
+                                {formatCurrency(lineSub)}
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-bold text-indigo-600 dark:text-indigo-400 mb-1">
+                                %VAT
+                              </label>
+                              <div className="relative">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="100"
+                                  step="any"
+                                  value={item.vat_rate ?? 0}
+                                  onChange={(e) => handleInboundItemChange(idx, "vat_rate", e.target.value === "" ? "" : Math.max(0, parseFloat(e.target.value) || 0))}
+                                  onBlur={() => handleInboundItemChange(idx, "vat_rate", Math.max(0, Number(item.vat_rate) || 0))}
+                                  placeholder="0"
+                                  title="Nhập %VAT theo hóa đơn (VD: 0, 5, 8, 10)"
+                                  className="w-full p-2 pr-6 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 font-mono font-bold text-xs text-right"
+                                />
+                                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400 pointer-events-none">%</span>
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-bold text-indigo-600 dark:text-indigo-400 mb-1">
+                                Tiền VAT (VNĐ)
+                              </label>
+                              <div className="p-2 rounded-lg bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/50 text-indigo-700 dark:text-indigo-300 font-mono font-bold text-xs truncate" title={formatCurrency(lineVatAmt)}>
+                                {formatCurrency(lineVatAmt)}
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-bold text-orange-600 dark:text-orange-400 mb-1">
+                                Thành Tiền Sau VAT
+                              </label>
+                              <div className="p-2 rounded-lg bg-orange-50/80 dark:bg-orange-950/40 border border-orange-200/80 dark:border-orange-900/50 text-orange-700 dark:text-orange-300 font-mono font-black text-xs truncate" title={formatCurrency(lineAfterVat)}>
+                                {formatCurrency(lineAfterVat)}
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                      </div>
+                        );
+                      })()}
 
                       {/* Line 3: Điều kiện bảo quản, Vị trí lưu kho, Tình trạng QC, Ghi chú dòng hàng */}
                       <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
@@ -9184,7 +9212,13 @@ export const WarehouseModule: React.FC = () => {
                       Tổng SL nhập: <strong className="text-emerald-600 dark:text-emerald-400 font-mono">{inboundSummary.totalQty}</strong>
                     </span>
                     <span className="text-slate-600 dark:text-slate-400">
-                      Tổng giá trị phiếu nhập: <strong className="text-emerald-600 dark:text-emerald-400 font-mono">{formatCurrency(inboundSummary.totalAmount)}</strong>
+                      Tiền trước VAT: <strong className="text-slate-900 dark:text-white font-mono">{formatCurrency(inboundSummary.totalAmount)}</strong>
+                    </span>
+                    <span className="text-slate-600 dark:text-slate-400">
+                      Tiền VAT: <strong className="text-indigo-600 dark:text-indigo-400 font-mono">{formatCurrency(inboundSummary.totalVatAmount)}</strong>
+                    </span>
+                    <span className="text-slate-600 dark:text-slate-400">
+                      Tổng sau VAT: <strong className="text-orange-600 dark:text-orange-400 font-mono">{formatCurrency(inboundSummary.totalAfterVat)}</strong>
                     </span>
                   </div>
                 </div>
@@ -9214,7 +9248,13 @@ export const WarehouseModule: React.FC = () => {
                   Tổng SL: <strong className="text-emerald-600 dark:text-emerald-400 font-mono">{inboundSummary.totalQty}</strong>
                 </span>
                 <span className="text-slate-600 dark:text-slate-400">
-                  Tổng giá trị phiếu: <strong className="text-emerald-600 dark:text-emerald-400 font-mono">{formatCurrency(inboundSummary.totalAmount)}</strong>
+                  Trước VAT: <strong className="text-slate-900 dark:text-white font-mono">{formatCurrency(inboundSummary.totalAmount)}</strong>
+                </span>
+                <span className="text-slate-600 dark:text-slate-400">
+                  VAT: <strong className="text-indigo-600 dark:text-indigo-400 font-mono">{formatCurrency(inboundSummary.totalVatAmount)}</strong>
+                </span>
+                <span className="text-slate-600 dark:text-slate-400">
+                  Tổng sau VAT: <strong className="text-orange-600 dark:text-orange-400 font-mono">{formatCurrency(inboundSummary.totalAfterVat)}</strong>
                 </span>
               </div>
 
@@ -9278,7 +9318,7 @@ export const WarehouseModule: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mã Đơn Bán Hàng (SO) / Mục Đích *</label>
-                  <FastInput
+                  <input
                     type="text"
                     value={outboundForm.reference_code}
                     onChange={(e) => setOutboundForm({ ...outboundForm, reference_code: e.target.value })}
@@ -9288,7 +9328,7 @@ export const WarehouseModule: React.FC = () => {
                 </div>
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Khách Hàng / Bệnh Viện Tiếp Nhận</label>
-                  <FastInput
+                  <input
                     type="text"
                     value={outboundForm.customer_name || ""}
                     onChange={(e) => setOutboundForm({ ...outboundForm, customer_name: e.target.value })}
@@ -9430,7 +9470,7 @@ export const WarehouseModule: React.FC = () => {
 
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Ghi Chú Xuất Kho</label>
-                <FastTextarea
+                <textarea
                   rows={2}
                   value={outboundForm.notes || ""}
                   onChange={(e) => setOutboundForm({ ...outboundForm, notes: e.target.value })}
@@ -9545,7 +9585,7 @@ export const WarehouseModule: React.FC = () => {
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Ghi chú điều phối gửi phòng Cung Ứng
                 </label>
-                <FastTextarea
+                <textarea
                   rows={2}
                   value={prFormData.notes}
                   onChange={(e) => setPRFormData({ ...prFormData, notes: e.target.value })}
@@ -9641,7 +9681,7 @@ export const WarehouseModule: React.FC = () => {
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Phương án điều phối ưu tiên
                 </label>
-                <FastInput
+                <input
                   type="text"
                   value={pushSalesFormData.priorityStrategy}
                   onChange={(e) => setPushSalesFormData({ ...pushSalesFormData, priorityStrategy: e.target.value })}
@@ -9653,7 +9693,7 @@ export const WarehouseModule: React.FC = () => {
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Nội dung gửi Phòng Kinh Doanh &amp; Ứng Dụng
                 </label>
-                <FastTextarea
+                <textarea
                   rows={2}
                   value={pushSalesFormData.notes}
                   onChange={(e) => setPushSalesFormData({ ...pushSalesFormData, notes: e.target.value })}
@@ -9714,7 +9754,7 @@ export const WarehouseModule: React.FC = () => {
                     </span>
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Giao dịch thực hiện ngày {selectedTxDetail.date ? formatDayVN(selectedTxDetail.date) : ""} bởi {selectedTxDetail.performed_by || "Thủ kho ABT"}
+                    Giao dịch thực hiện ngày {selectedTxDetail.date ? formatDayVN(selectedTxDetail.date) : ""} bởi {selectedTxDetail.performed_by || "Thủ kho TBR"}
                   </p>
                 </div>
               </div>
@@ -9739,7 +9779,7 @@ export const WarehouseModule: React.FC = () => {
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 font-bold block uppercase">Thủ Kho / Người Thực Hiện</span>
-                  <strong className="text-slate-900 dark:text-white text-xs">{selectedTxDetail.performed_by || "Thủ kho ABT"}</strong>
+                  <strong className="text-slate-900 dark:text-white text-xs">{selectedTxDetail.performed_by || "Thủ kho TBR"}</strong>
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 font-bold block uppercase">Ngày Lập Chứng Từ</span>
@@ -9795,7 +9835,8 @@ export const WarehouseModule: React.FC = () => {
 
               {/* Items Table */}
               {(() => {
-                const allIts: any[] = Array.isArray(selectedTxDetail.items) ? selectedTxDetail.items : [];
+                const enrichedTx = enrichTransactionWithCatalog(selectedTxDetail);
+                const allIts: any[] = Array.isArray(enrichedTx.items) ? enrichedTx.items : [];
                 const dq = txDetailSearch.trim().toLowerCase();
                 const shown = dq ? allIts.map((it, i) => ({ it, i })).filter(({ it }) => txItemMatches(it, dq)) : allIts.map((it, i) => ({ it, i }));
                 return (
@@ -9804,7 +9845,7 @@ export const WarehouseModule: React.FC = () => {
                   <span className="font-bold text-slate-900 dark:text-white uppercase text-[11px] tracking-wide">
                     Danh Sách Mặt Hàng Trong Phiếu ({dq ? `${shown.length}/` : ""}{allIts.length} mặt hàng):
                   </span>
-                  <FastInput
+                  <input
                     type="text"
                     value={txDetailSearch}
                     onChange={(e) => setTxDetailSearch(e.target.value)}
@@ -9820,33 +9861,65 @@ export const WarehouseModule: React.FC = () => {
                         <th className="py-2.5 px-3">#</th>
                         <th className="py-2.5 px-3">Mã Hàng</th>
                         <th className="py-2.5 px-3">Tên Hàng Hóa</th>
+                        <th className="py-2.5 px-3">Hãng SX</th>
+                        <th className="py-2.5 px-3">Quy Cách</th>
                         <th className="py-2.5 px-3">Số Lô (LOT)</th>
                         <th className="py-2.5 px-3">Hạn Dùng (EXP)</th>
                         <th className="py-2.5 px-3 text-right">SL</th>
                         <th className="py-2.5 px-3">ĐVT</th>
                         <th className="py-2.5 px-3 text-right">Đơn Giá</th>
                         <th className="py-2.5 px-3 text-right">Thành Tiền</th>
+                        {selectedTxDetail.transaction_type === "INBOUND" && (
+                          <>
+                            <th className="py-2.5 px-3 text-center">%VAT</th>
+                            <th className="py-2.5 px-3 text-right">Tiền VAT</th>
+                            <th className="py-2.5 px-3 text-right">Thành Tiền Sau VAT</th>
+                          </>
+                        )}
                         <th className="py-2.5 px-3">Nhiệt Độ / Vị Trí</th>
                         <th className="py-2.5 px-3">Tình Trạng QC</th>
                         <th className="py-2.5 px-3">Ghi Chú</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
-                      {shown.map(({ it, i: idx }) => (
+                      {shown.map(({ it, i: idx }) => {
+                        const hasPrice = it.unit_price !== undefined && it.unit_price !== null;
+                        const lineSub = hasPrice ? Math.round((Number(it.unit_price) || 0) * (Number(it.quantity) || 0)) : 0;
+                        const vatRate = Math.max(0, Number(it.vat_rate ?? it.vat ?? 0) || 0);
+                        const vatAmt = hasPrice
+                          ? (it.vat_amount !== undefined && it.vat_amount !== null ? Math.round(Number(it.vat_amount) || 0) : Math.round(lineSub * (vatRate / 100)))
+                          : 0;
+                        const afterVat = lineSub + vatAmt;
+                        return (
                         <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                           <td className="py-2 px-3 font-mono text-slate-400">{idx + 1}</td>
                           <td className="py-2 px-3 font-mono font-black text-[13px] text-slate-900 dark:text-white whitespace-nowrap"><Hl text={it.product_code || it.productCode} q={dq} /></td>
                           <td className="py-2 px-3 font-semibold text-slate-800 dark:text-slate-200 max-w-[260px]"><Hl text={it.product_name || it.name} q={dq} /></td>
+                          <td className="py-2 px-3 font-bold text-indigo-700 dark:text-indigo-300 whitespace-nowrap">{it.manufacturer || "—"}</td>
+                          <td className="py-2 px-3 text-slate-700 dark:text-slate-300 whitespace-nowrap">{it.specification || "—"}</td>
                           <td className="py-2 px-3 font-mono text-orange-600 dark:text-orange-400 font-bold whitespace-nowrap"><Hl text={it.lot_number || "—"} q={dq} /></td>
                           <td className="py-2 px-3 font-mono text-emerald-600 dark:text-emerald-400 font-bold">{formatVNDate(it.expiry_date, it.expiry_date || "—")}</td>
                           <td className="py-2 px-3 text-right font-mono font-black text-slate-900 dark:text-white">{it.quantity}</td>
                           <td className="py-2 px-3 text-slate-500">{it.unit || "Hộp"}</td>
                           <td className="py-2 px-3 text-right font-mono">
-                            {it.unit_price !== undefined && it.unit_price !== null ? new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 3 }).format(Math.round((Number(it.unit_price) || 0) * 1000) / 1000) : "—"}
+                            {hasPrice ? new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 3 }).format(Math.round((Number(it.unit_price) || 0) * 1000) / 1000) : "—"}
                           </td>
                           <td className="py-2 px-3 text-right font-mono font-bold">
-                            {it.unit_price !== undefined && it.unit_price !== null ? new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 3 }).format(Math.round(((Number(it.unit_price) || 0) * (Number(it.quantity) || 0)) * 1000) / 1000) : "—"}
+                            {hasPrice ? new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(lineSub) : "—"}
                           </td>
+                          {selectedTxDetail.transaction_type === "INBOUND" && (
+                            <>
+                              <td className="py-2 px-3 text-center font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                                {hasPrice ? `${vatRate}%` : "—"}
+                              </td>
+                              <td className="py-2 px-3 text-right font-mono font-semibold text-indigo-600 dark:text-indigo-400">
+                                {hasPrice ? new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(vatAmt) : "—"}
+                              </td>
+                              <td className="py-2 px-3 text-right font-mono font-black text-orange-600 dark:text-orange-400">
+                                {hasPrice ? new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(afterVat) : "—"}
+                              </td>
+                            </>
+                          )}
                           <td className="py-2 px-3 text-slate-600 dark:text-slate-400">
                             <div>{it.storage_condition || it.storage_location || "Kho thường"}</div>
                             {it.shelf_position && <div className="text-[10px] text-slate-400 font-mono">[{it.shelf_position}]</div>}
@@ -9860,18 +9933,25 @@ export const WarehouseModule: React.FC = () => {
                             {it.notes || it.item_notes || "—"}
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                       {shown.length === 0 && (
-                        <tr><td colSpan={12} className="py-6 text-center text-slate-500">Không có dòng hàng khớp "{txDetailSearch}"</td></tr>
+                        <tr><td colSpan={selectedTxDetail.transaction_type === "INBOUND" ? 17 : 14} className="py-6 text-center text-slate-500">Không có dòng hàng khớp "{txDetailSearch}"</td></tr>
                       )}
                     </tbody>
                     {shown.length > 0 && (() => {
                       const sumQty = shown.reduce((s, { it }) => s + (Number(it.quantity) || 0), 0);
-                      const sumAmt = shown.reduce((s, { it }) => s + (Number(it.quantity) || 0) * (Number(it.unit_price ?? it.cost_price ?? it.price) || 0), 0);
+                      const sumAmt = shown.reduce((s, { it }) => s + Math.round((Number(it.quantity) || 0) * (Number(it.unit_price ?? it.cost_price ?? it.price) || 0)), 0);
+                      const sumVat = shown.reduce((s, { it }) => {
+                        const sub = Math.round((Number(it.quantity) || 0) * (Number(it.unit_price ?? it.cost_price ?? it.price) || 0));
+                        const vr = Math.max(0, Number(it.vat_rate ?? it.vat ?? 0) || 0);
+                        return s + (it.vat_amount !== undefined && it.vat_amount !== null ? Math.round(Number(it.vat_amount) || 0) : Math.round(sub * (vr / 100)));
+                      }, 0);
+                      const sumAfterVat = sumAmt + sumVat;
                       return (
                         <tfoot className="bg-slate-100 dark:bg-slate-800/90 border-t-2 border-slate-200 dark:border-slate-700 font-bold text-xs">
                           <tr>
-                            <td colSpan={5} className="py-2.5 px-3 text-right uppercase text-slate-700 dark:text-slate-200">
+                            <td colSpan={7} className="py-2.5 px-3 text-right uppercase text-slate-700 dark:text-slate-200">
                               Tổng cộng ({shown.length} dòng):
                             </td>
                             <td className="py-2.5 px-3 text-right font-mono font-black text-emerald-600 dark:text-emerald-400">
@@ -9884,6 +9964,17 @@ export const WarehouseModule: React.FC = () => {
                             <td className="py-2.5 px-3 text-right font-mono font-black text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
                               {sumAmt > 0 ? `${Math.round(sumAmt).toLocaleString("vi-VN")} đ` : "—"}
                             </td>
+                            {selectedTxDetail.transaction_type === "INBOUND" && (
+                              <>
+                                <td className="py-2.5 px-3 text-center text-slate-500 font-normal text-[10px]">VAT:</td>
+                                <td className="py-2.5 px-3 text-right font-mono font-bold text-indigo-600 dark:text-indigo-400 whitespace-nowrap">
+                                  {sumAmt > 0 ? `${Math.round(sumVat).toLocaleString("vi-VN")} đ` : "—"}
+                                </td>
+                                <td className="py-2.5 px-3 text-right font-mono font-black text-orange-600 dark:text-orange-400 whitespace-nowrap">
+                                  {sumAmt > 0 ? `${Math.round(sumAfterVat).toLocaleString("vi-VN")} đ` : "—"}
+                                </td>
+                              </>
+                            )}
                             <td colSpan={3} className="py-2.5 px-3"></td>
                           </tr>
                         </tfoot>
@@ -9913,7 +10004,10 @@ export const WarehouseModule: React.FC = () => {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => exportWarehouseSlipExcel(selectedTxDetail, txFinanceMeta(selectedTxDetail))}
+                  onClick={() => {
+                    const enrichedTx = enrichTransactionWithCatalog(selectedTxDetail);
+                    exportWarehouseSlipExcel(enrichedTx, txFinanceMeta(enrichedTx));
+                  }}
                   className="px-4 py-2 rounded-xl text-xs font-bold border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 flex items-center gap-1.5 cursor-pointer"
                   title="Tải phiếu này ra file Excel (.xlsx)"
                 >
@@ -9922,7 +10016,10 @@ export const WarehouseModule: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => printWarehouseSlip(selectedTxDetail, txFinanceMeta(selectedTxDetail), companyConfig)}
+                  onClick={() => {
+                    const enrichedTx = enrichTransactionWithCatalog(selectedTxDetail);
+                    printWarehouseSlip(enrichedTx, txFinanceMeta(enrichedTx), companyConfig);
+                  }}
                   className="px-4 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-1.5 cursor-pointer"
                   title="In phiếu khổ A4 (mẫu in trắng, tiêu đề bảng lặp lại mỗi trang)"
                 >
@@ -10209,7 +10306,7 @@ export const WarehouseModule: React.FC = () => {
                   <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
                     Ghi chú / Mục đích giữ chỗ
                   </label>
-                  <FastTextarea
+                  <textarea
                     rows={2}
                     value={reserveFormData.notes}
                     onChange={(e) => setReserveFormData({ ...reserveFormData, notes: e.target.value })}
@@ -10293,7 +10390,7 @@ export const WarehouseModule: React.FC = () => {
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                     Mã Thành Phần Con (Child SKU) *
                   </label>
-                  <FastInput
+                  <input
                     type="text"
                     value={componentFormData.component_code}
                     onChange={(e) => setComponentFormData({ ...componentFormData, component_code: e.target.value })}
@@ -10307,7 +10404,7 @@ export const WarehouseModule: React.FC = () => {
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Tên Thành Phần / Phụ Kiện Đính Kèm *
                 </label>
-                <FastInput
+                <input
                   type="text"
                   value={componentFormData.component_name}
                   onChange={(e) => setComponentFormData({ ...componentFormData, component_name: e.target.value })}
@@ -10321,7 +10418,7 @@ export const WarehouseModule: React.FC = () => {
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                     Quy Cách Kỹ Thuật
                   </label>
-                  <FastInput
+                  <input
                     type="text"
                     value={componentFormData.specification}
                     onChange={(e) => setComponentFormData({ ...componentFormData, specification: e.target.value })}
@@ -10334,7 +10431,7 @@ export const WarehouseModule: React.FC = () => {
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                     Đơn Vị Tính (ĐVT)
                   </label>
-                  <FastInput
+                  <input
                     type="text"
                     value={componentFormData.unit}
                     onChange={(e) => setComponentFormData({ ...componentFormData, unit: e.target.value })}
@@ -10410,7 +10507,7 @@ export const WarehouseModule: React.FC = () => {
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Ghi Chú Kỹ Thuật / Lưu Ý Sử Dụng
                 </label>
-                <FastTextarea
+                <textarea
                   rows={2}
                   value={componentFormData.notes}
                   onChange={(e) => setComponentFormData({ ...componentFormData, notes: e.target.value })}
@@ -10502,7 +10599,7 @@ export const WarehouseModule: React.FC = () => {
                   <span className="font-bold uppercase text-purple-700 dark:text-purple-400 block text-xs">
                     I. ĐẠI DIỆN BÊN GIAO ({companyConfig.companyName ? companyConfig.companyName.toUpperCase() : "BÊN GIAO"})
                   </span>
-                  <div>Đơn vị: <strong>{companyConfig.companyName || "CÔNG TY TNHH THƯƠNG MẠI & PHÂN PHỐI ABT"}</strong></div>
+                  <div>Đơn vị: <strong>{companyConfig.companyName || "CÔNG TY TNHH THƯƠNG MẠI & PHÂN PHỐI TBR"}</strong></div>
                   <div>Kho xuất hàng: <strong>{handoverData.warehouse_name}</strong></div>
                   <div>Người thực hiện bàn giao: <strong>{handoverData.performed_by}</strong></div>
                 </div>
@@ -10797,7 +10894,7 @@ export const WarehouseModule: React.FC = () => {
                                 </span>
                               </div>
                               <div className="text-[10px] text-slate-500 mt-1">
-                                📍 {comp.shelf_position || "Kho ABT"}
+                                📍 {comp.shelf_position || "Kho TBR"}
                               </div>
                               {isDiffTemp && (
                                 <span className="inline-block text-[9px] text-amber-600 dark:text-amber-400 font-bold mt-0.5">
@@ -10924,7 +11021,7 @@ export const WarehouseModule: React.FC = () => {
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                     Số lô (Lot No) *
                   </label>
-                  <FastInput
+                  <input
                     type="text"
                     value={editStockForm.lot_number}
                     onChange={(e) => setEditStockForm({ ...editStockForm, lot_number: e.target.value })}
@@ -10993,7 +11090,7 @@ export const WarehouseModule: React.FC = () => {
                   <option value="CUSTOM">Khác (Tùy chỉnh nhiệt độ bảo quản...)</option>
                 </select>
                 {editStockForm.storage_condition === "CUSTOM" && (
-                  <FastInput
+                  <input
                     type="text"
                     value={editStockForm.custom_storage_condition}
                     onChange={(e) => setEditStockForm({ ...editStockForm, custom_storage_condition: e.target.value })}
@@ -11028,7 +11125,7 @@ export const WarehouseModule: React.FC = () => {
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                     Vị trí Tủ / Kệ lưu trữ
                   </label>
-                  <FastInput
+                  <input
                     type="text"
                     value={editStockForm.shelf_position}
                     onChange={(e) => setEditStockForm({ ...editStockForm, shelf_position: e.target.value })}

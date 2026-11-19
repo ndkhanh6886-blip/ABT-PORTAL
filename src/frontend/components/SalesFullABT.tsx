@@ -16551,14 +16551,23 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     date: slip.deliveryDate ? parseSlipDateToIso(slip.deliveryDate) : todayVN(),
                     performed_by: slip.dispatcherName || loggedInStaff?.full_name || "Thủ kho ABT",
                     warehouse_name: is13B ? "Kho Trung Tâm" : (slip.dispatchLocation || "Kho Trung Tâm"),
-                    items: valid.map((it: any) => ({
-                        // Luôn xuất theo mã của dòng: lô trùng số của mã khác không được trừ tồn sang mã đó
-                        product_code: getItemCode(it),
-                        product_name: it.productName,
-                        quantity: Number(it.quantity) || 0,
-                        lot_number: it.lotNo || it.lotNumber || "",
-                        expiry_date: it.expDate || it.expiryDate || ""
-                    })),
+                    items: valid.map((it: any) => {
+                        const code = getItemCode(it);
+                        const prod = allSalesProducts.find(p => String(p.code || "").trim().toLowerCase() === String(code || "").trim().toLowerCase());
+                        return {
+                            // Luôn xuất theo mã của dòng: lô trùng số của mã khác không được trừ tồn sang mã đó
+                            product_code: code,
+                            product_name: it.productName || prod?.name || code,
+                            manufacturer: getProductManufacturer({ ...it, productCode: code, productName: it.productName || prod?.name }) || prod?.brand || "",
+                            specification: it.specification || getProductSpecificationForForm({ ...it, productCode: code, productName: it.productName || prod?.name }) || prod?.specification || "",
+                            unit: it.unit || prod?.unit || "Hộp",
+                            storage_condition: it.storageCondition || getStorageConditionForProduct(code) || "",
+                            quantity: Number(it.quantity) || 0,
+                            lot_number: it.lotNo || it.lotNumber || "",
+                            expiry_date: it.expDate || it.expiryDate || "",
+                            notes: it.notes || ""
+                        };
+                    }),
                     notes: note
                 })
             });

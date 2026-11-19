@@ -12,6 +12,9 @@ export type SlipFinanceMeta = {
   shipping: string;
   hasPrice: boolean;
   total: number;
+  subtotal?: number;
+  vatAmount?: number;
+  totalAfterVat?: number;
 };
 
 export type SlipCompany = {
@@ -28,7 +31,8 @@ const esc = (v: any) =>
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 
-const money = (n: number) => new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Number(n) || 0);
+const money = (n: number) => new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Math.round(Number(n) || 0));
+const unitMoney = (n: number) => new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 3 }).format(Math.round((Number(n) || 0) * 1000) / 1000);
 
 const slipItems = (tx: any): any[] => (Array.isArray(tx?.items) ? tx.items : []);
 
@@ -49,21 +53,36 @@ export function buildWarehouseSlipHtml(tx: any, meta: SlipFinanceMeta, company: 
   const title = isIn ? "PHIẾU NHẬP KHO" : "PHIẾU XUẤT KHO";
   const items = slipItems(tx);
   const showPrice = items.some(hasUnitPrice);
+  const showVat = isIn && showPrice;
   const partner = txPartnerName(tx, meta);
   const totalQty = items.reduce((s, it) => s + (Number(it?.quantity) || 0), 0);
+  const sumSubtotal = items.reduce((s, it) => s + Math.round((Number(it?.quantity) || 0) * (Number(it?.unit_price) || 0)), 0);
+  const sumVat = items.reduce((s, it) => {
+    const sub = Math.round((Number(it?.quantity) || 0) * (Number(it?.unit_price) || 0));
+    const vr = Math.max(0, Number(it?.vat_rate ?? it?.vat ?? 0) || 0);
+    return s + (it?.vat_amount !== undefined && it?.vat_amount !== null ? Math.round(Number(it.vat_amount) || 0) : Math.round(sub * (vr / 100)));
+  }, 0);
+  const sumAfterVat = sumSubtotal + sumVat;
 
   const rows = items
     .map((it: any, i: number) => {
       const price = hasUnitPrice(it) ? Number(it.unit_price) || 0 : null;
+      const lineSub = price === null ? null : Math.round(price * (Number(it.quantity) || 0));
+      const vatRate = Math.max(0, Number(it?.vat_rate ?? it?.vat ?? 0) || 0);
+      const vatAmt = lineSub === null ? null : (it?.vat_amount !== undefined && it?.vat_amount !== null ? Math.round(Number(it.vat_amount) || 0) : Math.round(lineSub * (vatRate / 100)));
+      const afterVat = lineSub === null ? null : lineSub + (vatAmt || 0);
       return `<tr>
         <td class="c">${i + 1}</td>
         <td class="code">${esc(it.product_code || it.productCode)}</td>
-        <td class="name">${esc(it.product_name || it.name)}${it.specification ? `<div class="sub">${esc(it.specification)}</div>` : ""}</td>
+        <td class="name">${esc(it.product_name || it.name)}</td>
+        <td>${esc(it.manufacturer || it.brand || "—")}</td>
+        <td>${esc(it.specification || "—")}</td>
         <td class="mono">${esc(it.lot_number || "—")}</td>
         <td class="mono c">${esc(it.expiry_date ? formatDayVN(it.expiry_date) || it.expiry_date : "—")}</td>
         <td>${esc(it.unit || "")}</td>
         <td class="r b">${esc(it.quantity)}</td>
-        ${showPrice ? `<td class="r">${price === null ? "—" : money(price)}</td><td class="r b">${price === null ? "—" : money(price * (Number(it.quantity) || 0))}</td>` : ""}
+        ${showPrice ? `<td class="r">${price === null ? "—" : unitMoney(price)}</td><td class="r b">${lineSub === null ? "—" : money(lineSub)}</td>` : ""}
+        ${showVat ? `<td class="c">${price === null ? "—" : `${vatRate}%`}</td><td class="r">${vatAmt === null ? "—" : money(vatAmt)}</td><td class="r b">${afterVat === null ? "—" : money(afterVat)}</td>` : ""}
         <td class="sub2">${esc(it.storage_condition || "")}${it.shelf_position ? ` · ${esc(it.shelf_position)}` : ""}</td>
         <td class="sub2">${esc(it.notes || it.item_notes || "—")}</td>
       </tr>`;
@@ -124,13 +143,13 @@ export function buildWarehouseSlipHtml(tx: any, meta: SlipFinanceMeta, company: 
   ${tx?.notes ? `<div class="note"><b>Ghi chú:</b> ${esc(tx.notes)}</div>` : ""}
   <table>
     <thead><tr>
-      <th class="c">#</th><th>Mã hàng</th><th>Tên hàng hóa</th><th>Số lô</th><th class="c">Hạn dùng</th><th>ĐVT</th><th>SL</th>
-      ${showPrice ? "<th>Đơn giá</th><th>Thành tiền</th>" : ""}<th>Bảo quản / Vị trí</th><th>Ghi chú</th>
+      <th class="c">#</th><th>Mã hàng</th><th>Tên hàng hóa</th><th>Hãng SX</th><th>Quy cách</th><th>Số lô</th><th class="c">Hạn dùng</th><th>ĐVT</th><th>SL</th>
+      ${showPrice ? "<th>Đơn giá</th><th>Thành tiền</th>" : ""}${showVat ? "<th class=\"c\">%VAT</th><th>Tiền VAT</th><th>Thành tiền sau VAT</th>" : ""}<th>Bảo quản / Vị trí</th><th>Ghi chú</th>
     </tr></thead>
     <tbody>${rows}</tbody>
     <tfoot><tr>
-      <td colspan="6" class="r">Tổng cộng (${items.length} dòng)</td><td class="r">${totalQty}</td>
-      ${showPrice ? `<td></td><td class="r">${money(meta.total)}</td>` : ""}<td></td><td></td>
+      <td colspan="8" class="r">Tổng cộng (${items.length} dòng)</td><td class="r">${totalQty}</td>
+      ${showPrice ? `<td></td><td class="r">${money(sumSubtotal)}</td>` : ""}${showVat ? `<td></td><td class="r">${money(sumVat)}</td><td class="r">${money(sumAfterVat)}</td>` : ""}<td></td><td></td>
     </tr></tfoot>
   </table>
   <div class="sign">
@@ -159,6 +178,7 @@ export function exportWarehouseSlipExcel(tx: any, meta: SlipFinanceMeta) {
   const partner = txPartnerName(tx, meta);
   const items = slipItems(tx);
   const showPrice = items.some(hasUnitPrice);
+  const showVat = isIn && showPrice;
   const header: any[][] = [
     [isIn ? "PHIẾU NHẬP KHO" : "PHIẾU XUẤT KHO", tx?.transaction_code || ""],
     ["Ngày", tx?.date ? formatDayVN(tx.date) : ""],
@@ -170,20 +190,28 @@ export function exportWarehouseSlipExcel(tx: any, meta: SlipFinanceMeta) {
     ["Ghi chú", tx?.notes || ""],
     [],
   ];
-  const cols = ["STT", "Mã hàng", "Tên hàng hóa", "Quy cách", "Số lô", "Hạn dùng", "ĐVT", "Số lượng",
-    ...(showPrice ? ["Đơn giá", "Thành tiền"] : []), "Điều kiện bảo quản", "Vị trí kệ", "Tình trạng QC", "Ghi chú"];
+  const cols = ["STT", "Mã hàng", "Tên hàng hóa", "Hãng SX", "Quy cách", "Số lô", "Hạn dùng", "ĐVT", "Số lượng",
+    ...(showPrice ? ["Đơn giá", "Thành tiền"] : []),
+    ...(showVat ? ["%VAT", "Tiền VAT", "Thành tiền sau VAT"] : []),
+    "Điều kiện bảo quản", "Vị trí kệ", "Tình trạng QC", "Ghi chú"];
   const body = items.map((it: any, i: number) => {
     const price = hasUnitPrice(it) ? Number(it.unit_price) || 0 : "";
+    const lineSub = price === "" ? "" : Math.round((price as number) * (Number(it.quantity) || 0));
+    const vatRate = Math.max(0, Number(it?.vat_rate ?? it?.vat ?? 0) || 0);
+    const vatAmt = lineSub === "" ? "" : (it?.vat_amount !== undefined && it?.vat_amount !== null ? Math.round(Number(it.vat_amount) || 0) : Math.round((lineSub as number) * (vatRate / 100)));
+    const afterVat = lineSub === "" ? "" : (lineSub as number) + (vatAmt as number);
     return [
       i + 1,
       it.product_code || it.productCode || "",
       it.product_name || it.name || "",
+      it.manufacturer || it.brand || "",
       it.specification || "",
       it.lot_number || "",
       it.expiry_date ? formatDayVN(it.expiry_date) || it.expiry_date : "",
       it.unit || "",
       Number(it.quantity) || 0,
-      ...(showPrice ? [price, price === "" ? "" : (price as number) * (Number(it.quantity) || 0)] : []),
+      ...(showPrice ? [price, lineSub] : []),
+      ...(showVat ? [`${vatRate}%`, vatAmt, afterVat] : []),
       it.storage_condition || "",
       it.shelf_position || "",
       it.qc_status || "",
@@ -191,8 +219,10 @@ export function exportWarehouseSlipExcel(tx: any, meta: SlipFinanceMeta) {
     ];
   });
   const ws = XLSX.utils.aoa_to_sheet([...header, cols, ...body]);
-  ws["!cols"] = [{ wch: 6 }, { wch: 18 }, { wch: 48 }, { wch: 16 }, { wch: 18 }, { wch: 12 }, { wch: 8 }, { wch: 10 },
-    ...(showPrice ? [{ wch: 14 }, { wch: 16 }] : []), { wch: 24 }, { wch: 18 }, { wch: 22 }, { wch: 24 }];
+  ws["!cols"] = [{ wch: 6 }, { wch: 18 }, { wch: 48 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 12 }, { wch: 8 }, { wch: 10 },
+    ...(showPrice ? [{ wch: 14 }, { wch: 16 }] : []),
+    ...(showVat ? [{ wch: 8 }, { wch: 14 }, { wch: 18 }] : []),
+    { wch: 24 }, { wch: 18 }, { wch: 22 }, { wch: 24 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, isIn ? "PhieuNhapKho" : "PhieuXuatKho");
   const safeCode = String(tx?.transaction_code || "phieu").replace(/[^\w.-]+/g, "_");

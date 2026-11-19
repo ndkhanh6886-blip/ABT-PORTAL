@@ -1532,6 +1532,38 @@ export async function POST(req: NextRequest) {
       // Deduct with lot precision (FEFO when no lot is given); quarantined lots are never shipped.
       const shortfalls: string[] = [];
       await withTransaction(async (c) => {
+        const codesToLookup = Array.from(
+          new Set(
+            (Array.isArray(items) ? items : [])
+              .map((it: any) => String(it?.product_code || it?.productCode || "").trim())
+              .filter(Boolean)
+          )
+        );
+        const prodMetaByCode = new Map<string, any>();
+        if (codesToLookup.length > 0) {
+          const pRes = await c.query(
+            `SELECT code, name, manufacturer, specification, unit, storage_condition
+               FROM products
+              WHERE LOWER(TRIM(code)) = ANY($1::text[])`,
+            [codesToLookup.map((k) => k.toLowerCase())]
+          );
+          for (const pr of pRes.rows) {
+            prodMetaByCode.set(String(pr.code || "").trim().toLowerCase(), pr);
+          }
+        }
+        const enrichedOutboundItems = (Array.isArray(items) ? items : []).map((it: any) => {
+          const pCode = String(it?.product_code || it?.productCode || "").trim();
+          const meta = prodMetaByCode.get(pCode.toLowerCase());
+          return {
+            ...it,
+            product_code: pCode,
+            product_name: it?.product_name || it?.productName || meta?.name || pCode,
+            manufacturer: it?.manufacturer || it?.brand || meta?.manufacturer || "",
+            specification: it?.specification || meta?.specification || "",
+            unit: it?.unit || meta?.unit || "Hộp",
+            storage_condition: it?.storage_condition || it?.storageCondition || meta?.storage_condition || "Kho thường",
+          };
+        });
         for (const item of lines) {
           const pCode = item.product_code || item.productCode;
           const res = await removeStock(c, {
@@ -1550,7 +1582,7 @@ export async function POST(req: NextRequest) {
         await c.query(
           `INSERT INTO inventory_transactions (transaction_code, transaction_type, reference_code, date, performed_by, warehouse_name, items, notes)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [code, "OUTBOUND", reference_code, normalizeExcelDateToISO(date, todayVN()), performed_by || "Thủ kho ABT", warehouse_name || "Kho Trung Tâm", JSON.stringify(items || []), finalNotes]
+          [code, "OUTBOUND", reference_code, normalizeExcelDateToISO(date, todayVN()), performed_by || "Thủ kho ABT", warehouse_name || "Kho Trung Tâm", JSON.stringify(enrichedOutboundItems), finalNotes]
         );
       });
 
