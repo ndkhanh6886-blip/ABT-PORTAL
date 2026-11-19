@@ -170,13 +170,35 @@ const createSubVendorSchema = z.object({
   address: z.string().trim().max(400).optional().nullable(),
 });
 
+let partnerContactColumnsEnsured = false;
+
+export async function ensurePartnerContactColumns(tx: Tx) {
+  if (partnerContactColumnsEnsured) return;
+  await tx.query("SAVEPOINT sp_partner_contact_cols");
+  try {
+    await tx.query(`
+      ALTER TABLE master.partner
+        ADD COLUMN IF NOT EXISTS contact_name text,
+        ADD COLUMN IF NOT EXISTS phone text,
+        ADD COLUMN IF NOT EXISTS email text,
+        ADD COLUMN IF NOT EXISTS asl_status text NOT NULL DEFAULT 'APPROVED'
+    `);
+    await tx.query("RELEASE SAVEPOINT sp_partner_contact_cols");
+    partnerContactColumnsEnsured = true;
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_partner_contact_cols").catch(() => {});
+  }
+}
+
 export async function createSubcontractVendor(tx: Tx, actor: AuthzActor, input: unknown) {
+  await ensurePartnerContactColumns(tx);
   const d = parseInput(createSubVendorSchema, input);
   await authorizeAnywhere(tx, actor, "device.subcontract.manage");
   const code = d.code.toUpperCase();
   const existing = (await tx.query("SELECT id FROM master.partner WHERE upper(code) = $1 LIMIT 1", [code])).rows[0];
+  let partnerRow;
   if (existing) {
-    const updated = (
+    partnerRow = (
       await tx.query(
         `UPDATE master.partner
             SET name = $2, is_supplier = true, is_subcontractor = true,
@@ -189,24 +211,70 @@ export async function createSubcontractVendor(tx: Tx, actor: AuthzActor, input: 
         [existing.id, d.name, d.tax_code || null, d.contact_name || null, d.phone || null, d.email || null, d.address || null, actor.userId]
       )
     ).rows[0];
-    return updated;
+  } else {
+    partnerRow = (
+      await tx.query(
+        `INSERT INTO master.partner
+           (code, name, is_supplier, is_subcontractor, tax_code, contact_name, phone, email, address, asl_status, status, created_by, updated_by)
+         VALUES ($1, $2, true, true, $3, $4, $5, $6, $7, 'APPROVED', 'ACTIVE', $8, $8)
+         RETURNING *`,
+        [code, d.name, d.tax_code || null, d.contact_name || null, d.phone || null, d.email || null, d.address || null, actor.userId]
+      )
+    ).rows[0];
+    await writeAudit(tx, actor, {
+      entityType: "partner",
+      entityId: partnerRow.id,
+      action: "create",
+      changes: { code: [null, code], name: [null, d.name] },
+    });
   }
-  const inserted = (
-    await tx.query(
-      `INSERT INTO master.partner
-         (code, name, is_supplier, is_subcontractor, tax_code, contact_name, phone, email, address, asl_status, status, created_by, updated_by)
-       VALUES ($1, $2, true, true, $3, $4, $5, $6, $7, 'APPROVED', 'ACTIVE', $8, $8)
-       RETURNING *`,
-      [code, d.name, d.tax_code || null, d.contact_name || null, d.phone || null, d.email || null, d.address || null, actor.userId]
-    )
-  ).rows[0];
+
+  if (d.contact_name?.trim() || d.phone?.trim() || d.email?.trim()) {
+    const contactName = d.contact_name?.trim() || d.name;
+    const exContact = (
+      await tx.query("SELECT id FROM master.partner_contact WHERE partner_id = $1 ORDER BY id LIMIT 1", [partnerRow.id])
+    ).rows[0];
+    if (exContact) {
+      await tx.query(
+        "UPDATE master.partner_contact SET name = $2, phone = COALESCE($3, phone), email = COALESCE($4, email), status = 'ACTIVE' WHERE id = $1",
+        [exContact.id, contactName, d.phone?.trim() || null, d.email?.trim() || null]
+      );
+    } else {
+      await tx.query(
+        "INSERT INTO master.partner_contact (partner_id, name, phone, email, role, status) VALUES ($1, $2, $3, $4, 'Liên hệ gia công', 'ACTIVE')",
+        [partnerRow.id, contactName, d.phone?.trim() || null, d.email?.trim() || null]
+      );
+    }
+  }
+
+  return partnerRow;
+}
+
+export async function deleteSubcontractVendor(tx: Tx, actor: AuthzActor, input: unknown) {
+  await ensurePartnerContactColumns(tx);
+  await authorizeAnywhere(tx, actor, "device.subcontract.manage");
+  const raw = (input ?? {}) as Record<string, unknown>;
+  const id = parseInput(z.string().uuid("ID đơn vị gia công không hợp lệ"), raw.id);
+  const cur = (await tx.query("SELECT * FROM master.partner WHERE id = $1 FOR UPDATE", [id])).rows[0];
+  if (!cur) throw notFound("đơn vị gia công");
+
+  const usedPart = (await tx.query("SELECT 1 FROM device.subcontract_part WHERE vendor_id = $1 LIMIT 1", [id])).rowCount;
+  const usedOrder = (await tx.query("SELECT 1 FROM device.subcontract_order WHERE vendor_id = $1 LIMIT 1", [id])).rowCount;
+  if (usedPart || usedOrder) {
+    await tx.query("UPDATE master.partner SET status = 'INACTIVE', updated_at = now(), updated_by = $2 WHERE id = $1", [id, actor.userId]);
+  } else {
+    await tx.query("DELETE FROM master.partner_contact WHERE partner_id = $1", [id]);
+    await tx.query("DELETE FROM master.partner WHERE id = $1", [id]).catch(async () => {
+      await tx.query("UPDATE master.partner SET status = 'INACTIVE', updated_at = now(), updated_by = $2 WHERE id = $1", [id, actor.userId]);
+    });
+  }
   await writeAudit(tx, actor, {
     entityType: "partner",
-    entityId: inserted.id,
-    action: "create",
-    changes: { code: [null, code], name: [null, d.name] },
+    entityId: id,
+    action: "delete",
+    changes: { code: [cur.code, null], name: [cur.name, null] },
   });
-  return inserted;
+  return { deleted: id };
 }
 
 export async function listSubcontractParts(tx: Tx, actor: AuthzActor) {

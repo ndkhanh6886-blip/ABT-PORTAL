@@ -24,7 +24,17 @@ export interface DeviceOptions {
   units: { id: string; code: string; name: string; unit_type: string }[];
   warehouses: { id: string; code: string; name: string; owner_org_unit_id: string }[];
   items: { id: string; code: string; name: string; item_type: string; base_uom: string; tracking: string }[];
-  vendors: { id: string; code: string; name: string }[];
+  vendors: {
+    id: string;
+    code: string;
+    name: string;
+    tax_code?: string | null;
+    contact_name?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    address?: string | null;
+    is_subcontractor?: boolean;
+  }[];
   serial_units: {
     id: string;
     serial_no: string;

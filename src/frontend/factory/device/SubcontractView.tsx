@@ -651,6 +651,56 @@ export function SubcontractView() {
             </div>
           )}
 
+          {(opts.data?.vendors?.length ?? 0) > 0 && (
+            <div className="mb-3 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50">
+              <div className="text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1.5">
+                🏭 Danh sách Đơn vị Gia công ngoài đã khai báo ({opts.data?.vendors.length} đơn vị):
+              </div>
+              <Table head={["Mã ĐV", "Tên đơn vị / Xưởng gia công", "Người liên hệ", "Số điện thoại", "Thao tác"]}>
+                {(opts.data?.vendors ?? []).map((v) => (
+                  <tr key={v.id}>
+                    <td className="py-1.5 pr-3 font-mono font-bold text-xs text-emerald-700 dark:text-emerald-400">{v.code}</td>
+                    <td className="py-1.5 pr-3 text-xs font-medium">{v.name}</td>
+                    <td className="py-1.5 pr-3 text-xs">{v.contact_name || "—"}</td>
+                    <td className="py-1.5 pr-3 text-xs font-mono">{v.phone || "—"}</td>
+                    <td className="py-1.5 pr-3 text-right whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          onClick={() => {
+                            setVendorForm({
+                              code: v.code,
+                              name: v.name,
+                              tax_code: v.tax_code ?? "",
+                              contact_name: v.contact_name ?? "",
+                              phone: v.phone ?? "",
+                              address: v.address ?? "",
+                            });
+                            setShowVendorForm(true);
+                          }}
+                        >
+                          Sửa
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          className="text-rose-600 dark:text-rose-400"
+                          disabled={postMut.isPending}
+                          onClick={() => {
+                            if (window.confirm(`Xóa đơn vị gia công ${v.code} (${v.name})?`)) {
+                              postMut.mutate({ kind: "delete_vendor", id: v.id });
+                            }
+                          }}
+                        >
+                          Xóa
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </Table>
+            </div>
+          )}
+
           {showPartForm && (
             <div className="mb-3 p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 flex flex-col gap-2.5">
               <div className="text-xs font-extrabold text-sky-900 dark:text-sky-200">

@@ -1,9 +1,11 @@
 import { authorizeAnywhere, hasFactoryPermission } from "@/factory/core/authz";
 import { listTechPartsInventory } from "@/factory/device/models";
+import { ensurePartnerContactColumns } from "@/factory/device/subcontract";
 import { factoryRoute } from "@/factory/http";
 
 export const GET = factoryRoute(async (tx, { actor }) => {
   await authorizeAnywhere(tx, actor, "device.view");
+  await ensurePartnerContactColumns(tx);
   const partsInventory = await listTechPartsInventory(tx, actor);
   const allUnits = (
     await tx.query("SELECT id, code, name, unit_type FROM core.org_unit WHERE status = 'ACTIVE' ORDER BY code")
@@ -22,7 +24,10 @@ export const GET = factoryRoute(async (tx, { actor }) => {
   ).rows;
   const vendors = (
     await tx.query(
-      "SELECT id, code, name FROM master.partner WHERE is_supplier = true AND status = 'ACTIVE' ORDER BY name LIMIT 300"
+      `SELECT id, code, name, tax_code, contact_name, phone, email, address, is_subcontractor
+         FROM master.partner
+        WHERE (is_supplier = true OR is_subcontractor = true) AND status = 'ACTIVE'
+        ORDER BY is_subcontractor DESC, name LIMIT 300`
     )
   ).rows;
   const serialUnits = (

@@ -27,6 +27,8 @@ import {
 import {
   attachLineDrawing,
   createSubcontractOrder,
+  createSubcontractVendor,
+  deleteSubcontractVendor,
   listLineDrawings,
   createSubcontractPart,
   createVendorEvaluation,
@@ -642,6 +644,23 @@ describe("Phase 4c — Module Phòng Kỹ thuật – Công nghệ / Thiết b�
       })
     );
     expect(evalD.tier).toBe("D");
+
+    // Creating & updating a subcontract vendor with contact_name and phone works without error
+    const customVendor = await withTransaction((tx) =>
+      createSubcontractVendor(tx, engineer, {
+        org_unit_id: site.dept,
+        code: "0908649336",
+        name: "CÔNG TY TNHH NHÔM - KÍNH CƠ KHÍ",
+        contact_name: "HOÀNG NGỌC ANH",
+        phone: "0908649336",
+      })
+    );
+    expect(customVendor.code).toBe("0908649336");
+    expect(customVendor.contact_name).toBe("HOÀNG NGỌC ANH");
+    expect(customVendor.phone).toBe("0908649336");
+
+    const delVendor = await withTransaction((tx) => deleteSubcontractVendor(tx, engineer, { id: customVendor.id }));
+    expect(delVendor.deleted).toBe(customVendor.id);
   });
 
   it("4. Field Service Tickets, Warranty Auto-Detection, DHR Spare Part Replacement & Complaint CAPA Guard", async () => {

@@ -5,6 +5,7 @@ import {
   createSubcontractVendor,
   createVendorEvaluation,
   deleteSubcontractPart,
+  deleteSubcontractVendor,
   listSubcontractOrders,
   listSubcontractParts,
   listVendorEvaluations,
@@ -27,6 +28,7 @@ export const POST = factoryRoute((tx, ctx) =>
     if (kind === "update_part") return updateSubcontractPart(tx, ctx.actor, ctx.body);
     if (kind === "delete_part") return deleteSubcontractPart(tx, ctx.actor, ctx.body);
     if (kind === "vendor") return createSubcontractVendor(tx, ctx.actor, ctx.body);
+    if (kind === "delete_vendor") return deleteSubcontractVendor(tx, ctx.actor, ctx.body);
     if (kind === "vendor_eval") return createVendorEvaluation(tx, ctx.actor, ctx.body);
     return createSubcontractOrder(tx, ctx.actor, ctx.body);
   })
