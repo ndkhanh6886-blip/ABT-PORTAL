@@ -135,6 +135,10 @@ function parseBoolFlag(val: unknown, fallback = false): boolean {
 }
 
 function extractStockQty(r: Record<string, unknown>): number {
+  const statusStr = normStr(r.status ?? r["Trạng thái"] ?? r["Trạng Thái"]).toLowerCase();
+  if (statusStr.includes("đã hết") || statusStr.includes("da het") || statusStr === "discarded") {
+    return 0;
+  }
   const directRaw =
     r.qty_on_hand ??
     r.qty ??
@@ -594,6 +598,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
                 r.category ||
                 r["Phân loại"] ||
                 r["Phân loại *"] ||
+                r["Phân nhóm"] ||
                 r["Loại hàng"] ||
                 r["Nhóm vật tư"] ||
                 r["Danh Mục"] ||
@@ -619,7 +624,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
         const lotCode = normCode(hasExplicitLot ? rawLotCode : `${itemCode}-L01`, `${itemCode}-L01`);
         if ((qty > 0 || hasExplicitLot) && itemRes.tracking !== "NONE") {
           const lotStatus = canReleaseOpeningLot ? "RELEASED" : "QUARANTINE";
-          const mfgDate = normDate(r.mfg_date || r["Ngày SX"] || r["Ngày sản xuất"]);
+          const mfgDate = normDate(r.mfg_date || r["Ngày SX"] || r["Ngày sản xuất"] || r["Ngày nhập"]);
           let expiryDate =
             normDate(
               r.expiry_date ||
@@ -633,7 +638,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
             expiryDate = mfgDate;
           }
           const rawMfrLot = normStr(
-            r.mfr_lot_no || r.manufacturer_lot || r["Lô NSX"] || r["Số lô NSX (Mfg Lot)"] || r["Lô nhà sản xuất"]
+            r.mfr_lot_no || r.manufacturer_lot || r["Lô NSX"] || r["Lot NSX"] || r["Số lô NSX (Mfg Lot)"] || r["Lô nhà sản xuất"]
           );
           const mfrLot = rawMfrLot && rawMfrLot !== "-" ? rawMfrLot : lotCode;
 
