@@ -426,86 +426,6 @@ export function DepartmentEquipmentView({
       )}
 
       {/* Modal / Collapsible Form gửi đề xuất Bảo trì / Hiệu chuẩn / Báo hỏng */}
-      {requestAsset && (
-        <Card
-          title={`🔧 Gửi Đề xuất Bảo trì / Hiệu chuẩn / Báo hỏng tới Phòng Kỹ thuật – Thiết bị: ${requestAsset.code} — ${requestAsset.name}`}
-          actions={
-            <Button variant="ghost" onClick={() => setRequestAsset(null)}>
-              Đóng
-            </Button>
-          }
-        >
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              createRequestMut.mutate();
-            }}
-            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5 items-end"
-          >
-            <Field label="Phân loại yêu cầu *">
-              <select
-                className={inputClass}
-                value={reqForm.kind}
-                onChange={(e) =>
-                  setReqForm({
-                    ...reqForm,
-                    kind: e.target.value,
-                    out_of_service: e.target.value === "REPAIR" ? true : reqForm.out_of_service,
-                  })
-                }
-              >
-                {Object.entries(EVENT_KIND_LABELS).map(([k, v]) => (
-                  <option key={k} value={k}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Ngày yêu cầu xử lý *">
-              <input
-                type="date"
-                className={inputClass}
-                value={reqForm.planned_date}
-                onChange={(e) => setReqForm({ ...reqForm, planned_date: e.target.value })}
-                required
-              />
-            </Field>
-            <Field label="Đơn vị tiếp nhận xử lý">
-              <input
-                className={inputClass}
-                value={reqForm.assignee}
-                onChange={(e) => setReqForm({ ...reqForm, assignee: e.target.value })}
-              />
-            </Field>
-            <div className="sm:col-span-2">
-              <Field label="Mô tả triệu chứng / Nội dung đề xuất gửi Phòng Kỹ thuật *">
-                <input
-                  className={inputClass}
-                  placeholder="VD: Lệch nhiệt độ block / Cần hiệu chuẩn định kỳ / Báo hỏng khẩn..."
-                  value={reqForm.description}
-                  onChange={(e) => setReqForm({ ...reqForm, description: e.target.value })}
-                  required
-                />
-              </Field>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="flex items-center gap-1.5 text-xs font-semibold text-rose-700 dark:text-rose-400 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={reqForm.out_of_service}
-                  onChange={(e) => setReqForm({ ...reqForm, out_of_service: e.target.checked })}
-                />
-                🚨 Báo hỏng: Ngừng máy ngay
-              </label>
-              <Button type="submit" disabled={createRequestMut.isPending}>
-                📤 Gửi sang Phòng Kỹ thuật
-              </Button>
-            </div>
-          </form>
-          <ErrorNote error={createRequestMut.error} />
-        </Card>
-      )}
-
       {/* Bảng 1: Hàng đợi Phiếu Đề xuất Bảo trì / Hiệu chuẩn / Sửa chữa */}
       <Card
         title={
@@ -541,69 +461,6 @@ export function DepartmentEquipmentView({
         }
       >
         <ErrorNote error={eventsQuery.error} />
-        {completeEvent && (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              completeMut.mutate();
-            }}
-            className="mb-3 p-3 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/20 space-y-2.5"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
-                🛠️ Nghiệm thu &amp; Hoàn thành Bảo trì / Hiệu chuẩn phiếu {completeEvent.code} — Máy {completeEvent.asset_code} ({completeEvent.owner_name})
-              </span>
-              <Button type="button" variant="ghost" onClick={() => setCompleteEvent(null)}>
-                Đóng
-              </Button>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2 items-end">
-              <Field label="Ngày hoàn thành *">
-                <input
-                  type="date"
-                  max={today()}
-                  className={inputClass}
-                  value={doneForm.done_date}
-                  onChange={(e) => setDoneForm({ ...doneForm, done_date: e.target.value })}
-                  required
-                />
-              </Field>
-              <Field label="Kỹ sư / Đơn vị thực hiện *">
-                <input
-                  className={inputClass}
-                  value={doneForm.performed_by}
-                  onChange={(e) => setDoneForm({ ...doneForm, performed_by: e.target.value })}
-                  required
-                />
-              </Field>
-              <div className="sm:col-span-2">
-                <Field label="Kết quả xử lý / Biên bản hiệu chuẩn / Linh kiện đã thay *">
-                  <input
-                    className={inputClass}
-                    value={doneForm.result}
-                    onChange={(e) => setDoneForm({ ...doneForm, result: e.target.value })}
-                    required
-                  />
-                </Field>
-              </div>
-              <Field label="Kết luận Đạt / Không đạt">
-                <select
-                  className={inputClass}
-                  value={doneForm.passed}
-                  onChange={(e) => setDoneForm({ ...doneForm, passed: e.target.value })}
-                >
-                  <option value="true">✅ ĐẠT (Mở khóa máy IN_SERVICE)</option>
-                  <option value="false">❌ KHÔNG ĐẠT (Giữ khóa máy)</option>
-                </select>
-              </Field>
-              <Button type="submit" disabled={completeMut.isPending}>
-                ✓ Xác nhận Hoàn thành
-              </Button>
-            </div>
-            <ErrorNote error={completeMut.error} />
-          </form>
-        )}
-
         {events.length === 0 ? (
           <Empty>Không có phiếu bảo trì / hiệu chuẩn nào ở trạng thái đã chọn.</Empty>
         ) : (
@@ -621,49 +478,118 @@ export function DepartmentEquipmentView({
           >
             {events.map((ev: any) => {
               const st = EVENT_STATUS_BADGE[ev.status] ?? ["QUARANTINE", ev.status];
+              const isCompletingRow = completeEvent?.id === ev.id;
               return (
-                <tr key={ev.id}>
-                  <td className="py-2 pr-3 font-mono text-xs font-bold text-sky-700 dark:text-sky-400">{ev.code}</td>
-                  <td className="py-2 pr-3 text-xs font-semibold">{ev.owner_name}</td>
-                  <td className="py-2 pr-3 text-xs">
-                    <div className="font-semibold text-slate-800 dark:text-slate-100">
-                      {ev.asset_code} — {ev.asset_name}
-                    </div>
-                    {ev.out_of_service && (
-                      <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 text-[10px] font-bold">
-                        🚨 Báo hỏng ngừng máy
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-2 pr-3 text-xs font-medium">{EVENT_KIND_LABELS[ev.kind] ?? ev.kind}</td>
-                  <td className="py-2 pr-3 text-xs font-mono">
-                    <div>KH: {fmtDate(ev.planned_date)}</div>
-                    {ev.done_date && <div className="text-emerald-700 font-bold">Xong: {fmtDate(ev.done_date)}</div>}
-                  </td>
-                  <td className="py-2 pr-3 text-xs">
-                    <div className="text-slate-700 dark:text-slate-200">{ev.description ?? "—"}</div>
-                    {ev.result && (
-                      <div className="text-emerald-700 dark:text-emerald-400 font-medium mt-0.5">
-                        ↳ KQ Kỹ thuật ({ev.performed_by}): {ev.result}
+                <React.Fragment key={ev.id}>
+                  <tr className={isCompletingRow ? "bg-emerald-50/70 dark:bg-emerald-950/30 font-semibold" : ""}>
+                    <td className="py-2 pr-3 font-mono text-xs font-bold text-sky-700 dark:text-sky-400">{ev.code}</td>
+                    <td className="py-2 pr-3 text-xs font-semibold">{ev.owner_name}</td>
+                    <td className="py-2 pr-3 text-xs">
+                      <div className="font-semibold text-slate-800 dark:text-slate-100">
+                        {ev.asset_code} — {ev.asset_name}
                       </div>
-                    )}
-                  </td>
-                  <td className="py-2 pr-3">
-                    <StatusBadge status={st[0]} label={st[1]} />
-                  </td>
-                  <td className="py-2 text-right">
-                    {ev.status === "PLANNED" && (
-                      <Button
-                        variant="secondary"
-                        onClick={() => {
-                          setCompleteEvent(ev);
-                        }}
-                      >
-                        🛠️ Kỹ thuật Xử lý &amp; Nghiệm thu
-                      </Button>
-                    )}
-                  </td>
-                </tr>
+                      {ev.out_of_service && (
+                        <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 text-[10px] font-bold">
+                          🚨 Báo hỏng ngừng máy
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 text-xs font-medium">{EVENT_KIND_LABELS[ev.kind] ?? ev.kind}</td>
+                    <td className="py-2 pr-3 text-xs font-mono">
+                      <div>KH: {fmtDate(ev.planned_date)}</div>
+                      {ev.done_date && <div className="text-emerald-700 font-bold">Xong: {fmtDate(ev.done_date)}</div>}
+                    </td>
+                    <td className="py-2 pr-3 text-xs">
+                      <div className="text-slate-700 dark:text-slate-200">{ev.description ?? "—"}</div>
+                      {ev.result && (
+                        <div className="text-emerald-700 dark:text-emerald-400 font-medium mt-0.5">
+                          ↳ KQ Kỹ thuật ({ev.performed_by}): {ev.result}
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3">
+                      <StatusBadge status={st[0]} label={st[1]} />
+                    </td>
+                    <td className="py-2 text-right">
+                      {ev.status === "PLANNED" && (
+                        <Button
+                          variant={isCompletingRow ? "primary" : "secondary"}
+                          onClick={() => {
+                            setCompleteEvent(isCompletingRow ? null : ev);
+                          }}
+                        >
+                          {isCompletingRow ? "Đóng nghiệm thu" : "🛠️ Kỹ thuật Xử lý & Nghiệm thu"}
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                  {isCompletingRow && (
+                    <tr>
+                      <td colSpan={8} className="py-2 pr-3">
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            completeMut.mutate();
+                          }}
+                          className="p-3 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/20 space-y-2.5"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
+                              🛠️ Nghiệm thu &amp; Hoàn thành Bảo trì / Hiệu chuẩn phiếu {ev.code} — Máy {ev.asset_code} ({ev.owner_name})
+                            </span>
+                            <Button type="button" variant="ghost" onClick={() => setCompleteEvent(null)}>
+                              Đóng
+                            </Button>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2 items-end">
+                            <Field label="Ngày hoàn thành *">
+                              <input
+                                type="date"
+                                max={today()}
+                                className={inputClass}
+                                value={doneForm.done_date}
+                                onChange={(e) => setDoneForm({ ...doneForm, done_date: e.target.value })}
+                                required
+                              />
+                            </Field>
+                            <Field label="Kỹ sư / Đơn vị thực hiện *">
+                              <input
+                                className={inputClass}
+                                value={doneForm.performed_by}
+                                onChange={(e) => setDoneForm({ ...doneForm, performed_by: e.target.value })}
+                                required
+                              />
+                            </Field>
+                            <div className="sm:col-span-2">
+                              <Field label="Kết quả xử lý / Biên bản hiệu chuẩn / Linh kiện đã thay *">
+                                <input
+                                  className={inputClass}
+                                  value={doneForm.result}
+                                  onChange={(e) => setDoneForm({ ...doneForm, result: e.target.value })}
+                                  required
+                                />
+                              </Field>
+                            </div>
+                            <Field label="Kết luận Đạt / Không đạt">
+                              <select
+                                className={inputClass}
+                                value={doneForm.passed}
+                                onChange={(e) => setDoneForm({ ...doneForm, passed: e.target.value })}
+                              >
+                                <option value="true">✅ ĐẠT (Mở khóa máy IN_SERVICE)</option>
+                                <option value="false">❌ KHÔNG ĐẠT (Giữ khóa máy)</option>
+                              </select>
+                            </Field>
+                            <Button type="submit" disabled={completeMut.isPending}>
+                              ✓ Xác nhận Hoàn thành
+                            </Button>
+                          </div>
+                          <ErrorNote error={completeMut.error} />
+                        </form>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               );
             })}
           </Table>
@@ -786,151 +712,6 @@ export function DepartmentEquipmentView({
               ))}
             </datalist>
             <ErrorNote error={createAssetMut.error} />
-          </form>
-        )}
-
-        {canManageAsset && editingAsset && (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              updateAssetMut.mutate();
-            }}
-            className="mb-3 p-3 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 space-y-2.5"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-amber-900 dark:text-amber-200">
-                ✏️ Sửa thông tin thiết bị: <span className="font-mono">{editingAsset.code}</span> — {editingAsset.name}
-              </span>
-              <Button type="button" variant="ghost" onClick={() => setEditingAsset(null)}>
-                Đóng
-              </Button>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2 items-end">
-              <Field label="Mã thiết bị *">
-                <input
-                  className={`${inputClass} font-mono`}
-                  value={editAssetForm.code}
-                  onChange={(e) => setEditAssetForm({ ...editAssetForm, code: e.target.value })}
-                  required
-                />
-              </Field>
-              <div className="sm:col-span-2">
-                <Field label="Tên thiết bị *">
-                  <input
-                    className={inputClass}
-                    value={editAssetForm.name}
-                    onChange={(e) => setEditAssetForm({ ...editAssetForm, name: e.target.value })}
-                    required
-                  />
-                </Field>
-              </div>
-              <Field label="Nhóm thiết bị *">
-                <select
-                  className={inputClass}
-                  value={editAssetForm.asset_type}
-                  onChange={(e) => setEditAssetForm({ ...editAssetForm, asset_type: e.target.value })}
-                >
-                  {Object.entries(ASSET_TYPE_LABELS).map(([k, v]) => (
-                    <option key={k} value={k}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Phân nhóm chi tiết">
-                <input
-                  list="asset-category-presets-list"
-                  className={inputClass}
-                  value={editAssetForm.equipment_category}
-                  onChange={(e) => setEditAssetForm({ ...editAssetForm, equipment_category: e.target.value })}
-                />
-              </Field>
-              <Field label="Vị trí phòng">
-                <input
-                  list="asset-location-presets-list"
-                  className={inputClass}
-                  value={editAssetForm.location}
-                  onChange={(e) => setEditAssetForm({ ...editAssetForm, location: e.target.value })}
-                />
-              </Field>
-              <Field label="Hãng sản xuất">
-                <input
-                  className={inputClass}
-                  value={editAssetForm.manufacturer}
-                  onChange={(e) => setEditAssetForm({ ...editAssetForm, manufacturer: e.target.value })}
-                />
-              </Field>
-              <Field label="Model">
-                <input
-                  className={inputClass}
-                  value={editAssetForm.model}
-                  onChange={(e) => setEditAssetForm({ ...editAssetForm, model: e.target.value })}
-                />
-              </Field>
-              <Field label="Số Serial">
-                <input
-                  className={inputClass}
-                  value={editAssetForm.serial_no}
-                  onChange={(e) => setEditAssetForm({ ...editAssetForm, serial_no: e.target.value })}
-                />
-              </Field>
-              <Field label="Hạn HC kế tiếp">
-                <input
-                  type="date"
-                  className={inputClass}
-                  value={editAssetForm.next_calibration_due}
-                  onChange={(e) => setEditAssetForm({ ...editAssetForm, next_calibration_due: e.target.value })}
-                />
-              </Field>
-              <Field label="Trạng thái">
-                <select
-                  className={inputClass}
-                  value={editAssetForm.status}
-                  onChange={(e) => setEditAssetForm({ ...editAssetForm, status: e.target.value })}
-                >
-                  {Object.entries(ASSET_STATUS_BADGE).map(([k, [, label]]) => (
-                    <option key={k} value={k}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Lý do chỉnh sửa *">
-                <input
-                  className={inputClass}
-                  value={editAssetForm.reason}
-                  onChange={(e) => setEditAssetForm({ ...editAssetForm, reason: e.target.value })}
-                  required
-                />
-              </Field>
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-              <div className="flex items-center gap-2">
-                <Button type="submit" disabled={updateAssetMut.isPending || deleteAssetMut.isPending}>
-                  {updateAssetMut.isPending ? "Đang lưu..." : "💾 Lưu thay đổi thiết bị"}
-                </Button>
-                <Button type="button" variant="ghost" onClick={() => setEditingAsset(null)}>
-                  Hủy
-                </Button>
-              </div>
-              <Button
-                type="button"
-                variant="danger"
-                disabled={deleteAssetMut.isPending || updateAssetMut.isPending}
-                onClick={() => {
-                  const reason = window.prompt(
-                    `Nhập lý do xóa thiết bị ${editingAsset.code} (${editingAsset.name}):`,
-                    "Khai báo nhầm / loại bỏ thiết bị chưa phát sinh hồ sơ"
-                  );
-                  if (reason && reason.trim().length >= 3) {
-                    deleteAssetMut.mutate({ id: editingAsset.id, reason: reason.trim() });
-                  }
-                }}
-              >
-                🗑️ Xóa thiết bị
-              </Button>
-            </div>
-            <ErrorNote error={updateAssetMut.error ?? deleteAssetMut.error} />
           </form>
         )}
 
@@ -1058,139 +839,386 @@ export function DepartmentEquipmentView({
                   {pagedAssets.map((a: any) => {
                     const st = ASSET_STATUS_BADGE[a.status] ?? ["QUARANTINE", a.status];
                     const days = daysUntil(a.next_calibration_due);
+                    const isEditingRow = canManageAsset && editingAsset?.id === a.id;
+                    const isRequestingRow = requestAsset?.id === a.id;
                     return (
-                      <tr key={a.id}>
-                        <td className="py-2 pr-3 font-mono text-xs font-bold text-sky-700 dark:text-sky-400">
-                          <div>{a.code}</div>
-                          {a.equipment_category && (
-                            <span className="inline-block mt-0.5 px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-semibold text-slate-600 dark:text-slate-300">
-                              {a.equipment_category}
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-2 pr-3 text-xs">
-                          <div className="font-semibold text-slate-800 dark:text-slate-100">{a.name}</div>
-                          <div className="text-slate-500">
-                            {ASSET_TYPE_LABELS[a.asset_type] ?? a.asset_type} {a.model ? `· Model: ${a.model}` : ""}
-                          </div>
-                        </td>
-                        <td className="py-2 pr-3 text-xs">
-                          <div className="font-medium text-slate-800 dark:text-slate-200">{a.owner_name}</div>
-                          {a.location && (
-                            <div className="text-[11px] font-semibold text-indigo-700 dark:text-indigo-400 mt-0.5">
-                              📍 {a.location}
-                            </div>
-                          )}
-                        </td>
-                        <td className="py-2 pr-3 font-mono text-xs">{a.serial_no ?? "—"}</td>
-                        <td className="py-2 pr-3 text-xs font-mono">
-                          {a.last_calibration_date && (
-                            <div className="text-[11px] text-slate-500">
-                              BT gần nhất: {fmtDate(a.last_calibration_date)}
-                            </div>
-                          )}
-                          {a.next_calibration_due ? (
-                            <div>
-                              <span className="font-semibold">Hạn: {fmtDate(a.next_calibration_due)}</span>
-                              {days !== null && (
-                                <span
-                                  className={`ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                    days < 0
-                                      ? "bg-rose-100 text-rose-800"
-                                      : days <= 30
-                                        ? "bg-amber-100 text-amber-800"
-                                        : "bg-emerald-50 text-emerald-700"
-                                  }`}
-                                >
-                                  {days < 0 ? `Quá hạn ${Math.abs(days)}d` : `Còn ${days}d`}
-                                </span>
-                              )}
-                            </div>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td className="py-2 pr-3">
-                          <StatusBadge status={st[0]} label={st[1]} />
-                        </td>
-                        <td className="py-2 text-right">
-                          <div className="flex flex-wrap justify-end gap-1.5">
-                            {canManageAsset && (
-                              <>
-                                <Button
-                                  variant="ghost"
-                                  onClick={() => {
-                                    updateAssetMut.reset();
-                                    deleteAssetMut.reset();
-                                    setEditingAsset(a);
-                                    setEditAssetForm({
-                                      code: a.code || "",
-                                      name: a.name || "",
-                                      asset_type: a.asset_type || "OTHER",
-                                      equipment_category: a.equipment_category || "",
-                                      location: a.location || "",
-                                      manufacturer: a.manufacturer || "",
-                                      model: a.model || "",
-                                      serial_no: a.serial_no || "",
-                                      next_calibration_due: a.next_calibration_due ? String(a.next_calibration_due).slice(0, 10) : "",
-                                      status: a.status || "IN_SERVICE",
-                                      reason: "Cập nhật thông số thiết bị",
-                                    });
-                                  }}
-                                >
-                                  ✏️ Sửa
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  className="text-rose-600 dark:text-rose-400"
-                                  disabled={deleteAssetMut.isPending}
-                                  onClick={() => {
-                                    const reason = window.prompt(
-                                      `Nhập lý do xóa thiết bị ${a.code} (${a.name}):`,
-                                      "Khai báo nhầm / loại bỏ thiết bị chưa phát sinh hồ sơ"
-                                    );
-                                    if (reason && reason.trim().length >= 3) {
-                                      deleteAssetMut.mutate({ id: a.id, reason: reason.trim() });
-                                    }
-                                  }}
-                                >
-                                  🗑️ Xóa
-                                </Button>
-                              </>
+                      <React.Fragment key={a.id}>
+                        <tr className={isEditingRow || isRequestingRow ? "bg-sky-50/80 dark:bg-sky-950/30 font-semibold" : ""}>
+                          <td className="py-2 pr-3 font-mono text-xs font-bold text-sky-700 dark:text-sky-400">
+                            <div>{a.code}</div>
+                            {a.equipment_category && (
+                              <span className="inline-block mt-0.5 px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-semibold text-slate-600 dark:text-slate-300">
+                                {a.equipment_category}
+                              </span>
                             )}
-                            <Button
-                              variant="ghost"
-                              onClick={() => {
-                                setRequestAsset(a);
-                                setReqForm({
-                                  kind: "MAINTENANCE",
-                                  planned_date: today(),
-                                  assignee: "Phòng Kỹ thuật – Thiết bị",
-                                  description: `Đề xuất từ ${a.owner_name}${a.location ? ` (${a.location})` : ""}: Bảo trì / Hiệu chuẩn định kỳ thiết bị ${a.code} (${a.name})`,
-                                  out_of_service: false,
-                                });
-                              }}
-                            >
-                              🔧 Đề xuất Bảo trì / HC
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              onClick={() => {
-                                setRequestAsset(a);
-                                setReqForm({
-                                  kind: "REPAIR",
-                                  planned_date: today(),
-                                  assignee: "Phòng Kỹ thuật – Thiết bị",
-                                  description: `🚨 Báo hỏng khẩn từ ${a.owner_name}${a.location ? ` (${a.location})` : ""}: Đề nghị Kỹ thuật kiểm tra sửa chữa máy ${a.code} (${a.name})`,
-                                  out_of_service: true,
-                                });
-                              }}
-                            >
-                              🚨 Báo hỏng khẩn
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
+                          </td>
+                          <td className="py-2 pr-3 text-xs">
+                            <div className="font-semibold text-slate-800 dark:text-slate-100">{a.name}</div>
+                            <div className="text-slate-500">
+                              {ASSET_TYPE_LABELS[a.asset_type] ?? a.asset_type} {a.model ? `· Model: ${a.model}` : ""}
+                            </div>
+                          </td>
+                          <td className="py-2 pr-3 text-xs">
+                            <div className="font-medium text-slate-800 dark:text-slate-200">{a.owner_name}</div>
+                            {a.location && (
+                              <div className="text-[11px] font-semibold text-indigo-700 dark:text-indigo-400 mt-0.5">
+                                📍 {a.location}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-2 pr-3 font-mono text-xs">{a.serial_no ?? "—"}</td>
+                          <td className="py-2 pr-3 text-xs font-mono">
+                            {a.last_calibration_date && (
+                              <div className="text-[11px] text-slate-500">
+                                BT gần nhất: {fmtDate(a.last_calibration_date)}
+                              </div>
+                            )}
+                            {a.next_calibration_due ? (
+                              <div>
+                                <span className="font-semibold">Hạn: {fmtDate(a.next_calibration_due)}</span>
+                                {days !== null && (
+                                  <span
+                                    className={`ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                      days < 0
+                                        ? "bg-rose-100 text-rose-800"
+                                        : days <= 30
+                                          ? "bg-amber-100 text-amber-800"
+                                          : "bg-emerald-50 text-emerald-700"
+                                    }`}
+                                  >
+                                    {days < 0 ? `Quá hạn ${Math.abs(days)}d` : `Còn ${days}d`}
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                          <td className="py-2 pr-3">
+                            <StatusBadge status={st[0]} label={st[1]} />
+                          </td>
+                          <td className="py-2 text-right">
+                            <div className="flex flex-wrap justify-end gap-1.5">
+                              {canManageAsset && (
+                                <>
+                                  <Button
+                                    variant={isEditingRow ? "primary" : "ghost"}
+                                    onClick={() => {
+                                      if (isEditingRow) {
+                                        setEditingAsset(null);
+                                        return;
+                                      }
+                                      updateAssetMut.reset();
+                                      deleteAssetMut.reset();
+                                      setEditingAsset(a);
+                                      setEditAssetForm({
+                                        code: a.code || "",
+                                        name: a.name || "",
+                                        asset_type: a.asset_type || "OTHER",
+                                        equipment_category: a.equipment_category || "",
+                                        location: a.location || "",
+                                        manufacturer: a.manufacturer || "",
+                                        model: a.model || "",
+                                        serial_no: a.serial_no || "",
+                                        next_calibration_due: a.next_calibration_due ? String(a.next_calibration_due).slice(0, 10) : "",
+                                        status: a.status || "IN_SERVICE",
+                                        reason: "Cập nhật thông số thiết bị",
+                                      });
+                                    }}
+                                  >
+                                    {isEditingRow ? "Đóng sửa" : "✏️ Sửa"}
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    className="text-rose-600 dark:text-rose-400"
+                                    disabled={deleteAssetMut.isPending}
+                                    onClick={() => {
+                                      const reason = window.prompt(
+                                        `Nhập lý do xóa thiết bị ${a.code} (${a.name}):`,
+                                        "Khai báo nhầm / loại bỏ thiết bị chưa phát sinh hồ sơ"
+                                      );
+                                      if (reason && reason.trim().length >= 3) {
+                                        deleteAssetMut.mutate({ id: a.id, reason: reason.trim() });
+                                      }
+                                    }}
+                                  >
+                                    🗑️ Xóa
+                                  </Button>
+                                </>
+                              )}
+                              <Button
+                                variant={isRequestingRow && !reqForm.out_of_service ? "primary" : "ghost"}
+                                onClick={() => {
+                                  if (isRequestingRow && !reqForm.out_of_service) {
+                                    setRequestAsset(null);
+                                    return;
+                                  }
+                                  setRequestAsset(a);
+                                  setReqForm({
+                                    kind: "MAINTENANCE",
+                                    planned_date: today(),
+                                    assignee: "Phòng Kỹ thuật – Thiết bị",
+                                    description: `Đề xuất từ ${a.owner_name}${a.location ? ` (${a.location})` : ""}: Bảo trì / Hiệu chuẩn định kỳ thiết bị ${a.code} (${a.name})`,
+                                    out_of_service: false,
+                                  });
+                                }}
+                              >
+                                🔧 Đề xuất Bảo trì / HC
+                              </Button>
+                              <Button
+                                variant={isRequestingRow && reqForm.out_of_service ? "danger" : "ghost"}
+                                onClick={() => {
+                                  if (isRequestingRow && reqForm.out_of_service) {
+                                    setRequestAsset(null);
+                                    return;
+                                  }
+                                  setRequestAsset(a);
+                                  setReqForm({
+                                    kind: "REPAIR",
+                                    planned_date: today(),
+                                    assignee: "Phòng Kỹ thuật – Thiết bị",
+                                    description: `🚨 Báo hỏng khẩn từ ${a.owner_name}${a.location ? ` (${a.location})` : ""}: Đề nghị Kỹ thuật kiểm tra sửa chữa máy ${a.code} (${a.name})`,
+                                    out_of_service: true,
+                                  });
+                                }}
+                              >
+                                🚨 Báo hỏng khẩn
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                        {isEditingRow && (
+                          <tr>
+                            <td colSpan={7} className="py-2 pr-3">
+                              <form
+                                onSubmit={(e) => {
+                                  e.preventDefault();
+                                  updateAssetMut.mutate();
+                                }}
+                                className="p-3 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 space-y-2.5"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                                    ✏️ Sửa thông tin thiết bị: <span className="font-mono">{a.code}</span> — {a.name}
+                                  </span>
+                                  <Button type="button" variant="ghost" onClick={() => setEditingAsset(null)}>
+                                    Đóng
+                                  </Button>
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2 items-end">
+                                  <Field label="Mã thiết bị *">
+                                    <input
+                                      className={`${inputClass} font-mono`}
+                                      value={editAssetForm.code}
+                                      onChange={(e) => setEditAssetForm({ ...editAssetForm, code: e.target.value })}
+                                      required
+                                    />
+                                  </Field>
+                                  <div className="sm:col-span-2">
+                                    <Field label="Tên thiết bị *">
+                                      <input
+                                        className={inputClass}
+                                        value={editAssetForm.name}
+                                        onChange={(e) => setEditAssetForm({ ...editAssetForm, name: e.target.value })}
+                                        required
+                                      />
+                                    </Field>
+                                  </div>
+                                  <Field label="Nhóm thiết bị *">
+                                    <select
+                                      className={inputClass}
+                                      value={editAssetForm.asset_type}
+                                      onChange={(e) => setEditAssetForm({ ...editAssetForm, asset_type: e.target.value })}
+                                    >
+                                      {Object.entries(ASSET_TYPE_LABELS).map(([k, v]) => (
+                                        <option key={k} value={k}>
+                                          {v}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </Field>
+                                  <Field label="Phân nhóm chi tiết">
+                                    <input
+                                      list="asset-category-presets-list"
+                                      className={inputClass}
+                                      value={editAssetForm.equipment_category}
+                                      onChange={(e) => setEditAssetForm({ ...editAssetForm, equipment_category: e.target.value })}
+                                    />
+                                  </Field>
+                                  <Field label="Vị trí phòng">
+                                    <input
+                                      list="asset-location-presets-list"
+                                      className={inputClass}
+                                      value={editAssetForm.location}
+                                      onChange={(e) => setEditAssetForm({ ...editAssetForm, location: e.target.value })}
+                                    />
+                                  </Field>
+                                  <Field label="Hãng sản xuất">
+                                    <input
+                                      className={inputClass}
+                                      value={editAssetForm.manufacturer}
+                                      onChange={(e) => setEditAssetForm({ ...editAssetForm, manufacturer: e.target.value })}
+                                    />
+                                  </Field>
+                                  <Field label="Model">
+                                    <input
+                                      className={inputClass}
+                                      value={editAssetForm.model}
+                                      onChange={(e) => setEditAssetForm({ ...editAssetForm, model: e.target.value })}
+                                    />
+                                  </Field>
+                                  <Field label="Số Serial">
+                                    <input
+                                      className={inputClass}
+                                      value={editAssetForm.serial_no}
+                                      onChange={(e) => setEditAssetForm({ ...editAssetForm, serial_no: e.target.value })}
+                                    />
+                                  </Field>
+                                  <Field label="Hạn HC kế tiếp">
+                                    <input
+                                      type="date"
+                                      className={inputClass}
+                                      value={editAssetForm.next_calibration_due}
+                                      onChange={(e) => setEditAssetForm({ ...editAssetForm, next_calibration_due: e.target.value })}
+                                    />
+                                  </Field>
+                                  <Field label="Trạng thái">
+                                    <select
+                                      className={inputClass}
+                                      value={editAssetForm.status}
+                                      onChange={(e) => setEditAssetForm({ ...editAssetForm, status: e.target.value })}
+                                    >
+                                      {Object.entries(ASSET_STATUS_BADGE).map(([k, [, label]]) => (
+                                        <option key={k} value={k}>
+                                          {label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </Field>
+                                  <Field label="Lý do chỉnh sửa *">
+                                    <input
+                                      className={inputClass}
+                                      value={editAssetForm.reason}
+                                      onChange={(e) => setEditAssetForm({ ...editAssetForm, reason: e.target.value })}
+                                      required
+                                    />
+                                  </Field>
+                                </div>
+                                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                                  <div className="flex items-center gap-2">
+                                    <Button type="submit" disabled={updateAssetMut.isPending || deleteAssetMut.isPending}>
+                                      {updateAssetMut.isPending ? "Đang lưu..." : "💾 Lưu thay đổi thiết bị"}
+                                    </Button>
+                                    <Button type="button" variant="ghost" onClick={() => setEditingAsset(null)}>
+                                      Hủy
+                                    </Button>
+                                  </div>
+                                  <Button
+                                    type="button"
+                                    variant="danger"
+                                    disabled={deleteAssetMut.isPending || updateAssetMut.isPending}
+                                    onClick={() => {
+                                      const reason = window.prompt(
+                                        `Nhập lý do xóa thiết bị ${a.code} (${a.name}):`,
+                                        "Khai báo nhầm / loại bỏ thiết bị chưa phát sinh hồ sơ"
+                                      );
+                                      if (reason && reason.trim().length >= 3) {
+                                        deleteAssetMut.mutate({ id: a.id, reason: reason.trim() });
+                                      }
+                                    }}
+                                  >
+                                    🗑️ Xóa thiết bị
+                                  </Button>
+                                </div>
+                                <ErrorNote error={updateAssetMut.error ?? deleteAssetMut.error} />
+                              </form>
+                            </td>
+                          </tr>
+                        )}
+                        {isRequestingRow && (
+                          <tr>
+                            <td colSpan={7} className="py-2 pr-3">
+                              <Card
+                                title={`🔧 Gửi Đề xuất Bảo trì / Hiệu chuẩn / Báo hỏng tới Phòng Kỹ thuật – Thiết bị: ${a.code} — ${a.name}`}
+                                actions={
+                                  <Button variant="ghost" onClick={() => setRequestAsset(null)}>
+                                    Đóng
+                                  </Button>
+                                }
+                              >
+                                <form
+                                  onSubmit={(e) => {
+                                    e.preventDefault();
+                                    createRequestMut.mutate();
+                                  }}
+                                  className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5 items-end"
+                                >
+                                  <Field label="Phân loại yêu cầu *">
+                                    <select
+                                      className={inputClass}
+                                      value={reqForm.kind}
+                                      onChange={(e) =>
+                                        setReqForm({
+                                          ...reqForm,
+                                          kind: e.target.value,
+                                          out_of_service: e.target.value === "REPAIR" ? true : reqForm.out_of_service,
+                                        })
+                                      }
+                                    >
+                                      {Object.entries(EVENT_KIND_LABELS).map(([k, v]) => (
+                                        <option key={k} value={k}>
+                                          {v}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </Field>
+                                  <Field label="Ngày yêu cầu xử lý *">
+                                    <input
+                                      type="date"
+                                      className={inputClass}
+                                      value={reqForm.planned_date}
+                                      onChange={(e) => setReqForm({ ...reqForm, planned_date: e.target.value })}
+                                      required
+                                    />
+                                  </Field>
+                                  <Field label="Đơn vị tiếp nhận xử lý">
+                                    <input
+                                      className={inputClass}
+                                      value={reqForm.assignee}
+                                      onChange={(e) => setReqForm({ ...reqForm, assignee: e.target.value })}
+                                    />
+                                  </Field>
+                                  <div className="sm:col-span-2">
+                                    <Field label="Mô tả triệu chứng / Nội dung đề xuất gửi Phòng Kỹ thuật *">
+                                      <input
+                                        className={inputClass}
+                                        placeholder="VD: Lệch nhiệt độ block / Cần hiệu chuẩn định kỳ / Báo hỏng khẩn..."
+                                        value={reqForm.description}
+                                        onChange={(e) => setReqForm({ ...reqForm, description: e.target.value })}
+                                        required
+                                      />
+                                    </Field>
+                                  </div>
+                                  <div className="flex flex-col gap-1.5">
+                                    <label className="flex items-center gap-1.5 text-xs font-semibold text-rose-700 dark:text-rose-400 cursor-pointer">
+                                      <input
+                                        type="checkbox"
+                                        checked={reqForm.out_of_service}
+                                        onChange={(e) => setReqForm({ ...reqForm, out_of_service: e.target.checked })}
+                                      />
+                                      🚨 Báo hỏng: Ngừng máy ngay
+                                    </label>
+                                    <Button type="submit" disabled={createRequestMut.isPending}>
+                                      📤 Gửi sang Phòng Kỹ thuật
+                                    </Button>
+                                  </div>
+                                </form>
+                                <ErrorNote error={createRequestMut.error} />
+                              </Card>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     );
                   })}
                 </Table>

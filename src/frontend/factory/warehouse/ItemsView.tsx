@@ -737,20 +737,12 @@ export function ItemsView({ canManage }: { canManage: boolean }) {
 
   return (
     <div className="flex flex-col gap-3">
-      {editingUomItem && (
-        <BaseUomModal
-          item={editingUomItem}
-          uoms={uoms.data ?? []}
-          onClose={() => setEditingUomItem(null)}
-        />
-      )}
-
-      {showConversions && (
+      {showConversions && !convTargetItem && (
         <UomConversionPanel
           canManage={canManage}
           uoms={uoms.data ?? []}
           items={items.data?.rows ?? []}
-          preselectedItem={convTargetItem}
+          preselectedItem={null}
           onClose={() => {
             setShowConversions(false);
             setConvTargetItem(null);
@@ -785,7 +777,7 @@ export function ItemsView({ canManage }: { canManage: boolean }) {
             )}
             <Button
               type="button"
-              variant={showConversions ? "primary" : "secondary"}
+              variant={showConversions && !convTargetItem ? "primary" : "secondary"}
               onClick={() => {
                 setConvTargetItem(null);
                 setShowConversions((v) => !v);
@@ -912,70 +904,106 @@ export function ItemsView({ canManage }: { canManage: boolean }) {
             <Table head={["Mã", "Tên", "Phân loại", "ĐVT gốc", "Quản lý", "Chế độ lưu kho", "Bảo quản", "Tồn tối thiểu", "QC nhận hàng", "Mã hàng KD", "Trạng thái", ""]}>
               {items.data.rows.map((r) => {
                 const badUom = isPlaceholderUomClient(r.base_uom);
+                const isRowEditingUom = editingUomItem?.id === r.id;
+                const isRowConv = showConversions && convTargetItem?.id === r.id;
                 return (
-                  <tr key={r.id}>
-                    <td className="py-2 pr-3 font-mono font-semibold whitespace-nowrap">{r.code}</td>
-                    <td className="py-2 pr-3">{r.name}</td>
-                    <td className="py-2 pr-3 whitespace-nowrap">
-                      <StockCategoryBadge
-                        itemType={r.item_type}
-                        canEdit={canManage}
-                        isUpdating={updateTypeMut.isPending}
-                        onChangeType={(nextType) => {
-                          if (nextType === r.item_type) return;
-                          updateTypeMut.mutate({
-                            itemId: r.id,
-                            version: r.version,
-                            item_type: nextType,
-                            code: r.code,
-                          });
-                        }}
-                      />
-                    </td>
-                    <td className="py-2 pr-3 whitespace-nowrap">
-                      {canManage ? (
+                  <React.Fragment key={r.id}>
+                    <tr className={isRowEditingUom || isRowConv ? "bg-sky-50/80 dark:bg-sky-950/30 font-semibold" : ""}>
+                      <td className="py-2 pr-3 font-mono font-semibold whitespace-nowrap">{r.code}</td>
+                      <td className="py-2 pr-3">{r.name}</td>
+                      <td className="py-2 pr-3 whitespace-nowrap">
+                        <StockCategoryBadge
+                          itemType={r.item_type}
+                          canEdit={canManage}
+                          isUpdating={updateTypeMut.isPending}
+                          onChangeType={(nextType) => {
+                            if (nextType === r.item_type) return;
+                            updateTypeMut.mutate({
+                              itemId: r.id,
+                              version: r.version,
+                              item_type: nextType,
+                              code: r.code,
+                            });
+                          }}
+                        />
+                      </td>
+                      <td className="py-2 pr-3 whitespace-nowrap">
+                        {canManage ? (
+                          <button
+                            type="button"
+                            onClick={() => setEditingUomItem(isRowEditingUom ? null : r)}
+                            title={badUom ? "ĐVT gốc đang là dấu '-' — Bấm để chọn ĐVT chuẩn (mL, µL, tube...)" : "Bấm để sửa/quy đổi ĐVT gốc"}
+                            className={
+                              badUom
+                                ? "inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-2 py-0.5 text-[11px] font-bold text-rose-700 hover:bg-rose-100 dark:border-rose-800 dark:bg-rose-950/60 dark:text-rose-300 cursor-pointer"
+                                : "inline-flex items-center gap-1 font-mono font-semibold text-sky-700 dark:text-sky-400 hover:underline underline-offset-2 cursor-pointer"
+                            }
+                          >
+                            {badUom ? `⚠️ Thiếu ĐVT (${r.base_uom})` : r.base_uom}
+                            <span className="text-[10px] opacity-75">✏️</span>
+                          </button>
+                        ) : badUom ? (
+                          <span className="text-rose-600 font-bold">⚠️ {r.base_uom}</span>
+                        ) : (
+                          r.base_uom
+                        )}
+                      </td>
+                      <td className="py-2 pr-3 whitespace-nowrap">{TRACKING_LABEL[r.tracking]}</td>
+                      <td className="py-2 pr-3 whitespace-nowrap">
+                        <StockModeControls item={r} canManage={canManage} />
+                      </td>
+                      <td className="py-2 pr-3 whitespace-nowrap">{STORAGE_LABEL[r.storage_condition]}</td>
+                      <td className="py-2 pr-3 text-right">{fmtQty(r.min_stock)}</td>
+                      <td className="py-2 pr-3">{r.receipt_qc_required ? "Có" : "Không"}</td>
+                      <td className="py-2 pr-3 whitespace-nowrap">{canManage ? <KdMapping item={r} /> : r.kd_item_code ?? "—"}</td>
+                      <td className="py-2 pr-3"><StatusBadge status={r.status === "ACTIVE" ? "RELEASED" : "EXPIRED"} label={r.status === "ACTIVE" ? "Đang dùng" : "Ngừng"} /></td>
+                      <td className="py-2 pr-3 whitespace-nowrap text-right">
                         <button
                           type="button"
-                          onClick={() => setEditingUomItem(r)}
-                          title={badUom ? "ĐVT gốc đang là dấu '-' — Bấm để chọn ĐVT chuẩn (mL, µL, tube...)" : "Bấm để sửa/quy đổi ĐVT gốc"}
-                          className={
-                            badUom
-                              ? "inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-2 py-0.5 text-[11px] font-bold text-rose-700 hover:bg-rose-100 dark:border-rose-800 dark:bg-rose-950/60 dark:text-rose-300 cursor-pointer"
-                              : "inline-flex items-center gap-1 font-mono font-semibold text-sky-700 dark:text-sky-400 hover:underline underline-offset-2 cursor-pointer"
-                          }
+                          onClick={() => {
+                            if (isRowConv) {
+                              setShowConversions(false);
+                              setConvTargetItem(null);
+                            } else {
+                              setConvTargetItem(r);
+                              setShowConversions(true);
+                            }
+                          }}
+                          title={`Khai báo hoặc xem quy đổi đơn vị riêng cho ${r.code} (VD: 1 tube = 0,5 mL)`}
+                          className="text-xs font-semibold text-indigo-700 dark:text-indigo-400 hover:underline underline-offset-2 cursor-pointer"
                         >
-                          {badUom ? `⚠️ Thiếu ĐVT (${r.base_uom})` : r.base_uom}
-                          <span className="text-[10px] opacity-75">✏️</span>
+                          {isRowConv ? "Đóng quy đổi" : "⚖️ Quy đổi"}
                         </button>
-                      ) : badUom ? (
-                        <span className="text-rose-600 font-bold">⚠️ {r.base_uom}</span>
-                      ) : (
-                        r.base_uom
-                      )}
-                    </td>
-                    <td className="py-2 pr-3 whitespace-nowrap">{TRACKING_LABEL[r.tracking]}</td>
-                    <td className="py-2 pr-3 whitespace-nowrap">
-                      <StockModeControls item={r} canManage={canManage} />
-                    </td>
-                    <td className="py-2 pr-3 whitespace-nowrap">{STORAGE_LABEL[r.storage_condition]}</td>
-                    <td className="py-2 pr-3 text-right">{fmtQty(r.min_stock)}</td>
-                    <td className="py-2 pr-3">{r.receipt_qc_required ? "Có" : "Không"}</td>
-                    <td className="py-2 pr-3 whitespace-nowrap">{canManage ? <KdMapping item={r} /> : r.kd_item_code ?? "—"}</td>
-                    <td className="py-2 pr-3"><StatusBadge status={r.status === "ACTIVE" ? "RELEASED" : "EXPIRED"} label={r.status === "ACTIVE" ? "Đang dùng" : "Ngừng"} /></td>
-                    <td className="py-2 pr-3 whitespace-nowrap text-right">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setConvTargetItem(r);
-                          setShowConversions(true);
-                        }}
-                        title={`Khai báo hoặc xem quy đổi đơn vị riêng cho ${r.code} (VD: 1 tube = 0,5 mL)`}
-                        className="text-xs font-semibold text-indigo-700 dark:text-indigo-400 hover:underline underline-offset-2 cursor-pointer"
-                      >
-                        ⚖️ Quy đổi
-                      </button>
-                    </td>
-                  </tr>
+                      </td>
+                    </tr>
+                    {isRowEditingUom && (
+                      <tr>
+                        <td colSpan={12} className="py-2 pr-3">
+                          <BaseUomModal
+                            item={r}
+                            uoms={uoms.data ?? []}
+                            onClose={() => setEditingUomItem(null)}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                    {isRowConv && (
+                      <tr>
+                        <td colSpan={12} className="py-2 pr-3">
+                          <UomConversionPanel
+                            canManage={canManage}
+                            uoms={uoms.data ?? []}
+                            items={items.data?.rows ?? []}
+                            preselectedItem={r}
+                            onClose={() => {
+                              setShowConversions(false);
+                              setConvTargetItem(null);
+                            }}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 );
               })}
             </Table>

@@ -441,16 +441,13 @@ export function PreparationView({
           </div>
         }
       >
-        {editing && (
+        {editing && !editing.item && (
           <FormulaEditor
-            key={`${deptScope}-${editing.item?.id ?? "new"}-${editing.isClone ? "clone" : "edit"}`}
-            base={editing.item}
-            isClone={editing.isClone}
+            key={`${deptScope}-new`}
             deptScope={deptScope}
             onClose={() => setEditing(null)}
           />
         )}
-        {preparing && <PrepareForm key={preparing.id} formula={preparing} deptScope={deptScope} onDone={refresh} />}
 
         {/* Thanh Tìm kiếm nhanh & Bộ lọc Công thức pha chế */}
         {allFormulas.length > 0 && (
@@ -559,42 +556,104 @@ export function PreparationView({
         )}
         {filteredFormulas.length > 0 && (
           <Table head={["Mã", "Tên / nhóm", "Thành phẩm", "Mẻ chuẩn", "Nguyên liệu", "Hạn / QC", ""]}>
-            {filteredFormulas.map((f) => (
-              <tr key={f.id} className={f.status === "ACTIVE" ? "" : "opacity-50"}>
-                <td className="py-1.5 pr-3 font-mono text-xs">{f.code}</td>
-                <td className="py-1.5 pr-3">{f.name}{f.category && <div className="text-[11px] text-slate-500">{f.category}</div>}</td>
-                <td className="py-1.5 pr-3 text-xs">{f.output_code} · {f.output_name}</td>
-                <td className="py-1.5 pr-3 text-xs whitespace-nowrap">{fmtQty(f.basis_qty)} {f.basis_uom}</td>
-                <td className="py-1.5 pr-3 text-xs">{f.lines.map((l) => `${l.item_code} ${fmtQty(l.qty)} ${l.uom}`).join(" · ")}</td>
-                <td className="py-1.5 pr-3 text-xs">{f.shelf_life_days ? `${f.shelf_life_days} ngày` : "—"}{f.requires_qc && " · cần QC"}{f.incubation_days > 0 && ` · ủ ${f.incubation_days} ngày`}</td>
-                <td className="py-1.5 pr-3 text-right whitespace-nowrap">
-                  <div className="inline-flex flex-wrap justify-end gap-1">
-                    {canExecute && f.status === "ACTIVE" && <Button type="button" variant="ghost" onClick={() => setPreparing(preparing?.id === f.id ? null : f)}>Pha</Button>}
-                    {canManage && (
-                      <>
-                        <Button type="button" variant="ghost" onClick={() => setEditing({ item: f })}>Sửa</Button>
-                        <Button type="button" variant="ghost" onClick={() => setEditing({ item: f, isClone: true })}>Nhân bản</Button>
-                      </>
-                    )}
-                    {allowDelete && (
-                      <Button
-                        type="button"
-                        variant="danger"
-                        disabled={removeFormula.isPending}
-                        onClick={() => {
-                          const reason = window.prompt(`Nhập lý do xóa công thức ${f.code} (${f.name}):`);
-                          if (reason && reason.trim()) {
-                            removeFormula.mutate({ id: f.id, reason: reason.trim() });
-                          }
-                        }}
-                      >
-                        Xóa
-                      </Button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {filteredFormulas.map((f) => {
+              const isRowEditing = editing?.item?.id === f.id;
+              const isRowPreparing = preparing?.id === f.id;
+              return (
+                <React.Fragment key={f.id}>
+                  <tr
+                    className={`${f.status === "ACTIVE" ? "" : "opacity-50"} ${
+                      isRowEditing || isRowPreparing ? "bg-sky-50/80 dark:bg-sky-950/30 font-semibold" : ""
+                    }`}
+                  >
+                    <td className="py-1.5 pr-3 font-mono text-xs">{f.code}</td>
+                    <td className="py-1.5 pr-3">{f.name}{f.category && <div className="text-[11px] text-slate-500">{f.category}</div>}</td>
+                    <td className="py-1.5 pr-3 text-xs">{f.output_code} · {f.output_name}</td>
+                    <td className="py-1.5 pr-3 text-xs whitespace-nowrap">{fmtQty(f.basis_qty)} {f.basis_uom}</td>
+                    <td className="py-1.5 pr-3 text-xs">{f.lines.map((l) => `${l.item_code} ${fmtQty(l.qty)} ${l.uom}`).join(" · ")}</td>
+                    <td className="py-1.5 pr-3 text-xs">{f.shelf_life_days ? `${f.shelf_life_days} ngày` : "—"}{f.requires_qc && " · cần QC"}{f.incubation_days > 0 && ` · ủ ${f.incubation_days} ngày`}</td>
+                    <td className="py-1.5 pr-3 text-right whitespace-nowrap">
+                      <div className="inline-flex flex-wrap justify-end gap-1">
+                        {canExecute && f.status === "ACTIVE" && (
+                          <Button
+                            type="button"
+                            variant={isRowPreparing ? "primary" : "ghost"}
+                            onClick={() => setPreparing(isRowPreparing ? null : f)}
+                          >
+                            {isRowPreparing ? "Đóng pha" : "Pha"}
+                          </Button>
+                        )}
+                        {canManage && (
+                          <>
+                            <Button
+                              type="button"
+                              variant={isRowEditing && !editing?.isClone ? "primary" : "ghost"}
+                              onClick={() =>
+                                setEditing(isRowEditing && !editing?.isClone ? null : { item: f, isClone: false })
+                              }
+                            >
+                              {isRowEditing && !editing?.isClone ? "Đóng sửa" : "Sửa"}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant={isRowEditing && editing?.isClone ? "primary" : "ghost"}
+                              onClick={() =>
+                                setEditing(isRowEditing && editing?.isClone ? null : { item: f, isClone: true })
+                              }
+                            >
+                              {isRowEditing && editing?.isClone ? "Đóng nhân bản" : "Nhân bản"}
+                            </Button>
+                          </>
+                        )}
+                        {allowDelete && (
+                          <Button
+                            type="button"
+                            variant="danger"
+                            disabled={removeFormula.isPending}
+                            onClick={() => {
+                              const reason = window.prompt(`Nhập lý do xóa công thức ${f.code} (${f.name}):`);
+                              if (reason && reason.trim()) {
+                                removeFormula.mutate({ id: f.id, reason: reason.trim() });
+                              }
+                            }}
+                          >
+                            Xóa
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                  {isRowEditing && (
+                    <tr>
+                      <td colSpan={7} className="py-2 pr-3">
+                        <FormulaEditor
+                          key={`${deptScope}-${f.id}-${editing?.isClone ? "clone" : "edit"}`}
+                          base={f}
+                          isClone={editing?.isClone}
+                          deptScope={deptScope}
+                          onClose={() => setEditing(null)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                  {isRowPreparing && (
+                    <tr>
+                      <td colSpan={7} className="py-2 pr-3">
+                        <PrepareForm
+                          key={f.id}
+                          formula={f}
+                          deptScope={deptScope}
+                          onDone={() => {
+                            setPreparing(null);
+                            refresh();
+                          }}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </Table>
         )}
       </Card>

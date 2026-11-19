@@ -379,11 +379,9 @@ export function SopConfigView({ canManage }: { canManage: boolean }) {
           </div>
         }
       >
-        {methodState && (
+        {methodState && !methodState.item && (
           <MethodEditor
-            key={`${methodState.item?.id ?? "new"}-${methodState.isClone ? "clone" : "edit"}`}
-            base={methodState.item}
-            isClone={methodState.isClone}
+            key="new-method"
             onClose={() => setMethodState(null)}
           />
         )}
@@ -437,51 +435,92 @@ export function SopConfigView({ canManage }: { canManage: boolean }) {
         )}
         {filteredMethods.length > 0 && (
           <Table head={["Nhóm bước", "Phương pháp", "Thời gian chuẩn", "Thông số ghi", "Trạng thái", "Thao tác"]}>
-            {filteredMethods.map((m) => (
-              <tr key={m.id} className={m.status === "ACTIVE" ? "" : "opacity-50"}>
-                <td className="py-1.5 pr-3 text-xs">{m.category}</td>
-                <td className="py-1.5 pr-3">{m.name}{m.kind === "QUANTIFICATION" && <span className="text-sky-700 dark:text-sky-400 text-xs"> · đo OD</span>}</td>
-                <td className="py-1.5 pr-3 text-xs">{m.target_hours ? `${m.target_hours} giờ` : "—"}</td>
-                <td className="py-1.5 pr-3 text-xs">
-                  {m.fields
-                    .map((f) =>
-                      f.type === "REAGENT"
-                        ? `${f.label} (${f.item_code || FIELD_TYPE[f.type]}${f.default_qty != null ? `: ${f.default_qty} ${f.uom ?? ""}` : ""})`
-                        : `${f.label} (${FIELD_TYPE[f.type]}${f.unit ? ` ${f.unit}` : ""})`
-                    )
-                    .join(" · ") || "—"}
-                </td>
-                <td className="py-1.5 pr-3 text-xs">{m.status === "ACTIVE" ? "Đang dùng" : "Ngừng"}</td>
-                <td className="py-1.5 pr-3 text-right whitespace-nowrap">
-                  <div className="inline-flex items-center gap-1">
-                    {canEditSop && (
-                      <Button type="button" variant="ghost" onClick={() => setMethodState({ item: m })}>Sửa</Button>
-                    )}
-                    {canCreateOrClone && (
-                      <Button type="button" variant="ghost" onClick={() => setMethodState({ item: m, isClone: true })}>Nhân bản</Button>
-                    )}
-                    {canDeleteSop && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        className="text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50"
-                        disabled={deleteMethodMut.isPending}
-                        onClick={() => {
-                          const reason = window.prompt(
-                            `Nhập lý do xóa phương pháp "${m.name}" (${m.category}):`,
-                            "Xóa phương pháp không còn sử dụng"
-                          );
-                          if (!reason || reason.trim().length < 3) return;
-                          deleteMethodMut.mutate({ id: m.id, reason: reason.trim() });
-                        }}
-                      >
-                        Xóa
-                      </Button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {filteredMethods.map((m) => {
+              const isRowEditing = methodState?.item?.id === m.id;
+              return (
+                <React.Fragment key={m.id}>
+                  <tr
+                    className={`${m.status === "ACTIVE" ? "" : "opacity-50"} ${
+                      isRowEditing ? "bg-sky-50/80 dark:bg-sky-950/30 font-semibold" : ""
+                    }`}
+                  >
+                    <td className="py-1.5 pr-3 text-xs">{m.category}</td>
+                    <td className="py-1.5 pr-3">{m.name}{m.kind === "QUANTIFICATION" && <span className="text-sky-700 dark:text-sky-400 text-xs"> · đo OD</span>}</td>
+                    <td className="py-1.5 pr-3 text-xs">{m.target_hours ? `${m.target_hours} giờ` : "—"}</td>
+                    <td className="py-1.5 pr-3 text-xs">
+                      {m.fields
+                        .map((f) =>
+                          f.type === "REAGENT"
+                            ? `${f.label} (${f.item_code || FIELD_TYPE[f.type]}${f.default_qty != null ? `: ${f.default_qty} ${f.uom ?? ""}` : ""})`
+                            : `${f.label} (${FIELD_TYPE[f.type]}${f.unit ? ` ${f.unit}` : ""})`
+                        )
+                        .join(" · ") || "—"}
+                    </td>
+                    <td className="py-1.5 pr-3 text-xs">{m.status === "ACTIVE" ? "Đang dùng" : "Ngừng"}</td>
+                    <td className="py-1.5 pr-3 text-right whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1">
+                        {canEditSop && (
+                          <Button
+                            type="button"
+                            variant={isRowEditing && !methodState?.isClone ? "primary" : "ghost"}
+                            onClick={() =>
+                              setMethodState(
+                                isRowEditing && !methodState?.isClone ? null : { item: m, isClone: false }
+                              )
+                            }
+                          >
+                            {isRowEditing && !methodState?.isClone ? "Đóng sửa" : "Sửa"}
+                          </Button>
+                        )}
+                        {canCreateOrClone && (
+                          <Button
+                            type="button"
+                            variant={isRowEditing && methodState?.isClone ? "primary" : "ghost"}
+                            onClick={() =>
+                              setMethodState(
+                                isRowEditing && methodState?.isClone ? null : { item: m, isClone: true }
+                              )
+                            }
+                          >
+                            {isRowEditing && methodState?.isClone ? "Đóng nhân bản" : "Nhân bản"}
+                          </Button>
+                        )}
+                        {canDeleteSop && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className="text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50"
+                            disabled={deleteMethodMut.isPending}
+                            onClick={() => {
+                              const reason = window.prompt(
+                                `Nhập lý do xóa phương pháp "${m.name}" (${m.category}):`,
+                                "Xóa phương pháp không còn sử dụng"
+                              );
+                              if (!reason || reason.trim().length < 3) return;
+                              deleteMethodMut.mutate({ id: m.id, reason: reason.trim() });
+                            }}
+                          >
+                            Xóa
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                  {isRowEditing && (
+                    <tr>
+                      <td colSpan={6} className="py-2 pr-3">
+                        <MethodEditor
+                          key={`${m.id}-${methodState?.isClone ? "clone" : "edit"}`}
+                          base={m}
+                          isClone={methodState?.isClone}
+                          onClose={() => setMethodState(null)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </Table>
         )}
       </Card>
@@ -518,11 +557,9 @@ export function SopConfigView({ canManage }: { canManage: boolean }) {
           </div>
         }
       >
-        {workflowState && (
+        {workflowState && !workflowState.item && (
           <WorkflowEditor
-            key={`${workflowState.item?.id ?? "new"}-${workflowState.isClone ? "clone" : "edit"}`}
-            base={workflowState.item}
-            isClone={workflowState.isClone}
+            key="new-workflow"
             methods={methods}
             onClose={() => setWorkflowState(null)}
           />
@@ -537,43 +574,85 @@ export function SopConfigView({ canManage }: { canManage: boolean }) {
         )}
         {workflows.length > 0 && (
           <Table head={["Quy trình", "Mặc định cho", "Các bước", "Phiên bản", "Trạng thái", ""]}>
-            {workflows.map((w) => (
-              <tr key={w.id} className={w.status === "ACTIVE" ? "" : "opacity-50"}>
-                <td className="py-1.5 pr-3">{w.name}{w.description && <div className="text-[11px] text-slate-500">{w.description}</div>}</td>
-                <td className="py-1.5 pr-3 text-xs">{w.purifications.map((p) => PURIFICATION[p as keyof typeof PURIFICATION]).join(", ") || "—"}</td>
-                <td className="py-1.5 pr-3 text-xs">{w.steps.map((s, i) => `${i + 1}. ${s.name || nameOf(s.method_id)}`).join(" → ")}</td>
-                <td className="py-1.5 pr-3 text-xs">rev {w.revision}</td>
-                <td className="py-1.5 pr-3 text-xs">{w.status === "ACTIVE" ? "Đang dùng" : "Ngừng"}</td>
-                <td className="py-1.5 pr-3 text-right whitespace-nowrap">
-                  <div className="inline-flex items-center gap-1">
-                    {canEditSop && (
-                      <Button type="button" variant="ghost" onClick={() => setWorkflowState({ item: w })}>Sửa</Button>
-                    )}
-                    {canCreateOrClone && (
-                      <Button type="button" variant="ghost" onClick={() => setWorkflowState({ item: w, isClone: true })}>Nhân bản</Button>
-                    )}
-                    {canDeleteSop && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        className="text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50"
-                        disabled={deleteWorkflowMut.isPending}
-                        onClick={() => {
-                          const reason = window.prompt(
-                            `Nhập lý do xóa quy trình SOP "${w.name}":`,
-                            "Xóa quy trình SOP không còn sử dụng"
-                          );
-                          if (!reason || reason.trim().length < 3) return;
-                          deleteWorkflowMut.mutate({ id: w.id, reason: reason.trim() });
-                        }}
-                      >
-                        Xóa
-                      </Button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {workflows.map((w) => {
+              const isRowEditing = workflowState?.item?.id === w.id;
+              return (
+                <React.Fragment key={w.id}>
+                  <tr
+                    className={`${w.status === "ACTIVE" ? "" : "opacity-50"} ${
+                      isRowEditing ? "bg-sky-50/80 dark:bg-sky-950/30 font-semibold" : ""
+                    }`}
+                  >
+                    <td className="py-1.5 pr-3">{w.name}{w.description && <div className="text-[11px] text-slate-500">{w.description}</div>}</td>
+                    <td className="py-1.5 pr-3 text-xs">{w.purifications.map((p) => PURIFICATION[p as keyof typeof PURIFICATION]).join(", ") || "—"}</td>
+                    <td className="py-1.5 pr-3 text-xs">{w.steps.map((s, i) => `${i + 1}. ${s.name || nameOf(s.method_id)}`).join(" → ")}</td>
+                    <td className="py-1.5 pr-3 text-xs">rev {w.revision}</td>
+                    <td className="py-1.5 pr-3 text-xs">{w.status === "ACTIVE" ? "Đang dùng" : "Ngừng"}</td>
+                    <td className="py-1.5 pr-3 text-right whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1">
+                        {canEditSop && (
+                          <Button
+                            type="button"
+                            variant={isRowEditing && !workflowState?.isClone ? "primary" : "ghost"}
+                            onClick={() =>
+                              setWorkflowState(
+                                isRowEditing && !workflowState?.isClone ? null : { item: w, isClone: false }
+                              )
+                            }
+                          >
+                            {isRowEditing && !workflowState?.isClone ? "Đóng sửa" : "Sửa"}
+                          </Button>
+                        )}
+                        {canCreateOrClone && (
+                          <Button
+                            type="button"
+                            variant={isRowEditing && workflowState?.isClone ? "primary" : "ghost"}
+                            onClick={() =>
+                              setWorkflowState(
+                                isRowEditing && workflowState?.isClone ? null : { item: w, isClone: true }
+                              )
+                            }
+                          >
+                            {isRowEditing && workflowState?.isClone ? "Đóng nhân bản" : "Nhân bản"}
+                          </Button>
+                        )}
+                        {canDeleteSop && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className="text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50"
+                            disabled={deleteWorkflowMut.isPending}
+                            onClick={() => {
+                              const reason = window.prompt(
+                                `Nhập lý do xóa quy trình SOP "${w.name}":`,
+                                "Xóa quy trình SOP không còn sử dụng"
+                              );
+                              if (!reason || reason.trim().length < 3) return;
+                              deleteWorkflowMut.mutate({ id: w.id, reason: reason.trim() });
+                            }}
+                          >
+                            Xóa
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                  {isRowEditing && (
+                    <tr>
+                      <td colSpan={6} className="py-2 pr-3">
+                        <WorkflowEditor
+                          key={`${w.id}-${workflowState?.isClone ? "clone" : "edit"}`}
+                          base={w}
+                          isClone={workflowState?.isClone}
+                          methods={methods}
+                          onClose={() => setWorkflowState(null)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </Table>
         )}
       </Card>

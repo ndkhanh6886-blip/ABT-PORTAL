@@ -663,148 +663,137 @@ export function SpecsView() {
     });
   };
 
+  const renderAssignCard = () => {
+    if (!assignTarget) return null;
+    return (
+      <Card
+        title={
+          assignTarget.mode === "ASSIGN"
+            ? `🔗 Gán / Chọn Nhiều Sản phẩm áp dụng cho Tiêu chuẩn ${assignTarget.spec.code}`
+            : `📋 Sao chép bộ chỉ tiêu của ${assignTarget.spec.code} & Gán cho (Một hoặc Nhiều) Sản phẩm khác`
+        }
+        actions={
+          <Button variant="ghost" onClick={() => setAssignTarget(null)}>
+            Đóng
+          </Button>
+        }
+      >
+        <ErrorNote error={assignMut.error} />
+        <form
+          className="grid gap-3 sm:grid-cols-2 items-end"
+          onSubmit={(e) => {
+            e.preventDefault();
+            assignMut.mutate({
+              spec_id: assignTarget.spec.id,
+              mode: assignTarget.mode,
+              applies_to: assignTarget.applies_to,
+              item_id: assignTarget.item_ids[0] || null,
+              item_ids: assignTarget.item_ids,
+              custom_name: assignTarget.custom_name || null,
+              make_effective: assignTarget.make_effective,
+            });
+          }}
+        >
+          <Field label="1. Chế độ thực hiện *">
+            <select
+              className={inputClass}
+              value={assignTarget.mode}
+              onChange={(e) => {
+                const nextMode = e.target.value as "ASSIGN" | "CLONE";
+                const s = assignTarget.spec;
+                const existingIds =
+                  nextMode === "ASSIGN"
+                    ? s.assigned_items && s.assigned_items.length > 0
+                      ? s.assigned_items.map((x) => x.id)
+                      : s.item_id
+                      ? [s.item_id]
+                      : []
+                    : [];
+                setAssignTarget({
+                  ...assignTarget,
+                  mode: nextMode,
+                  item_ids: existingIds,
+                  custom_name: nextMode === "ASSIGN" ? s.name : "",
+                });
+              }}
+            >
+              <option value="ASSIGN">🔗 Gán trực tiếp tiêu chuẩn {assignTarget.spec.code} cho các sản phẩm được tích chọn bên dưới</option>
+              <option value="CLONE">📋 Sao chép bộ chỉ tiêu của {assignTarget.spec.code} sang mã TC mới cho các sản phẩm bên dưới</option>
+            </select>
+          </Field>
+          <Field label="2. Áp dụng cho phân loại *">
+            <select
+              className={inputClass}
+              value={assignTarget.applies_to}
+              onChange={(e) => setAssignTarget({ ...assignTarget, applies_to: e.target.value })}
+            >
+              {Object.entries(APPLIES).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <div className="sm:col-span-2">
+            <Field label="3. Tích chọn (Một hoặc Nhiều) Vật tư / Bán thành phẩm / Sản phẩm cần gán *">
+              <MultiItemPicker
+                selectedIds={assignTarget.item_ids}
+                initialItems={assignTarget.spec.assigned_items ?? []}
+                onChange={(ids, selectedObjs) => {
+                  const prefix = assignTarget.applies_to === "RECEIPT" ? "IQC" : assignTarget.applies_to === "PRODUCT" ? "FQC" : "IPQC";
+                  let autoName = assignTarget.custom_name;
+                  if (assignTarget.mode === "CLONE" && selectedObjs.length > 0) {
+                    const first = selectedObjs[0];
+                    autoName =
+                      selectedObjs.length === 1
+                        ? `Tiêu chuẩn ${prefix} — ${first.code} ${first.name}`
+                        : `Tiêu chuẩn ${prefix} — ${first.code} (+${selectedObjs.length - 1} SP cùng nhóm)`;
+                  }
+                  setAssignTarget({
+                    ...assignTarget,
+                    item_ids: ids,
+                    custom_name: autoName,
+                  });
+                }}
+              />
+            </Field>
+          </div>
+          <Field label="4. Tên Tiêu chuẩn sau khi gán">
+            <input
+              className={inputClass}
+              value={assignTarget.custom_name}
+              onChange={(e) => setAssignTarget({ ...assignTarget, custom_name: e.target.value })}
+              placeholder="Để trống để hệ thống tự đặt tên theo sản phẩm đã chọn"
+            />
+          </Field>
+          <div className="flex items-center justify-between gap-2 pb-1">
+            <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+              <input
+                type="checkbox"
+                checked={assignTarget.make_effective}
+                onChange={(e) => setAssignTarget({ ...assignTarget, make_effective: e.target.checked })}
+              />
+              Kích hoạt có hiệu lực ngay (EFFECTIVE)
+            </label>
+            <div className="flex gap-2">
+              <Button type="button" variant="ghost" onClick={() => setAssignTarget(null)}>
+                Hủy
+              </Button>
+              <Button type="submit" disabled={assignMut.isPending || (NEEDS_ITEM.includes(assignTarget.applies_to) && assignTarget.item_ids.length === 0)}>
+                {assignTarget.mode === "CLONE"
+                  ? `📋 Sao chép & Gán (${assignTarget.item_ids.length} SP)`
+                  : `🔗 Lưu gán (${assignTarget.item_ids.length} SP)`}
+              </Button>
+            </div>
+          </div>
+        </form>
+      </Card>
+    );
+  };
+
   return (
     <div className="flex flex-col gap-3">
       {creating && <SpecEditor mode="new" onClose={() => setCreating(false)} />}
-
-      {assignTarget && (
-        <Card
-          title={
-            assignTarget.mode === "ASSIGN"
-              ? `🔗 Gán / Chọn Nhiều Sản phẩm áp dụng cho Tiêu chuẩn ${assignTarget.spec.code}`
-              : `📋 Sao chép bộ chỉ tiêu của ${assignTarget.spec.code} & Gán cho (Một hoặc Nhiều) Sản phẩm khác`
-          }
-          actions={
-            <Button variant="ghost" onClick={() => setAssignTarget(null)}>
-              Đóng
-            </Button>
-          }
-        >
-          <ErrorNote error={assignMut.error} />
-          <form
-            className="grid gap-3 sm:grid-cols-2 items-end"
-            onSubmit={(e) => {
-              e.preventDefault();
-              assignMut.mutate({
-                spec_id: assignTarget.spec.id,
-                mode: assignTarget.mode,
-                applies_to: assignTarget.applies_to,
-                item_id: assignTarget.item_ids[0] || null,
-                item_ids: assignTarget.item_ids,
-                custom_name: assignTarget.custom_name || null,
-                make_effective: assignTarget.make_effective,
-              });
-            }}
-          >
-            <Field label="1. Chế độ thực hiện *">
-              <select
-                className={inputClass}
-                value={assignTarget.mode}
-                onChange={(e) => {
-                  const nextMode = e.target.value as "ASSIGN" | "CLONE";
-                  const s = assignTarget.spec;
-                  const existingIds =
-                    nextMode === "ASSIGN"
-                      ? s.assigned_items && s.assigned_items.length > 0
-                        ? s.assigned_items.map((x) => x.id)
-                        : s.item_id
-                        ? [s.item_id]
-                        : []
-                      : [];
-                  setAssignTarget({
-                    ...assignTarget,
-                    mode: nextMode,
-                    item_ids: existingIds,
-                    custom_name: nextMode === "ASSIGN" ? s.name : "",
-                  });
-                }}
-              >
-                <option value="ASSIGN">🔗 Gán trực tiếp tiêu chuẩn {assignTarget.spec.code} cho các sản phẩm được tích chọn bên dưới</option>
-                <option value="CLONE">📋 Sao chép bộ chỉ tiêu của {assignTarget.spec.code} sang mã TC mới cho các sản phẩm bên dưới</option>
-              </select>
-            </Field>
-            <Field label="2. Áp dụng cho phân loại *">
-              <select
-                className={inputClass}
-                value={assignTarget.applies_to}
-                onChange={(e) => setAssignTarget({ ...assignTarget, applies_to: e.target.value })}
-              >
-                {Object.entries(APPLIES).map(([k, v]) => (
-                  <option key={k} value={k}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <div className="sm:col-span-2">
-              <Field label="3. Tích chọn (Một hoặc Nhiều) Vật tư / Bán thành phẩm / Sản phẩm cần gán *">
-                <MultiItemPicker
-                  selectedIds={assignTarget.item_ids}
-                  initialItems={assignTarget.spec.assigned_items ?? []}
-                  onChange={(ids, selectedObjs) => {
-                    const prefix = assignTarget.applies_to === "RECEIPT" ? "IQC" : assignTarget.applies_to === "PRODUCT" ? "FQC" : "IPQC";
-                    let autoName = assignTarget.custom_name;
-                    if (assignTarget.mode === "CLONE" && selectedObjs.length > 0) {
-                      const first = selectedObjs[0];
-                      autoName =
-                        selectedObjs.length === 1
-                          ? `Tiêu chuẩn ${prefix} — ${first.code} ${first.name}`
-                          : `Tiêu chuẩn ${prefix} — ${first.code} (+${selectedObjs.length - 1} SP cùng nhóm)`;
-                    }
-                    setAssignTarget({
-                      ...assignTarget,
-                      item_ids: ids,
-                      custom_name: autoName,
-                    });
-                  }}
-                />
-              </Field>
-            </div>
-            <Field label="4. Tên Tiêu chuẩn sau khi gán">
-              <input
-                className={inputClass}
-                value={assignTarget.custom_name}
-                onChange={(e) => setAssignTarget({ ...assignTarget, custom_name: e.target.value })}
-                placeholder="Để trống để hệ thống tự đặt tên theo sản phẩm đã chọn"
-              />
-            </Field>
-            <div className="flex items-center justify-between gap-2 pb-1">
-              <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={assignTarget.make_effective}
-                  onChange={(e) => setAssignTarget({ ...assignTarget, make_effective: e.target.checked })}
-                />
-                Kích hoạt có hiệu lực ngay (EFFECTIVE)
-              </label>
-              <div className="flex gap-2">
-                <Button type="button" variant="ghost" onClick={() => setAssignTarget(null)}>
-                  Hủy
-                </Button>
-                <Button type="submit" disabled={assignMut.isPending || (NEEDS_ITEM.includes(assignTarget.applies_to) && assignTarget.item_ids.length === 0)}>
-                  {assignTarget.mode === "CLONE"
-                    ? `📋 Sao chép & Gán (${assignTarget.item_ids.length} SP)`
-                    : `🔗 Lưu gán (${assignTarget.item_ids.length} SP)`}
-                </Button>
-              </div>
-            </div>
-          </form>
-        </Card>
-      )}
-
-      {selected && !creating && (
-        <SpecDetailPanel
-          key={`${selected}-${selectedInitialEdit ?? "view"}`}
-          id={selected}
-          initialEditing={selectedInitialEdit}
-          onClose={() => {
-            setSelected(null);
-            setSelectedInitialEdit(null);
-          }}
-          onOpenAssign={(s, mode) => openAssignModal(s, mode)}
-          onDelete={(s) => handleDeleteSpec(s)}
-        />
-      )}
 
       <Card
         title="Tiêu chuẩn QC (Gán Một hoặc Nhiều Sản phẩm ↔ Bộ Chỉ tiêu Kiểm nghiệm)"
@@ -875,68 +864,118 @@ export function SpecsView() {
                 const hay = `${s.code} ${s.name} ${s.item_code ?? ""} ${s.item_name ?? ""} ${assignedText}`.toLowerCase();
                 return hay.includes(q);
               })
-              .map((s) => (
-              <tr
-                key={s.id}
-                className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                onClick={() => {
-                  setSelectedInitialEdit(null);
-                  setSelected(s.id);
-                }}
-              >
-                <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">{s.code}</td>
-                <td className="py-2 pr-3">{s.spec_version}</td>
-                <td className="py-2 pr-3">{s.name}</td>
-                <td className="py-2 pr-3 whitespace-nowrap">{APPLIES[s.applies_to]}</td>
-                <td className="py-2 pr-3 font-medium">{renderAssignedBadges(s)}</td>
-                <td className="py-2 pr-3">{s.parameter_count}</td>
-                <td className="py-2 pr-3 whitespace-nowrap"><StatusBadge status={SPEC_STATUS[s.status][0]} label={SPEC_STATUS[s.status][1]} /></td>
-                <td className="py-2 pr-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                  <div className="inline-flex items-center gap-1">
-                    <button
-                      type="button"
-                      title="Gán / Chọn một hoặc nhiều sản phẩm áp dụng tiêu chuẩn này"
-                      className="px-2 py-1 rounded-lg text-[11px] font-medium border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                      onClick={() => openAssignModal(s, "ASSIGN")}
+              .map((s) => {
+                const isRowSelected = selected === s.id && !creating;
+                const isRowAssign = assignTarget?.spec.id === s.id;
+                return (
+                  <React.Fragment key={s.id}>
+                    <tr
+                      className={`cursor-pointer transition-colors ${
+                        isRowSelected || isRowAssign
+                          ? "bg-sky-50/80 dark:bg-sky-950/30 font-semibold"
+                          : "hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                      }`}
+                      onClick={() => {
+                        if (isRowSelected && !selectedInitialEdit) {
+                          setSelected(null);
+                        } else {
+                          setSelectedInitialEdit(null);
+                          setSelected(s.id);
+                        }
+                      }}
                     >
-                      🔗 Gán SP
-                    </button>
-                    <button
-                      type="button"
-                      title="Sao chép bộ chỉ tiêu sang mã TC mới cho sản phẩm khác"
-                      className="px-2 py-1 rounded-lg text-[11px] font-medium border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                      onClick={() => openAssignModal(s, "CLONE")}
-                    >
-                      📋 Sao chép
-                    </button>
-                    {canManage && (
-                      <>
-                        <button
-                          type="button"
-                          title="Sửa tiêu chuẩn QC và các chỉ tiêu kiểm nghiệm"
-                          className="px-2 py-1 rounded-lg text-[11px] font-semibold border border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/50 text-sky-800 dark:text-sky-300 hover:bg-sky-100 cursor-pointer"
-                          onClick={() => {
-                            setSelected(s.id);
-                            setSelectedInitialEdit("edit");
-                          }}
-                        >
-                          ✏️ Sửa
-                        </button>
-                        <button
-                          type="button"
-                          disabled={deleteMut.isPending}
-                          title="Xóa tiêu chuẩn QC này"
-                          className="px-2 py-1 rounded-lg text-[11px] font-semibold border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 hover:bg-rose-100 cursor-pointer"
-                          onClick={() => handleDeleteSpec(s)}
-                        >
-                          🗑️ Xóa
-                        </button>
-                      </>
+                      <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">{s.code}</td>
+                      <td className="py-2 pr-3">{s.spec_version}</td>
+                      <td className="py-2 pr-3">{s.name}</td>
+                      <td className="py-2 pr-3 whitespace-nowrap">{APPLIES[s.applies_to]}</td>
+                      <td className="py-2 pr-3 font-medium">{renderAssignedBadges(s)}</td>
+                      <td className="py-2 pr-3">{s.parameter_count}</td>
+                      <td className="py-2 pr-3 whitespace-nowrap"><StatusBadge status={SPEC_STATUS[s.status][0]} label={SPEC_STATUS[s.status][1]} /></td>
+                      <td className="py-2 pr-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                        <div className="inline-flex items-center gap-1">
+                          <button
+                            type="button"
+                            title="Gán / Chọn một hoặc nhiều sản phẩm áp dụng tiêu chuẩn này"
+                            className="px-2 py-1 rounded-lg text-[11px] font-medium border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                            onClick={() =>
+                              isRowAssign && assignTarget?.mode === "ASSIGN"
+                                ? setAssignTarget(null)
+                                : openAssignModal(s, "ASSIGN")
+                            }
+                          >
+                            {isRowAssign && assignTarget?.mode === "ASSIGN" ? "Đóng gán" : "🔗 Gán SP"}
+                          </button>
+                          <button
+                            type="button"
+                            title="Sao chép bộ chỉ tiêu sang mã TC mới cho sản phẩm khác"
+                            className="px-2 py-1 rounded-lg text-[11px] font-medium border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                            onClick={() =>
+                              isRowAssign && assignTarget?.mode === "CLONE"
+                                ? setAssignTarget(null)
+                                : openAssignModal(s, "CLONE")
+                            }
+                          >
+                            {isRowAssign && assignTarget?.mode === "CLONE" ? "Đóng sao chép" : "📋 Sao chép"}
+                          </button>
+                          {canManage && (
+                            <>
+                              <button
+                                type="button"
+                                title="Sửa tiêu chuẩn QC và các chỉ tiêu kiểm nghiệm"
+                                className="px-2 py-1 rounded-lg text-[11px] font-semibold border border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/50 text-sky-800 dark:text-sky-300 hover:bg-sky-100 cursor-pointer"
+                                onClick={() => {
+                                  if (isRowSelected && selectedInitialEdit === "edit") {
+                                    setSelected(null);
+                                    setSelectedInitialEdit(null);
+                                  } else {
+                                    setSelected(s.id);
+                                    setSelectedInitialEdit("edit");
+                                  }
+                                }}
+                              >
+                                {isRowSelected && selectedInitialEdit === "edit" ? "Đóng sửa" : "✏️ Sửa"}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={deleteMut.isPending}
+                                title="Xóa tiêu chuẩn QC này"
+                                className="px-2 py-1 rounded-lg text-[11px] font-semibold border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 hover:bg-rose-100 cursor-pointer"
+                                onClick={() => handleDeleteSpec(s)}
+                              >
+                                🗑️ Xóa
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    {isRowAssign && (
+                      <tr>
+                        <td colSpan={8} className="py-2 pr-3">
+                          {renderAssignCard()}
+                        </td>
+                      </tr>
                     )}
-                  </div>
-                </td>
-              </tr>
-            ))}
+                    {isRowSelected && (
+                      <tr>
+                        <td colSpan={8} className="py-2 pr-3">
+                          <SpecDetailPanel
+                            key={`${s.id}-${selectedInitialEdit ?? "view"}`}
+                            id={s.id}
+                            initialEditing={selectedInitialEdit}
+                            onClose={() => {
+                              setSelected(null);
+                              setSelectedInitialEdit(null);
+                            }}
+                            onOpenAssign={(sp, mode) => openAssignModal(sp, mode)}
+                            onDelete={(sp) => handleDeleteSpec(sp)}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
           </Table>
         )}
       </Card>

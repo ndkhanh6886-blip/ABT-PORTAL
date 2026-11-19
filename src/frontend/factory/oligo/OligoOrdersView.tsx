@@ -339,26 +339,21 @@ export function OligoOrdersView({
 
   const openOrderDetail = (orderId: string) => {
     setShowNewOrder(false);
-    setSelected(orderId);
-    if (typeof window !== "undefined") {
-      window.setTimeout(() => {
-        document.getElementById("oligo-order-detail-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 40);
-    }
+    setSelected((prev) => (prev === orderId ? null : orderId));
   };
+
+  const selectedInRows = Boolean(selected && rows.some((r) => r.id === selected));
 
   return (
     <div className="flex flex-col gap-3">
-      <div id="oligo-order-detail-anchor">
-        {selected && (
-          <OligoOrderPanel
-            key={selected}
-            id={selected}
-            canDeliver={canDeliver}
-            onClose={() => setSelected(null)}
-          />
-        )}
-      </div>
+      {selected && !selectedInRows && (
+        <OligoOrderPanel
+          key={selected}
+          id={selected}
+          canDeliver={canDeliver}
+          onClose={() => setSelected(null)}
+        />
+      )}
       <Card
         title="Đơn Oligo (Liên kết 2 chiều Đơn Nội Bộ · Xuất COA Đơn hàng & COA Amplicon)"
         actions={
@@ -394,7 +389,8 @@ export function OligoOrdersView({
           <NewOrder
             onCancel={() => setShowNewOrder(false)}
             onCreated={(id) => {
-              openOrderDetail(id);
+              setShowNewOrder(false);
+              setSelected(id);
             }}
           />
         )}
@@ -553,148 +549,169 @@ export function OligoOrdersView({
               const isSelectedRow = selected === o.id;
 
               return (
-                <tr
-                  key={o.id}
-                  className={`cursor-pointer transition-colors ${
-                    isSelectedRow
-                      ? "bg-purple-50/90 dark:bg-purple-950/35 ring-1 ring-inset ring-purple-300 dark:ring-purple-700"
-                      : "hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                  }`}
-                  onClick={() => openOrderDetail(o.id)}
-                >
-                  <td className="py-2 pr-3 font-mono font-bold text-sky-700 dark:text-sky-400 whitespace-nowrap">
-                    <div>{o.code}</div>
-                    {isSelectedRow && (
-                      <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-purple-600 text-white font-sans text-[10px] font-bold">
-                        Đang mở ở trên ▲
-                      </span>
-                    )}
-                  </td>
-                  <td
-                    className="py-2 pr-3 whitespace-nowrap"
-                    onClick={(e) => {
-                      if (o.internal_order_id) {
-                        e.stopPropagation();
-                        jumpToInternalOrder(o.internal_order_id);
-                      }
-                    }}
+                <React.Fragment key={o.id}>
+                  <tr
+                    className={`cursor-pointer transition-colors ${
+                      isSelectedRow
+                        ? "bg-purple-50/90 dark:bg-purple-950/35 ring-1 ring-inset ring-purple-300 dark:ring-purple-700"
+                        : "hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                    }`}
+                    onClick={() => openOrderDetail(o.id)}
                   >
-                    {o.internal_order_code || o.kd_po_code ? (
-                      <div className="flex flex-col gap-0.5">
-                        {o.internal_order_code && (
-                          <span
-                            title="Nhấp để mở Đơn Nội Bộ liên kết"
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 font-mono text-[11px] font-bold text-indigo-700 dark:text-indigo-300 hover:underline w-fit"
+                    <td className="py-2 pr-3 font-mono font-bold text-sky-700 dark:text-sky-400 whitespace-nowrap">
+                      <div>{o.code}</div>
+                      {isSelectedRow && (
+                        <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-purple-600 text-white font-sans text-[10px] font-bold">
+                          Đang mở bên dưới ▼
+                        </span>
+                      )}
+                    </td>
+                    <td
+                      className="py-2 pr-3 whitespace-nowrap"
+                      onClick={(e) => {
+                        if (o.internal_order_id) {
+                          e.stopPropagation();
+                          jumpToInternalOrder(o.internal_order_id);
+                        }
+                      }}
+                    >
+                      {o.internal_order_code || o.kd_po_code ? (
+                        <div className="flex flex-col gap-0.5">
+                          {o.internal_order_code && (
+                            <span
+                              title="Nhấp để mở Đơn Nội Bộ liên kết"
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 font-mono text-[11px] font-bold text-indigo-700 dark:text-indigo-300 hover:underline w-fit"
+                            >
+                              🔗 {o.internal_order_code} ↗
+                            </span>
+                          )}
+                          {o.kd_po_code && (
+                            <span className="font-mono text-[11px] text-slate-600 dark:text-slate-400">
+                              PO: <b>{o.kd_po_code}</b>
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-slate-400">—</span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 max-w-52">
+                      <div className="font-semibold text-slate-900 dark:text-white line-clamp-2">
+                        {o.customer_label ?? "—"}
+                      </div>
+                    </td>
+                    <td className="py-2 pr-3 max-w-64">
+                      {displayNote ? (
+                        <div
+                          title={displayNote}
+                          className="px-2 py-1 rounded-lg bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/70 dark:border-amber-800/60 text-[11px] text-slate-700 dark:text-slate-200 line-clamp-2"
+                        >
+                          📝 {displayNote}
+                        </div>
+                      ) : (
+                        <span className="text-slate-400 italic text-[11px]">Chưa có ghi chú</span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 whitespace-nowrap text-xs">
+                      <div className="font-bold text-slate-900 dark:text-white">
+                        Tổng: {o.sequence_count} chuỗi
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        🧪 {ppCount} Primer/Probe · 🧬 {ampCount} Amplicon
+                      </div>
+                      <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">
+                        Đã giao: {o.delivered_count ?? 0}/{o.sequence_count}
+                      </div>
+                    </td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      <div className="font-semibold">{fmtDate(o.due_date)}</div>
+                      {o.due_date_change_count > 0 && (
+                        <span
+                          title={`Đơn hàng này đã bị thay đổi ngày giao ${o.due_date_change_count} lần (Ngày giao ban đầu: ${fmtDate(
+                            o.initial_due_date ?? null
+                          )})`}
+                          className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 text-[10px] font-bold"
+                        >
+                          ⚠️ Đã dời lịch {o.due_date_change_count} lần
+                        </span>
+                      )}
+                      {isLate && (
+                        <div className="text-[10px] font-bold text-rose-600 dark:text-rose-400 mt-0.5">
+                          🚨 Trễ hơn KD yêu cầu ({fmtDate(o.requested_date ?? null)})
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      <StatusBadge
+                        status={ORDER_STATUS[o.status][0]}
+                        label={ORDER_STATUS[o.status][1]}
+                      />
+                    </td>
+                    <td
+                      className="py-2 pr-3 whitespace-nowrap"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="inline-flex flex-wrap items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => openOrderDetail(o.id)}
+                          className={`px-2.5 py-1 rounded-lg font-bold text-[11px] cursor-pointer shadow-2xs ${
+                            isSelectedRow
+                              ? "bg-slate-700 hover:bg-slate-800 text-white"
+                              : "bg-emerald-600 hover:bg-emerald-700 text-white"
+                          }`}
+                          title="Mở chi tiết đơn hàng này ngay tại dòng để nhập hoặc sửa danh sách trình tự"
+                        >
+                          {isSelectedRow
+                            ? "Đóng chi tiết ▲"
+                            : o.sequence_count === 0
+                              ? "🧬 Nhập trình tự"
+                              : "✏️ Xem / Sửa trình tự"}
+                        </button>
+                        {o.sequence_count > 0 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              printOrderCoa(o.id, "PRIMER_PROBE_ONLY").catch((err) =>
+                                window.alert(err.message)
+                              )
+                            }
+                            title="Xuất COA Đơn hàng (chỉ gồm các trình tự Primer & Probe)"
+                            className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] cursor-pointer"
                           >
-                            🔗 {o.internal_order_code} ↗
-                          </span>
+                            📜 COA Đơn hàng
+                          </button>
                         )}
-                        {o.kd_po_code && (
-                          <span className="font-mono text-[11px] text-slate-600 dark:text-slate-400">
-                            PO: <b>{o.kd_po_code}</b>
-                          </span>
+                        {ampCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              printOrderCoa(o.id, "AMPLICONS_ONLY").catch((err) =>
+                                window.alert(err.message)
+                              )
+                            }
+                            title="Xuất COA cho trình tự Amplicon"
+                            className="px-2 py-1 rounded-lg border border-purple-300 dark:border-purple-800 bg-purple-50 dark:bg-purple-950/50 hover:bg-purple-100 text-purple-800 dark:text-purple-300 font-bold text-[11px] cursor-pointer"
+                          >
+                            🧬 COA Amplicon ({ampCount})
+                          </button>
                         )}
                       </div>
-                    ) : (
-                      <span className="text-slate-400">—</span>
-                    )}
-                  </td>
-                  <td className="py-2 pr-3 max-w-52">
-                    <div className="font-semibold text-slate-900 dark:text-white line-clamp-2">
-                      {o.customer_label ?? "—"}
-                    </div>
-                  </td>
-                  <td className="py-2 pr-3 max-w-64">
-                    {displayNote ? (
-                      <div
-                        title={displayNote}
-                        className="px-2 py-1 rounded-lg bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/70 dark:border-amber-800/60 text-[11px] text-slate-700 dark:text-slate-200 line-clamp-2"
-                      >
-                        📝 {displayNote}
-                      </div>
-                    ) : (
-                      <span className="text-slate-400 italic text-[11px]">Chưa có ghi chú</span>
-                    )}
-                  </td>
-                  <td className="py-2 pr-3 whitespace-nowrap text-xs">
-                    <div className="font-bold text-slate-900 dark:text-white">
-                      Tổng: {o.sequence_count} chuỗi
-                    </div>
-                    <div className="text-[11px] text-slate-500">
-                      🧪 {ppCount} Primer/Probe · 🧬 {ampCount} Amplicon
-                    </div>
-                    <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">
-                      Đã giao: {o.delivered_count ?? 0}/{o.sequence_count}
-                    </div>
-                  </td>
-                  <td className="py-2 pr-3 whitespace-nowrap">
-                    <div className="font-semibold">{fmtDate(o.due_date)}</div>
-                    {o.due_date_change_count > 0 && (
-                      <span
-                        title={`Đơn hàng này đã bị thay đổi ngày giao ${o.due_date_change_count} lần (Ngày giao ban đầu: ${fmtDate(
-                          o.initial_due_date ?? null
-                        )})`}
-                        className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 text-[10px] font-bold"
-                      >
-                        ⚠️ Đã dời lịch {o.due_date_change_count} lần
-                      </span>
-                    )}
-                    {isLate && (
-                      <div className="text-[10px] font-bold text-rose-600 dark:text-rose-400 mt-0.5">
-                        🚨 Trễ hơn KD yêu cầu ({fmtDate(o.requested_date ?? null)})
-                      </div>
-                    )}
-                  </td>
-                  <td className="py-2 pr-3 whitespace-nowrap">
-                    <StatusBadge
-                      status={ORDER_STATUS[o.status][0]}
-                      label={ORDER_STATUS[o.status][1]}
-                    />
-                  </td>
-                  <td
-                    className="py-2 pr-3 whitespace-nowrap"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <div className="inline-flex flex-wrap items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => openOrderDetail(o.id)}
-                        className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] cursor-pointer shadow-2xs"
-                        title="Mở chi tiết đơn hàng này để nhập hoặc sửa danh sách trình tự"
-                      >
-                        {o.sequence_count === 0 ? "🧬 Nhập trình tự" : "✏️ Xem / Sửa trình tự"}
-                      </button>
-                      {o.sequence_count > 0 && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            printOrderCoa(o.id, "PRIMER_PROBE_ONLY").catch((err) =>
-                              window.alert(err.message)
-                            )
-                          }
-                          title="Xuất COA Đơn hàng (chỉ gồm các trình tự Primer & Probe)"
-                          className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] cursor-pointer"
-                        >
-                          📜 COA Đơn hàng
-                        </button>
-                      )}
-                      {ampCount > 0 && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            printOrderCoa(o.id, "AMPLICONS_ONLY").catch((err) =>
-                              window.alert(err.message)
-                            )
-                          }
-                          title="Xuất COA cho trình tự Amplicon"
-                          className="px-2 py-1 rounded-lg border border-purple-300 dark:border-purple-800 bg-purple-50 dark:bg-purple-950/50 hover:bg-purple-100 text-purple-800 dark:text-purple-300 font-bold text-[11px] cursor-pointer"
-                        >
-                          🧬 COA Amplicon ({ampCount})
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
+                    </td>
+                  </tr>
+                  {isSelectedRow && (
+                    <tr>
+                      <td colSpan={8} className="py-2.5 pr-3">
+                        <OligoOrderPanel
+                          key={o.id}
+                          id={o.id}
+                          canDeliver={canDeliver}
+                          onClose={() => setSelected(null)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               );
             })}
           </Table>

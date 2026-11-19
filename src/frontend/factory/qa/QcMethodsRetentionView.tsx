@@ -150,50 +150,6 @@ export function QcMethodsRetentionView() {
 
       {subView === "methods" && (
         <>
-          {selectedMethod && (
-            <Card
-              title={`Phương pháp ${selectedMethod.code} (v${selectedMethod.version_no}) — ${selectedMethod.name}`}
-              actions={<Button variant="ghost" onClick={() => setSelectedMethod(null)}>Đóng</Button>}
-            >
-              <div className="flex flex-col gap-3 text-xs">
-                <div className="grid gap-2 sm:grid-cols-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800">
-                  <div><b>Nhóm kỹ thuật:</b> {METHOD_CATEGORY_LABEL[selectedMethod.category] ?? selectedMethod.category}</div>
-                  <div><b>Hệ thống thiết bị:</b> {selectedMethod.instrument_type || "—"}</div>
-                  <div><b>Tiêu chí hợp lệ mẻ chạy (System Suitability):</b> {selectedMethod.suitability_criteria || "—"}</div>
-                </div>
-                {selectedMethod.principle && (
-                  <div>
-                    <b>Nguyên lý phương pháp:</b> {selectedMethod.principle}
-                  </div>
-                )}
-                <div>
-                  <b className="block mb-1">Các bước thao tác chuẩn (SOP Kiểm nghiệm):</b>
-                  <ol className="list-decimal list-inside space-y-1 pl-1">
-                    {(Array.isArray(selectedMethod.sop_steps) ? selectedMethod.sop_steps : []).map((st: any, idx: number) => (
-                      <li key={idx}>
-                        <b>{st.title}:</b> {st.detail}
-                      </li>
-                    ))}
-                  </ol>
-                </div>
-                {selectedMethod.validation_summary && (
-                  <div className="p-3 rounded-xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/40 dark:bg-emerald-950/20">
-                    <div className="font-bold text-emerald-800 dark:text-emerald-300 mb-1">
-                      ✓ Tóm tắt Hồ sơ Thẩm định Phương pháp (Method Validation Summary — ISO 13485 / GLP)
-                    </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                      <div>Độ lặp lại (%CV): <b>{selectedMethod.validation_summary.repeatability_cv_pct || "—"}</b></div>
-                      <div>Độ tái lập (%CV): <b>{selectedMethod.validation_summary.reproducibility_cv_pct || "—"}</b></div>
-                      <div>Giới hạn phát hiện (LoD): <b>{selectedMethod.validation_summary.lod_value || "—"}</b></div>
-                      <div>Độ đặc hiệu: <b>{selectedMethod.validation_summary.specificity_pct || "100%"}</b></div>
-                      <div>Tuyến tính ($R^2$): <b>{selectedMethod.validation_summary.linearity_r2 || "—"}</b></div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </Card>
-          )}
-
           <Card
             title="🔬 Thư viện Phương pháp Kiểm nghiệm & Thẩm định Phương pháp (QC Analytical Methods)"
             actions={<Button onClick={() => setAddingMethod(!addingMethod)}>+ Xây dựng Phương pháp Kiểm nghiệm mới</Button>}
@@ -267,23 +223,84 @@ export function QcMethodsRetentionView() {
               <Empty>Chưa có phương pháp kiểm nghiệm nào.</Empty>
             ) : (
               <Table head={["Mã PP", "Tên Phương pháp Kiểm nghiệm", "Nhóm kỹ thuật", "Thiết bị chính", "Thông số Thẩm định (CV% / LoD)", "Trạng thái", "Chi tiết SOP"]}>
-                {methods.map((m) => (
-                  <tr key={m.id} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setSelectedMethod(m)}>
-                    <td className="py-2 pr-3 font-mono font-bold text-sky-700 dark:text-sky-400">{m.code}</td>
-                    <td className="py-2 pr-3 font-semibold">{m.name}</td>
-                    <td className="py-2 pr-3 text-xs">{METHOD_CATEGORY_LABEL[m.category] ?? m.category}</td>
-                    <td className="py-2 pr-3 text-xs">{m.instrument_type || "—"}</td>
-                    <td className="py-2 pr-3 font-mono text-xs">
-                      CV: {m.validation_summary?.repeatability_cv_pct || "≤2%"} · LoD: {m.validation_summary?.lod_value || "Đạt"}
-                    </td>
-                    <td className="py-2 pr-3">
-                      <StatusBadge status="RELEASED" label="Đã thẩm định (EFFECTIVE)" />
-                    </td>
-                    <td className="py-2 pr-3">
-                      <Button variant="ghost" onClick={() => setSelectedMethod(m)}>Xem SOP</Button>
-                    </td>
-                  </tr>
-                ))}
+                {methods.map((m) => {
+                  const isRowOpen = selectedMethod?.id === m.id;
+                  return (
+                    <React.Fragment key={m.id}>
+                      <tr
+                        className={`cursor-pointer transition-colors ${
+                          isRowOpen
+                            ? "bg-sky-50/80 dark:bg-sky-950/30 font-semibold"
+                            : "hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                        }`}
+                        onClick={() => setSelectedMethod(isRowOpen ? null : m)}
+                      >
+                        <td className="py-2 pr-3 font-mono font-bold text-sky-700 dark:text-sky-400">{m.code}</td>
+                        <td className="py-2 pr-3 font-semibold">{m.name}</td>
+                        <td className="py-2 pr-3 text-xs">{METHOD_CATEGORY_LABEL[m.category] ?? m.category}</td>
+                        <td className="py-2 pr-3 text-xs">{m.instrument_type || "—"}</td>
+                        <td className="py-2 pr-3 font-mono text-xs">
+                          CV: {m.validation_summary?.repeatability_cv_pct || "≤2%"} · LoD: {m.validation_summary?.lod_value || "Đạt"}
+                        </td>
+                        <td className="py-2 pr-3">
+                          <StatusBadge status="RELEASED" label="Đã thẩm định (EFFECTIVE)" />
+                        </td>
+                        <td className="py-2 pr-3" onClick={(e) => e.stopPropagation()}>
+                          <Button variant={isRowOpen ? "primary" : "ghost"} onClick={() => setSelectedMethod(isRowOpen ? null : m)}>
+                            {isRowOpen ? "Đóng SOP" : "Xem SOP"}
+                          </Button>
+                        </td>
+                      </tr>
+                      {isRowOpen && (
+                        <tr>
+                          <td colSpan={7} className="py-2 pr-3">
+                            <Card
+                              title={`Phương pháp ${m.code} (v${m.version_no}) — ${m.name}`}
+                              actions={<Button variant="ghost" onClick={() => setSelectedMethod(null)}>Đóng</Button>}
+                            >
+                              <div className="flex flex-col gap-3 text-xs">
+                                <div className="grid gap-2 sm:grid-cols-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800">
+                                  <div><b>Nhóm kỹ thuật:</b> {METHOD_CATEGORY_LABEL[m.category] ?? m.category}</div>
+                                  <div><b>Hệ thống thiết bị:</b> {m.instrument_type || "—"}</div>
+                                  <div><b>Tiêu chí hợp lệ mẻ chạy (System Suitability):</b> {m.suitability_criteria || "—"}</div>
+                                </div>
+                                {m.principle && (
+                                  <div>
+                                    <b>Nguyên lý phương pháp:</b> {m.principle}
+                                  </div>
+                                )}
+                                <div>
+                                  <b className="block mb-1">Các bước thao tác chuẩn (SOP Kiểm nghiệm):</b>
+                                  <ol className="list-decimal list-inside space-y-1 pl-1">
+                                    {(Array.isArray(m.sop_steps) ? m.sop_steps : []).map((st: any, idx: number) => (
+                                      <li key={idx}>
+                                        <b>{st.title}:</b> {st.detail}
+                                      </li>
+                                    ))}
+                                  </ol>
+                                </div>
+                                {m.validation_summary && (
+                                  <div className="p-3 rounded-xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/40 dark:bg-emerald-950/20">
+                                    <div className="font-bold text-emerald-800 dark:text-emerald-300 mb-1">
+                                      ✓ Tóm tắt Hồ sơ Thẩm định Phương pháp (Method Validation Summary — ISO 13485 / GLP)
+                                    </div>
+                                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                                      <div>Độ lặp lại (%CV): <b>{m.validation_summary.repeatability_cv_pct || "—"}</b></div>
+                                      <div>Độ tái lập (%CV): <b>{m.validation_summary.reproducibility_cv_pct || "—"}</b></div>
+                                      <div>Giới hạn phát hiện (LoD): <b>{m.validation_summary.lod_value || "—"}</b></div>
+                                      <div>Độ đặc hiệu: <b>{m.validation_summary.specificity_pct || "100%"}</b></div>
+                                      <div>Tuyến tính ($R^2$): <b>{m.validation_summary.linearity_r2 || "—"}</b></div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </Card>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
               </Table>
             )}
           </Card>
