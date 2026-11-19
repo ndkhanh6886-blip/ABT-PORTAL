@@ -194,33 +194,77 @@ export async function createSubcontractVendor(tx: Tx, actor: AuthzActor, input: 
   await ensurePartnerContactColumns(tx);
   const d = parseInput(createSubVendorSchema, input);
   await authorizeAnywhere(tx, actor, "device.subcontract.manage");
-  const code = d.code.toUpperCase();
-  const existing = (await tx.query("SELECT id FROM master.partner WHERE upper(code) = $1 LIMIT 1", [code])).rows[0];
-  let partnerRow;
+  const code = d.code.trim().toUpperCase();
+  const taxCode = d.tax_code?.trim() || null;
+  const contactName = d.contact_name?.trim() || null;
+  const phone = d.phone?.trim() || null;
+  const email = d.email?.trim() || null;
+  const address = d.address?.trim() || null;
+
+  const existing = (
+    await tx.query(
+      "SELECT id FROM master.partner WHERE upper(code) = $1 OR ($2::text IS NOT NULL AND tax_code = $2) ORDER BY (upper(code) = $1) DESC LIMIT 1",
+      [code, taxCode]
+    )
+  ).rows[0];
+
+  let partnerRow: any;
   if (existing) {
-    partnerRow = (
-      await tx.query(
-        `UPDATE master.partner
-            SET name = $2, is_supplier = true, is_subcontractor = true,
-                tax_code = COALESCE($3, tax_code), contact_name = COALESCE($4, contact_name),
-                phone = COALESCE($5, phone), email = COALESCE($6, email),
-                address = COALESCE($7, address), status = 'ACTIVE',
-                updated_at = now(), updated_by = $8
-          WHERE id = $1
-          RETURNING *`,
-        [existing.id, d.name, d.tax_code || null, d.contact_name || null, d.phone || null, d.email || null, d.address || null, actor.userId]
-      )
-    ).rows[0];
+    await tx.query("SAVEPOINT sp_vendor_upsert");
+    try {
+      partnerRow = (
+        await tx.query(
+          `UPDATE master.partner
+              SET name = $2, is_supplier = true, is_subcontractor = true,
+                  tax_code = COALESCE($3, tax_code), contact_name = COALESCE($4, contact_name),
+                  phone = COALESCE($5, phone), email = COALESCE($6, email),
+                  address = COALESCE($7, address), status = 'ACTIVE',
+                  updated_at = now(), updated_by = $8
+            WHERE id = $1
+            RETURNING *`,
+          [existing.id, d.name, taxCode, contactName, phone, email, address, actor.userId]
+        )
+      ).rows[0];
+      await tx.query("RELEASE SAVEPOINT sp_vendor_upsert");
+    } catch {
+      await tx.query("ROLLBACK TO SAVEPOINT sp_vendor_upsert");
+      partnerRow = (
+        await tx.query(
+          `UPDATE master.partner
+              SET name = $2, is_supplier = true, is_subcontractor = true,
+                  tax_code = COALESCE($3, tax_code), address = COALESCE($4, address),
+                  status = 'ACTIVE', updated_at = now(), updated_by = $5
+            WHERE id = $1
+            RETURNING *`,
+          [existing.id, d.name, taxCode, address, actor.userId]
+        )
+      ).rows[0];
+    }
   } else {
-    partnerRow = (
-      await tx.query(
-        `INSERT INTO master.partner
-           (code, name, is_supplier, is_subcontractor, tax_code, contact_name, phone, email, address, asl_status, status, created_by, updated_by)
-         VALUES ($1, $2, true, true, $3, $4, $5, $6, $7, 'APPROVED', 'ACTIVE', $8, $8)
-         RETURNING *`,
-        [code, d.name, d.tax_code || null, d.contact_name || null, d.phone || null, d.email || null, d.address || null, actor.userId]
-      )
-    ).rows[0];
+    await tx.query("SAVEPOINT sp_vendor_upsert");
+    try {
+      partnerRow = (
+        await tx.query(
+          `INSERT INTO master.partner
+             (code, name, is_supplier, is_subcontractor, tax_code, contact_name, phone, email, address, asl_status, status, created_by, updated_by)
+           VALUES ($1, $2, true, true, $3, $4, $5, $6, $7, 'APPROVED', 'ACTIVE', $8, $8)
+           RETURNING *`,
+          [code, d.name, taxCode, contactName, phone, email, address, actor.userId]
+        )
+      ).rows[0];
+      await tx.query("RELEASE SAVEPOINT sp_vendor_upsert");
+    } catch {
+      await tx.query("ROLLBACK TO SAVEPOINT sp_vendor_upsert");
+      partnerRow = (
+        await tx.query(
+          `INSERT INTO master.partner
+             (code, name, is_supplier, is_subcontractor, tax_code, address, status, created_by, updated_by)
+           VALUES ($1, $2, true, true, $3, $4, 'ACTIVE', $5, $5)
+           RETURNING *`,
+          [code, d.name, taxCode, address, actor.userId]
+        )
+      ).rows[0];
+    }
     await writeAudit(tx, actor, {
       entityType: "partner",
       entityId: partnerRow.id,
@@ -229,25 +273,35 @@ export async function createSubcontractVendor(tx: Tx, actor: AuthzActor, input: 
     });
   }
 
-  if (d.contact_name?.trim() || d.phone?.trim() || d.email?.trim()) {
-    const contactName = d.contact_name?.trim() || d.name;
-    const exContact = (
-      await tx.query("SELECT id FROM master.partner_contact WHERE partner_id = $1 ORDER BY id LIMIT 1", [partnerRow.id])
-    ).rows[0];
-    if (exContact) {
-      await tx.query(
-        "UPDATE master.partner_contact SET name = $2, phone = COALESCE($3, phone), email = COALESCE($4, email), status = 'ACTIVE' WHERE id = $1",
-        [exContact.id, contactName, d.phone?.trim() || null, d.email?.trim() || null]
-      );
-    } else {
-      await tx.query(
-        "INSERT INTO master.partner_contact (partner_id, name, phone, email, role, status) VALUES ($1, $2, $3, $4, 'Liên hệ gia công', 'ACTIVE')",
-        [partnerRow.id, contactName, d.phone?.trim() || null, d.email?.trim() || null]
-      );
+  if (contactName || phone || email) {
+    await tx.query("SAVEPOINT sp_vendor_contact");
+    try {
+      const exContact = (
+        await tx.query("SELECT id FROM master.partner_contact WHERE partner_id = $1 ORDER BY id DESC LIMIT 1", [partnerRow.id])
+      ).rows[0];
+      if (exContact) {
+        await tx.query(
+          "UPDATE master.partner_contact SET name = $2, phone = COALESCE($3, phone), email = COALESCE($4, email), status = 'ACTIVE' WHERE id = $1",
+          [exContact.id, contactName || d.name, phone, email]
+        );
+      } else {
+        await tx.query(
+          "INSERT INTO master.partner_contact (partner_id, name, phone, email, role, status) VALUES ($1, $2, $3, $4, 'Liên hệ gia công', 'ACTIVE')",
+          [partnerRow.id, contactName || d.name, phone, email]
+        );
+      }
+      await tx.query("RELEASE SAVEPOINT sp_vendor_contact");
+    } catch {
+      await tx.query("ROLLBACK TO SAVEPOINT sp_vendor_contact").catch(() => {});
     }
   }
 
-  return partnerRow;
+  return {
+    ...partnerRow,
+    contact_name: partnerRow.contact_name ?? contactName,
+    phone: partnerRow.phone ?? phone,
+    email: partnerRow.email ?? email,
+  };
 }
 
 export async function deleteSubcontractVendor(tx: Tx, actor: AuthzActor, input: unknown) {

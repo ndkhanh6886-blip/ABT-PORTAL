@@ -15,15 +15,24 @@ import { FORMAT, PURIFICATION, SEQ_STATUS } from "./shared";
 interface Row {
   id: string; code: string; name: string; status: string; scale_code: string; purification: string; format: string; base_count: number; mw: number;
   order_code: string | null; due_date: string | null; od_total: number | null; nmol: number | null; qc_code: string | null; qc_status: string | null; qc_result: string | null;
+  workflow_id?: string | null; workflow_name?: string | null; workflow_total_steps?: number; workflow_logged_steps?: number;
 }
 interface Rec {
   id: string; version: number; status: string; purification: string; format: string;
+  workflow_id?: string | null; workflow_name?: string | null;
   synthesis_scale_code?: string | null; mfg_date?: string | null;
   tubes_detail?: { tube_no: number; label: string; od: number; nmol: number; ug: number; vol_100um_ul: number }[];
   cleavage_done: boolean; deprotection_done: boolean; purification_done: boolean;
   a260: string | null; dilution_factor: string; path_cm: string; stock_volume_ul: string | null; target_conc_um: string | null; tube_count: number; notes: string | null;
   od_total: string | null; nmol: string | null; ug: string | null; resuspend_volume_ul: string | null; od_per_tube: string | null;
   workflow_steps: FrozenStep[] | null;
+}
+interface SopWorkflowOption {
+  id: string;
+  name: string;
+  purifications: string[];
+  steps: { method_id: string; name?: string | null }[];
+  status: string;
 }
 interface Detail {
   sequence: { id: string; code: string; name: string; status: string; relation: string | null; normalized_sequence: string; mw: string; nmol_per_od: string; ug_per_od: string; scale_code: string; order_code: string | null };
@@ -35,10 +44,23 @@ interface Detail {
 const num = (v: string | null | undefined) => (v == null ? "" : String(Number(v)));
 const refreshKeys = ["oligo-post", "oligo-post-detail", "oligo-orders", "oligo-order", "qc-tests"];
 
-function PostPanel({ id, canManage, canLabel, onClose }: { id: string; canManage: boolean; canLabel: boolean; onClose: () => void }) {
+function PostPanel({
+  id,
+  canManage,
+  canLabel,
+  workflows,
+  onClose,
+}: {
+  id: string;
+  canManage: boolean;
+  canLabel: boolean;
+  workflows: SopWorkflowOption[];
+  onClose: () => void;
+}) {
   const qc = useQueryClient();
   const d = useQuery({ queryKey: ["factory", "oligo-post-detail", id], queryFn: () => api<Detail>(`/api/factory/oligo/post/${id}`) });
   const [f, setF] = useState<Record<string, any>>({});
+  const [pickedWfId, setPickedWfId] = useState<string>("AUTO");
   const rec = d.data?.record;
   useEffect(() => {
     if (!rec) return;
@@ -50,6 +72,7 @@ function PostPanel({ id, canManage, canLabel, onClose }: { id: string; canManage
       mfg_date: rec.mfg_date ? String(rec.mfg_date).slice(0, 10) : new Date().toISOString().slice(0, 10),
       notes: rec.notes ?? "",
     });
+    setPickedWfId(rec.workflow_id || "AUTO");
   }, [rec, d.data?.sequence?.scale_code]);
   const refresh = () => refreshKeys.forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k] }));
   const act = useMutation({ mutationFn: (fn: () => Promise<unknown>) => fn(), onSuccess: refresh });
@@ -92,6 +115,52 @@ function PostPanel({ id, canManage, canLabel, onClose }: { id: string; canManage
           )}
           {rec && (
             <>
+              {editable && (
+                <div className="flex flex-wrap items-center gap-2 p-2.5 rounded-xl bg-sky-50/70 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800">
+                  <span className="text-xs font-bold text-sky-900 dark:text-sky-200">
+                    📋 Quy trình SOP sau tổng hợp:
+                  </span>
+                  <select
+                    className={`${inputClass} max-w-md`}
+                    value={pickedWfId}
+                    onChange={(e) => setPickedWfId(e.target.value)}
+                    aria-label="Chọn quy trình SOP sau tổng hợp"
+                  >
+                    <option value="AUTO">
+                      ✨ Tự động theo kiểu tinh sạch ({PURIFICATION[rec.purification as keyof typeof PURIFICATION] ?? rec.purification})
+                    </option>
+                    {workflows.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        📋 {w.name} ({w.steps?.length ?? 0} bước{w.purifications?.length ? ` · ${w.purifications.join(", ")}` : ""})
+                      </option>
+                    ))}
+                    <option value="NONE">⚙️ Các bước cơ bản (không theo SOP)</option>
+                  </select>
+                  <Button
+                    variant="ghost"
+                    disabled={act.isPending}
+                    onClick={() =>
+                      act.mutate(() =>
+                        api("/api/factory/oligo/post", {
+                          method: "POST",
+                          json: {
+                            action: "batch_assign_workflow",
+                            sequence_ids: [id],
+                            workflow_id: pickedWfId,
+                          },
+                        })
+                      )
+                    }
+                  >
+                    Áp dụng quy trình SOP
+                  </Button>
+                  {rec.workflow_name && (
+                    <span className="text-xs text-emerald-700 dark:text-emerald-300 font-semibold ml-auto">
+                      Đang áp dụng: {rec.workflow_name} ({d.data?.steps.length ?? 0}/{rec.workflow_steps?.length ?? 0} bước)
+                    </span>
+                  )}
+                </div>
+              )}
               {rec.workflow_steps ? (
                 <>
                   <StepTable steps={rec.workflow_steps} logs={d.data!.steps} seqId={id} canCorrect={editable} onCorrected={refresh} />
@@ -105,7 +174,7 @@ function PostPanel({ id, canManage, canLabel, onClose }: { id: string; canManage
                   {check("cleavage_done", "Cắt khỏi cột")}
                   {check("deprotection_done", "Khử bảo vệ")}
                   {check("purification_done", `Tinh sạch ${PURIFICATION[rec.purification as keyof typeof PURIFICATION]}`)}
-                  <span className="text-xs text-slate-500">Dạng giao: {FORMAT[rec.format as keyof typeof FORMAT]} · Chưa có quy trình SOP cho kiểu tinh sạch này: dùng các bước cơ bản.</span>
+                  <span className="text-xs text-slate-500">Dạng giao: {FORMAT[rec.format as keyof typeof FORMAT]} · Đang dùng các bước cơ bản (hoặc chọn quy trình SOP ở thanh phía trên).</span>
                 </div>
               )}
               <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-8 items-end">
@@ -194,13 +263,47 @@ const FILTERS: [string, string][] = [["", "Cần xử lý"], ["SYNTHESIZED", "Đ
 
 /** Sequences from finished batches through post-processing and QC. */
 /** One step for several sequences at once (same next step of the same SOP), as OligoFlow's batch step logging. */
-function BulkStep({ ids, onDone }: { ids: string[]; onDone: () => void }) {
+function BulkStep({
+  ids,
+  onAssignAuto,
+  assignPending,
+  onDone,
+}: {
+  ids: string[];
+  onAssignAuto: () => void;
+  assignPending: boolean;
+  onDone: () => void;
+}) {
   const first = useQuery({ queryKey: ["factory", "oligo-post-detail", ids[0]], queryFn: () => api<Detail>(`/api/factory/oligo/post/${ids[0]}`) });
   const rec = first.data?.record;
-  const step = rec?.workflow_steps?.[first.data!.steps.length];
+  const loggedCount = first.data?.steps.length ?? 0;
+  const totalSteps = rec?.workflow_steps?.length ?? 0;
+  const step = rec?.workflow_steps?.[loggedCount];
   if (!first.data) return null;
-  if (!step) return <p className="text-[11px] text-amber-700 dark:text-amber-400">Trình tự đầu tiên đã chọn không theo SOP hoặc đã xong mọi bước.</p>;
-  if (step.kind === "QUANTIFICATION") return <p className="text-[11px] text-slate-500">Bước đo OD ghi riêng từng trình tự (mở từng trình tự để nhập kết quả đo).</p>;
+  if (!rec?.workflow_steps || totalSteps === 0) {
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/30 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+        <span>Trình tự đã chọn chưa được gán quy trình SOP sau tổng hợp (đang ở chế độ bước cơ bản).</span>
+        <Button variant="ghost" disabled={assignPending} onClick={onAssignAuto}>
+          ⚡ Gán tự động quy trình SOP theo kiểu tinh sạch
+        </Button>
+      </div>
+    );
+  }
+  if (!step) {
+    return (
+      <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+        ✅ Đã hoàn tất đủ {totalSteps}/{totalSteps} bước quy trình SOP{rec.workflow_name ? ` (${rec.workflow_name})` : ""}. Có thể nhập A260 và Gửi QC.
+      </p>
+    );
+  }
+  if (step.kind === "QUANTIFICATION") {
+    return (
+      <p className="text-xs text-slate-600 dark:text-slate-400">
+        📏 Bước hiện tại là <b>{step.name}</b> (Định lượng OD260): nhập A260 ở khung trên và nhấn <b>🧪 Ghi Cắt cột + Tinh sạch + Đo OD Hàng loạt</b> hoặc <b>🚀 Hoàn tất Hậu tổng hợp &amp; Gửi QC Hàng loạt</b>.
+      </p>
+    );
+  }
   return <StepLogForm key={`${ids.join()}-${step.step_no}`} step={step} sequenceIds={ids} odReady onDone={onDone} />;
 }
 
@@ -217,17 +320,28 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
   const [batchDilution, setBatchDilution] = useState("10");
   const [batchVolUl, setBatchVolUl] = useState("200");
   const [batchTubeCount, setBatchTubeCount] = useState("1");
+  const [batchWorkflowId, setBatchWorkflowId] = useState("AUTO");
   const effectiveStatus = subView === "COMPLETED" ? "COMPLETED" : status;
   const list = useQuery({
     queryKey: ["factory", "oligo-post", effectiveStatus],
     queryFn: () => api<Row[]>(`/api/factory/oligo/post${effectiveStatus ? `?status=${effectiveStatus}` : ""}`),
   });
+  const sopQ = useQuery({
+    queryKey: ["factory", "oligo-sop"],
+    queryFn: () => api<{ workflows: SopWorkflowOption[] }>("/api/factory/oligo/sop"),
+  });
+  const activeWorkflows = useMemo(
+    () => (sopQ.data?.workflows ?? []).filter((w) => w.status === "ACTIVE"),
+    [sopQ.data?.workflows]
+  );
 
   const batchAct = useMutation({
     mutationFn: (payload: Record<string, unknown>) => api("/api/factory/oligo/post", { method: "POST", json: payload }),
-    onSuccess: () => {
-      setPicked([]);
-      setBatchTsvText("");
+    onSuccess: (_res, variables) => {
+      if (variables.action !== "batch_assign_workflow" && variables.action !== "batch_start") {
+        setPicked([]);
+        setBatchTsvText("");
+      }
       refreshKeys.forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k] }));
     },
   });
@@ -351,7 +465,16 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
 
       {(subView === "PROCESSING" || subView === "COMPLETED") && (
         <>
-          {selected && <PostPanel key={selected} id={selected} canManage={canManage} canLabel={canLabel} onClose={() => setSelected(null)} />}
+          {selected && (
+            <PostPanel
+              key={selected}
+              id={selected}
+              canManage={canManage}
+              canLabel={canLabel}
+              workflows={activeWorkflows}
+              onClose={() => setSelected(null)}
+            />
+          )}
           <Card
             title="Hậu tổng hợp & QC"
             actions={
@@ -453,6 +576,40 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                     </Button>
                   </div>
                 </div>
+                <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-sky-200 dark:border-sky-800/70">
+                  <span className="text-xs font-bold text-sky-900 dark:text-sky-200">
+                    📋 Quy trình SOP sau tổng hợp:
+                  </span>
+                  <select
+                    className={`${inputClass} max-w-md`}
+                    value={batchWorkflowId}
+                    onChange={(e) => setBatchWorkflowId(e.target.value)}
+                    aria-label="Chọn quy trình SOP sau tổng hợp cho các trình tự đã chọn"
+                  >
+                    <option value="AUTO">
+                      ✨ Tự động theo kiểu tinh sạch của từng trình tự (Desalt / OPC / HPLC / PAGE)
+                    </option>
+                    {activeWorkflows.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        📋 {w.name} ({w.steps?.length ?? 0} bước{w.purifications?.length ? ` · ${w.purifications.join(", ")}` : ""})
+                      </option>
+                    ))}
+                    <option value="NONE">⚙️ Các bước cơ bản (không theo SOP)</option>
+                  </select>
+                  <Button
+                    variant="ghost"
+                    disabled={batchAct.isPending}
+                    onClick={() =>
+                      batchAct.mutate({
+                        action: "batch_assign_workflow",
+                        sequence_ids: picked,
+                        workflow_id: batchWorkflowId,
+                      })
+                    }
+                  >
+                    📋 Gán quy trình SOP ({picked.length})
+                  </Button>
+                </div>
                 <div className="grid gap-2 sm:grid-cols-6 items-end pt-1 border-t border-sky-200 dark:border-sky-800/70">
                   <Field label="A260 đo được (chung nếu không dán bảng)">
                     <input
@@ -532,6 +689,14 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                 </div>
                 <BulkStep
                   ids={picked}
+                  assignPending={batchAct.isPending}
+                  onAssignAuto={() =>
+                    batchAct.mutate({
+                      action: "batch_assign_workflow",
+                      sequence_ids: picked,
+                      workflow_id: batchWorkflowId || "AUTO",
+                    })
+                  }
                   onDone={() => {
                     setPicked([]);
                     refreshKeys.forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k] }));
@@ -540,7 +705,7 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
               </div>
             )}
             {filteredList.length > 0 && (
-              <Table head={["", "Trình tự", "Đơn", "Hạn giao", "Thang / tinh sạch", "Tổng OD", "nmol", "QC", "Trạng thái"]}>
+              <Table head={["", "Trình tự", "Đơn", "Hạn giao", "Thang / tinh sạch", "Quy trình SOP", "Tổng OD", "nmol", "QC", "Trạng thái"]}>
                 {filteredList.map((r) => (
                   <tr key={r.id} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setSelected(r.id)}>
                     <td className="py-2 pr-2" onClick={(e) => e.stopPropagation()}>
@@ -564,6 +729,22 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                     </td>
                     <td className="py-2 pr-3 text-xs whitespace-nowrap">{fmtDate(r.due_date)}</td>
                     <td className="py-2 pr-3 text-xs">{r.scale_code} · {PURIFICATION[r.purification as keyof typeof PURIFICATION]}</td>
+                    <td className="py-2 pr-3 text-xs">
+                      {r.workflow_name ? (
+                        <span className="inline-flex items-center gap-1 rounded-md bg-sky-50 dark:bg-sky-950/50 px-1.5 py-0.5 text-[11px] font-medium text-sky-800 dark:text-sky-300 border border-sky-200 dark:border-sky-800">
+                          📋 {r.workflow_name}
+                          {Number(r.workflow_total_steps) > 0 && (
+                            <span className="font-mono text-[10px] text-slate-500">
+                              ({r.workflow_logged_steps ?? 0}/{r.workflow_total_steps} bước)
+                            </span>
+                          )}
+                        </span>
+                      ) : r.status === "SYNTHESIZED" ? (
+                        <span className="text-[11px] text-slate-400">Tự động gán khi bắt đầu</span>
+                      ) : (
+                        <span className="text-[11px] text-amber-600 dark:text-amber-400">Chưa gán SOP (Bước cơ bản)</span>
+                      )}
+                    </td>
                     <td className="py-2 pr-3 text-right">{fmtQty(r.od_total)}</td>
                     <td className="py-2 pr-3 text-right">{fmtQty(r.nmol)}</td>
                     <td className="py-2 pr-3 text-xs">{r.qc_code ? `${r.qc_code} · ${QC_STATUS_LABEL[r.qc_status!]}` : "—"}</td>

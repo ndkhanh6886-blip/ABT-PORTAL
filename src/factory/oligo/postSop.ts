@@ -357,16 +357,76 @@ export interface FrozenStep {
   fields: StepField[];
 }
 
-/** The active workflow of a purification with its methods frozen into the record (null: built-in basic steps). */
-export async function workflowFor(tx: Tx, purification: string): Promise<{ id: string; revision: number; steps: FrozenStep[] } | null> {
-  const w = (await tx.query("SELECT * FROM oligo.ps_workflow WHERE status = 'ACTIVE' AND $1 = ANY(purifications) LIMIT 1", [purification])).rows[0];
-  if (!w) return null;
-  const methods = (await tx.query("SELECT * FROM oligo.ps_method WHERE id = ANY($1::uuid[])", [w.steps.map((s: any) => s.method_id)])).rows;
-  const steps = w.steps.map((s: any, i: number) => {
+export async function freezeWorkflowRow(
+  tx: Tx,
+  w: any
+): Promise<{ id: string; name: string; revision: number; steps: FrozenStep[] } | null> {
+  if (!w || !Array.isArray(w.steps) || w.steps.length === 0) return null;
+  const methodIds = w.steps.map((s: any) => s?.method_id).filter(Boolean);
+  if (methodIds.length === 0) return null;
+  const methods = (await tx.query("SELECT * FROM oligo.ps_method WHERE id = ANY($1::uuid[])", [methodIds])).rows;
+  const steps: FrozenStep[] = [];
+  for (let i = 0; i < w.steps.length; i++) {
+    const s = w.steps[i];
     const m = methods.find((x) => x.id === s.method_id);
-    return { step_no: i + 1, method_id: m.id, name: s.name || m.name, category: m.category, kind: m.kind, target_hours: m.target_hours == null ? null : Number(m.target_hours), fields: m.fields };
-  });
-  return { id: w.id, revision: w.revision, steps };
+    if (!m) continue;
+    steps.push({
+      step_no: steps.length + 1,
+      method_id: m.id,
+      name: s.name || m.name,
+      category: m.category,
+      kind: m.kind,
+      target_hours: m.target_hours == null ? null : Number(m.target_hours),
+      fields: Array.isArray(m.fields) ? m.fields : [],
+    });
+  }
+  if (steps.length === 0) return null;
+  return { id: w.id, name: w.name, revision: Number(w.revision ?? 1), steps };
+}
+
+export async function freezeWorkflowById(
+  tx: Tx,
+  workflowId: string
+): Promise<{ id: string; name: string; revision: number; steps: FrozenStep[] } | null> {
+  const w = (await tx.query("SELECT * FROM oligo.ps_workflow WHERE id = $1 LIMIT 1", [workflowId])).rows[0];
+  if (!w) return null;
+  return freezeWorkflowRow(tx, w);
+}
+
+const PURIFICATION_NAME_PATTERNS: Record<string, RegExp> = {
+  DESALT: /desalt|khử\s*muối|giải\s*nhanh/i,
+  OPC: /\bopc\b|cartridge/i,
+  HPLC: /\bhplc\b|sắc\s*ký/i,
+  PAGE: /\bpage\b|điện\s*di/i,
+};
+
+/** The active workflow of a purification with its methods frozen into the record (null: built-in basic steps). */
+export async function workflowFor(
+  tx: Tx,
+  purification: string
+): Promise<{ id: string; name: string; revision: number; steps: FrozenStep[] } | null> {
+  let w = (
+    await tx.query("SELECT * FROM oligo.ps_workflow WHERE status = 'ACTIVE' AND $1 = ANY(purifications) LIMIT 1", [purification])
+  ).rows[0];
+  if (!w) {
+    // Check if an inactive workflow explicitly owns this purification (e.g. disabled by admin/test)
+    const inactiveOwner = (
+      await tx.query("SELECT 1 FROM oligo.ps_workflow WHERE $1 = ANY(purifications) LIMIT 1", [purification])
+    ).rows[0];
+    if (!inactiveOwner) {
+      const activeWfs = (await tx.query("SELECT * FROM oligo.ps_workflow WHERE status = 'ACTIVE' ORDER BY name")).rows;
+      const pattern = PURIFICATION_NAME_PATTERNS[purification];
+      w = pattern ? activeWfs.find((row) => pattern.test(String(row.name || ""))) : undefined;
+      if (w) {
+        await tx.query(
+          "UPDATE oligo.ps_workflow SET purifications = array_append(purifications, $2) WHERE id = $1 AND NOT ($2 = ANY(purifications))",
+          [w.id, purification]
+        );
+      }
+    }
+  }
+  if (!w) return null;
+  return freezeWorkflowRow(tx, w);
 }
 
 const logSchema = z.object({

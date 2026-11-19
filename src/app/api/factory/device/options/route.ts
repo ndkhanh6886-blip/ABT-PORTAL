@@ -22,14 +22,47 @@ export const GET = factoryRoute(async (tx, { actor }) => {
       "SELECT id, code, name, item_type, base_uom, tracking FROM master.item WHERE status = 'ACTIVE' ORDER BY code LIMIT 500"
     )
   ).rows;
-  const vendors = (
-    await tx.query(
-      `SELECT id, code, name, tax_code, contact_name, phone, email, address, is_subcontractor
-         FROM master.partner
-        WHERE (is_supplier = true OR is_subcontractor = true) AND status = 'ACTIVE'
-        ORDER BY is_subcontractor DESC, name LIMIT 300`
-    )
-  ).rows;
+  let vendors: any[];
+  await tx.query("SAVEPOINT sp_device_vendors");
+  try {
+    vendors = (
+      await tx.query(
+        `SELECT p.id, p.code, p.name, p.tax_code, p.address, p.is_subcontractor,
+                COALESCE(p.contact_name, pc.name) AS contact_name,
+                COALESCE(p.phone, pc.phone) AS phone,
+                COALESCE(p.email, pc.email) AS email
+           FROM master.partner p
+           LEFT JOIN LATERAL (
+             SELECT name, phone, email
+               FROM master.partner_contact
+              WHERE partner_id = p.id AND status = 'ACTIVE'
+              ORDER BY id DESC
+              LIMIT 1
+           ) pc ON true
+          WHERE (p.is_supplier = true OR p.is_subcontractor = true) AND p.status = 'ACTIVE'
+          ORDER BY p.is_subcontractor DESC, p.name LIMIT 300`
+      )
+    ).rows;
+    await tx.query("RELEASE SAVEPOINT sp_device_vendors");
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_device_vendors");
+    vendors = (
+      await tx.query(
+        `SELECT p.id, p.code, p.name, p.tax_code, p.address, p.is_subcontractor,
+                pc.name AS contact_name, pc.phone, pc.email
+           FROM master.partner p
+           LEFT JOIN LATERAL (
+             SELECT name, phone, email
+               FROM master.partner_contact
+              WHERE partner_id = p.id AND status = 'ACTIVE'
+              ORDER BY id DESC
+              LIMIT 1
+           ) pc ON true
+          WHERE (p.is_supplier = true OR p.is_subcontractor = true) AND p.status = 'ACTIVE'
+          ORDER BY p.is_subcontractor DESC, p.name LIMIT 300`
+      )
+    ).rows;
+  }
   const serialUnits = (
     await tx.query(
       `SELECT du.id, du.serial_no, du.status, du.customer_name, du.warranty_end::text AS warranty_end,

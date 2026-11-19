@@ -7,8 +7,9 @@ import { parseInput } from "../core/records";
 import { runTransition } from "../core/stateMachine";
 import { createQcTest, registerQcSubject } from "../qms/qcTests";
 import { pyRound } from "./analyzer";
+import { ensureLegacyOligoDataSeeded } from "./legacySync";
 import { recomputeOrdersOf, visibleOligoUnits } from "./orders";
-import { stepLogs, workflowFor } from "./postSop";
+import { freezeWorkflowById, stepLogs, workflowFor } from "./postSop";
 import { sequenceMachine } from "./sequences";
 
 registerPermissions([{ code: "oligo.post.manage", description: "Hậu tổng hợp Oligo: cắt, khử bảo vệ, tinh sạch, đo OD, hoàn nguyên / chia ống, gửi QC" }]);
@@ -171,7 +172,52 @@ export async function savePostProcess(tx: Tx, actor: AuthzActor, seqId: string, 
 }
 
 async function oligoSpec(tx: Tx) {
-  return (await tx.query("SELECT id FROM qms.qc_spec WHERE status = 'EFFECTIVE' AND applies_to = 'OLIGO' LIMIT 1")).rows[0] as { id: string } | undefined;
+  let row = (await tx.query("SELECT id FROM qms.qc_spec WHERE status = 'EFFECTIVE' AND applies_to = 'OLIGO' LIMIT 1")).rows[0] as { id: string } | undefined;
+  if (!row) {
+    const hasObsolete = (await tx.query("SELECT 1 FROM qms.qc_spec WHERE applies_to = 'OLIGO' AND status = 'OBSOLETE' LIMIT 1")).rows[0];
+    if (!hasObsolete) {
+      await tx.query("SAVEPOINT sp_auto_oligo_spec");
+      try {
+        const existingStd = (
+          await tx.query("SELECT id FROM qms.qc_spec WHERE code = 'TC-OLIGO-STD' AND spec_version = 1 LIMIT 1")
+        ).rows[0];
+        let specId: string;
+        if (existingStd) {
+          specId = existingStd.id;
+          await tx.query(
+            "UPDATE qms.qc_spec SET status = 'EFFECTIVE', effective_at = COALESCE(effective_at, now()), updated_at = now() WHERE id = $1",
+            [specId]
+          );
+        } else {
+          specId = (
+            await tx.query(
+              `INSERT INTO qms.qc_spec (code, spec_version, name, applies_to, status, notes, effective_at)
+               VALUES ('TC-OLIGO-STD', 1, 'Tiêu chuẩn Kiểm nghiệm Xuất xưởng Oligo', 'OLIGO', 'EFFECTIVE',
+                       'Tiêu chuẩn xuất xưởng mặc định cho trình tự Oligonucleotide (Tổng OD260, Hiệu suất thu hồi, Cảm quan).', now())
+               RETURNING id`
+            )
+          ).rows[0].id;
+        }
+        const hasParams = (await tx.query("SELECT 1 FROM qms.qc_spec_parameter WHERE spec_id = $1 LIMIT 1", [specId])).rows[0];
+        if (!hasParams) {
+          await tx.query(
+            `INSERT INTO qms.qc_spec_parameter
+               (spec_id, seq, name, method, unit, value_type, lower_limit, upper_limit, target, is_critical, derived_metric)
+             VALUES
+               ($1, 1, 'Tổng OD260', 'Quang phổ UV 260nm (Nanodrop / Reader)', 'OD', 'NUMERIC', 0.05, NULL, '≥ 0.05 OD', true, 'OD_TOTAL'),
+               ($1, 2, 'Hiệu suất thu hồi (nmol)', 'Tính từ OD260 và hệ số tắt phân tử', 'nmol', 'NUMERIC', 0.1, NULL, '≥ 0.1 nmol', true, 'YIELD_NMOL'),
+               ($1, 3, 'Ngoại quan & Cảm quan ống thành phẩm', 'Kiểm tra trực quan', NULL, 'PASS_FAIL', NULL, NULL, 'Đạt', true, NULL)`,
+            [specId]
+          );
+        }
+        await tx.query("RELEASE SAVEPOINT sp_auto_oligo_spec");
+        row = { id: specId };
+      } catch {
+        await tx.query("ROLLBACK TO SAVEPOINT sp_auto_oligo_spec").catch(() => {});
+      }
+    }
+  }
+  return row;
 }
 
 /** POST_PROCESSING → QC: every step done and measured, then a final QC test against the effective Oligo spec goes to QA/QC. */
@@ -202,16 +248,50 @@ const QUEUE_STATUSES = ["SYNTHESIZED", "POST_PROCESSING", "QC"];
 
 /** Sequences between synthesis and completion with their post-processing record and latest QC test. */
 export async function listPostQueue(tx: Tx, actor: AuthzActor, status?: string) {
+  await ensureLegacyOligoDataSeeded(tx);
   const units = await visibleOligoUnits(tx, actor);
   if (units !== "ALL" && !units.length) return [];
   const statuses = status ? [status] : QUEUE_STATUSES;
+
+  // Auto-attach default SOP workflow to any newly opened post-process record that didn't get one yet
+  const unlinkedOpen = (
+    await tx.query(
+      `SELECT pp.id, pp.purification
+         FROM oligo.post_process pp
+         JOIN oligo.oligo_sequence s ON s.id = pp.sequence_id
+        WHERE pp.status = 'OPEN'
+          AND pp.workflow_id IS NULL
+          AND pp.workflow_steps IS NULL
+          AND NOT pp.cleavage_done
+          AND NOT pp.deprotection_done
+          AND NOT pp.purification_done
+          AND s.status = 'POST_PROCESSING'
+          AND ($1::uuid[] IS NULL OR s.org_unit_id = ANY($1::uuid[]))
+        LIMIT 200`,
+      [units === "ALL" ? null : units]
+    )
+  ).rows;
+  for (const row of unlinkedOpen) {
+    const wf = await workflowFor(tx, row.purification);
+    if (wf) {
+      await tx.query(
+        "UPDATE oligo.post_process SET workflow_id = $2, workflow_revision = $3, workflow_steps = $4 WHERE id = $1",
+        [row.id, wf.id, wf.revision, JSON.stringify(wf.steps)]
+      );
+    }
+  }
+
   return (
     await tx.query(
       `SELECT s.id, s.code, s.name, s.status, s.version, s.scale_code, s.purification, s.format, s.base_count, s.mw::float AS mw, o.code AS order_code, o.due_date,
               pp.od_total::float AS od_total, pp.nmol::float AS nmol, pp.status AS post_status,
+              pp.workflow_id, pw.name AS workflow_name,
+              CASE WHEN jsonb_typeof(pp.workflow_steps) = 'array' THEN jsonb_array_length(pp.workflow_steps) ELSE 0 END AS workflow_total_steps,
+              COALESCE((SELECT count(*)::int FROM oligo.ps_step_log l WHERE l.post_process_id = pp.id), 0) AS workflow_logged_steps,
               qt.code AS qc_code, qt.status AS qc_status, qt.overall_result AS qc_result
          FROM oligo.oligo_sequence s LEFT JOIN oligo.oligo_order o ON o.id = s.order_id
          LEFT JOIN oligo.post_process pp ON pp.sequence_id = s.id AND pp.status <> 'VOID'
+         LEFT JOIN oligo.ps_workflow pw ON pw.id = pp.workflow_id
          LEFT JOIN LATERAL (SELECT code, status, overall_result FROM qms.qc_test WHERE entity_type = 'OLIGO_SEQUENCE' AND entity_id = s.id ORDER BY created_at DESC LIMIT 1) qt ON true
         WHERE s.status = ANY($1::text[]) AND ($2::uuid[] IS NULL OR s.org_unit_id = ANY($2::uuid[]))
         ORDER BY o.due_date NULLS LAST, s.code LIMIT 500`,
@@ -224,7 +304,15 @@ export async function getPostProcess(tx: Tx, actor: AuthzActor, seqId: string) {
   const s = (await tx.query("SELECT s.*, o.code AS order_code FROM oligo.oligo_sequence s LEFT JOIN oligo.oligo_order o ON o.id = s.order_id WHERE s.id = $1", [seqId])).rows[0];
   const units = s ? await visibleOligoUnits(tx, actor) : [];
   if (!s || (units !== "ALL" && !units.includes(s.org_unit_id))) throw notFound("trình tự");
-  const record = (await tx.query("SELECT * FROM oligo.post_process WHERE sequence_id = $1 AND status <> 'VOID'", [seqId])).rows[0] ?? null;
+  const record = (
+    await tx.query(
+      `SELECT pp.*, pw.name AS workflow_name
+         FROM oligo.post_process pp
+         LEFT JOIN oligo.ps_workflow pw ON pw.id = pp.workflow_id
+        WHERE pp.sequence_id = $1 AND pp.status <> 'VOID'`,
+      [seqId]
+    )
+  ).rows[0] ?? null;
   const qc_tests = (
     await tx.query("SELECT id, code, status, overall_result, created_at, reviewed_at FROM qms.qc_test WHERE entity_type = 'OLIGO_SEQUENCE' AND entity_id = $1 ORDER BY created_at", [seqId])
   ).rows;
@@ -288,8 +376,9 @@ registerQcSubject("OLIGO_SEQUENCE", {
 });
 
 const batchPostSchema = z.object({
-  action: z.enum(["batch_start", "batch_measure", "batch_submit_qc"]),
+  action: z.enum(["batch_start", "batch_measure", "batch_submit_qc", "batch_assign_workflow"]),
   sequence_ids: z.array(z.string().uuid()).min(1, "chọn ít nhất 1 trình tự").max(200),
+  workflow_id: z.string().trim().max(100).optional().nullable(),
   a260: z.coerce.number().positive().max(1000).optional(),
   per_sequence_a260: z.record(z.string(), z.coerce.number().positive().max(1000)).optional(),
   dilution_factor: z.coerce.number().min(1).max(100000).optional().default(10),
@@ -345,6 +434,64 @@ export async function batchPostProcessAction(tx: Tx, actor: AuthzActor, input: u
         await startPostProcess(tx, actor, seqId);
         processed.push(s.code);
       }
+    }
+    return { action: d.action, count: processed.length, codes: processed };
+  }
+
+  if (d.action === "batch_assign_workflow") {
+    await ensureLegacyOligoDataSeeded(tx);
+    const wfParam = d.workflow_id?.trim() || "AUTO";
+    for (const seqId of ids) {
+      let s = await lockSequence(tx, seqId);
+      await authorize(tx, actor, "oligo.post.manage", s.org_unit_id);
+      if (s.status === "SYNTHESIZED") {
+        await startPostProcess(tx, actor, seqId);
+        s = await lockSequence(tx, seqId);
+      }
+      if (s.status !== "POST_PROCESSING") continue;
+      const rec = await liveRecord(tx, seqId, true);
+      if (!rec || rec.status !== "OPEN") continue;
+
+      let wf: { id: string; name: string; revision: number; steps: any[] } | null = null;
+      if (wfParam === "NONE") {
+        wf = null;
+      } else if (wfParam === "AUTO") {
+        wf = await workflowFor(tx, rec.purification || s.purification);
+        if (!wf) {
+          throw invalid(
+            `Chưa có quy trình SOP mặc định cho kiểu tinh sạch ${rec.purification || s.purification}. Hãy chọn trực tiếp tên quy trình SOP trong danh sách.`
+          );
+        }
+      } else {
+        wf = await freezeWorkflowById(tx, wfParam);
+        if (!wf) throw notFound("quy trình SOP sau tổng hợp");
+      }
+
+      await tx.query("DELETE FROM oligo.ps_step_log WHERE post_process_id = $1", [rec.id]);
+      await tx.query(
+        `UPDATE oligo.post_process
+            SET workflow_id = $2,
+                workflow_revision = $3,
+                workflow_steps = $4,
+                cleavage_done = false,
+                deprotection_done = false,
+                purification_done = false,
+                version = version + 1,
+                updated_at = now(),
+                updated_by = $5
+          WHERE id = $1`,
+        [rec.id, wf?.id ?? null, wf?.revision ?? null, wf ? JSON.stringify(wf.steps) : null, actor.userId]
+      );
+      await writeAudit(tx, actor, {
+        entityType: "oligo_post_process",
+        entityId: rec.id,
+        action: "assign_workflow",
+        changes: {
+          workflow_id: [rec.workflow_id ?? null, wf?.id ?? null],
+          workflow_name: [null, wf?.name ?? "BASIC"],
+        },
+      });
+      processed.push(s.code);
     }
     return { action: d.action, count: processed.length, codes: processed };
   }

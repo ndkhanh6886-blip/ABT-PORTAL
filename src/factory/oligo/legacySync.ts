@@ -838,10 +838,12 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
 
     for (const wf of legacyWorkflows) {
       if (deletedWorkflowNames.has(wf.name.toLowerCase())) continue;
-      const ex = (await tx.query("SELECT id FROM oligo.ps_workflow WHERE lower(name) = lower($1) LIMIT 1", [wf.name])).rows[0];
+      const ex = (
+        await tx.query("SELECT id, purifications, status FROM oligo.ps_workflow WHERE lower(name) = lower($1) LIMIT 1", [wf.name])
+      ).rows[0];
       if (!ex) {
         const clash = (
-          await tx.query("SELECT id FROM oligo.ps_workflow WHERE status = 'ACTIVE' AND $1 = ANY(purifications) LIMIT 1", [wf.purification])
+          await tx.query("SELECT id FROM oligo.ps_workflow WHERE $1 = ANY(purifications) LIMIT 1", [wf.purification])
         ).rows[0];
         const purifs = clash ? [] : [wf.purification];
         const steps = wf.steps
@@ -857,6 +859,13 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
             [wf.name, wf.description, purifs, JSON.stringify(steps)]
           );
           counts.workflows += 1;
+        }
+      } else if (ex.status === "ACTIVE" && (!Array.isArray(ex.purifications) || ex.purifications.length === 0)) {
+        const clash = (
+          await tx.query("SELECT id FROM oligo.ps_workflow WHERE $1 = ANY(purifications) LIMIT 1", [wf.purification])
+        ).rows[0];
+        if (!clash) {
+          await tx.query("UPDATE oligo.ps_workflow SET purifications = ARRAY[$2]::text[] WHERE id = $1", [ex.id, wf.purification]);
         }
       }
     }
