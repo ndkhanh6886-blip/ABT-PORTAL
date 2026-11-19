@@ -2503,24 +2503,91 @@ export async function POST(req: NextRequest) {
       const me = await getAuthorizedUser(req);
       setAuditActor(me);
       if (!me) return unauthorizedResponse();
-      if (!isAccountantUser(me)) {
-        return forbiddenResponse("Chỉ Kế toán / Ban Giám Đốc mới được mở khóa công nợ.");
+      if (!isAccountantUser(me) && !hasPermission(me, "sales.approve_orders")) {
+        return forbiddenResponse("Chỉ Kế toán, Ban Giám Đốc hoặc nhân sự được phân quyền duyệt đơn hàng mới được mở khóa công nợ.");
       }
       const { order_id, override_reason } = body;
-      const override_by = me.full_name || me.username;
+      const override_by = me.full_name || me.username || "Kế Toán";
+      const targetCode = String(body.order_code || order_id || "").trim();
       // order_id from the UI is the order code: match the numeric id or the code
       const upd = await query(
         `UPDATE sales_orders
          SET is_credit_blocked = false,
+             credit_block_reason = NULL,
              credit_override_by = $1,
              credit_override_at = CURRENT_TIMESTAMP,
-             credit_override_reason = $2
+             credit_override_reason = $2,
+             approval_status = CASE
+               WHEN COALESCE(price_approval_status, 'APPROVED') <> 'PENDING_APPROVAL' THEN 'APPROVED'
+               ELSE approval_status
+             END,
+             approval_note = CASE
+               WHEN COALESCE(price_approval_status, 'APPROVED') <> 'PENDING_APPROVAL' AND approval_note LIKE 'Cần duyệt lại%' THEN NULL
+               ELSE approval_note
+             END,
+             approved_by = COALESCE(approved_by, $1),
+             approved_at = COALESCE(approved_at, CURRENT_TIMESTAMP)
          WHERE (CASE WHEN $4::text IS NOT NULL AND $4::text !~ '^[0-9]+$' THEN order_code = $4::text ELSE id = $3::int END)`,
-        [override_by || "Kế Toán Trưởng", override_reason || "Kế toán bảo lãnh mở khóa", numericIdOrNull(order_id), String(body.order_code || order_id || "").trim() || null]
+        [override_by, override_reason || "Kế toán bảo lãnh mở khóa", numericIdOrNull(order_id), targetCode || null]
       );
-      if (upd.rowCount === 0) return NextResponse.json({ error: "Không tìm thấy đơn hàng trong CSDL" }, { status: 404 });
-      await logAudit("RELEASE_CREDIT", "SALES_ORDER", `Kế toán ${override_by} mở khóa công nợ cho đơn #${order_id}: ${override_reason}`);
-      return NextResponse.json({ success: true });
+
+      // Đồng bộ trực tiếp vào app_storage (sales_factory_orders) để khi chuyển tab hoặc F5 không bị đọc lại trạng thái khóa cũ
+      let updatedInStorage = false;
+      try {
+        if (targetCode) {
+          await withTransaction(async (c) => {
+            const cur = await c.query("SELECT data, version FROM app_storage WHERE key = 'sales_factory_orders' FOR UPDATE");
+            const arr = cur.rows[0]?.data;
+            if (Array.isArray(arr)) {
+              let changed = false;
+              const nextArr = arr.map((it: any) => {
+                const itCode = String(it?.order_code || it?.id || "").trim();
+                if (itCode === targetCode || String(it?.id || "") === String(order_id || "")) {
+                  changed = true;
+                  const hasZero = Boolean(
+                    it?.hasZeroPriceItems ||
+                    it?.has_zero_price_items ||
+                    (Array.isArray(it?.items) && it.items.some((x: any) => x?.status !== "CANCELLED" && Number(x?.unitPrice ?? x?.unit_price ?? x?.price ?? 0) === 0))
+                  );
+                  const currentPriceSt = String(it?.priceApprovalStatus || it?.price_approval_status || "").toUpperCase();
+                  const stillNeedsBOD = hasZero && currentPriceSt !== "APPROVED";
+                  return {
+                    ...it,
+                    isCreditBlocked: false,
+                    is_credit_blocked: false,
+                    creditBlockReason: "",
+                    credit_block_reason: "",
+                    creditOverrideBy: override_by,
+                    credit_override_by: override_by,
+                    creditOverrideReason: override_reason || "Kế toán bảo lãnh mở khóa",
+                    credit_override_reason: override_reason || "Kế toán bảo lãnh mở khóa",
+                    approval_status: stillNeedsBOD ? it.approval_status : "APPROVED",
+                    status: stillNeedsBOD ? it.status : (it.status === "Pending" || it.status === "PENDING" ? "Approved" : it.status),
+                    approvedBy: it.approvedBy || override_by,
+                    approvedAt: it.approvedAt || new Date().toISOString()
+                  };
+                }
+                return it;
+              });
+              if (changed) {
+                updatedInStorage = true;
+                await c.query(
+                  `UPDATE app_storage SET data = $1, version = COALESCE(version, 1) + 1, updated_at = now() WHERE key = 'sales_factory_orders'`,
+                  [JSON.stringify(nextArr)]
+                );
+              }
+            }
+          });
+        }
+      } catch (e) {
+        console.warn("[sales/release_credit] Could not sync app_storage:", e);
+      }
+
+      if (upd.rowCount === 0 && !updatedInStorage) {
+        return NextResponse.json({ error: "Không tìm thấy đơn hàng trong CSDL" }, { status: 404 });
+      }
+      await logAudit("RELEASE_CREDIT", "SALES_ORDER", `Kế toán ${override_by} mở khóa công nợ cho đơn #${targetCode || order_id}: ${override_reason}`);
+      return NextResponse.json({ success: true, approved_by: override_by });
     }
 
     // 2.2 Approve Price Policy / Zero-price Item - Requirement 12 & 13

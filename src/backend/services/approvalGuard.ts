@@ -1,5 +1,5 @@
 import { query } from "@/backend/db/db";
-import { AuthorizedUser, isAdminUser } from "@/backend/services/authz";
+import { AuthorizedUser, isAdminUser, isAccountantUser } from "@/backend/services/authz";
 import { hasPermission } from "@/backend/services/permissions";
 import { itemIdentity } from "@/backend/services/storagePatch";
 
@@ -19,6 +19,7 @@ export function canApproveSalesOrders(user: AuthorizedUser | null): boolean {
   return Boolean(
     user &&
       (isAdminUser(user) ||
+        isAccountantUser(user) ||
         hasPermission(user, "sales.approve_orders") ||
         hasPermission(user, "sales.approve_zero_price") ||
         hasPermission(user, "sales.approve_quotes") ||
@@ -56,7 +57,13 @@ async function keepApprovedOrder(item: any, prev: any): Promise<any | null> {
   return {
     ...item,
     status: prev.status,
+    approval_status: "APPROVED",
+    isCreditBlocked: false,
+    is_credit_blocked: false,
+    creditBlockReason: null,
+    credit_block_reason: null,
     priceApprovalStatus: prev.priceApprovalStatus ?? item.priceApprovalStatus,
+    price_approval_status: prev.price_approval_status ?? prev.priceApprovalStatus ?? item.price_approval_status,
     approvedBy: prev.approvedBy ?? item.approvedBy,
     approvedAt: prev.approvedAt ?? item.approvedAt,
   };

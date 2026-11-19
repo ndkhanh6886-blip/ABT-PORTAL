@@ -96,7 +96,11 @@ export function isAccountantUser(user: AuthorizedUser | null): boolean {
   if (!user) return false;
   if (isAdminUser(user)) return true;
   const role = String(user.role || "").toLowerCase();
-  return role.includes("accountant") || role.includes("kế toán");
+  const dept = String(user.department || "").toLowerCase();
+  if (role.includes("accountant") || role.includes("kế toán") || dept.includes("kế toán") || dept.includes("account") || dept.includes("tài chính")) {
+    return true;
+  }
+  return hasPermission(user, "sales.approve_orders");
 }
 
 /**

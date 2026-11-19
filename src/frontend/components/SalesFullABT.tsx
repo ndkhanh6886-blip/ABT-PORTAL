@@ -1781,8 +1781,12 @@ export function SalesFullABT() {
             const cleanedMfgCode = o.mfgOrderCode ? String(o.mfgOrderCode).replace(/^ĐHX-/, "PO-") : undefined;
             const items = Array.isArray(o.items) ? o.items : (typeof o.items === "string" ? JSON.parse(o.items || "[]") : []);
             const hasZero = !isStock && (o.hasZeroPriceItems || (items && items.some((it: any) => Number(it.unitPrice ?? it.price ?? 0) === 0)));
-            const isBlocked = !isStock && Boolean(o.isCreditBlocked || o.is_credit_blocked);
-            const autoApproved = !hasZero && !isBlocked && (o.status === "Pending" || o.status === "PENDING");
+            const rawBlocked = o.isCreditBlocked !== undefined ? o.isCreditBlocked : o.is_credit_blocked;
+            const isBlocked = !isStock && Boolean(rawBlocked);
+            const resolvedPriceApprovalStatus = isStock
+                ? "APPROVED"
+                : (o.priceApprovalStatus || o.price_approval_status || (hasZero ? "PENDING_APPROVAL" : "APPROVED"));
+            const autoApproved = (!hasZero || resolvedPriceApprovalStatus === "APPROVED") && !isBlocked && (o.status === "Pending" || o.status === "PENDING");
 
             let normalizedStatus = o.status || (o.delivery_status === "DELIVERED" ? "Delivered" : (o.delivery_status === "CANCELLED" ? "Cancelled" : "Approved"));
             if (o.status === "Rejected") {
@@ -1844,13 +1848,15 @@ export function SalesFullABT() {
                 procureStatus: o.procureStatus || o.procure_status || (prCode ? "PR_PENDING" : undefined),
                 linkedSalesOrderId: (o.linkedSalesOrderId && o.linkedSalesOrderId.startsWith("SO") && !/^SO\d{2}-\d{2}-\d{4}$/.test(o.linkedSalesOrderId)) ? o.linkedSalesOrderId : orderId,
                 isCreditBlocked: isBlocked,
+                is_credit_blocked: isBlocked,
                 mfgOrderCode: mfgOrderCode,
                 procureOrderCode: mfgOrderCode || o.procureOrderCode || o.procure_order_code,
                 status: normalizedStatus,
                 hasComm: true,
                 isStockOrder: isStock,
                 orderCategory: isStock ? "STOCK" : "COMMERCIAL",
-                priceApprovalStatus: isStock ? "APPROVED" : (autoApproved ? "APPROVED" : (o.priceApprovalStatus || o.price_approval_status || (hasZero ? "PENDING_APPROVAL" : "APPROVED")))
+                priceApprovalStatus: isStock ? "APPROVED" : (autoApproved ? "APPROVED" : resolvedPriceApprovalStatus),
+                price_approval_status: isStock ? "APPROVED" : (autoApproved ? "APPROVED" : resolvedPriceApprovalStatus)
             });
         }
         return result;
@@ -2247,7 +2253,9 @@ export function SalesFullABT() {
                                 invoiceDate: raw0.invoice_date ? toVNDateString(raw0.invoice_date) : undefined,
                                 invoiced_delivery_slips: raw0.invoiced_delivery_slips,
                                 isCreditBlocked: raw0.is_credit_blocked !== undefined ? Boolean(raw0.is_credit_blocked) : undefined,
-                                creditBlockReason: raw0.credit_block_reason ?? undefined,
+                                is_credit_blocked: raw0.is_credit_blocked !== undefined ? Boolean(raw0.is_credit_blocked) : undefined,
+                                creditBlockReason: raw0.is_credit_blocked ? (raw0.credit_block_reason ?? "") : "",
+                                credit_block_reason: raw0.is_credit_blocked ? (raw0.credit_block_reason ?? "") : "",
                                 priceApprovalStatus: raw0.price_approval_status ?? undefined,
                                 // Bản trùng tên kiểu CSDL: trước đây không cập nhật nên vẫn ghi "chờ duyệt" sau khi đã duyệt
                                 price_approval_status: raw0.price_approval_status ?? undefined,
@@ -7603,7 +7611,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return Boolean(
             isSalesExecutive ||
             isSalesLeader ||
-            (can && (can("sales.approve_zero_price") || can("sales.approve_quotes") || can("sales.approve_discount")))
+            (can && (can("sales.approve_zero_price") || can("sales.approve_quotes") || can("sales.approve_discount") || can("sales.approve_orders")))
         );
     }, [isSalesExecutive, isSalesLeader, can]);
 
@@ -25264,6 +25272,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                             setFactoryOrders(prev => prev.map(o => o.id === req.id ? { 
                                                                                                 ...o, 
                                                                                                 priceApprovalStatus: "APPROVED",
+                                                                                                price_approval_status: "APPROVED",
+                                                                                                approval_status: o.isCreditBlocked ? o.approval_status : "APPROVED",
                                                                                                 status: o.isCreditBlocked ? o.status : "Approved",
                                                                                                 approvedBy: approverName,
                                                                                                 approvedAt: new Date().toISOString()
@@ -25301,7 +25311,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                                 showToast(err.error || "Bạn không có quyền từ chối đơn hàng 0 đồng!", "error");
                                                                                                 return;
                                                                                             }
-                                                                                            setFactoryOrders(prev => prev.map(o => o.id === req.id ? { ...o, status: "Rejected", priceApprovalStatus: "REJECTED" } : o));
+                                                                                            setFactoryOrders(prev => prev.map(o => o.id === req.id ? { ...o, status: "Rejected", approval_status: "REJECTED", priceApprovalStatus: "REJECTED", price_approval_status: "REJECTED" } : o));
                                                                                             showToast(`Đã từ chối đơn hàng ${req.id}!`, "info");
                                                                                         } catch (e: any) {
                                                                                             showToast("Lỗi khi từ chối đơn: " + e.message, "error");
@@ -42108,22 +42118,34 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 onClick={async () => {
                                     setIsSubmittingUnblock(true);
                                     try {
-                                        await fetch("/api/sales?action=release_credit", {
+                                        const res = await fetch("/api/sales?action=release_credit", {
                                             method: "POST",
                                             headers: { "Content-Type": "application/json" },
                                             body: JSON.stringify({
                                                 order_id: unblockingOrder.id,
-                                                override_by: loggedInStaff?.full_name || "Kế toán trưởng",
+                                                order_code: unblockingOrder.order_code || unblockingOrder.id,
+                                                override_by: loggedInStaff?.full_name || user?.name || "Kế toán",
                                                 override_reason: unblockReason.trim()
                                             })
                                         });
+                                        if (!res.ok) {
+                                            const errData = await res.json().catch(() => ({}));
+                                            showToast(errData.error || `Không thể mở khóa công nợ (Lỗi ${res.status})`, "error");
+                                            return;
+                                        }
                                         const hasZeroOrGift = unblockingOrder.hasZeroPriceItems || (unblockingOrder.items && unblockingOrder.items.some((it: any) => Number(it.unitPrice ?? it.price ?? 0) === 0));
                                         const stillNeedsBOD = hasZeroOrGift && unblockingOrder.priceApprovalStatus !== "APPROVED";
-                                        setFactoryOrders(prev => prev.map(o => o.id === unblockingOrder.id ? { 
+                                        const approverName = loggedInStaff?.full_name || user?.name || "Kế toán";
+                                        setFactoryOrders(prev => prev.map(o => (o.id === unblockingOrder.id || o.order_code === unblockingOrder.id) ? { 
                                             ...o, 
-                                            isCreditBlocked: false, 
+                                            isCreditBlocked: false,
+                                            is_credit_blocked: false,
                                             creditBlockReason: undefined,
-                                            status: stillNeedsBOD ? o.status : (o.status === "Pending" ? "Approved" : o.status)
+                                            credit_block_reason: undefined,
+                                            approval_status: stillNeedsBOD ? o.approval_status : "APPROVED",
+                                            status: stillNeedsBOD ? o.status : (o.status === "Pending" || o.status === "PENDING" ? "Approved" : o.status),
+                                            approvedBy: o.approvedBy || approverName,
+                                            approvedAt: o.approvedAt || new Date().toISOString()
                                         } : o));
                                         showToast(`Đã mở khóa đơn hàng ${unblockingOrder.id} thành công!`, "success");
                                         setUnblockingOrder(null);
