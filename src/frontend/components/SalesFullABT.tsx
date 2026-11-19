@@ -3307,6 +3307,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
     const [quoteItems, setQuoteItems] = useState<any[]>([{ productCode: "", specification: "", manufacturer: "", quantity: 1, price: 0, vatRate: 8, priceBeforeVat: 0, totalBeforeVat: 0, discountRate: 0, discountAmount: 0, total: 0, vatAmount: 0, notes: "" }]);
     const [expandedConfigIndex, setExpandedConfigIndex] = useState<number | null>(null);
+    const [isQuoteTermsExpanded, setIsQuoteTermsExpanded] = useState(false);
     const [quoteValidityTerms, setQuoteValidityTerms] = useState(() => {
         if (typeof window !== "undefined") return localStorage.getItem("sales_default_quote_validity_terms") || "Báo giá có hiệu lực trong vòng 30 ngày kể từ ngày ban hành.";
         return "Báo giá có hiệu lực trong vòng 30 ngày kể từ ngày ban hành.";
@@ -29919,68 +29920,95 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         {renderOligoBuilderPanel("QUOTE")}
                     </div>
 
-                    {/* GENERAL TERMS AND SAMPLE FORM OPTIONS */}
-                    <div className="border border-slate-850 p-4 rounded-xl bg-slate-900/20 space-y-4">
-                        <h4 className="text-xs font-bold text-indigo-400 font-mono uppercase border-b border-slate-850 pb-2">
-                            Điều khoản chung & Báo giá mẫu
-                        </h4>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Hiệu lực báo giá</label>
-                                <FastInput
-                                    type="text"
-                                    value={quoteValidityTerms}
-                                    onChange={(e) => setQuoteValidityTerms(e.target.value)}
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
-                                />
+                    {/* GENERAL TERMS AND SAMPLE FORM OPTIONS (COLLAPSIBLE BY DEFAULT) */}
+                    <div className="border border-slate-850 px-3.5 py-2.5 rounded-xl bg-slate-900/20">
+                        <div
+                            onClick={() => setIsQuoteTermsExpanded(prev => !prev)}
+                            className="flex flex-wrap items-center justify-between gap-2 cursor-pointer select-none"
+                            title="Bấm để mở rộng hoặc thu gọn mục Điều khoản chung & Báo giá mẫu"
+                        >
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <h4 className="text-xs font-bold text-indigo-400 font-mono uppercase">
+                                    Điều khoản chung &amp; Báo giá mẫu
+                                </h4>
+                                {!isQuoteTermsExpanded && (
+                                    <span className="text-[11px] text-slate-400 italic truncate max-w-md">
+                                        (Đang ẩn để gọn giao diện • Đã áp dụng sẵn điều khoản mặc định)
+                                    </span>
+                                )}
                             </div>
-                            <div>
-                                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Điều khoản giao hàng</label>
-                                <FastInput
-                                    type="text"
-                                    value={quoteDeliveryTerms}
-                                    onChange={(e) => setQuoteDeliveryTerms(e.target.value)}
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
-                                />
-                            </div>
-                            <div className="md:col-span-2">
-                                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Điều khoản thanh toán</label>
-                                <FastInput
-                                    type="text"
-                                    value={quotePaymentTerms}
-                                    onChange={(e) => setQuotePaymentTerms(e.target.value)}
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
-                                />
-                            </div>
-                            <div className="md:col-span-2">
-                                <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-                                    <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Ghi chú bổ sung (in ở mục 4 của báo giá, chuyển sang SO)</label>
-                                    {(() => {
-                                        const VAT_FEE_NOTE = "Đơn giá đã bao gồm thuế VAT và phí lắp đặt / vận chuyển ngoại tỉnh.";
-                                        const on = quoteNoteTerms.includes(VAT_FEE_NOTE);
-                                        return (
-                                            <label className="flex items-center gap-1.5 text-[11px] text-slate-300 cursor-pointer">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={on}
-                                                    onChange={(e) => setQuoteNoteTerms(prev => e.target.checked
-                                                        ? (prev.trim() ? `${VAT_FEE_NOTE} ${prev.trim()}` : VAT_FEE_NOTE)
-                                                        : prev.replace(VAT_FEE_NOTE, "").replace(/\s{2,}/g, " ").trim())}
-                                                    className="w-3.5 h-3.5 accent-emerald-500"
-                                                />
-                                                Đơn giá đã gồm VAT + phí lắp đặt / vận chuyển ngoại tỉnh
-                                            </label>
-                                        );
-                                    })()}
-                                </div>
-                                <FastTextarea
-                                    rows={2}
-                                    value={quoteNoteTerms}
-                                    onChange={(e) => setQuoteNoteTerms(e.target.value)}
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white resize-y"
-                                />
-                            </div>
+                            <button
+                                type="button"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setIsQuoteTermsExpanded(prev => !prev);
+                                }}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-indigo-950/60 hover:bg-indigo-900/80 text-indigo-300 border border-indigo-700/50 cursor-pointer transition-colors"
+                            >
+                                <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isQuoteTermsExpanded ? "rotate-180" : ""}`} />
+                                <span>{isQuoteTermsExpanded ? "Thu gọn điều khoản" : "Mở rộng / Sửa điều khoản"}</span>
+                            </button>
                         </div>
+
+                        {isQuoteTermsExpanded && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 mt-2.5 border-t border-slate-850">
+                                <div>
+                                    <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Hiệu lực báo giá</label>
+                                    <FastInput
+                                        type="text"
+                                        value={quoteValidityTerms}
+                                        onChange={(e) => setQuoteValidityTerms(e.target.value)}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Điều khoản giao hàng</label>
+                                    <FastInput
+                                        type="text"
+                                        value={quoteDeliveryTerms}
+                                        onChange={(e) => setQuoteDeliveryTerms(e.target.value)}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
+                                    />
+                                </div>
+                                <div className="md:col-span-2">
+                                    <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Điều khoản thanh toán</label>
+                                    <FastInput
+                                        type="text"
+                                        value={quotePaymentTerms}
+                                        onChange={(e) => setQuotePaymentTerms(e.target.value)}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
+                                    />
+                                </div>
+                                <div className="md:col-span-2">
+                                    <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                                        <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Ghi chú bổ sung (in ở mục 4 của báo giá, chuyển sang SO)</label>
+                                        {(() => {
+                                            const VAT_FEE_NOTE = "Đơn giá đã bao gồm thuế VAT và phí lắp đặt / vận chuyển ngoại tỉnh.";
+                                            const on = quoteNoteTerms.includes(VAT_FEE_NOTE);
+                                            return (
+                                                <label className="flex items-center gap-1.5 text-[11px] text-slate-300 cursor-pointer">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={on}
+                                                        onChange={(e) => setQuoteNoteTerms(prev => e.target.checked
+                                                            ? (prev.trim() ? `${VAT_FEE_NOTE} ${prev.trim()}` : VAT_FEE_NOTE)
+                                                            : prev.replace(VAT_FEE_NOTE, "").replace(/\s{2,}/g, " ").trim())}
+                                                        className="w-3.5 h-3.5 accent-emerald-500"
+                                                    />
+                                                    Đơn giá đã gồm VAT + phí lắp đặt / vận chuyển ngoại tỉnh
+                                                </label>
+                                            );
+                                        })()}
+                                    </div>
+                                    <FastTextarea
+                                        rows={2}
+                                        value={quoteNoteTerms}
+                                        onChange={(e) => setQuoteNoteTerms(e.target.value)}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white resize-y"
+                                    />
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     <div className="pt-3 border-t border-slate-800 space-y-3">
