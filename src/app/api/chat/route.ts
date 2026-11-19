@@ -9,7 +9,298 @@ import { getFactoryPool } from "@/factory/core/db";
  * Identity of the chat user comes from the server session. The browser used to send `user` /
  * `sender_name` itself, so anyone could post as somebody else or read other people's private chats.
  */
-type ChatIdentity = { name: string; aliases: string[]; isAdmin: boolean; department: string };
+type ChatIdentity = {
+  name: string;
+  username: string;
+  role: string;
+  position: string;
+  aliases: string[];
+  aliasKeys: string[];
+  isAdmin: boolean;
+  isDeptManager: boolean;
+  department: string;
+  departments: string[];
+};
+
+function stripVn(input?: string | null): string {
+  return String(input || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/[^a-z0-9&/]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractDeptBuckets(rawText?: string | null): Set<string> {
+  const s = stripVn(rawText);
+  const buckets = new Set<string>();
+  if (!s) return buckets;
+  const words = s.split(/[\s/&]+/).filter(Boolean);
+
+  if (
+    s.includes("kinh doanh") ||
+    s.includes("sales") ||
+    s.includes("marketing") ||
+    s.includes("truyen thong") ||
+    s.includes("quan ly san pham") ||
+    s.includes("cham soc khach hang") ||
+    words.includes("pm") ||
+    words.includes("cskh")
+  ) {
+    buckets.add("SALES");
+  }
+
+  if (s.includes("r&d") || s.includes("nghien cuu") || words.includes("rd")) {
+    buckets.add("RD");
+  }
+
+  if (s.includes("oligo")) {
+    buckets.add("OLIGO");
+  }
+
+  if (
+    (s.includes("san xuat") || s.includes("sx kit") || words.includes("kit")) &&
+    !s.includes("oligo")
+  ) {
+    buckets.add("KIT_PROD");
+  }
+
+  if (
+    s.includes("ktcn") ||
+    s.includes("ky thuat cong nghe") ||
+    s.includes("ky thuat thiet bi") ||
+    s.includes("thiet bi")
+  ) {
+    buckets.add("DEVICE_TECH");
+  }
+
+  if (
+    words.includes("qa") ||
+    words.includes("qc") ||
+    s.includes("qa/qc") ||
+    s.includes("qc/qa") ||
+    s.includes("chat luong") ||
+    s.includes("iso13485") ||
+    s.includes("iso 13485")
+  ) {
+    buckets.add("QA_QC");
+  }
+
+  if (
+    s.includes("application") ||
+    s.includes("ung dung") ||
+    words.includes("app") ||
+    words.includes("lab")
+  ) {
+    buckets.add("APPLICATION");
+  }
+
+  if (
+    s.includes("cung ung") ||
+    s.includes("mua hang") ||
+    s.includes("procurement") ||
+    s.includes("purchasing") ||
+    s.includes("thu mua") ||
+    words.includes("xnk")
+  ) {
+    buckets.add("PROCUREMENT");
+  }
+
+  if (
+    words.includes("kho") ||
+    s.includes("kho van") ||
+    s.includes("van hanh") ||
+    s.includes("dieu van") ||
+    s.includes("giao nhan") ||
+    words.includes("warehouse")
+  ) {
+    buckets.add("WAREHOUSE");
+  }
+
+  if (
+    s.includes("phong it") ||
+    s.includes("cong nghe thong tin") ||
+    words.includes("it") ||
+    words.includes("cntt")
+  ) {
+    buckets.add("IT");
+  }
+
+  if (
+    s.includes("hanh chinh") ||
+    s.includes("hanh chanh") ||
+    s.includes("nhan su") ||
+    words.includes("hcns") ||
+    words.includes("hr")
+  ) {
+    buckets.add("HR_ADMIN");
+  }
+
+  if (
+    s.includes("ke toan") ||
+    s.includes("tai chinh") ||
+    s.includes("cong no") ||
+    s.includes("thu quy")
+  ) {
+    buckets.add("ACCOUNTING");
+  }
+
+  if (
+    s.includes("phap che") ||
+    s.includes("ho so thau") ||
+    words.includes("thau") ||
+    words.includes("legal")
+  ) {
+    buckets.add("LEGAL");
+  }
+
+  if (buckets.size === 0 && s.includes("ky thuat")) {
+    buckets.add("DEVICE_TECH");
+  }
+
+  return buckets;
+}
+
+function isCompanyWideChannel(c: any): boolean {
+  if (!c || String(c.channel_type || "CHANNEL").toUpperCase() !== "CHANNEL") return false;
+  const code = stripVn(c.channel_code);
+  const name = stripVn(c.name);
+  const dept = stripVn(c.department);
+  if (code === "general") return true;
+  if (["toan cong ty", "cong ty", "general", "thong bao chung", "toan the cong ty"].includes(name)) {
+    return true;
+  }
+  const nameBuckets = extractDeptBuckets(c.name);
+  if (nameBuckets.size === 0 && (dept === "toan cong ty" || dept === "cong ty")) {
+    return true;
+  }
+  return false;
+}
+
+function getChannelDeptBuckets(c: any): Set<string> {
+  if (!c) return new Set();
+  const fromName = extractDeptBuckets(c.name);
+  if (fromName.size > 0) return fromName;
+  const combined = new Set<string>();
+  for (const b of extractDeptBuckets(c.department)) combined.add(b);
+  if (combined.size > 0) return combined;
+  for (const b of extractDeptBuckets(c.channel_code)) combined.add(b);
+  return combined;
+}
+
+function deptMatchesChannel(deptText: string, c: any): boolean {
+  if (!deptText || !c) return false;
+  const chBuckets = getChannelDeptBuckets(c);
+  const userBuckets = extractDeptBuckets(deptText);
+  if (chBuckets.size > 0 && userBuckets.size > 0) {
+    for (const b of userBuckets) {
+      if (chBuckets.has(b)) return true;
+    }
+    return false;
+  }
+  const dNorm = stripVn(deptText);
+  const cDeptNorm = stripVn(c.department);
+  const cNameNorm = stripVn(c.name);
+  if (!dNorm) return false;
+  return (Boolean(cDeptNorm) && dNorm === cDeptNorm) || (Boolean(cNameNorm) && dNorm === cNameNorm);
+}
+
+function userMatchesChannelDepartment(ident: ChatIdentity, c: any): boolean {
+  if (!ident || !c) return false;
+  for (const d of ident.departments) {
+    if (deptMatchesChannel(d, c)) return true;
+  }
+  return false;
+}
+
+function parseChannelMembers(rawMembers: any): string[] {
+  let arr: any[] = [];
+  if (Array.isArray(rawMembers)) {
+    arr = rawMembers;
+  } else if (typeof rawMembers === "string" && rawMembers.trim()) {
+    try {
+      const parsed = JSON.parse(rawMembers);
+      if (Array.isArray(parsed)) arr = parsed;
+    } catch {
+      arr = rawMembers
+        .replace(/[{}]/g, "")
+        .split(",")
+        .map((s: string) => s.trim().replace(/^"|"$/g, ""));
+    }
+  }
+  return arr.map((m) => String(m || "").trim()).filter(Boolean);
+}
+
+function userMatchesMemberList(ident: ChatIdentity, members: string[]): boolean {
+  if (!members || members.length === 0) return false;
+  for (const m of members) {
+    const lower = m.toLowerCase();
+    const key = stripVn(m);
+    if (ident.aliases.includes(lower) || (key && ident.aliasKeys.includes(key))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function userIsChannelCreator(ident: ChatIdentity, c: any): boolean {
+  const creator = String(c?.created_by || "").trim();
+  if (!creator || stripVn(creator) === "he thong") return false;
+  const lower = creator.toLowerCase();
+  const key = stripVn(creator);
+  return ident.aliases.includes(lower) || (Boolean(key) && ident.aliasKeys.includes(key));
+}
+
+function isChannelAdmin(ident: ChatIdentity, c: any): boolean {
+  if (!ident || !c) return false;
+  if (ident.isAdmin) return true;
+  if (userIsChannelCreator(ident, c)) return true;
+  if (String(c.channel_type || "CHANNEL").toUpperCase() === "CHANNEL") {
+    if (ident.isDeptManager && userMatchesChannelDepartment(ident, c)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function canUserAccessChannelRow(ident: ChatIdentity, c: any): boolean {
+  if (!ident || !c) return false;
+  const members = parseChannelMembers(c.members);
+  const type = String(c.channel_type || "CHANNEL").toUpperCase();
+  const code = String(c.channel_code || "").toLowerCase();
+
+  // 1. Direct Messages (1-1): strictly limited to the two participants
+  if (type === "DIRECT" || code.startsWith("dm-")) {
+    if (userMatchesMemberList(ident, members)) return true;
+    if (userIsChannelCreator(ident, c)) return true;
+    if (members.length === 0) {
+      const nameLower = String(c.name || "").trim().toLowerCase();
+      const nameKey = stripVn(c.name);
+      if (ident.aliases.includes(nameLower) || (nameKey && ident.aliasKeys.includes(nameKey))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // 2. Department Channels (CHANNEL)
+  if (type === "CHANNEL") {
+    if (isCompanyWideChannel(c)) return true;
+    if (ident.isAdmin) return true;
+    if (userIsChannelCreator(ident, c)) return true;
+    if (userMatchesMemberList(ident, members)) return true;
+    if (c.is_private && members.length > 0) return false;
+    return userMatchesChannelDepartment(ident, c);
+  }
+
+  // 3. Group & Project Channels (GROUP / PROJECT)
+  if (userIsChannelCreator(ident, c)) return true;
+  if (userMatchesMemberList(ident, members)) return true;
+  if (!c.is_private && ident.isAdmin) return true;
+  return false;
+}
 
 async function getChatIdentity(req: NextRequest): Promise<ChatIdentity | null> {
   const me = await getAuthorizedUser(req);
@@ -17,27 +308,79 @@ async function getChatIdentity(req: NextRequest): Promise<ChatIdentity | null> {
   if (!me) return null;
   const name = String(me.full_name || me.username).trim();
   const aliases = new Set<string>([name, me.username].map(s => String(s || "").trim().toLowerCase()).filter(Boolean));
+  const depts = new Set<string>();
+  if (me.department) depts.add(String(me.department).trim());
+  let position = "";
+
   try {
     const p = await query(
-      `SELECT employee_code FROM personnel
-        WHERE employee_code = $1 OR REPLACE(REPLACE(employee_code, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA') = $1 LIMIT 1`,
-      [me.username]
+      `SELECT employee_code, full_name, department, position FROM personnel
+        WHERE LOWER(employee_code) = LOWER($1)
+           OR LOWER(REGEXP_REPLACE(employee_code, '^NV-(ABT|TBRS|TBR|VIA)-?', '\\1', 'i')) = LOWER($1)
+           OR LOWER(TRIM(full_name)) = LOWER(TRIM($2))
+        LIMIT 1`,
+      [me.username, name]
     );
-    if (p.rows[0]?.employee_code) aliases.add(String(p.rows[0].employee_code).toLowerCase());
+    if (p.rows[0]) {
+      if (p.rows[0].employee_code) aliases.add(String(p.rows[0].employee_code).trim().toLowerCase());
+      if (p.rows[0].full_name) aliases.add(String(p.rows[0].full_name).trim().toLowerCase());
+      if (p.rows[0].department) depts.add(String(p.rows[0].department).trim());
+      if (p.rows[0].position) position = String(p.rows[0].position).trim();
+    }
   } catch {}
-  const isAdmin = me.username === "admin";
+
+  const roleLower = String(me.role || "").trim().toLowerCase();
+  const posNorm = stripVn(position);
+  const deptsArr = Array.from(depts).filter(Boolean);
+  const isBod = deptsArr.some(d => {
+    const dn = stripVn(d);
+    return dn.includes("ban giam doc") || dn === "giam doc" || dn === "bod";
+  });
+
+  const isAdmin =
+    me.username === "admin" ||
+    roleLower === "admin" ||
+    roleLower === "director" ||
+    isBod ||
+    posNorm.includes("giam doc") ||
+    posNorm.includes("quan tri vien he thong");
+
   if (isAdmin) {
     aliases.add("admin");
     aliases.add("quản trị viên hệ thống");
   }
-  return { name, aliases: Array.from(aliases), isAdmin, department: me.department || "" };
+
+  const isDeptManager =
+    isAdmin ||
+    roleLower === "manager" ||
+    roleLower === "leader" ||
+    roleLower === "head" ||
+    posNorm.includes("truong phong") ||
+    posNorm.includes("pho phong") ||
+    posNorm.includes("truong bo phan") ||
+    posNorm.includes("quan ly");
+
+  const aliasArr = Array.from(aliases);
+  const aliasKeys = Array.from(new Set(aliasArr.map(a => stripVn(a)).filter(Boolean)));
+
+  return {
+    name,
+    username: String(me.username || ""),
+    role: String(me.role || ""),
+    position,
+    aliases: aliasArr,
+    aliasKeys,
+    isAdmin,
+    isDeptManager,
+    department: deptsArr[0] || me.department || "",
+    departments: deptsArr
+  };
 }
 
-/** SQL condition (on alias `c`) for channels the user may see; the parameter must be a lowercase text[] of aliases. */
+/** Broad SQL pre-filter (final strict department & member filtering is enforced by canUserAccessChannelRow) */
 function channelAccessSql(aliasParam: string) {
   return `(
-    (c.is_private = FALSE AND c.channel_type = 'CHANNEL')
-    OR (c.channel_type = 'CHANNEL' AND c.department = 'Toàn công ty')
+    c.channel_type = 'CHANNEL'
     OR LOWER(TRIM(COALESCE(c.created_by, ''))) = ANY(${aliasParam})
     OR EXISTS (
       SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(c.members) = 'array' THEN c.members ELSE '[]'::jsonb END) mm
@@ -53,35 +396,32 @@ async function canAccessChannel(ident: ChatIdentity, channelId: any, channelCode
   const numId = channelId && !isNaN(Number(channelId)) ? Number(channelId) : null;
   const cleanCode = channelCode ? String(channelCode).trim() : null;
 
-  // If both channelId and channelCode are provided, prefer exact match on channelCode if channelId points to a different channel_code
   if (cleanCode) {
     const codeRes = await query(
-      `SELECT c.id FROM chat_channels c
+      `SELECT c.* FROM chat_channels c
         WHERE c.channel_code = $1
-          AND ${channelAccessSql("$2::text[]")}
         LIMIT 1`,
-      [cleanCode, ident.aliases]
+      [cleanCode]
     );
-    if (codeRes.rows[0]?.id) {
+    if (codeRes.rows[0] && canUserAccessChannelRow(ident, codeRes.rows[0])) {
       return Number(codeRes.rows[0].id);
     }
   }
 
   if (numId !== null) {
     const idRes = await query(
-      `SELECT c.id, c.channel_code FROM chat_channels c
+      `SELECT c.* FROM chat_channels c
         WHERE c.id = $1::int
-          AND ${channelAccessSql("$2::text[]")}
         LIMIT 1`,
-      [numId, ident.aliases]
+      [numId]
     );
-    if (idRes.rows[0]?.id) {
-      // Guard against stale fallback IDs: if caller explicitly asked for a standard department channel_code
-      // but this ID in DB is a DIRECT/different channel, do NOT return the wrong channel!
+    if (idRes.rows[0]) {
       if (cleanCode && idRes.rows[0].channel_code && idRes.rows[0].channel_code !== cleanCode) {
         return null;
       }
-      return Number(idRes.rows[0].id);
+      if (canUserAccessChannelRow(ident, idRes.rows[0])) {
+        return Number(idRes.rows[0].id);
+      }
     }
   }
 
@@ -183,13 +523,29 @@ async function ensureChatTables() {
       ).catch(logFail(`kênh ${ch.channel_code}`));
     }
 
-    // Ensure standard department channels always have channel_type = 'CHANNEL' and is_private = FALSE
+    // Ensure standard department channels always have channel_type = 'CHANNEL' (do NOT overwrite custom is_private on specific dept channels)
     await query(`
       UPDATE chat_channels
-      SET channel_type = 'CHANNEL', is_private = FALSE
+      SET channel_type = 'CHANNEL'
       WHERE channel_code IN ('general', 'sales', 'application', 'warehouse', 'procurement', 'rd', 'kit', 'oligo', 'device', 'qa', 'legal')
-        AND (channel_type IS DISTINCT FROM 'CHANNEL' OR is_private IS DISTINCT FROM FALSE)
+        AND channel_type IS DISTINCT FROM 'CHANNEL'
     `).catch(logFail("kênh phòng ban"));
+
+    await query(`
+      UPDATE chat_channels
+      SET is_private = FALSE, department = 'Toàn công ty'
+      WHERE channel_code = 'general'
+        AND (is_private IS DISTINCT FROM FALSE OR department IS DISTINCT FROM 'Toàn công ty')
+    `).catch(logFail("kênh toàn công ty"));
+
+    // Auto-align department label if a standard channel was renamed to a specific department (e.g. "Phòng IT")
+    await query(`
+      UPDATE chat_channels
+      SET department = 'Phòng IT'
+      WHERE channel_type = 'CHANNEL'
+        AND LOWER(TRIM(name)) IN ('phòng it', 'phong it', 'kênh phòng it', 'it')
+        AND department IS DISTINCT FROM 'Phòng IT'
+    `).catch(() => {});
 
     // Ensure DM channels always have channel_type = 'DIRECT', is_private = TRUE, and department = 'Tin nhắn riêng'
     await query(`
@@ -397,22 +753,54 @@ export async function GET(req: NextRequest) {
           : Promise.resolve({ rows: [] })
       ]);
 
-      const formattedChannels = (channelsRes.rows || []).map((c: any) => {
-        let members = c.members;
-        if (typeof members === "string") {
-          try {
-            members = JSON.parse(members);
-          } catch (e) {
-            members = members.replace(/[{}]/g, "").split(",").map((s: string) => s.trim().replace(/^"|"$/g, "")).filter(Boolean);
+      const presenceRank = (s?: string) => (s === "online" ? 2 : s === "away" ? 1 : 0);
+      const dedupedPersonnelMap = new Map<string, any>();
+      for (const row of personnelRes.rows || []) {
+        const cleanName = normalizePersonText(row.full_name);
+        const key = personNameKey(cleanName) || String(row.username || row.id || "").toLowerCase();
+        if (!key) continue;
+        const normalizedRow = { ...row, full_name: cleanName || row.username };
+        const existing = dedupedPersonnelMap.get(key);
+        if (!existing || presenceRank(normalizedRow.presence_status) > presenceRank(existing.presence_status)) {
+          dedupedPersonnelMap.set(key, normalizedRow);
+        }
+      }
+      const dedupedPersonnelList = Array.from(dedupedPersonnelMap.values());
+
+      const accessibleRows = (channelsRes.rows || []).filter((c: any) => canUserAccessChannelRow(ident, c));
+
+      const formattedChannels = accessibleRows.map((c: any) => {
+        const explicitMembers = parseChannelMembers(c.members);
+        let effectiveMembers = explicitMembers;
+        const chType = String(c.channel_type || "CHANNEL").toUpperCase();
+
+        if (chType === "CHANNEL") {
+          if (isCompanyWideChannel(c)) {
+            const allNames = dedupedPersonnelList.map((p: any) => String(p.full_name || "").trim()).filter(Boolean);
+            effectiveMembers = Array.from(new Set([...explicitMembers, ...allNames]));
+          } else if (!c.is_private) {
+            const deptNames = dedupedPersonnelList
+              .filter((p: any) => p.department && deptMatchesChannel(p.department, c))
+              .map((p: any) => String(p.full_name || "").trim())
+              .filter(Boolean);
+            effectiveMembers = Array.from(new Set([...explicitMembers, ...deptNames]));
           }
         }
-        if (!Array.isArray(members)) members = [];
+
+        // Display accurate department badge when channel was renamed (e.g. "Phòng IT")
+        let displayDept = c.department;
+        if (chType === "CHANNEL" && extractDeptBuckets(c.name).has("IT") && stripVn(displayDept) === "cung ung") {
+          displayDept = "Phòng IT";
+        }
+
         return {
           ...c,
+          department: displayDept,
           unread_count: Number(c.unread_count) || 0,
           message_count: Number(c.message_count) || 0,
           name: c.name || "Kênh chat",
-          members: members.map((m: any) => String(m || "").trim()).filter(Boolean)
+          can_manage: isChannelAdmin(ident, c),
+          members: effectiveMembers
         };
       });
 
@@ -445,22 +833,10 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      const presenceRank = (s?: string) => (s === "online" ? 2 : s === "away" ? 1 : 0);
-      const dedupedPersonnelMap = new Map<string, any>();
-      for (const row of personnelRes.rows || []) {
-        const cleanName = normalizePersonText(row.full_name);
-        const key = personNameKey(cleanName) || String(row.username || row.id || "").toLowerCase();
-        if (!key) continue;
-        const normalizedRow = { ...row, full_name: cleanName || row.username };
-        const existing = dedupedPersonnelMap.get(key);
-        if (!existing || presenceRank(normalizedRow.presence_status) > presenceRank(existing.presence_status)) {
-          dedupedPersonnelMap.set(key, normalizedRow);
-        }
-      }
-
       return NextResponse.json({
         channels: formattedChannels,
-        personnel: Array.from(dedupedPersonnelMap.values()),
+        personnel: dedupedPersonnelList,
+        is_admin: ident.isAdmin,
         tasks: tasksRes.rows || [],
         workflows: workflowsRes.rows || [],
         factoryWorkItems,
@@ -594,13 +970,21 @@ export async function GET(req: NextRequest) {
       const q = searchParams.get("q") || "";
       if (!q.trim()) return NextResponse.json({ messages: [] });
 
+      const chRes = await query("SELECT * FROM chat_channels");
+      const allowedIds = (chRes.rows || [])
+        .filter((c: any) => canUserAccessChannelRow(ident, c))
+        .map((c: any) => Number(c.id))
+        .filter(Boolean);
+
+      if (allowedIds.length === 0) return NextResponse.json({ messages: [] });
+
       const res = await query(
         `SELECT m.*, c.name as channel_name 
          FROM chat_messages m
          JOIN chat_channels c ON m.channel_id = c.id
-         WHERE m.content ILIKE $1 AND ${channelAccessSql("$2::text[]")}
+         WHERE m.content ILIKE $1 AND m.channel_id = ANY($2::int[])
          ORDER BY m.id DESC LIMIT 50`,
-        [`%${q}%`, ident.aliases]
+        [`%${q}%`, allowedIds]
       );
 
       return NextResponse.json({ messages: res.rows });
@@ -648,10 +1032,14 @@ export async function POST(req: NextRequest) {
       if (m.rows[0] && !(await canAccessChannel(ident, m.rows[0].channel_id))) return chatForbidden();
     }
     if (action === "delete_channel" && body.channel_id) {
-      const ch = await query("SELECT created_by FROM chat_channels WHERE id = $1", [body.channel_id]);
-      const owner = String(ch.rows[0]?.created_by || "").trim().toLowerCase();
-      if (ch.rows[0] && !ident.aliases.includes(owner) && !ident.isAdmin) {
-        return NextResponse.json({ error: "Chỉ người tạo nhóm hoặc Quản trị viên mới được xóa nhóm." }, { status: 403 });
+      const ch = await query("SELECT * FROM chat_channels WHERE id = $1", [body.channel_id]);
+      if (ch.rows[0]) {
+        if (String(ch.rows[0].channel_code || "").toLowerCase() === "general") {
+          return NextResponse.json({ error: "Không thể xóa kênh thông báo chung của toàn công ty." }, { status: 400 });
+        }
+        if (!isChannelAdmin(ident, ch.rows[0])) {
+          return NextResponse.json({ error: "Chỉ Trưởng nhóm hoặc Quản trị viên mới được xóa nhóm." }, { status: 403 });
+        }
       }
     }
 
@@ -1099,18 +1487,35 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Thiếu thông tin cập nhật nhóm chat" }, { status: 400 });
       }
 
+      const existRes = await query("SELECT * FROM chat_channels WHERE id = $1", [channel_id]);
+      if (existRes.rows.length === 0) {
+        return NextResponse.json({ error: "Không tìm thấy nhóm chat" }, { status: 404 });
+      }
+      const existingChannel = existRes.rows[0];
+      if (!isChannelAdmin(ident, existingChannel)) {
+        return NextResponse.json(
+          { error: "Chỉ Trưởng nhóm hoặc Quản trị viên mới có quyền chỉnh sửa cài đặt nhóm." },
+          { status: 403 }
+        );
+      }
+
+      let nextDepartment = department || existingChannel.department || "Liên phòng ban";
+      if (extractDeptBuckets(name).has("IT") && stripVn(nextDepartment) === "cung ung") {
+        nextDepartment = "Phòng IT";
+      }
+
       const res = await query(
         `UPDATE chat_channels 
          SET name = $1, department = $2, description = $3, is_private = $4 
          WHERE id = $5 RETURNING *`,
-        [name.trim(), department || "Liên phòng ban", description || "", !!is_private, channel_id]
+        [name.trim(), nextDepartment, description || "", !!is_private, channel_id]
       );
 
       if (res.rows.length === 0) {
         return NextResponse.json({ error: "Không tìm thấy nhóm chat" }, { status: 404 });
       }
 
-      const updated = res.rows[0];
+      const updated = { ...res.rows[0], can_manage: true };
       await query(
         `INSERT INTO chat_messages (channel_id, channel_code, sender_name, sender_role, sender_dept, content)
          VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -1139,10 +1544,56 @@ export async function POST(req: NextRequest) {
       if (cRes.rows.length === 0) return NextResponse.json({ error: "Không tìm thấy nhóm chat" }, { status: 404 });
 
       const channel = cRes.rows[0];
-      const currentMembers: string[] = Array.isArray(channel.members) ? channel.members : [];
-      const updatedMembers = currentMembers.filter(m => m !== member_name);
+      if (!isChannelAdmin(ident, channel)) {
+        return NextResponse.json(
+          { error: "Chỉ Trưởng nhóm hoặc Quản trị viên mới có quyền xóa thành viên khỏi nhóm." },
+          { status: 403 }
+        );
+      }
 
-      await query("UPDATE chat_channels SET members = $1 WHERE id = $2", [JSON.stringify(updatedMembers), channel_id]);
+      const targetKey = stripVn(member_name);
+      const creatorKey = stripVn(channel.created_by);
+      if (creatorKey && creatorKey !== "he thong" && targetKey === creatorKey && !ident.isAdmin) {
+        return NextResponse.json(
+          { error: "Không thể xóa Trưởng nhóm (người tạo nhóm) khỏi nhóm chat." },
+          { status: 400 }
+        );
+      }
+
+      let baseMembers = parseChannelMembers(channel.members);
+      let nextIsPrivate = Boolean(channel.is_private);
+
+      // If removing a member from a department channel that wasn't locked to explicit members yet,
+      // materialize the department's members into c.members (minus the removed person) so they are genuinely excluded.
+      if (String(channel.channel_type || "").toUpperCase() === "CHANNEL" && !isCompanyWideChannel(channel) && !channel.is_private) {
+        const pRes = await query(
+          "SELECT full_name, department FROM personnel WHERE employee_code IS NOT NULL AND employee_code != '' AND (status IS NULL OR status != 'INACTIVE')"
+        );
+        const deptMatchingNames: string[] = [];
+        let targetBelongsToDept = false;
+        for (const p of pRes.rows || []) {
+          const fn = normalizePersonText(p.full_name);
+          if (!fn) continue;
+          if (p.department && deptMatchesChannel(p.department, channel)) {
+            deptMatchingNames.push(fn);
+            if (stripVn(fn) === targetKey) {
+              targetBelongsToDept = true;
+            }
+          }
+        }
+        if (targetBelongsToDept) {
+          baseMembers = Array.from(new Set([...baseMembers, ...deptMatchingNames]));
+          nextIsPrivate = true;
+        }
+      }
+
+      const updatedMembers = baseMembers.filter(m => stripVn(m) !== targetKey && m !== member_name);
+
+      await query("UPDATE chat_channels SET members = $1, is_private = $2 WHERE id = $3", [
+        JSON.stringify(updatedMembers),
+        nextIsPrivate,
+        channel_id
+      ]);
 
       await query(
         `INSERT INTO chat_messages (channel_id, channel_code, sender_name, sender_role, sender_dept, content)
@@ -1157,7 +1608,7 @@ export async function POST(req: NextRequest) {
         ]
       );
 
-      return NextResponse.json({ success: true, members: updatedMembers });
+      return NextResponse.json({ success: true, members: updatedMembers, is_private: nextIsPrivate });
     }
 
     // 2.8 Leave Channel / Group

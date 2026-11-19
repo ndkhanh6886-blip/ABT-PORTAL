@@ -16559,7 +16559,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             product_code: code,
                             product_name: it.productName || prod?.name || code,
                             manufacturer: getProductManufacturer({ ...it, productCode: code, productName: it.productName || prod?.name }) || prod?.brand || "",
-                            specification: it.specification || getProductSpecificationForForm({ ...it, productCode: code, productName: it.productName || prod?.name }) || prod?.specification || "",
+                            specification: it.specification || getProductSpecification({ ...it, productCode: code, productName: it.productName || prod?.name }) || prod?.specification || "",
                             unit: it.unit || prod?.unit || "Hộp",
                             storage_condition: it.storageCondition || getStorageConditionForProduct(code) || "",
                             quantity: Number(it.quantity) || 0,

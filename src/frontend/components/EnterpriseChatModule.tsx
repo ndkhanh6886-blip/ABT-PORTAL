@@ -105,6 +105,7 @@ interface ChatChannel {
   unread_count?: number;
   last_message_content?: string;
   last_message_sender?: string;
+  can_manage?: boolean;
 }
 
 interface ChatMessage {
@@ -430,11 +431,14 @@ export const EnterpriseChatModule: React.FC = () => {
   const [isChannelSettingsModalOpen, setIsChannelSettingsModalOpen] = useState(false);
   const [editChannelForm, setEditChannelForm] = useState({
     id: 0,
+    channel_code: "",
+    channel_type: "GROUP",
     name: "",
     department: "",
     description: "",
     is_private: false,
     created_by: "",
+    can_manage: false,
     members: [] as string[]
   });
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
@@ -778,7 +782,13 @@ export const EnterpriseChatModule: React.FC = () => {
             const still =
               data.channels.find((c: ChatChannel) => c.channel_code === current.channel_code) ||
               data.channels.find((c: ChatChannel) => c.id === current.id);
-            return still || current;
+            if (still) return still;
+            const fallbackCh =
+              data.channels.find((c: ChatChannel) => c.channel_code === "general" && c.channel_type === "CHANNEL") ||
+              data.channels.find((c: ChatChannel) => c.channel_type === "CHANNEL") ||
+              data.channels[0] ||
+              null;
+            return fallbackCh;
           });
         }
       }
@@ -1477,17 +1487,47 @@ export const EnterpriseChatModule: React.FC = () => {
     setSplitChannel(temp);
   };
 
+  const isSystemAdminUser = useMemo(() => {
+    const r = String(currentUserRole || "").trim().toLowerCase();
+    const d = String(currentUserDept || "").trim().toLowerCase();
+    return (
+      currentUserKey === "admin" ||
+      currentUserName === "Quản Trị Viên Hệ Thống" ||
+      r === "admin" ||
+      r === "director" ||
+      d.includes("ban giám đốc") ||
+      d.includes("ban giam doc")
+    );
+  }, [currentUserKey, currentUserName, currentUserRole, currentUserDept]);
+
+  const canUserManageChannel = useCallback(
+    (channel?: ChatChannel | null): boolean => {
+      if (!channel) return false;
+      if (typeof channel.can_manage === "boolean") return channel.can_manage;
+      if (isSystemAdminUser) return true;
+      const creator = String(channel.created_by || "").trim();
+      if (creator && creator !== "Hệ Thống" && normalizeUserName(creator) === currentUserName) {
+        return true;
+      }
+      return false;
+    },
+    [isSystemAdminUser, currentUserName]
+  );
+
   // 10. Open Channel Settings Modal
   const handleOpenChannelSettings = (channel?: ChatChannel) => {
     const target = channel || activeChannel;
     if (!target) return;
     setEditChannelForm({
       id: target.id,
+      channel_code: target.channel_code || "",
+      channel_type: target.channel_type || "GROUP",
       name: target.name,
       department: target.department || "Liên phòng ban",
       description: target.description || "",
       is_private: !!target.is_private,
       created_by: target.created_by || "",
+      can_manage: canUserManageChannel(target),
       members: Array.isArray(target.members) ? target.members : []
     });
     setIsChannelSettingsModalOpen(true);
@@ -1580,11 +1620,25 @@ export const EnterpriseChatModule: React.FC = () => {
       const data = await res.json();
       if (data.success) {
         showToast(`Đã xóa ${memberName} khỏi nhóm`, "success");
-        setEditChannelForm(prev => ({ ...prev, members: data.members }));
+        setEditChannelForm(prev => ({
+          ...prev,
+          members: data.members,
+          is_private: typeof data.is_private === "boolean" ? data.is_private : prev.is_private
+        }));
         if (activeChannel?.id === editChannelForm.id) {
-          setActiveChannel(prev => prev ? { ...prev, members: data.members } : null);
+          setActiveChannel(prev =>
+            prev
+              ? {
+                  ...prev,
+                  members: data.members,
+                  is_private: typeof data.is_private === "boolean" ? data.is_private : prev.is_private
+                }
+              : null
+          );
         }
         fetchChannels();
+      } else {
+        showToast(data.error || "Chỉ Trưởng nhóm hoặc Quản trị viên mới có quyền xóa thành viên", "error");
       }
     } catch (e: any) {
       showToast("Lỗi: " + e.message, "error");
@@ -1614,6 +1668,8 @@ export const EnterpriseChatModule: React.FC = () => {
           setSplitChannel(null);
         }
         await fetchChannels();
+      } else {
+        showToast(data.error || "Không thể rời khỏi nhóm này", "error");
       }
     } catch (e: any) {
       showToast("Lỗi: " + e.message, "error");
@@ -4117,6 +4173,19 @@ export const EnterpriseChatModule: React.FC = () => {
         size="lg"
       >
         <div className="space-y-4 p-1 text-xs">
+          {/* Permission Role Banner */}
+          {editChannelForm.can_manage ? (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/70 text-amber-800 dark:text-amber-200 font-semibold text-[11px]">
+              <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>Bạn là Trưởng nhóm / Quản trị viên của kênh này (Có quyền chỉnh sửa cài đặt &amp; quản lý thành viên).</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-medium text-[11px]">
+              <Lock className="w-4 h-4 text-slate-500 shrink-0" />
+              <span>Bạn là Thành viên của nhóm. Chỉ Trưởng nhóm hoặc Quản trị viên mới có quyền chỉnh sửa thông tin nhóm hoặc xóa thành viên.</span>
+            </div>
+          )}
+
           {/* Form edit channel */}
           <form onSubmit={handleSaveChannelSettings} className="space-y-3">
             <div>
@@ -4126,9 +4195,10 @@ export const EnterpriseChatModule: React.FC = () => {
               <input
                 type="text"
                 required
+                disabled={!editChannelForm.can_manage}
                 value={editChannelForm.name}
                 onChange={(e) => setEditChannelForm({ ...editChannelForm, name: e.target.value })}
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 font-bold"
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 font-bold disabled:opacity-60 disabled:cursor-not-allowed"
               />
             </div>
 
@@ -4138,9 +4208,10 @@ export const EnterpriseChatModule: React.FC = () => {
                   Phạm vi phụ trách
                 </label>
                 <select
+                  disabled={!editChannelForm.can_manage}
                   value={editChannelForm.department}
                   onChange={(e) => setEditChannelForm({ ...editChannelForm, department: e.target.value })}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 font-semibold"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   <option value="Liên phòng ban">Liên phòng ban</option>
                   <option value="Toàn công ty">Toàn công ty</option>
@@ -4148,6 +4219,7 @@ export const EnterpriseChatModule: React.FC = () => {
                   <option value="Sản Xuất Kit">Sản Xuất Kit</option>
                   <option value="Tổng Hợp Oligo">Tổng Hợp Oligo</option>
                   <option value="Kỹ Thuật – Thiết Bị">Kỹ Thuật – Thiết Bị</option>
+                  <option value="Kỹ thuật - Công nghệ">Kỹ thuật - Công nghệ</option>
                   <option value="QA/QC">QA/QC</option>
                   <option value="Application">Application</option>
                   <option value="Kinh Doanh">Kinh Doanh</option>
@@ -4155,8 +4227,12 @@ export const EnterpriseChatModule: React.FC = () => {
                   <option value="PM">PM (Quản lý Sản phẩm)</option>
                   <option value="Marketing">Marketing</option>
                   <option value="Kho & Vận Hành">Kho &amp; Vận Hành</option>
+                  <option value="Cung Ứng">Cung Ứng</option>
                   <option value="Mua Hàng & Cung Ứng">Mua Hàng &amp; Cung Ứng (Procurement)</option>
+                  <option value="Cung ứng - Kho">Cung ứng - Kho (Nhà máy)</option>
+                  <option value="Phòng IT">Phòng IT</option>
                   <option value="Kế Toán">Kế Toán</option>
+                  <option value="Hành chánh - Kế toán">Hành chánh - Kế toán</option>
                   <option value="Pháp Chế">Pháp Chế</option>
                   <option value="Hành Chính Nhân Sự">Hành Chính Nhân Sự</option>
                   <option value="Ban Giám Đốc">Ban Giám Đốc</option>
@@ -4167,9 +4243,10 @@ export const EnterpriseChatModule: React.FC = () => {
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Quyền riêng tư
                 </label>
-                <label className="flex items-center gap-2 pt-2 cursor-pointer font-medium">
+                <label className={`flex items-center gap-2 pt-2 font-medium ${editChannelForm.can_manage ? "cursor-pointer" : "opacity-60 cursor-not-allowed"}`}>
                   <input
                     type="checkbox"
+                    disabled={!editChannelForm.can_manage}
                     checked={editChannelForm.is_private}
                     onChange={(e) => setEditChannelForm({ ...editChannelForm, is_private: e.target.checked })}
                     className="rounded text-indigo-600"
@@ -4185,36 +4262,56 @@ export const EnterpriseChatModule: React.FC = () => {
               </label>
               <textarea
                 rows={2}
+                disabled={!editChannelForm.can_manage}
                 value={editChannelForm.description}
                 onChange={(e) => setEditChannelForm({ ...editChannelForm, description: e.target.value })}
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950"
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 disabled:opacity-60 disabled:cursor-not-allowed"
               />
             </div>
 
-            <div className="flex justify-end pt-1">
-              <button
-                type="submit"
-                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-xs cursor-pointer"
-              >
-                Lưu Thay Đổi
-              </button>
-            </div>
+            {editChannelForm.can_manage && (
+              <div className="flex justify-end pt-1">
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-xs cursor-pointer"
+                >
+                  Lưu Thay Đổi
+                </button>
+              </div>
+            )}
           </form>
 
           {/* Members Management in Settings */}
           <div className="pt-3 border-t border-slate-200 dark:border-slate-800">
             <div className="flex items-center justify-between mb-2">
               <label className="font-bold text-slate-700 dark:text-slate-300 uppercase text-[11px]">
-                Quản lý thành viên ({editChannelForm.members.length} người)
+                Danh sách thành viên ({editChannelForm.members.length} người)
               </label>
+              {editChannelForm.channel_type !== "DIRECT" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsChannelSettingsModalOpen(false);
+                    setIsAddMemberModalOpen(true);
+                  }}
+                  className="text-indigo-600 dark:text-indigo-400 font-bold text-[11px] hover:underline flex items-center gap-0.5 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Thêm thành viên
+                </button>
+              )}
             </div>
 
             <div className="max-h-40 overflow-y-auto space-y-1.5 border border-slate-200 dark:border-slate-800 rounded-xl p-2 bg-slate-50 dark:bg-slate-950">
               {editChannelForm.members.map((memName, idx) => {
-                const isMe = memName === currentUserName;
-                const isCreator = memName === editChannelForm.created_by;
-                const p = personnelList.find(item => item.full_name === memName);
+                const isMe = normalizeUserName(memName) === currentUserName;
+                const isCreator =
+                  Boolean(editChannelForm.created_by) &&
+                  editChannelForm.created_by !== "Hệ Thống" &&
+                  normalizeUserName(memName) === normalizeUserName(editChannelForm.created_by);
+                const p = personnelList.find(item => normalizeUserName(item.full_name) === normalizeUserName(memName));
                 const mPalette = getSenderPalette(memName);
+                const canRemoveThisMember =
+                  editChannelForm.can_manage && !isMe && (!isCreator || isSystemAdminUser);
                 return (
                   <div
                     key={idx}
@@ -4231,11 +4328,11 @@ export const EnterpriseChatModule: React.FC = () => {
                             Trưởng nhóm
                           </span>
                         )}
-                        <span className="text-[10px] text-slate-500 block">{p?.department} - {p?.position}</span>
+                        <span className="text-[10px] text-slate-500 block">{p?.department || editChannelForm.department} - {p?.position || "Thành viên"}</span>
                       </div>
                     </div>
 
-                    {!isMe && (
+                    {canRemoveThisMember && (
                       <button
                         type="button"
                         onClick={() => handleRemoveMember(memName)}
@@ -4252,43 +4349,47 @@ export const EnterpriseChatModule: React.FC = () => {
           </div>
 
           {/* Danger Zone: Leave Group or Delete Group */}
-          <div className="pt-3 border-t border-rose-200 dark:border-rose-900/40 space-y-2">
-            <span className="font-bold text-rose-600 dark:text-rose-400 uppercase text-[10px]">
-              Khu vực nguy hiểm
-            </span>
+          {editChannelForm.channel_code !== "general" && (
+            <div className="pt-3 border-t border-rose-200 dark:border-rose-900/40 space-y-2">
+              <span className="font-bold text-rose-600 dark:text-rose-400 uppercase text-[10px]">
+                Tùy chọn nâng cao
+              </span>
 
-            <div className="flex items-center justify-between p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/60">
-              <div>
-                <h5 className="font-bold text-rose-900 dark:text-rose-200 text-xs">Rời khỏi nhóm chat</h5>
-                <p className="text-[10px] text-rose-700/80 dark:text-rose-400">
-                  Bạn sẽ không còn thấy tin nhắn hoặc tham gia thảo luận trong nhóm này.
-                </p>
+              <div className="flex items-center justify-between p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/60">
+                <div>
+                  <h5 className="font-bold text-rose-900 dark:text-rose-200 text-xs">Rời khỏi nhóm chat</h5>
+                  <p className="text-[10px] text-rose-700/80 dark:text-rose-400">
+                    Bạn sẽ không còn thấy tin nhắn hoặc tham gia thảo luận trong nhóm này.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleLeaveChannel}
+                  className="px-3 py-1.5 rounded-xl border border-rose-300 dark:border-rose-700 text-rose-700 dark:text-rose-300 hover:bg-rose-100 font-bold cursor-pointer shrink-0"
+                >
+                  Rời Nhóm
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={handleLeaveChannel}
-                className="px-3 py-1.5 rounded-xl border border-rose-300 dark:border-rose-700 text-rose-700 dark:text-rose-300 hover:bg-rose-100 font-bold cursor-pointer shrink-0"
-              >
-                Rời Nhóm
-              </button>
-            </div>
 
-            <div className="flex items-center justify-between p-3 rounded-xl bg-rose-500/10 border border-rose-300 dark:border-rose-800">
-              <div>
-                <h5 className="font-bold text-rose-800 dark:text-rose-300 text-xs">Xóa vĩnh viễn nhóm chat</h5>
-                <p className="text-[10px] text-rose-600 dark:text-rose-400">
-                  Xóa nhóm chat cùng toàn bộ lịch sử tin nhắn, tệp đính kèm. Không thể hoàn tác.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsDeleteConfirmOpen(true)}
-                className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold cursor-pointer shrink-0"
-              >
-                Xóa Nhóm
-              </button>
+              {editChannelForm.can_manage && (
+                <div className="flex items-center justify-between p-3 rounded-xl bg-rose-500/10 border border-rose-300 dark:border-rose-800">
+                  <div>
+                    <h5 className="font-bold text-rose-800 dark:text-rose-300 text-xs">Xóa vĩnh viễn nhóm chat</h5>
+                    <p className="text-[10px] text-rose-600 dark:text-rose-400">
+                      Xóa nhóm chat cùng toàn bộ lịch sử tin nhắn, tệp đính kèm. Không thể hoàn tác.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsDeleteConfirmOpen(true)}
+                    className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold cursor-pointer shrink-0"
+                  >
+                    Xóa Nhóm
+                  </button>
+                </div>
+              )}
             </div>
-          </div>
+          )}
         </div>
       </Modal>
 
