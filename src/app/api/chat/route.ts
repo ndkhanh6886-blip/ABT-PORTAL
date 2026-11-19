@@ -288,10 +288,10 @@ function canUserAccessChannelRow(ident: ChatIdentity, c: any): boolean {
   // 2. Department Channels (CHANNEL)
   if (type === "CHANNEL") {
     if (isCompanyWideChannel(c)) return true;
-    if (ident.isAdmin) return true;
     if (userIsChannelCreator(ident, c)) return true;
     if (userMatchesMemberList(ident, members)) return true;
-    if (c.is_private && members.length > 0) return false;
+    if (c.is_private) return false;
+    if (ident.isAdmin) return true;
     return userMatchesChannelDepartment(ident, c);
   }
 
@@ -513,8 +513,11 @@ async function ensureChatTables() {
   };
   try {
 
-    // Ensure all standard department channels exist in chat_channels and have correct type/privacy
+    // Always ensure the company-wide general channel exists; only seed the other default department channels on initial setup
+    const countRes = await query(`SELECT COUNT(*)::int AS cnt FROM chat_channels`).catch(() => ({ rows: [{ cnt: 1 }] }));
+    const hasExistingChannels = Number(countRes.rows?.[0]?.cnt || 0) > 0;
     for (const ch of DEFAULT_DEPARTMENT_CHANNELS) {
+      if (ch.channel_code !== "general" && hasExistingChannels) continue;
       await query(
         `INSERT INTO chat_channels (channel_code, name, channel_type, department, description, is_private, created_by, members)
          SELECT $1::varchar, $2::varchar, 'CHANNEL', $3::varchar, $4::text, FALSE, 'Hệ Thống', '[]'::jsonb
@@ -1514,11 +1517,34 @@ export async function POST(req: NextRequest) {
         nextDepartment = "Phòng IT";
       }
 
+      let nextMembers = parseChannelMembers(existingChannel.members);
+      const nextPrivate = isCompanyWideChannel(existingChannel) ? false : !!is_private;
+      if (
+        nextPrivate &&
+        !existingChannel.is_private &&
+        String(existingChannel.channel_type || "").toUpperCase() === "CHANNEL" &&
+        !isCompanyWideChannel(existingChannel)
+      ) {
+        const pRes = await query(
+          "SELECT full_name, department FROM personnel WHERE employee_code IS NOT NULL AND employee_code != '' AND (status IS NULL OR status != 'INACTIVE')"
+        );
+        const deptMatchingNames: string[] = [];
+        const tempChannel = { ...existingChannel, name: name.trim(), department: nextDepartment };
+        for (const p of pRes.rows || []) {
+          const fn = normalizePersonText(p.full_name);
+          if (!fn) continue;
+          if (p.department && deptMatchesChannel(p.department, tempChannel)) {
+            deptMatchingNames.push(fn);
+          }
+        }
+        nextMembers = Array.from(new Set([...nextMembers, ...deptMatchingNames, ident.name].filter(Boolean)));
+      }
+
       const res = await query(
         `UPDATE chat_channels 
-         SET name = $1, department = $2, description = $3, is_private = $4 
-         WHERE id = $5 RETURNING *`,
-        [name.trim(), nextDepartment, description || "", !!is_private, channel_id]
+         SET name = $1, department = $2, description = $3, is_private = $4, members = $5 
+         WHERE id = $6 RETURNING *`,
+        [name.trim(), nextDepartment, description || "", nextPrivate, JSON.stringify(nextMembers), channel_id]
       );
 
       if (res.rows.length === 0) {
@@ -1580,28 +1606,27 @@ export async function POST(req: NextRequest) {
           "SELECT full_name, department FROM personnel WHERE employee_code IS NOT NULL AND employee_code != '' AND (status IS NULL OR status != 'INACTIVE')"
         );
         const deptMatchingNames: string[] = [];
-        let targetBelongsToDept = false;
         for (const p of pRes.rows || []) {
           const fn = normalizePersonText(p.full_name);
           if (!fn) continue;
           if (p.department && deptMatchesChannel(p.department, channel)) {
             deptMatchingNames.push(fn);
-            if (stripVn(fn) === targetKey) {
-              targetBelongsToDept = true;
-            }
           }
         }
-        if (targetBelongsToDept) {
-          baseMembers = Array.from(new Set([...baseMembers, ...deptMatchingNames]));
-          nextIsPrivate = true;
-        }
+        baseMembers = Array.from(new Set([...baseMembers, ...deptMatchingNames]));
+        nextIsPrivate = true;
       }
 
       const updatedMembers = baseMembers.filter(m => stripVn(m) !== targetKey && m !== member_name);
+      let nextCreatedBy = channel.created_by || "Hệ Thống";
+      if (creatorKey && creatorKey === targetKey) {
+        nextCreatedBy = updatedMembers[0] || "Hệ Thống";
+      }
 
-      await query("UPDATE chat_channels SET members = $1, is_private = $2 WHERE id = $3", [
+      await query("UPDATE chat_channels SET members = $1, is_private = $2, created_by = $3 WHERE id = $4", [
         JSON.stringify(updatedMembers),
         nextIsPrivate,
+        nextCreatedBy,
         channel_id
       ]);
 
@@ -1618,7 +1643,12 @@ export async function POST(req: NextRequest) {
         ]
       );
 
-      return NextResponse.json({ success: true, members: updatedMembers, is_private: nextIsPrivate });
+      return NextResponse.json({
+        success: true,
+        members: updatedMembers,
+        is_private: nextIsPrivate,
+        created_by: nextCreatedBy
+      });
     }
 
     // 2.8 Leave Channel / Group
@@ -1632,10 +1662,56 @@ export async function POST(req: NextRequest) {
       if (cRes.rows.length === 0) return NextResponse.json({ error: "Không tìm thấy nhóm chat" }, { status: 404 });
 
       const channel = cRes.rows[0];
-      const currentMembers: string[] = Array.isArray(channel.members) ? channel.members : [];
-      const updatedMembers = currentMembers.filter(m => m !== member_name);
+      if (isCompanyWideChannel(channel)) {
+        return NextResponse.json(
+          { error: "Không thể rời khỏi kênh thông báo chung của toàn công ty." },
+          { status: 400 }
+        );
+      }
 
-      await query("UPDATE chat_channels SET members = $1 WHERE id = $2", [JSON.stringify(updatedMembers), channel_id]);
+      let baseMembers = parseChannelMembers(channel.members);
+      let nextIsPrivate = true;
+
+      // If leaving a department channel that wasn't locked to explicit members yet,
+      // materialize the department's members into c.members first so remaining department members stay in the channel
+      // while the leaving member is genuinely excluded.
+      if (String(channel.channel_type || "").toUpperCase() === "CHANNEL" && !channel.is_private) {
+        const pRes = await query(
+          "SELECT full_name, department FROM personnel WHERE employee_code IS NOT NULL AND employee_code != '' AND (status IS NULL OR status != 'INACTIVE')"
+        );
+        const deptMatchingNames: string[] = [];
+        for (const p of pRes.rows || []) {
+          const fn = normalizePersonText(p.full_name);
+          if (!fn) continue;
+          if (p.department && deptMatchesChannel(p.department, channel)) {
+            deptMatchingNames.push(fn);
+          }
+        }
+        baseMembers = Array.from(new Set([...baseMembers, ...deptMatchingNames]));
+      }
+
+      const leavingKey = stripVn(member_name);
+      const updatedMembers = baseMembers.filter((m) => {
+        const mLower = String(m || "").trim().toLowerCase();
+        const mKey = stripVn(m);
+        if (m === member_name || (leavingKey && mKey === leavingKey)) return false;
+        if (ident.aliases.includes(mLower) || (mKey && ident.aliasKeys.includes(mKey))) return false;
+        return true;
+      });
+
+      let nextCreatedBy = channel.created_by || "Hệ Thống";
+      let transferredTo = "";
+      if (userIsChannelCreator(ident, channel) || (leavingKey && stripVn(channel.created_by) === leavingKey)) {
+        nextCreatedBy = updatedMembers[0] || "Hệ Thống";
+        if (nextCreatedBy && nextCreatedBy !== "Hệ Thống") {
+          transferredTo = nextCreatedBy;
+        }
+      }
+
+      await query(
+        "UPDATE chat_channels SET members = $1, is_private = $2, created_by = $3 WHERE id = $4",
+        [JSON.stringify(updatedMembers), nextIsPrivate, nextCreatedBy, channel_id]
+      );
 
       await query(
         `INSERT INTO chat_messages (channel_id, channel_code, sender_name, sender_role, sender_dept, content)
@@ -1646,11 +1722,18 @@ export async function POST(req: NextRequest) {
           "Hệ Thống",
           "Thông báo",
           "ABT",
-          `${member_name} đã rời khỏi nhóm trao đổi.`
+          transferredTo
+            ? `${member_name} đã rời khỏi nhóm trao đổi (Quyền Trưởng nhóm được chuyển cho ${transferredTo}).`
+            : `${member_name} đã rời khỏi nhóm trao đổi.`
         ]
       );
 
-      return NextResponse.json({ success: true, members: updatedMembers });
+      return NextResponse.json({
+        success: true,
+        members: updatedMembers,
+        is_private: nextIsPrivate,
+        created_by: nextCreatedBy
+      });
     }
 
     // 2.9 Delete Channel / Group
@@ -1665,7 +1748,8 @@ export async function POST(req: NextRequest) {
 
       const channelName = cRes.rows[0].name;
 
-      // Delete messages first, then channel
+      // Delete reads & messages first, then channel
+      await query("DELETE FROM chat_channel_reads WHERE channel_id = $1", [channel_id]).catch(() => {});
       await query("DELETE FROM chat_messages WHERE channel_id = $1", [channel_id]);
       await query("DELETE FROM chat_channels WHERE id = $1", [channel_id]);
 

@@ -4501,7 +4501,7 @@ export const EnterpriseChatModule: React.FC = () => {
                 <div>
                   <h5 className="font-bold text-rose-900 dark:text-rose-200 text-xs">Rời khỏi nhóm chat</h5>
                   <p className="text-[10px] text-rose-700/80 dark:text-rose-400">
-                    Bạn sẽ không còn thấy tin nhắn hoặc tham gia thảo luận trong nhóm này.
+                    Bạn sẽ rời khỏi danh sách thành viên, ẩn nhóm khỏi thanh bên và không còn nhận tin nhắn từ nhóm này (trừ khi được thành viên khác mời lại).
                   </p>
                 </div>
                 <button
@@ -4518,7 +4518,7 @@ export const EnterpriseChatModule: React.FC = () => {
                   <div>
                     <h5 className="font-bold text-rose-800 dark:text-rose-300 text-xs">Xóa vĩnh viễn nhóm chat</h5>
                     <p className="text-[10px] text-rose-600 dark:text-rose-400">
-                      Xóa nhóm chat cùng toàn bộ lịch sử tin nhắn, tệp đính kèm. Không thể hoàn tác.
+                      Chỉ dành cho Trưởng nhóm (người tạo), Trưởng/Phó phòng phụ trách kênh hoặc Quản trị viên hệ thống (Ban Giám Đốc). Xóa toàn bộ nhóm và lịch sử tin nhắn, không thể hoàn tác.
                     </p>
                   </div>
                   <button
