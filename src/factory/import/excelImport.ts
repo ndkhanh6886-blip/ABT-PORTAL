@@ -283,12 +283,16 @@ async function ensureItemByCode(
   const itemType = mapItemType(params.item_type || "RAW_MATERIAL");
   const storage = mapStorageCondition(params.storage_condition || "RT");
   const existing = (
-    await tx.query("SELECT id, code, base_uom, tracking FROM master.item WHERE upper(code) = upper($1) LIMIT 1", [code])
+    await tx.query("SELECT id, code, base_uom, tracking, item_type FROM master.item WHERE upper(code) = upper($1) LIMIT 1", [code])
   ).rows[0];
 
   if (existing) {
     const shouldHealUom = isPlaceholderUom(existing.base_uom) && hasExplicitValidUom;
     const healedUom = shouldHealUom ? uom : (existing.base_uom as string);
+    const shouldUpgradeType =
+      ["FINISHED_KIT", "SEMI_FINISHED", "DEVICE"].includes(itemType) ||
+      (existing.item_type === "RAW_MATERIAL" && itemType !== "RAW_MATERIAL");
+    const nextItemType = shouldUpgradeType ? itemType : (existing.item_type as string);
     await tx.query(
       `UPDATE master.item
           SET name = COALESCE(NULLIF($2, ''), name),
@@ -297,6 +301,8 @@ async function ensureItemByCode(
               min_stock = COALESCE($5, min_stock),
               notes = COALESCE(NULLIF($6, ''), notes),
               base_uom = CASE WHEN $8 THEN $9 ELSE base_uom END,
+              item_type = $10,
+              is_manufacturable = CASE WHEN $10 IN ('FINISHED_KIT', 'SEMI_FINISHED', 'DEVICE') THEN true ELSE is_manufacturable END,
               updated_at = now(),
               updated_by = $7
         WHERE id = $1`,
@@ -310,6 +316,7 @@ async function ensureItemByCode(
         actor.userId,
         shouldHealUom,
         uom,
+        nextItemType,
       ]
     );
     if (shouldHealUom && existing.base_uom !== uom) {

@@ -7,6 +7,7 @@ import { api, fmtDate, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { openExcelImportTemplate } from "../import/FactoryExcelImportModule";
 import { CatalogItemCombobox, type CatalogMasterItemOption } from "./CatalogItemCombobox";
+import { StockCategoryBadge, type StockItemGroup } from "./StockView";
 import { DepartmentWorkTasksBar } from "@/frontend/components/DepartmentWorkTasksBar";
 
 const MODULE_IMPORT_TARGET: Record<"RD" | "KIT" | "OLIGO" | "DEVICE" | "QMS", { deptCode: string; warehouseCode: string; taskDeptCode: string }> = {
@@ -84,6 +85,8 @@ interface StockRow {
   lot_id: string | null;
   item_code: string;
   item_name: string;
+  item_type?: string;
+  item_group?: "RAW" | "SEMI_FINISHED" | "FINISHED";
   base_uom: string;
   lot_code: string | null;
   lot_status: string | null;
@@ -92,6 +95,17 @@ interface StockRow {
   location_code: string;
   qty_on_hand: string;
   qty_available: string;
+}
+
+interface StockGroupCounts {
+  total_lots: number;
+  total_items: number;
+  raw_lots: number;
+  raw_items: number;
+  semi_lots: number;
+  semi_items: number;
+  finished_lots: number;
+  finished_items: number;
 }
 
 export function DeptMaterialActionBar({
@@ -128,11 +142,12 @@ export function DeptMaterialActionBar({
 
   // Quick Stock View state
   const [stockQ, setStockQ] = useState("");
+  const [stockGroup, setStockGroup] = useState<StockItemGroup>("");
   const deptStock = useQuery({
-    queryKey: ["factory", "dept-quick-stock", currentWhId, stockQ],
+    queryKey: ["factory", "dept-quick-stock", currentWhId, stockQ, stockGroup],
     queryFn: () =>
-      api<{ rows: StockRow[]; total: number }>(
-        `/api/factory/inv/stock?page_size=25${currentWhId ? `&warehouse_id=${currentWhId}` : ""}${stockQ.trim() ? `&q=${encodeURIComponent(stockQ.trim())}` : ""}`
+      api<{ rows: StockRow[]; total: number; group_counts?: StockGroupCounts }>(
+        `/api/factory/inv/stock?page_size=25${currentWhId ? `&warehouse_id=${currentWhId}` : ""}${stockGroup ? `&item_group=${stockGroup}` : ""}${stockQ.trim() ? `&q=${encodeURIComponent(stockQ.trim())}` : ""}`
       ),
     enabled: panel === "stock" || panel === "requisition",
   });
@@ -410,6 +425,54 @@ export function DeptMaterialActionBar({
           title={`Tồn kho khả dụng — ${deptLabel}`}
           actions={<Button variant="ghost" onClick={() => setPanel("none")}>Đóng</Button>}
         >
+          <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
+            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mr-1">Phân loại:</span>
+            <button
+              type="button"
+              onClick={() => setStockGroup("")}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                stockGroup === ""
+                  ? "bg-slate-800 text-white border-slate-800 dark:bg-slate-100 dark:text-slate-900"
+                  : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
+              }`}
+            >
+              Tất cả{deptStock.data?.group_counts ? ` (${deptStock.data.group_counts.total_lots})` : ""}
+            </button>
+            <button
+              type="button"
+              onClick={() => setStockGroup("RAW")}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                stockGroup === "RAW"
+                  ? "bg-sky-700 text-white border-sky-700"
+                  : "bg-white dark:bg-slate-800 text-sky-800 dark:text-sky-300 border-sky-200 dark:border-sky-800/70 hover:bg-sky-50"
+              }`}
+            >
+              🧪 Nguyên liệu{deptStock.data?.group_counts ? ` (${deptStock.data.group_counts.raw_lots})` : ""}
+            </button>
+            <button
+              type="button"
+              onClick={() => setStockGroup("SEMI_FINISHED")}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                stockGroup === "SEMI_FINISHED"
+                  ? "bg-violet-700 text-white border-violet-700"
+                  : "bg-white dark:bg-slate-800 text-violet-800 dark:text-violet-300 border-violet-200 dark:border-violet-800/70 hover:bg-violet-50"
+              }`}
+            >
+              ⚗️ Bán thành phẩm{deptStock.data?.group_counts ? ` (${deptStock.data.group_counts.semi_lots})` : ""}
+            </button>
+            <button
+              type="button"
+              onClick={() => setStockGroup("FINISHED")}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                stockGroup === "FINISHED"
+                  ? "bg-emerald-700 text-white border-emerald-700"
+                  : "bg-white dark:bg-slate-800 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800/70 hover:bg-emerald-50"
+              }`}
+            >
+              📦 Thành phẩm{deptStock.data?.group_counts ? ` (${deptStock.data.group_counts.finished_lots})` : ""}
+            </button>
+          </div>
+
           <div className="grid gap-2 sm:grid-cols-2 mb-3">
             <select
               className={inputClass}
@@ -433,11 +496,14 @@ export function DeptMaterialActionBar({
           <ErrorNote error={deptStock.error} />
           {deptStock.data?.rows.length === 0 && <Empty>Không có lô tồn kho nào khớp bộ lọc.</Empty>}
           {deptStock.data && deptStock.data.rows.length > 0 && (
-            <Table head={["Vật tư", "Số lô", "Trạng thái", "Hạn dùng", "Kho · Vị trí", "Tồn", "Khả dụng"]}>
+            <Table head={["Vật tư", "Phân loại", "Số lô", "Trạng thái", "Hạn dùng", "Kho · Vị trí", "Tồn", "Khả dụng"]}>
               {deptStock.data.rows.map((r) => (
                 <tr key={r.id}>
                   <td className="py-1.5 pr-3 text-xs">
                     <b>{r.item_code}</b> — {r.item_name}
+                  </td>
+                  <td className="py-1.5 pr-3">
+                    <StockCategoryBadge itemType={r.item_type} itemGroup={r.item_group} />
                   </td>
                   <td className="py-1.5 pr-3 font-mono text-xs">{r.lot_code ?? "—"}</td>
                   <td className="py-1.5 pr-3">{r.lot_status ? <StatusBadge status={r.lot_status} /> : "—"}</td>

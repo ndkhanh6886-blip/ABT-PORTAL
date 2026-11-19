@@ -15,6 +15,7 @@ import {
   listQuerySchema,
   updateItemSchema,
 } from "./schemas";
+import { syncItemTypesFromBomAndFormula } from "../inv/queries";
 import "./permissions";
 
 export interface Item {
@@ -321,12 +322,20 @@ export const foldSql = (expr: string) => `lower(translate(${expr}, '${VI_FROM}',
 
 export async function listItems(tx: Tx, actor: AuthzActor, query: unknown) {
   await authorizeAnywhere(tx, actor, "master.data.view");
+  await syncItemTypesFromBomAndFormula(tx);
   const q = parseInput(listQuerySchema, query);
   const params: unknown[] = [];
   const where: string[] = [];
   if (q.status !== "ALL") {
     params.push(q.status);
     where.push(`i.status = $${params.length}`);
+  }
+  if (q.item_group === "RAW") {
+    where.push(`i.item_type NOT IN ('SEMI_FINISHED', 'FINISHED_KIT', 'DEVICE', 'OLIGO_SERVICE')`);
+  } else if (q.item_group === "SEMI_FINISHED") {
+    where.push(`i.item_type = 'SEMI_FINISHED'`);
+  } else if (q.item_group === "FINISHED") {
+    where.push(`i.item_type IN ('FINISHED_KIT', 'DEVICE', 'OLIGO_SERVICE')`);
   }
   if (q.item_type) {
     const allowed = new Set<string>(ITEM_TYPES);

@@ -5,6 +5,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { api, fmtQty, useDebouncedValue } from "../api";
 import { isDiscreteStockUomClient } from "../kit/shared";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, Pager, StatusBadge, Table } from "../ui";
+import { StockCategoryBadge, type StockItemGroup } from "./StockView";
 
 const ITEM_TYPE_LABEL: Record<string, string> = {
   RAW_MATERIAL: "Nguyên liệu",
@@ -680,8 +681,11 @@ function NewItemForm({ uoms, onDone }: { uoms: UomOption[]; onDone: () => void }
 }
 
 export function ItemsView({ canManage }: { canManage: boolean }) {
+  const qc = useQueryClient();
   const [q, setQ] = useState("");
   const debouncedQ = useDebouncedValue(q, 300);
+  const [itemGroup, setItemGroup] = useState<StockItemGroup>("");
+  const [itemTypeFilter, setItemTypeFilter] = useState("");
   const [page, setPage] = useState(1);
   const [onlyMissingUom, setOnlyMissingUom] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -698,6 +702,8 @@ export function ItemsView({ canManage }: { canManage: boolean }) {
     page: String(page),
     page_size: "50",
     ...(debouncedQ.trim() ? { q: debouncedQ.trim() } : {}),
+    ...(itemGroup ? { item_group: itemGroup } : {}),
+    ...(itemTypeFilter ? { item_type: itemTypeFilter } : {}),
     ...(onlyMissingUom ? { missing_uom: "1" } : {}),
   });
   const items = useQuery({
@@ -707,6 +713,24 @@ export function ItemsView({ canManage }: { canManage: boolean }) {
         `/api/factory/master/items?${params}`
       ),
     placeholderData: keepPreviousData,
+  });
+
+  const updateTypeMut = useMutation({
+    mutationFn: (payload: { itemId: string; version: number; item_type: string; code: string }) =>
+      api(`/api/factory/master/items/${payload.itemId}`, {
+        method: "PATCH",
+        json: {
+          version: payload.version,
+          item_type: payload.item_type,
+          is_manufacturable: ["SEMI_FINISHED", "FINISHED_KIT", "DEVICE"].includes(payload.item_type),
+          reason: `Phân loại lại ${payload.code} sang ${ITEM_TYPE_LABEL[payload.item_type] ?? payload.item_type}`,
+        },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["factory", "items"] });
+      qc.invalidateQueries({ queryKey: ["factory", "stock"] });
+    },
+    onError: (e) => window.alert((e as Error).message),
   });
 
   const missingCount = items.data?.missing_uom_count ?? 0;
@@ -794,18 +818,120 @@ export function ItemsView({ canManage }: { canManage: boolean }) {
         )}
 
         {adding && <NewItemForm uoms={uoms.data ?? []} onDone={() => setAdding(false)} />}
+
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3 p-2 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 px-1">Phân loại danh mục:</span>
+            <button
+              type="button"
+              onClick={() => {
+                setItemGroup("");
+                setItemTypeFilter("");
+                setPage(1);
+              }}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                itemGroup === "" && !itemTypeFilter
+                  ? "bg-slate-800 text-white border-slate-800 dark:bg-slate-100 dark:text-slate-900"
+                  : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
+              }`}
+            >
+              Tất cả
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setItemGroup("RAW");
+                setItemTypeFilter("");
+                setPage(1);
+              }}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                itemGroup === "RAW" && !itemTypeFilter
+                  ? "bg-sky-700 text-white border-sky-700"
+                  : "bg-white dark:bg-slate-800 text-sky-800 dark:text-sky-300 border-sky-200 dark:border-sky-800/70 hover:bg-sky-50"
+              }`}
+            >
+              🧪 Nguyên liệu
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setItemGroup("SEMI_FINISHED");
+                setItemTypeFilter("");
+                setPage(1);
+              }}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                itemGroup === "SEMI_FINISHED"
+                  ? "bg-violet-700 text-white border-violet-700"
+                  : "bg-white dark:bg-slate-800 text-violet-800 dark:text-violet-300 border-violet-200 dark:border-violet-800/70 hover:bg-violet-50"
+              }`}
+            >
+              ⚗️ Bán thành phẩm
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setItemGroup("FINISHED");
+                setItemTypeFilter("");
+                setPage(1);
+              }}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                itemGroup === "FINISHED"
+                  ? "bg-emerald-700 text-white border-emerald-700"
+                  : "bg-white dark:bg-slate-800 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800/70 hover:bg-emerald-50"
+              }`}
+            >
+              📦 Thành phẩm
+            </button>
+          </div>
+          <select
+            className={`${inputClass} w-64`}
+            value={itemTypeFilter}
+            onChange={(e) => {
+              const v = e.target.value;
+              setItemTypeFilter(v);
+              if (v === "SEMI_FINISHED") setItemGroup("SEMI_FINISHED");
+              else if (v === "FINISHED_KIT" || v === "DEVICE") setItemGroup("FINISHED");
+              else if (v) setItemGroup("RAW");
+              setPage(1);
+            }}
+            aria-label="Lọc chi tiết loại vật tư"
+          >
+            <option value="">-- Lọc chi tiết theo loại --</option>
+            {Object.entries(ITEM_TYPE_LABEL).map(([k, v]) => (
+              <option key={k} value={k}>
+                {v} ({k})
+              </option>
+            ))}
+          </select>
+        </div>
+
         <ErrorNote error={items.error} />
         {items.data && items.data.rows.length === 0 && <Empty>Chưa có vật tư nào.</Empty>}
         {items.data && items.data.rows.length > 0 && (
           <>
-            <Table head={["Mã", "Tên", "Loại", "ĐVT gốc", "Quản lý", "Chế độ lưu kho", "Bảo quản", "Tồn tối thiểu", "QC nhận hàng", "Mã hàng KD", "Trạng thái", ""]}>
+            <Table head={["Mã", "Tên", "Phân loại", "ĐVT gốc", "Quản lý", "Chế độ lưu kho", "Bảo quản", "Tồn tối thiểu", "QC nhận hàng", "Mã hàng KD", "Trạng thái", ""]}>
               {items.data.rows.map((r) => {
                 const badUom = isPlaceholderUomClient(r.base_uom);
                 return (
                   <tr key={r.id}>
                     <td className="py-2 pr-3 font-mono font-semibold whitespace-nowrap">{r.code}</td>
                     <td className="py-2 pr-3">{r.name}</td>
-                    <td className="py-2 pr-3 whitespace-nowrap">{ITEM_TYPE_LABEL[r.item_type] ?? r.item_type}</td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      <StockCategoryBadge
+                        itemType={r.item_type}
+                        canEdit={canManage}
+                        isUpdating={updateTypeMut.isPending}
+                        onChangeType={(nextType) => {
+                          if (nextType === r.item_type) return;
+                          updateTypeMut.mutate({
+                            itemId: r.id,
+                            version: r.version,
+                            item_type: nextType,
+                            code: r.code,
+                          });
+                        }}
+                      />
+                    </td>
                     <td className="py-2 pr-3 whitespace-nowrap">
                       {canManage ? (
                         <button
