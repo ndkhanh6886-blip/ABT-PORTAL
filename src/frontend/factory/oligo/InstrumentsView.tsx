@@ -1748,23 +1748,6 @@ export function InstrumentsView({
 
   return (
     <div className="flex flex-col gap-3">
-      {open && (
-        <SlotsPanel
-          key={open}
-          assetId={open}
-          hplcAssets={list}
-          onSelectAsset={(id) => {
-            setDismissed(false);
-            setOpen(id);
-          }}
-          canConfigure={canManage}
-          canOperate={canOperate}
-          onClose={() => {
-            setDismissed(true);
-            setOpen(null);
-          }}
-        />
-      )}
       <Card
         title="Hệ thống HPLC & Thiết bị Kiểm nghiệm / Hậu tổng hợp"
         actions={
@@ -1792,9 +1775,10 @@ export function InstrumentsView({
           <Table head={["Mã thiết bị", "Tên thiết bị", "Loại", "Trạng thái", "Phòng", "Model / Serial", "Hạn hiệu chuẩn", "Thao tác"]}>
             {list.map((a) => {
               const isRowEditing = canManage && editAssetId === a.id;
+              const isSlotsOpen = open === a.id;
               return (
                 <React.Fragment key={a.id}>
-                  <tr className={open === a.id || isRowEditing ? "bg-sky-50/70 dark:bg-sky-950/30" : ""}>
+                  <tr className={isSlotsOpen || isRowEditing ? "bg-sky-50/70 dark:bg-sky-950/30" : ""}>
                     <td className="py-1.5 pr-3 font-mono font-bold text-xs">{a.code}</td>
                     <td className="py-1.5 pr-3 font-medium">{a.name}</td>
                     <td className="py-1.5 pr-3 text-xs">
@@ -1843,9 +1827,9 @@ export function InstrumentsView({
                         ) : (
                           <Button
                             type="button"
-                            variant={open === a.id ? "primary" : "ghost"}
+                            variant={isSlotsOpen ? "primary" : "ghost"}
                             onClick={() => {
-                              if (open === a.id) {
+                              if (isSlotsOpen) {
                                 setDismissed(true);
                                 setOpen(null);
                               } else {
@@ -1854,7 +1838,7 @@ export function InstrumentsView({
                               }
                             }}
                           >
-                            🧪 {a.asset_type === "HPLC" ? "Hóa chất & Khấu hao HPLC" : "Vị trí hóa chất"}
+                            {isSlotsOpen ? "Đóng hóa chất" : `🧪 ${a.asset_type === "HPLC" ? "Hóa chất & Khấu hao HPLC" : "Vị trí hóa chất"}`}
                           </Button>
                         )}
                       </div>
@@ -1864,6 +1848,27 @@ export function InstrumentsView({
                     <tr className="bg-amber-50/30 dark:bg-amber-950/20">
                       <td colSpan={8} className="p-2.5 border-b-2 border-amber-300 dark:border-amber-700">
                         <EditInstrumentPanel key={a.id} asset={a} onDone={() => setEditAssetId(null)} />
+                      </td>
+                    </tr>
+                  )}
+                  {isSlotsOpen && (
+                    <tr className="bg-sky-50/30 dark:bg-sky-950/20">
+                      <td colSpan={8} className="p-2.5 border-b-2 border-sky-300 dark:border-sky-700">
+                        <SlotsPanel
+                          key={a.id}
+                          assetId={a.id}
+                          hplcAssets={list}
+                          onSelectAsset={(id) => {
+                            setDismissed(false);
+                            setOpen(id);
+                          }}
+                          canConfigure={canManage}
+                          canOperate={canOperate}
+                          onClose={() => {
+                            setDismissed(true);
+                            setOpen(null);
+                          }}
+                        />
                       </td>
                     </tr>
                   )}

@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, fmtDate } from "../api";
+import { api, fmtDate, useDebouncedValue } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, Table } from "../ui";
 import { useOligoUnits, useScales } from "./shared";
 import { SynthPortsPanel } from "./SynthPortsPanel";
@@ -181,21 +181,150 @@ function EditSynthesizerPanel({ asset, onClose }: { asset: Asset; onClose: () =>
 
 interface ItemOpt { id: string; code: string; name: string; base_uom: string }
 
-/** Searchable stock item select (server-side search, 30 hits). */
+/**
+ * Ô chọn Vật tư / Hóa chất tích hợp tìm kiếm trực tiếp bên trong danh sách xổ xuống (1 ô duy nhất).
+ * Thay thế cho thiết kế cũ gồm 2 ô tách rời ("Tìm mã hàng" + ô chọn) gây khó hiểu.
+ */
 export function ItemPicker({ value, current, onChange }: { value: string; current?: string; onChange: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
+  const debouncedQ = useDebouncedValue(q, 220);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
   const items = useQuery({
-    queryKey: ["factory", "items-pick", q],
-    queryFn: () => api<{ rows: ItemOpt[] }>(`/api/factory/master/items?page_size=30&q=${encodeURIComponent(q)}`),
+    queryKey: ["factory", "items-pick", open ? debouncedQ : ""],
+    queryFn: () =>
+      api<{ rows: ItemOpt[] }>(
+        `/api/factory/master/items?page_size=60&q=${encodeURIComponent(open ? debouncedQ : "")}`
+      ),
   });
+
+  useEffect(() => {
+    if (!open) return;
+    const timer = setTimeout(() => inputRef.current?.focus(), 20);
+    const onDocClick = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("mousedown", onDocClick);
+    };
+  }, [open]);
+
+  const rows = items.data?.rows ?? [];
+  const selectedRow = rows.find((i) => i.id === value);
+  const displayLabel = selectedRow
+    ? `${selectedRow.code} · ${selectedRow.name} (${selectedRow.base_uom})`
+    : value && current
+      ? current
+      : "";
+
   return (
-    <div className="flex gap-1">
-      <input className={`${inputClass} w-32`} placeholder="Tìm mã hàng" value={q} onChange={(e) => setQ(e.target.value)} />
-      <select className={`${inputClass} w-56`} value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">— chưa gắn —</option>
-        {value && current && !items.data?.rows.some((i) => i.id === value) && <option value={value}>{current}</option>}
-        {items.data?.rows.map((i) => <option key={i.id} value={i.id}>{i.code} · {i.name} ({i.base_uom})</option>)}
-      </select>
+    <div ref={containerRef} className="relative min-w-[250px] max-w-[340px]">
+      <button
+        type="button"
+        onClick={() => {
+          setOpen((v) => {
+            if (!v) setQ("");
+            return !v;
+          });
+        }}
+        title={displayLabel || "Nhấn để tìm và chọn mã vật tư / hóa chất trong kho"}
+        className={`${inputClass} w-full flex items-center justify-between gap-2 text-left cursor-pointer ${
+          open ? "ring-2 ring-sky-500 border-sky-500" : ""
+        }`}
+      >
+        <span className={`truncate text-xs ${displayLabel ? "font-medium text-slate-800 dark:text-slate-100" : "text-slate-400"}`}>
+          {displayLabel || "— Chọn vật tư / hóa chất —"}
+        </span>
+        <span className="text-[10px] text-slate-400 shrink-0">{open ? "▴" : "▾"}</span>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 z-50 mt-1 w-80 sm:w-96 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl p-2 space-y-1.5">
+          <div className="relative">
+            <input
+              ref={inputRef}
+              type="text"
+              className={`${inputClass} w-full text-xs pr-7`}
+              placeholder="🔍 Gõ mã hoặc tên hóa chất / vật tư để tìm..."
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.stopPropagation();
+                  setOpen(false);
+                }
+              }}
+            />
+            {q && (
+              <button
+                type="button"
+                onClick={() => setQ("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          <div className="max-h-56 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/70 text-xs">
+            <button
+              type="button"
+              onClick={() => {
+                onChange("");
+                setOpen(false);
+              }}
+              className={`w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer ${
+                !value ? "font-bold text-sky-700 dark:text-sky-300 bg-sky-50/60 dark:bg-sky-950/30" : "text-slate-500"
+              }`}
+            >
+              — Chưa gắn mã hàng —
+            </button>
+            {value && current && !rows.some((i) => i.id === value) && !q.trim() && (
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="w-full text-left px-2.5 py-1.5 rounded-lg font-bold text-sky-700 dark:text-sky-300 bg-sky-50/70 dark:bg-sky-950/40 cursor-pointer"
+              >
+                ✓ {current}
+              </button>
+            )}
+            {rows.map((i) => {
+              const active = i.id === value;
+              return (
+                <button
+                  key={i.id}
+                  type="button"
+                  onClick={() => {
+                    onChange(i.id);
+                    setOpen(false);
+                  }}
+                  className={`w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-sky-50 dark:hover:bg-sky-950/50 transition cursor-pointer flex items-center justify-between gap-2 ${
+                    active ? "bg-sky-50 dark:bg-sky-950/60 font-bold text-sky-700 dark:text-sky-300" : "text-slate-700 dark:text-slate-200"
+                  }`}
+                >
+                  <span className="truncate">
+                    <span className="font-mono font-bold text-sky-700 dark:text-sky-400">{i.code}</span> · {i.name}
+                  </span>
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 shrink-0">
+                    {i.base_uom}
+                  </span>
+                </button>
+              );
+            })}
+            {!items.isLoading && rows.length === 0 && (
+              <div className="px-2.5 py-3 text-center text-slate-400">
+                Không tìm thấy mã hàng phù hợp với &ldquo;{q}&rdquo;
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -350,7 +479,6 @@ export function EquipmentView({
   const rules = useQuery({ queryKey: ["factory", "oligo-reagent-rules"], queryFn: () => api<Rule[]>("/api/factory/oligo/reagent-rules") });
   return (
     <div className="flex flex-col gap-3">
-      {portsOf && <SynthPortsPanel key={portsOf} synthId={portsOf} canConfigure={canManageAssets} canOperate={canOperate} onClose={() => setPortsOf(null)} />}
       {section !== "rules" && (
       <Card
         title="Máy tổng hợp Oligo (dạng cột CPG)"
@@ -371,9 +499,10 @@ export function EquipmentView({
           <Table head={["Mã máy", "Tên máy tổng hợp", "Phòng", "Model / Serial", "Số cột CPG", "Thang hỗ trợ", "Hạn hiệu chuẩn", "Trạng thái", "Thao tác"]}>
             {assets.data.map((a) => {
               const isRowEditing = canManageAssets && editingSynth?.id === a.id;
+              const isPortsOpen = portsOf === a.id;
               return (
                 <React.Fragment key={a.id}>
-                  <tr className={isRowEditing ? "bg-amber-50/70 dark:bg-amber-950/30" : ""}>
+                  <tr className={isRowEditing || isPortsOpen ? "bg-amber-50/70 dark:bg-amber-950/30" : ""}>
                     <td className="py-1.5 pr-3 font-mono font-bold text-xs">{a.code}</td>
                     <td className="py-1.5 pr-3 font-medium">{a.name}</td>
                     <td className="py-1.5 pr-3 text-xs">{a.owner_name}</td>
@@ -414,8 +543,11 @@ export function EquipmentView({
                             </Button>
                           </>
                         )}
-                        <Button variant="ghost" onClick={() => setPortsOf(a.id)}>
-                          🧪 Cổng hóa chất
+                        <Button
+                          variant={isPortsOpen ? "primary" : "ghost"}
+                          onClick={() => setPortsOf(isPortsOpen ? null : a.id)}
+                        >
+                          {isPortsOpen ? "Đóng cổng HC" : "🧪 Cổng hóa chất"}
                         </Button>
                       </div>
                     </td>
@@ -424,6 +556,19 @@ export function EquipmentView({
                     <tr className="bg-amber-50/30 dark:bg-amber-950/20">
                       <td colSpan={9} className="p-2.5 border-b-2 border-amber-300 dark:border-amber-700">
                         <EditSynthesizerPanel key={a.id} asset={a} onClose={() => setEditingSynth(null)} />
+                      </td>
+                    </tr>
+                  )}
+                  {isPortsOpen && (
+                    <tr className="bg-sky-50/30 dark:bg-sky-950/20">
+                      <td colSpan={9} className="p-2.5 border-b-2 border-sky-300 dark:border-sky-700">
+                        <SynthPortsPanel
+                          key={a.id}
+                          synthId={a.id}
+                          canConfigure={canManageAssets}
+                          canOperate={canOperate}
+                          onClose={() => setPortsOf(null)}
+                        />
                       </td>
                     </tr>
                   )}
