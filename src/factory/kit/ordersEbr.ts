@@ -3484,9 +3484,59 @@ export async function assignStepOperator(
   tx: Tx,
   actor: AuthzActor,
   orderId: string,
-  input: { step_id?: string; assigned_to_name?: string; shift_code?: string; planned_date?: string }
+  input: {
+    step_id?: string;
+    apply_to_order?: boolean;
+    unschedule?: boolean;
+    assigned_to_name?: string;
+    shift_code?: string;
+    planned_date?: string | null;
+  }
 ) {
   await ensureKitDailyTrackerAndQcGateSchema(tx);
+  const order = (
+    await tx.query("SELECT * FROM kit.production_order WHERE id = $1 FOR UPDATE", [orderId])
+  ).rows[0];
+  if (!order) throw notFound("lệnh sản xuất");
+  if (!(await hasFactoryPermission(tx, actor, "kit.order.manage", order.org_unit_id))) {
+    await authorize(tx, actor, "kit.ebr.execute", order.org_unit_id);
+  }
+
+  const assignedName = input.assigned_to_name?.trim() || null;
+  const shiftCode = input.shift_code?.trim() || "CA_SANG";
+  const plannedDate = input.unschedule ? null : input.planned_date === null ? null : input.planned_date?.trim() || vnToday();
+
+  if (input.apply_to_order || input.step_id === "ALL" || input.unschedule) {
+    await tx.query(
+      `UPDATE kit.production_step
+          SET assigned_to_name = CASE WHEN $5::boolean THEN assigned_to_name ELSE COALESCE($2, assigned_to_name) END,
+              shift_code = CASE WHEN $5::boolean THEN shift_code ELSE COALESCE($3, shift_code) END,
+              planned_date = $4::date,
+              updated_at = now()
+        WHERE order_id = $1`,
+      [orderId, assignedName, shiftCode, plannedDate, Boolean(input.unschedule)]
+    );
+    await tx.query(
+      `UPDATE kit.production_order
+          SET planned_start_date = $2::date,
+              team_lead_name = CASE WHEN $3::text IS NOT NULL THEN $3 ELSE team_lead_name END,
+              updated_at = now()
+        WHERE id = $1`,
+      [orderId, plannedDate, assignedName]
+    );
+    await writeAudit(tx, actor, {
+      entityType: "kit_production_order",
+      entityId: orderId,
+      action: input.unschedule ? "unschedule_daily_plan" : "schedule_daily_plan",
+      changes: {
+        planned_date: [order.planned_start_date ?? null, plannedDate],
+        assigned_to_name: [order.team_lead_name ?? null, assignedName],
+        shift_code: [null, shiftCode],
+      },
+    });
+    return { order_id: orderId, planned_date: plannedDate, assigned_to_name: assignedName, shift_code: shiftCode };
+  }
+
   const stepId = String(input.step_id ?? "").trim();
   if (!stepId) throw invalid("Chọn bước công đoạn cần phân công nhân viên.");
   const step = (
@@ -3499,13 +3549,6 @@ export async function assignStepOperator(
     )
   ).rows[0];
   if (!step) throw notFound("bước công đoạn EBR");
-  if (!(await hasFactoryPermission(tx, actor, "kit.order.manage", step.org_unit_id))) {
-    await authorize(tx, actor, "kit.ebr.execute", step.org_unit_id);
-  }
-
-  const assignedName = input.assigned_to_name?.trim() || null;
-  const shiftCode = input.shift_code?.trim() || "CA_SANG";
-  const plannedDate = input.planned_date?.trim() || vnToday();
 
   const updated = (
     await tx.query(
@@ -3813,8 +3856,11 @@ export async function listDailyProductionSteps(tx: Tx, actor: AuthzActor) {
   return (
     await tx.query(
       `SELECT s.*,
+              s.planned_date::text AS planned_date,
               o.code AS order_code, o.status AS order_status, o.planned_qty::float AS planned_qty, o.uom,
               o.priority, o.order_mode, o.mfg_date::text AS mfg_date,
+              o.planned_start_date::text AS order_planned_start_date,
+              o.team_lead_name AS order_team_lead_name,
               i.code AS product_code, i.name AS product_name,
               l.code AS lot_code,
               io.code AS internal_order_code, io.kd_po_code, io.committed_date::text AS po_committed_date,
@@ -3831,11 +3877,8 @@ export async function listDailyProductionSteps(tx: Tx, actor: AuthzActor) {
          LEFT JOIN asset.asset a ON a.id = coalesce(s.asset_id, s.required_asset_id)
         WHERE ($1::uuid[] IS NULL OR o.org_unit_id = ANY($1::uuid[]))
           AND o.status NOT IN ('CANCELLED')
-        ORDER BY
-          CASE s.qc_gate_status WHEN 'WAITING_QC' THEN 0 WHEN 'REJECTED' THEN 1 ELSE 2 END,
-          CASE s.status WHEN 'IN_PROGRESS' THEN 0 WHEN 'AWAITING_CHECK' THEN 1 WHEN 'PENDING' THEN 2 ELSE 3 END,
-          o.created_at DESC, s.seq ASC
-        LIMIT 400`,
+        ORDER BY o.created_at DESC, s.seq ASC
+        LIMIT 600`,
       [units === "ALL" ? null : units]
     )
   ).rows;

@@ -1213,6 +1213,7 @@ export function OrdersEbrView({
           qcGateNotes={qcGateNotes}
           setQcGateNotes={setQcGateNotes}
           onAssignOperator={handleAssignOperator}
+          onReloadOrders={loadOrders}
           onVerifyQcGate={handleVerifyQcGate}
           onOpenOrderEbr={(orderId) => {
             setSelectedOrderId(orderId);
@@ -4037,6 +4038,7 @@ function DailyOperatorTrackerSection({
   qcGateNotes,
   setQcGateNotes,
   onAssignOperator,
+  onReloadOrders,
   onVerifyQcGate,
   onOpenOrderEbr,
 }: {
@@ -4055,57 +4057,410 @@ function DailyOperatorTrackerSection({
   qcGateNotes: Record<string, string>;
   setQcGateNotes: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   onAssignOperator: (orderId: string, step: any) => void;
+  onReloadOrders: () => Promise<void>;
   onVerifyQcGate: (orderId: string, step: any, decision: "REQUEST_QC" | "PASS" | "REJECT") => void;
   onOpenOrderEbr: (orderId: string) => void;
 }) {
-  const totalSteps = dailySteps.length;
-  const doneSteps = dailySteps.filter((s) => s.status === "DONE" || s.status === "SKIPPED").length;
-  const inProgressSteps = dailySteps.filter((s) => s.status === "IN_PROGRESS" || s.status === "AWAITING_CHECK").length;
-  const waitingQcSteps = dailySteps.filter((s) => isStepActivelyWaitingQc(s, dailySteps)).length;
+  const todayStr = vnToday();
+  const [selectedPlanDate, setSelectedPlanDate] = useState<string>(todayStr);
+  const [dateScope, setDateScope] = useState<"DAY" | "ALL">("DAY");
+  const [expandedOrderIds, setExpandedOrderIds] = useState<Record<string, boolean>>({});
+  const [showOrderPicker, setShowOrderPicker] = useState<boolean>(false);
+  const [pickedOrderIds, setPickedOrderIds] = useState<string[]>([]);
+  const [bulkAssignee, setBulkAssignee] = useState<string>("");
+  const [bulkShift, setBulkShift] = useState<string>("CA_SANG");
+  const [orderAssignEdits, setOrderAssignEdits] = useState<
+    Record<string, { assigned_to_name: string; shift_code: string; planned_date: string }>
+  >({});
+  const [savingOrderId, setSavingOrderId] = useState<string | null>(null);
 
-  // Tổng hợp năng suất theo từng nhân viên
-  const operatorStatsMap = new Map<
-    string,
-    { name: string; shift: string; total: number; inProgress: number; waitingQc: number; done: number }
-  >();
-  for (const s of dailySteps) {
-    const name = s.assigned_to_name || "Chưa phân công";
-    const cur = operatorStatsMap.get(name) ?? {
-      name,
-      shift: SHIFT_LABELS[s.shift_code] ?? "Ca sáng",
-      total: 0,
-      inProgress: 0,
-      waitingQc: 0,
-      done: 0,
-    };
-    cur.total += 1;
-    if (s.status === "DONE" || s.status === "SKIPPED") cur.done += 1;
-    else if (s.status === "IN_PROGRESS" || s.status === "AWAITING_CHECK") cur.inProgress += 1;
-    if (isStepActivelyWaitingQc(s, dailySteps)) cur.waitingQc += 1;
-    operatorStatsMap.set(name, cur);
-  }
-  const operatorStats = Array.from(operatorStatsMap.values());
+  // Gom các bước công đoạn theo từng Lệnh Sản Xuất (1 Lệnh SX = 1 nhóm gồm 5 bước xếp đúng thứ tự #10 -> #20 -> #30 -> #40 -> #50)
+  const orderGroups = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        order_id: string;
+        order_code: string;
+        order_status: string;
+        product_code: string;
+        product_name: string;
+        lot_code: string | null;
+        planned_qty: number;
+        uom: string;
+        kd_po_code: string | null;
+        internal_order_code: string | null;
+        planned_date: string | null;
+        primary_assignee: string;
+        primary_shift: string;
+        steps: any[];
+      }
+    >();
 
-  const filteredSteps = dailySteps.filter((s) => {
-    if (dailyShiftFilter !== "ALL" && (s.shift_code || "CA_SANG") !== dailyShiftFilter) return false;
-    if (dailyStatusFilter === "WAITING_QC" && !isStepActivelyWaitingQc(s, dailySteps)) return false;
-    if (dailyStatusFilter === "IN_PROGRESS" && !["IN_PROGRESS", "AWAITING_CHECK"].includes(s.status)) return false;
-    if (dailyStatusFilter === "DONE" && !["DONE", "SKIPPED"].includes(s.status)) return false;
-    if (dailySearch.trim()) {
-      const q = dailySearch.toLowerCase();
-      const hay = `${s.order_code} ${s.product_code} ${s.lot_code ?? ""} ${s.kd_po_code ?? ""} ${s.internal_order_code ?? ""} ${s.assigned_to_name ?? ""} ${s.step_name}`.toLowerCase();
-      if (!hay.includes(q)) return false;
+    for (const s of dailySteps) {
+      const oid = String(s.order_id);
+      let g = map.get(oid);
+      if (!g) {
+        g = {
+          order_id: oid,
+          order_code: s.order_code,
+          order_status: s.order_status,
+          product_code: s.product_code,
+          product_name: s.product_name,
+          lot_code: s.lot_code ?? null,
+          planned_qty: Number(s.planned_qty || 1),
+          uom: s.uom || "Bộ",
+          kd_po_code: s.kd_po_code ?? null,
+          internal_order_code: s.internal_order_code ?? null,
+          planned_date: null,
+          primary_assignee: s.order_team_lead_name || s.assigned_to_name || "",
+          primary_shift: s.shift_code || "CA_SANG",
+          steps: [],
+        };
+        map.set(oid, g);
+      }
+      g.steps.push(s);
     }
-    return true;
-  });
+
+    const list = Array.from(map.values());
+    for (const g of list) {
+      g.steps.sort((a, b) => Number(a.seq) - Number(b.seq));
+      const firstAssigned = g.steps.find((st) => st.assigned_to_name)?.assigned_to_name || g.primary_assignee || "";
+      const firstShift = g.steps.find((st) => st.shift_code)?.shift_code || g.primary_shift || "CA_SANG";
+      const stepDate =
+        g.steps.find((st) => st.planned_date)?.planned_date?.slice(0, 10) ||
+        g.steps[0]?.order_planned_start_date?.slice(0, 10) ||
+        null;
+      g.primary_assignee = firstAssigned;
+      g.primary_shift = firstShift;
+      g.planned_date = stepDate;
+    }
+    return list;
+  }, [dailySteps]);
+
+  // Phân tách các Lệnh SX được xếp lịch trong ngày đang chọn vs các Lệnh SX chưa xếp vào ngày này
+  const scheduledOrdersForView = useMemo(() => {
+    return orderGroups.filter((g) => {
+      if (dateScope === "DAY") {
+        // Hiển thị lệnh có planned_date khớp với ngày đang chọn, hoặc lệnh đã được phân công nhân viên chạy trong ngày
+        const matchesDate = g.planned_date === selectedPlanDate;
+        const hasActiveStepToday = g.steps.some(
+          (st) =>
+            (st.planned_date && String(st.planned_date).slice(0, 10) === selectedPlanDate) ||
+            (selectedPlanDate === todayStr && (st.status === "IN_PROGRESS" || st.status === "AWAITING_CHECK"))
+        );
+        if (!matchesDate && !hasActiveStepToday) return false;
+      }
+      if (dailyShiftFilter !== "ALL") {
+        const hasShift = g.steps.some((st) => (st.shift_code || "CA_SANG") === dailyShiftFilter);
+        if (!hasShift) return false;
+      }
+      if (dailyStatusFilter === "WAITING_QC") {
+        const hasWaitingQc = g.steps.some((st) => isStepActivelyWaitingQc(st, g.steps));
+        if (!hasWaitingQc) return false;
+      } else if (dailyStatusFilter === "IN_PROGRESS") {
+        const hasInProg = g.steps.some((st) => ["IN_PROGRESS", "AWAITING_CHECK"].includes(st.status));
+        if (!hasInProg) return false;
+      } else if (dailyStatusFilter === "DONE") {
+        const allDone = g.steps.length > 0 && g.steps.every((st) => ["DONE", "SKIPPED"].includes(st.status));
+        if (!allDone) return false;
+      }
+      if (dailySearch.trim()) {
+        const q = dailySearch.toLowerCase();
+        const hay = `${g.order_code} ${g.product_code} ${g.product_name ?? ""} ${g.lot_code ?? ""} ${g.kd_po_code ?? ""} ${g.internal_order_code ?? ""} ${g.primary_assignee} ${g.steps.map((x) => `${x.assigned_to_name ?? ""} ${x.step_name}`).join(" ")}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [orderGroups, dateScope, selectedPlanDate, todayStr, dailyShiftFilter, dailyStatusFilter, dailySearch]);
+
+  // Các lệnh sản xuất đang mở nhưng chưa đưa vào kế hoạch ngày selectedPlanDate
+  const unscheduledOrdersForDate = useMemo(() => {
+    const scheduledIds = new Set(
+      orderGroups
+        .filter(
+          (g) =>
+            g.planned_date === selectedPlanDate ||
+            g.steps.some((st) => st.planned_date && String(st.planned_date).slice(0, 10) === selectedPlanDate)
+        )
+        .map((g) => g.order_id)
+    );
+    return orderGroups.filter((g) => !scheduledIds.has(g.order_id) && g.order_status !== "COMPLETED");
+  }, [orderGroups, selectedPlanDate]);
+
+  // Bước công đoạn thuộc các Lệnh SX trong chế độ xem hiện tại
+  const visibleSteps = useMemo(
+    () => scheduledOrdersForView.flatMap((g) => g.steps),
+    [scheduledOrdersForView]
+  );
+
+  const totalOrdersCount = scheduledOrdersForView.length;
+  const totalSteps = visibleSteps.length;
+  const doneSteps = visibleSteps.filter((s) => s.status === "DONE" || s.status === "SKIPPED").length;
+  const inProgressSteps = visibleSteps.filter((s) => s.status === "IN_PROGRESS" || s.status === "AWAITING_CHECK").length;
+  const waitingQcSteps = visibleSteps.filter((s) => isStepActivelyWaitingQc(s, dailySteps)).length;
+
+  // Tổng hợp năng suất theo từng Nhân viên đối với các lệnh trong ngày
+  const operatorStats = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        name: string;
+        shift: string;
+        orderCodes: Set<string>;
+        total: number;
+        inProgress: number;
+        waitingQc: number;
+        done: number;
+      }
+    >();
+    for (const g of scheduledOrdersForView) {
+      for (const s of g.steps) {
+        const name = s.assigned_to_name || g.primary_assignee || "Chưa phân công";
+        const cur = map.get(name) ?? {
+          name,
+          shift: SHIFT_LABELS[s.shift_code || g.primary_shift] ?? "Ca sáng",
+          orderCodes: new Set<string>(),
+          total: 0,
+          inProgress: 0,
+          waitingQc: 0,
+          done: 0,
+        };
+        cur.orderCodes.add(g.order_code);
+        cur.total += 1;
+        if (s.status === "DONE" || s.status === "SKIPPED") cur.done += 1;
+        else if (s.status === "IN_PROGRESS" || s.status === "AWAITING_CHECK") cur.inProgress += 1;
+        if (isStepActivelyWaitingQc(s, g.steps)) cur.waitingQc += 1;
+        map.set(name, cur);
+      }
+    }
+    return Array.from(map.values());
+  }, [scheduledOrdersForView]);
+
+  const handleAssignWholeOrder = async (
+    orderId: string,
+    payload: { assigned_to_name?: string; shift_code?: string; planned_date?: string | null; unschedule?: boolean }
+  ) => {
+    setSavingOrderId(orderId);
+    try {
+      await api(`/api/factory/kit/orders/${orderId}`, {
+        method: "POST",
+        json: {
+          operation: "assign_operator",
+          apply_to_order: true,
+          ...payload,
+        },
+      });
+      await onReloadOrders();
+    } finally {
+      setSavingOrderId(null);
+    }
+  };
+
+  const handleBatchScheduleOrdersToDay = async () => {
+    if (pickedOrderIds.length === 0) return;
+    setSavingOrderId("BATCH");
+    try {
+      for (const oid of pickedOrderIds) {
+        await api(`/api/factory/kit/orders/${oid}`, {
+          method: "POST",
+          json: {
+            operation: "assign_operator",
+            apply_to_order: true,
+            assigned_to_name: bulkAssignee.trim() || undefined,
+            shift_code: bulkShift,
+            planned_date: selectedPlanDate,
+          },
+        });
+      }
+      setPickedOrderIds([]);
+      setShowOrderPicker(false);
+      setDateScope("DAY");
+      await onReloadOrders();
+    } finally {
+      setSavingOrderId(null);
+    }
+  };
 
   return (
     <div className="space-y-4">
+      {/* Thanh Điều độ Kế hoạch Ngày: Chọn ngày + Chọn Lệnh SX đưa vào kế hoạch chạy trong ngày */}
+      <div className="rounded-2xl border border-sky-200 dark:border-sky-900 bg-sky-50/50 dark:bg-sky-950/25 p-3.5 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-extrabold text-sky-900 dark:text-sky-200 uppercase">
+              📅 Kế hoạch &amp; Phân công Sản xuất theo Ngày:
+            </span>
+            <input
+              type="date"
+              className={`${inputClass} !w-40 !py-1 text-xs font-bold`}
+              value={selectedPlanDate}
+              onChange={(e) => {
+                setSelectedPlanDate(e.target.value);
+                setDateScope("DAY");
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedPlanDate(todayStr);
+                setDateScope("DAY");
+              }}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                dateScope === "DAY" && selectedPlanDate === todayStr
+                  ? "bg-sky-700 text-white border-sky-700"
+                  : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700"
+              }`}
+            >
+              📌 Kế hoạch Hôm nay ({fmtDate(todayStr)})
+            </button>
+            <button
+              type="button"
+              onClick={() => setDateScope("ALL")}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                dateScope === "ALL"
+                  ? "bg-indigo-700 text-white border-indigo-700"
+                  : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700"
+              }`}
+            >
+              🌐 Xem tất cả Lệnh SX đang mở ({orderGroups.length} lệnh)
+            </button>
+          </div>
+
+          <Button
+            onClick={() => setShowOrderPicker((v) => !v)}
+          >
+            {showOrderPicker
+              ? "Đóng bảng chọn Lệnh SX"
+              : `➕ Chọn Lệnh SX đưa vào Kế hoạch ngày ${fmtDate(selectedPlanDate)} (${unscheduledOrdersForDate.length} lệnh chờ)`}
+          </Button>
+        </div>
+
+        {/* Hộp chọn một số Lệnh SX đưa vào Kế hoạch sản xuất trong ngày & Phân công nhanh */}
+        {showOrderPicker && (
+          <div className="rounded-xl border-2 border-sky-400/70 dark:border-sky-700 bg-white dark:bg-slate-900 p-3 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs font-bold text-slate-800 dark:text-slate-100">
+                ☑️ Tích chọn các Lệnh Sản Xuất muốn triển khai trong ngày <b>{fmtDate(selectedPlanDate)}</b> và phân công Nhân viên / Ca trực:
+              </div>
+              {unscheduledOrdersForDate.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const allIds = unscheduledOrdersForDate.map((g) => g.order_id);
+                    setPickedOrderIds(pickedOrderIds.length === allIds.length ? [] : allIds);
+                  }}
+                  className="text-xs font-bold text-sky-700 dark:text-sky-400 hover:underline cursor-pointer"
+                >
+                  {pickedOrderIds.length === unscheduledOrdersForDate.length ? "Bỏ chọn tất cả" : "Chọn tất cả lệnh đang chờ"}
+                </button>
+              )}
+            </div>
+
+            {unscheduledOrdersForDate.length === 0 ? (
+              <div className="text-xs text-slate-500 py-2">
+                Tất cả các Lệnh sản xuất đang mở đều đã được đưa vào kế hoạch ngày {fmtDate(selectedPlanDate)}.
+              </div>
+            ) : (
+              <>
+                <div className="max-h-56 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800">
+                  {unscheduledOrdersForDate.map((g) => {
+                    const checked = pickedOrderIds.includes(g.order_id);
+                    const doneCnt = g.steps.filter((s) => s.status === "DONE" || s.status === "SKIPPED").length;
+                    return (
+                      <label
+                        key={g.order_id}
+                        className={`flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-xs cursor-pointer hover:bg-sky-50/60 dark:hover:bg-sky-950/30 ${
+                          checked ? "bg-sky-50 dark:bg-sky-950/40" : ""
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() =>
+                              setPickedOrderIds(
+                                checked ? pickedOrderIds.filter((id) => id !== g.order_id) : [...pickedOrderIds, g.order_id]
+                              )
+                            }
+                          />
+                          <div>
+                            <span className="font-mono font-bold text-sky-700 dark:text-sky-400">{g.order_code}</span>
+                            <span className="mx-1.5">·</span>
+                            <span className="font-bold text-slate-900 dark:text-slate-100">{g.product_code}</span>
+                            <span className="text-slate-600 dark:text-slate-300"> — {g.product_name}</span>
+                            <div className="text-[11px] text-slate-500">
+                              Lô: <b className="font-mono">{g.lot_code ?? "Chưa cấp"}</b> · SL: <b>{fmtQty(g.planned_qty)} {g.uom}</b>
+                              {g.kd_po_code ? ` · PO: ${g.kd_po_code}` : ""}
+                              {g.planned_date ? ` · Đang lịch ngày: ${fmtDate(g.planned_date)}` : " · Chưa xếp ngày"}
+                            </div>
+                          </div>
+                        </div>
+                        <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                          Tiến độ: {doneCnt}/{g.steps.length} bước
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-wrap items-end gap-2 pt-1">
+                  <div className="min-w-[220px]">
+                    <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                      Nhân viên phụ trách chính (Tùy chọn)
+                    </label>
+                    <select
+                      className={`${inputClass} !py-1.5 text-xs`}
+                      value={bulkAssignee}
+                      onChange={(e) => setBulkAssignee(e.target.value)}
+                    >
+                      <option value="">-- Chọn nhân viên phòng Sản xuất Kit --</option>
+                      {operatorOptions.map((op) => (
+                        <option key={op} value={op}>
+                          {op}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="min-w-[180px]">
+                    <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                      Ca sản xuất
+                    </label>
+                    <select
+                      className={`${inputClass} !py-1.5 text-xs`}
+                      value={bulkShift}
+                      onChange={(e) => setBulkShift(e.target.value)}
+                    >
+                      {Object.entries(SHIFT_LABELS).map(([k, lbl]) => (
+                        <option key={k} value={k}>
+                          {lbl}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <Button
+                    disabled={pickedOrderIds.length === 0 || savingOrderId === "BATCH"}
+                    onClick={handleBatchScheduleOrdersToDay}
+                  >
+                    {savingOrderId === "BATCH"
+                      ? "Đang lưu kế hoạch..."
+                      : `📅 Đưa ${pickedOrderIds.length} Lệnh đã chọn vào Kế hoạch ngày ${fmtDate(selectedPlanDate)}`}
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* KPI Ca sản xuất & Chốt chặn QC trong ngày */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-          <div className="text-[11px] text-slate-500">Tổng công đoạn theo PO trong ngày</div>
-          <div className="text-lg font-extrabold text-slate-900 dark:text-white">{totalSteps} bước</div>
+          <div className="text-[11px] text-slate-500">
+            {dateScope === "DAY" ? `Số Lệnh SX trong kế hoạch ngày ${fmtDate(selectedPlanDate)}` : "Tổng Lệnh SX đang triển khai"}
+          </div>
+          <div className="text-lg font-extrabold text-slate-900 dark:text-white">
+            {totalOrdersCount} lệnh <span className="text-xs font-normal text-slate-500">({totalSteps} bước)</span>
+          </div>
         </div>
         <div className="p-3 rounded-xl border border-sky-200 dark:border-sky-900 bg-sky-50/60 dark:bg-sky-950/30">
           <div className="text-[11px] text-sky-700 dark:text-sky-300">Đang thực hiện / Chờ kiểm tra chéo</div>
@@ -4126,19 +4481,37 @@ function DailyOperatorTrackerSection({
       {/* Bảng 1: Tổng hợp khối lượng công việc & tiến độ theo từng Nhân viên */}
       <Card title={`1. Bảng Tổng Hợp Phân Công & Năng Suất Nhân Viên Theo Ca (${operatorStats.length} nhân sự)`}>
         {operatorStats.length === 0 ? (
-          <Empty>Chưa có công đoạn nào được khởi tạo. Hãy xác nhận Lệnh sản xuất để hệ thống phân bổ công đoạn cho nhân viên.</Empty>
+          <Empty>
+            Chưa có Lệnh sản xuất nào được xếp lịch cho ngày {fmtDate(selectedPlanDate)}. Bấm nút{" "}
+            <b>&ldquo;➕ Chọn Lệnh SX đưa vào Kế hoạch ngày&rdquo;</b> ở thanh phía trên (hoặc bấm{" "}
+            <b>&ldquo;🌐 Xem tất cả Lệnh SX đang mở&rdquo;</b>) để phân công.
+          </Empty>
         ) : (
-          <Table head={["Nhân viên phụ trách / Tổ chuyên môn", "Ca làm việc chính", "Tổng bước được giao", "Đang thực hiện", "Chờ QC thông qua", "Đã hoàn tất", "Tỷ lệ hoàn thành"]}>
+          <Table
+            head={[
+              "Nhân viên phụ trách / Tổ chuyên môn",
+              "Ca làm việc chính",
+              "Lệnh SX đảm nhận",
+              "Tổng bước công đoạn",
+              "Đang thực hiện",
+              "Chờ QC thông qua",
+              "Đã hoàn tất",
+              "Tỷ lệ hoàn thành",
+            ]}
+          >
             {operatorStats.map((op) => {
               const pct = op.total ? Math.round((op.done / op.total) * 100) : 0;
               return (
                 <tr
                   key={op.name}
                   className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                  onClick={() => setDailySearch(op.name)}
+                  onClick={() => setDailySearch(op.name === "Chưa phân công" ? "" : op.name)}
                 >
                   <td className="px-3 py-2 text-xs font-bold text-sky-800 dark:text-sky-300">👨‍🔬 {op.name}</td>
                   <td className="px-3 py-2 text-xs">{op.shift}</td>
+                  <td className="px-3 py-2 text-xs font-mono font-bold text-indigo-700 dark:text-indigo-300">
+                    {op.orderCodes.size} lệnh ({Array.from(op.orderCodes).join(", ")})
+                  </td>
                   <td className="px-3 py-2 text-xs font-mono font-semibold">{op.total} bước</td>
                   <td className="px-3 py-2 text-xs font-mono text-sky-700 font-bold">{op.inProgress}</td>
                   <td className="px-3 py-2 text-xs font-mono text-amber-700 font-bold">{op.waitingQc}</td>
@@ -4158,9 +4531,9 @@ function DailyOperatorTrackerSection({
         )}
       </Card>
 
-      {/* Bảng 2: Bảng Điều độ & Giám sát chi tiết từng bước công đoạn theo PO hằng ngày */}
+      {/* Bảng 2: Gom gọn theo từng Lệnh Sản Xuất (1 dòng = 1 Lệnh SX, có thể bấm xổ chi tiết 5 bước theo đúng thứ tự #10 -> #50) */}
       <Card
-        title={`2. Bảng Giám Sát Nhân Viên Triển Khai Kế Hoạch Sản Xuất Theo PO Hằng Ngày (${filteredSteps.length} bước)`}
+        title={`2. Bảng Kế Hoạch & Giám Sát Tiến Độ Theo Lệnh Sản Xuất (${scheduledOrdersForView.length} lệnh · ${visibleSteps.length} bước)`}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <select
@@ -4178,7 +4551,7 @@ function DailyOperatorTrackerSection({
               value={dailyStatusFilter}
               onChange={(e) => setDailyStatusFilter(e.target.value)}
             >
-              <option value="ALL">Tất cả trạng thái công đoạn</option>
+              <option value="ALL">Tất cả trạng thái lệnh</option>
               <option value="WAITING_QC">🛡️ Đang chờ QC xác nhận thông qua</option>
               <option value="IN_PROGRESS">⚡ Đang thực hiện / Chờ kiểm tra</option>
               <option value="DONE">✅ Đã hoàn tất</option>
@@ -4197,191 +4570,328 @@ function DailyOperatorTrackerSection({
           </div>
         }
       >
-        {filteredSteps.length === 0 ? (
-          <Empty>Không có công đoạn nào khớp với bộ lọc hiện tại.</Empty>
+        {scheduledOrdersForView.length === 0 ? (
+          <Empty>
+            {dateScope === "DAY"
+              ? `Chưa có Lệnh sản xuất nào trong kế hoạch ngày ${fmtDate(selectedPlanDate)}. Bấm "➕ Chọn Lệnh SX đưa vào Kế hoạch ngày" ở trên hoặc chuyển sang "🌐 Xem tất cả Lệnh SX đang mở".`
+              : "Không có Lệnh sản xuất nào khớp với bộ lọc hiện tại."}
+          </Empty>
         ) : (
           <Table
             head={[
-              "Đơn PO / Lệnh SX & Lô",
-              "Bước công đoạn EBR",
-              "Nhân viên phụ trách & Ca trực",
-              "Giờ thực hiện & Thông số đo",
-              "Trạng thái & Cổng QC Xen Kẽ (IPQC)",
-              "Thao tác điều độ & Xác nhận QC",
+              "Lệnh SX / Sản phẩm / Lô",
+              "Phân công Nhân viên & Ca trực (Cả Lệnh)",
+              "Tiến độ 5 Bước Công đoạn EBR (#10 ➔ #50)",
+              "Bước hiện tại & Cổng QC (IPQC)",
+              "Thao tác Điều độ",
             ]}
           >
-            {filteredSteps.map((s) => {
-              const opEdit = operatorEdits[s.id] ?? {
-                assigned_to_name: s.assigned_to_name ?? "",
-                shift_code: s.shift_code ?? "CA_SANG",
-                planned_date: s.planned_date ? String(s.planned_date).slice(0, 10) : new Date().toISOString().slice(0, 10),
+            {scheduledOrdersForView.map((g) => {
+              const isExpanded = Boolean(expandedOrderIds[g.order_id]);
+              const ordEdit = orderAssignEdits[g.order_id] ?? {
+                assigned_to_name: g.primary_assignee,
+                shift_code: g.primary_shift,
+                planned_date: g.planned_date || selectedPlanDate,
               };
-              const paramEntries = Object.entries(s.param_values || {});
+              const doneCnt = g.steps.filter((st) => st.status === "DONE" || st.status === "SKIPPED").length;
+              // Bước hiện tại đang thực hiện hoặc bước đầu tiên chưa hoàn tất (theo đúng thứ tự #10 -> #20 -> #30 -> #40 -> #50)
+              const currentStep =
+                g.steps.find((st) => st.status === "IN_PROGRESS" || st.status === "AWAITING_CHECK") ||
+                g.steps.find((st) => st.status !== "DONE" && st.status !== "SKIPPED") ||
+                null;
+              const activeWaitingQcStep = g.steps.find((st) => isStepActivelyWaitingQc(st, g.steps)) || null;
+
               return (
-                <tr key={s.id} className={s.is_qc && s.qc_gate_status !== "PASSED" ? "bg-amber-50/40 dark:bg-amber-950/20" : ""}>
-                  <td className="px-3 py-2 text-xs">
-                    <div className="font-mono font-bold text-sky-700 dark:text-sky-400">
-                      {s.order_code} · {s.product_code}
-                    </div>
-                    <div className="text-[11px] text-slate-600 dark:text-slate-300">
-                      Lô: <b className="font-mono">{s.lot_code ?? "Chưa cấp"}</b> ({fmtQty(s.planned_qty)} {s.uom})
-                    </div>
-                    {s.kd_po_code && (
-                      <div className="text-[11px] font-semibold text-indigo-700 dark:text-indigo-300">
-                        📦 PO: {s.kd_po_code} ({s.internal_order_code})
+                <React.Fragment key={g.order_id}>
+                  {/* Dòng chính: 1 Dòng = 1 Lệnh Sản Xuất */}
+                  <tr className="border-b border-slate-200 dark:border-slate-800 hover:bg-slate-50/80 dark:hover:bg-slate-800/40 align-top">
+                    {/* Cột 1: Thông tin Lệnh SX & Lô */}
+                    <td className="px-3 py-3 text-xs min-w-[200px]">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono font-extrabold text-sky-700 dark:text-sky-400">
+                          {g.order_code}
+                        </span>
+                        <span>·</span>
+                        <span className="font-bold text-slate-900 dark:text-slate-100">{g.product_code}</span>
                       </div>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-xs">
-                    <div className="font-bold text-slate-800 dark:text-slate-100">
-                      Bước #{s.seq}: {s.step_name}
-                    </div>
-                    <div className="text-[11px] text-slate-500 font-mono">
-                      {s.step_code} · {STEP_CATEGORY_LABELS[s.category] ?? s.category}
-                    </div>
-                    {s.asset_code && (
-                      <div className="text-[11px] text-slate-500">
-                        🔧 Máy: {s.asset_code} ({s.asset_name})
+                      <div className="text-[11px] text-slate-600 dark:text-slate-300 font-medium mt-0.5">
+                        {g.product_name}
                       </div>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-xs space-y-1">
-                    <input
-                      list={`daily-op-${s.id}`}
-                      className={`${inputClass} !py-1 text-xs`}
-                      value={opEdit.assigned_to_name}
-                      onChange={(e) =>
-                        setOperatorEdits((prev) => ({
-                          ...prev,
-                          [s.id]: { ...opEdit, assigned_to_name: e.target.value },
-                        }))
-                      }
-                    />
-                    <datalist id={`daily-op-${s.id}`}>
-                      {operatorOptions.map((op) => (
-                        <option key={op} value={op} />
-                      ))}
-                    </datalist>
-                    <div className="flex items-center gap-1">
+                      <div className="text-[11px] text-slate-500 mt-0.5">
+                        Lô: <b className="font-mono text-slate-800 dark:text-slate-200">{g.lot_code ?? "Chưa cấp"}</b> ({fmtQty(g.planned_qty)} {g.uom})
+                      </div>
+                      {g.kd_po_code && (
+                        <div className="text-[11px] font-semibold text-indigo-700 dark:text-indigo-300 mt-0.5">
+                          📦 PO: {g.kd_po_code} ({g.internal_order_code})
+                        </div>
+                      )}
+                      <div className="mt-1 inline-flex items-center gap-1 rounded bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 dark:text-slate-300">
+                        📅 Ngày KH: {g.planned_date ? fmtDate(g.planned_date) : "Chưa gán ngày"}
+                      </div>
+                    </td>
+
+                    {/* Cột 2: Phân công Nhân viên & Ca làm việc cho CẢ Lệnh SX (1 lần chọn) */}
+                    <td className="px-3 py-3 text-xs min-w-[230px] space-y-1.5">
                       <select
-                        className={`${inputClass} !py-1 text-[11px]`}
-                        value={opEdit.shift_code}
+                        className={`${inputClass} !py-1 text-xs font-semibold`}
+                        value={ordEdit.assigned_to_name}
                         onChange={(e) =>
-                          setOperatorEdits((prev) => ({
+                          setOrderAssignEdits((prev) => ({
                             ...prev,
-                            [s.id]: { ...opEdit, shift_code: e.target.value },
+                            [g.order_id]: { ...ordEdit, assigned_to_name: e.target.value },
                           }))
                         }
                       >
-                        {Object.entries(SHIFT_LABELS).map(([k, lbl]) => (
-                          <option key={k} value={k}>
-                            {lbl}
+                        <option value="">-- Chọn nhân viên phụ trách --</option>
+                        {operatorOptions.map((op) => (
+                          <option key={op} value={op}>
+                            👨‍🔬 {op}
                           </option>
                         ))}
+                        {ordEdit.assigned_to_name && !operatorOptions.includes(ordEdit.assigned_to_name) && (
+                          <option value={ordEdit.assigned_to_name}>{ordEdit.assigned_to_name}</option>
+                        )}
                       </select>
-                      <Button
-                        variant="ghost"
-                        title="Cập nhật nhân viên phụ trách và ca làm việc cho bước công đoạn này"
-                        onClick={() => onAssignOperator(s.order_id, s)}
-                      >
-                        Lưu
-                      </Button>
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 text-xs space-y-0.5">
-                    <div>
-                      Bắt đầu: <b>{s.started_at ? fmtDateTime(s.started_at) : "Chưa bắt đầu"}</b>
-                    </div>
-                    <div>
-                      Hoàn tất: <b>{s.completed_at ? fmtDateTime(s.completed_at) : "-"}</b>
-                    </div>
-                    {s.performed_by_name && <div className="text-[11px] text-slate-500">Thực hiện: {s.performed_by_name}</div>}
-                    {s.checked_by_name && <div className="text-[11px] text-slate-500">Kiểm tra: {s.checked_by_name}</div>}
-                    {paramEntries.length > 0 && (
-                      <div className="pt-1 flex flex-wrap gap-1">
-                        {paramEntries.map(([k, v]) => (
-                          <span key={k} className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-900 font-mono text-[10px]">
-                            {k}: {String(v)}
-                          </span>
-                        ))}
+                      <div className="flex items-center gap-1">
+                        <select
+                          className={`${inputClass} !py-1 text-[11px]`}
+                          value={ordEdit.shift_code}
+                          onChange={(e) =>
+                            setOrderAssignEdits((prev) => ({
+                              ...prev,
+                              [g.order_id]: { ...ordEdit, shift_code: e.target.value },
+                            }))
+                          }
+                        >
+                          {Object.entries(SHIFT_LABELS).map(([k, lbl]) => (
+                            <option key={k} value={k}>
+                              {lbl}
+                            </option>
+                          ))}
+                        </select>
+                        <Button
+                          variant="ghost"
+                          disabled={savingOrderId === g.order_id}
+                          title="Lưu phân công nhân viên, ca trực và ngày kế hoạch cho toàn bộ các bước của Lệnh sản xuất này"
+                          onClick={() =>
+                            handleAssignWholeOrder(g.order_id, {
+                              assigned_to_name: ordEdit.assigned_to_name,
+                              shift_code: ordEdit.shift_code,
+                              planned_date: ordEdit.planned_date || selectedPlanDate,
+                            })
+                          }
+                        >
+                          {savingOrderId === g.order_id ? "..." : "Lưu"}
+                        </Button>
                       </div>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-xs space-y-1">
-                    <div>
-                      <StatusBadge status={s.status} />
-                    </div>
-                    {s.is_qc && (
-                      <div className="pt-0.5">
-                        {s.qc_gate_status === "PASSED" ? (
-                          <span
-                            title="Bước QC xen kẽ đã được QA/QC xác nhận thông qua — Dây chuyền được phép chạy bước tiếp theo"
-                            className="inline-block px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 font-bold text-[10px]"
+                    </td>
+
+                    {/* Cột 3: Thanh tiến trình 5 bước theo đúng thứ tự #10 -> #20 -> #30 -> #40 -> #50 */}
+                    <td className="px-3 py-3 text-xs min-w-[250px]">
+                      <div className="flex flex-wrap items-center gap-1 mb-1.5">
+                        {g.steps.map((st) => {
+                          const isDone = st.status === "DONE" || st.status === "SKIPPED";
+                          const isCurr = currentStep?.id === st.id;
+                          const isWaitQc = isStepActivelyWaitingQc(st, g.steps);
+                          return (
+                            <span
+                              key={st.id}
+                              title={`Bước #${st.seq}: ${st.step_name} (${st.assigned_to_name || "Chưa phân công"})`}
+                              className={`px-2 py-0.5 rounded-md font-mono text-[11px] font-bold border ${
+                                isWaitQc
+                                  ? "bg-amber-200 text-amber-950 border-amber-400"
+                                  : isDone
+                                    ? "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
+                                    : isCurr
+                                      ? "bg-sky-600 text-white border-sky-600 shadow-xs"
+                                      : "bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700"
+                              }`}
+                            >
+                              {isDone ? "✓" : isCurr ? "●" : "○"} #{st.seq}
+                            </span>
+                          );
+                        })}
+                        <span className="ml-1 font-mono text-[11px] font-bold text-slate-600 dark:text-slate-300">
+                          ({doneCnt}/{g.steps.length})
+                        </span>
+                      </div>
+                      <div className="w-full h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                        <div
+                          className="h-full bg-emerald-600 transition-all"
+                          style={{ width: `${g.steps.length ? Math.round((doneCnt / g.steps.length) * 100) : 0}%` }}
+                        />
+                      </div>
+                    </td>
+
+                    {/* Cột 4: Bước hiện tại đang triển khai & Cổng QC (chỉ hiện nút duyệt QC khi thực sự tới bước QC!) */}
+                    <td className="px-3 py-3 text-xs min-w-[240px]">
+                      {currentStep ? (
+                        <div className="space-y-1">
+                          <div className="font-bold text-slate-900 dark:text-slate-100">
+                            Bước #{currentStep.seq}: {currentStep.step_name}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <StatusBadge status={currentStep.status} />
+                            {currentStep.assigned_to_name && (
+                              <span className="text-[11px] text-sky-700 dark:text-sky-300 font-semibold">
+                                👨‍🔬 {currentStep.assigned_to_name}
+                              </span>
+                            )}
+                          </div>
+                          {activeWaitingQcStep && (
+                            <div className="mt-1.5 p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 space-y-1.5">
+                              <div className="text-[11px] font-bold text-amber-900 dark:text-amber-200">
+                                🛡️ Đang ở Cổng QC xen kẽ (Bước #{activeWaitingQcStep.seq})
+                              </div>
+                              <input
+                                className={`${inputClass} !py-1 text-[11px]`}
+                                placeholder="Ghi chú xác nhận QC (VD: pH=8.32 đạt)..."
+                                value={qcGateNotes[activeWaitingQcStep.id] ?? activeWaitingQcStep.qc_gate_note ?? ""}
+                                onChange={(e) =>
+                                  setQcGateNotes((prev) => ({ ...prev, [activeWaitingQcStep.id]: e.target.value }))
+                                }
+                              />
+                              <div className="flex flex-wrap gap-1">
+                                <Button
+                                  variant="secondary"
+                                  onClick={() => onVerifyQcGate(g.order_id, activeWaitingQcStep, "REQUEST_QC")}
+                                >
+                                  📤 Gửi chờ QC
+                                </Button>
+                                <Button onClick={() => onVerifyQcGate(g.order_id, activeWaitingQcStep, "PASS")}>
+                                  🛡️ QC Thông qua
+                                </Button>
+                                <Button
+                                  variant="danger"
+                                  onClick={() => onVerifyQcGate(g.order_id, activeWaitingQcStep, "REJECT")}
+                                >
+                                  ❌ Từ chối
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="inline-flex items-center rounded-lg bg-emerald-100 dark:bg-emerald-950/60 px-2.5 py-1 text-xs font-bold text-emerald-800 dark:text-emerald-300">
+                          ✅ Đã hoàn tất cả {g.steps.length} bước EBR
+                        </span>
+                      )}
+                    </td>
+
+                    {/* Cột 5: Thao tác điều độ */}
+                    <td className="px-3 py-3 text-xs whitespace-nowrap">
+                      <div className="flex flex-col gap-1.5">
+                        <Button
+                          variant="secondary"
+                          onClick={() =>
+                            setExpandedOrderIds((prev) => ({ ...prev, [g.order_id]: !prev[g.order_id] }))
+                          }
+                        >
+                          {isExpanded ? `▴ Thu gọn ${g.steps.length} bước` : `▾ Chi tiết / Phân công từng bước (${g.steps.length})`}
+                        </Button>
+                        <Button variant="ghost" onClick={() => onOpenOrderEbr(g.order_id)}>
+                          🔎 Mở Hồ sơ Lô (EBR)
+                        </Button>
+                        {g.planned_date && (
+                          <button
+                            type="button"
+                            onClick={() => handleAssignWholeOrder(g.order_id, { unschedule: true })}
+                            className="text-[11px] text-rose-600 dark:text-rose-400 hover:underline cursor-pointer text-center pt-0.5"
+                            title="Rút lệnh sản xuất này khỏi kế hoạch ngày để chuyển sang ngày khác"
                           >
-                            🛡️ QC Đã thông qua ({s.qc_verified_by_name ?? "QA/QC"})
-                          </span>
-                        ) : s.qc_gate_status === "REJECTED" ? (
-                          <span
-                            title="Bước QC xen kẽ bị từ chối — Khóa bước tiếp theo, yêu cầu pha chỉnh lại"
-                            className="inline-block px-2 py-0.5 rounded bg-rose-100 text-rose-900 font-bold text-[10px]"
-                          >
-                            ❌ QC Từ chối thông qua
-                          </span>
-                        ) : (
-                          <span
-                            title="Bước QC xen kẽ đang chờ QA/QC xác nhận thông qua để mở khóa bước tiếp theo"
-                            className="inline-block px-2 py-0.5 rounded bg-amber-200 text-amber-950 font-bold text-[10px]"
-                          >
-                            ⏳ Chờ QC xác nhận thông qua (IPQC)
-                          </span>
+                            🗓️ Bỏ khỏi kế hoạch ngày
+                          </button>
                         )}
                       </div>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-xs">
-                    <div className="flex flex-col gap-1.5">
-                      {s.is_qc && s.qc_gate_status !== "PASSED" && (
-                        <>
-                          <input
-                            className={`${inputClass} !py-1 text-[11px]`}
-                            placeholder="Ghi chú xác nhận QC (VD: pH=8.32 đạt)..."
-                            value={qcGateNotes[s.id] ?? s.qc_gate_note ?? ""}
-                            onChange={(e) => setQcGateNotes((prev) => ({ ...prev, [s.id]: e.target.value }))}
-                          />
-                          <div className="flex flex-wrap gap-1">
-                            <Button
-                              variant="secondary"
-                              title="Gửi yêu cầu và thông báo đẩy sang Phòng QA/QC để xác nhận thông qua bước kiểm soát trung gian này"
-                              onClick={() => onVerifyQcGate(s.order_id, s, "REQUEST_QC")}
-                            >
-                              📤 Gửi chờ QC
-                            </Button>
-                            <Button
-                              title="QA/QC xác nhận thông qua bước QC xen kẽ này (Đạt IPQC) và mở khóa cho phép chạy bước công đoạn tiếp theo"
-                              onClick={() => onVerifyQcGate(s.order_id, s, "PASS")}
-                            >
-                              🛡️ QC Xác nhận Thông qua
-                            </Button>
-                            <Button
-                              variant="danger"
-                              title="QA/QC từ chối thông qua bước này và giữ khóa bước kế tiếp"
-                              onClick={() => onVerifyQcGate(s.order_id, s, "REJECT")}
-                            >
-                              ❌ Từ chối
-                            </Button>
-                          </div>
-                        </>
-                      )}
-                      <Button
-                        variant="ghost"
-                        title="Mở chi tiết Hồ sơ lô điện tử (EBR) của Lệnh sản xuất này để nhập thông số và ký điện tử"
-                        onClick={() => onOpenOrderEbr(s.order_id)}
-                      >
-                        🔎 Mở Hồ sơ Lô (EBR)
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
+                    </td>
+                  </tr>
+
+                  {/* Các dòng con (5 bước theo đúng thứ tự #10 -> #20 -> #30 -> #40 -> #50) chỉ hiện khi bấm "▾ Chi tiết / Phân công từng bước" */}
+                  {isExpanded &&
+                    g.steps.map((s) => {
+                      const opEdit = operatorEdits[s.id] ?? {
+                        assigned_to_name: s.assigned_to_name ?? g.primary_assignee ?? "",
+                        shift_code: s.shift_code ?? g.primary_shift ?? "CA_SANG",
+                        planned_date: s.planned_date
+                          ? String(s.planned_date).slice(0, 10)
+                          : g.planned_date || selectedPlanDate,
+                      };
+                      const stepWaitingQc = isStepActivelyWaitingQc(s, g.steps);
+                      return (
+                        <tr
+                          key={s.id}
+                          className="bg-slate-50/90 dark:bg-slate-900/60 border-b border-slate-100 dark:border-slate-800/60 text-xs"
+                        >
+                          <td className="pl-7 pr-3 py-2 text-[11px] font-mono text-slate-500">
+                            ↳ Bước #{s.seq} ({s.step_code})
+                          </td>
+                          <td className="px-3 py-2 space-y-1">
+                            <div className="flex items-center gap-1">
+                              <select
+                                className={`${inputClass} !py-1 text-[11px]`}
+                                value={opEdit.assigned_to_name}
+                                onChange={(e) =>
+                                  setOperatorEdits((prev) => ({
+                                    ...prev,
+                                    [s.id]: { ...opEdit, assigned_to_name: e.target.value },
+                                  }))
+                                }
+                              >
+                                <option value="">-- Nhân viên bước #{s.seq} --</option>
+                                {operatorOptions.map((op) => (
+                                  <option key={op} value={op}>
+                                    {op}
+                                  </option>
+                                ))}
+                                {opEdit.assigned_to_name && !operatorOptions.includes(opEdit.assigned_to_name) && (
+                                  <option value={opEdit.assigned_to_name}>{opEdit.assigned_to_name}</option>
+                                )}
+                              </select>
+                              <select
+                                className={`${inputClass} !py-1 text-[11px] !w-36`}
+                                value={opEdit.shift_code}
+                                onChange={(e) =>
+                                  setOperatorEdits((prev) => ({
+                                    ...prev,
+                                    [s.id]: { ...opEdit, shift_code: e.target.value },
+                                  }))
+                                }
+                              >
+                                {Object.entries(SHIFT_LABELS).map(([k, lbl]) => (
+                                  <option key={k} value={k}>
+                                    {lbl}
+                                  </option>
+                                ))}
+                              </select>
+                              <Button variant="ghost" onClick={() => onAssignOperator(s.order_id, s)}>
+                                Lưu bước
+                              </Button>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2" colSpan={2}>
+                            <div className="font-semibold text-slate-800 dark:text-slate-100">
+                              Bước #{s.seq}: {s.step_name}
+                            </div>
+                            <div className="text-[11px] text-slate-500">
+                              {STEP_CATEGORY_LABELS[s.category] ?? s.category}
+                              {s.started_at ? ` · Bắt đầu: ${fmtDateTime(s.started_at)}` : " · Chưa bắt đầu"}
+                              {s.completed_at ? ` · Hoàn tất: ${fmtDateTime(s.completed_at)}` : ""}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <StatusBadge status={s.status} />
+                              {stepWaitingQc && (
+                                <Button onClick={() => onVerifyQcGate(s.order_id, s, "PASS")}>
+                                  🛡️ QC Thông qua
+                                </Button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </React.Fragment>
               );
             })}
           </Table>
