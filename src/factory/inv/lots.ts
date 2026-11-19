@@ -71,8 +71,11 @@ export const lotMachine = defineMachine<LotStatus, Lot>({
         {
           code: "QC_REQUIRED",
           message: "Vật tư này bắt buộc kiểm tra QC trước khi dùng.",
-          check: async ({ tx, row }) =>
-            !(await tx.query("SELECT receipt_qc_required FROM master.item WHERE id = $1", [row.item_id])).rows[0].receipt_qc_required,
+          check: async ({ tx, row }) => {
+            const lotRow = (await tx.query("SELECT origin FROM inv.lot WHERE id = $1", [row.id])).rows[0];
+            if (lotRow?.origin === "PREPARATION") return true;
+            return !(await tx.query("SELECT receipt_qc_required FROM master.item WHERE id = $1", [row.item_id])).rows[0].receipt_qc_required;
+          },
         },
       ],
     },

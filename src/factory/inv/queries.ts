@@ -66,25 +66,40 @@ export async function viewableWarehouses(tx: Tx, actor: AuthzActor) {
   ).rows;
   if (actor.isRootAdmin || actor.isPortalAdmin) return all;
 
-  // Single-query permission lookup across all org units instead of N+1 queries per warehouse
+  // Single-query permission lookup across all org units (using ur.scope_org_unit_id and active delegations)
   const grants = (
     await tx.query(
-      `SELECT ur.org_unit_id, r.scope
+      `SELECT ur.scope_org_unit_id, o.unit_type, o.module_key
          FROM core.user_role ur
-         JOIN core.role r ON r.id = ur.role_id
+         JOIN core.role r ON r.id = ur.role_id AND r.status = 'ACTIVE'
          JOIN core.role_permission rp ON rp.role_id = r.id
+         LEFT JOIN core.org_unit o ON o.id = ur.scope_org_unit_id
         WHERE ur.user_id = $1
           AND rp.permission_code = 'inv.stock.view'
-          AND ur.revoked_at IS NULL`,
+          AND ur.revoked_at IS NULL
+          AND ur.valid_from <= now() AND (ur.valid_to IS NULL OR ur.valid_to > now())
+       UNION ALL
+       SELECT ur.scope_org_unit_id, o.unit_type, o.module_key
+         FROM core.delegation d
+         JOIN core.user_role ur ON ur.user_id = d.from_user_id AND ur.role_id = d.role_id AND ur.revoked_at IS NULL
+         JOIN core.role r ON r.id = ur.role_id AND r.status = 'ACTIVE'
+         JOIN core.role_permission rp ON rp.role_id = r.id
+         LEFT JOIN core.org_unit o ON o.id = ur.scope_org_unit_id
+        WHERE d.to_user_id = $1
+          AND rp.permission_code = 'inv.stock.view'
+          AND d.revoked_at IS NULL
+          AND d.valid_from <= now() AND d.valid_to > now()`,
       [actor.userId]
     )
   ).rows;
 
   if (grants.length === 0) return [];
-  const hasCompanyScope = grants.some((g) => g.scope === "COMPANY" || g.org_unit_id === null);
+  const hasCompanyScope = grants.some(
+    (g) => g.scope_org_unit_id === null || g.unit_type === "COMPANY" || ["QA", "WH", "PURCHASE"].includes(g.module_key)
+  );
   if (hasCompanyScope) return all;
 
-  const grantedOrgIds = new Set(grants.map((g) => g.org_unit_id).filter(Boolean));
+  const grantedOrgIds = new Set(grants.map((g) => g.scope_org_unit_id).filter(Boolean));
   return all.filter((w) => w.access_mode === "SHARED_READ" || grantedOrgIds.has(w.owner_org_unit_id));
 }
 

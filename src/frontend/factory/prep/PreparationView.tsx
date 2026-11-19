@@ -329,6 +329,8 @@ export function PreparationView({
   // Quick search & filter states for Preparation Log
   const [prepLogQ, setPrepLogQ] = useState("");
   const [prepLotStatusFilter, setPrepLotStatusFilter] = useState("");
+  const [qcTargetPrepId, setQcTargetPrepId] = useState<string | null>(null);
+  const [qcNotes, setQcNotes] = useState("");
 
   const removeFormula = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) =>
@@ -339,12 +341,44 @@ export function PreparationView({
       qc.invalidateQueries({ queryKey: ["factory", "prep-formulas", deptScope] });
     },
   });
-  const refresh = () => ["prep-log", "prep-orders"].forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k, deptScope] }));
+  const refresh = () => {
+    ["prep-log", "prep-orders"].forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k, deptScope] }));
+    qc.invalidateQueries({ queryKey: ["factory", "stock"] });
+    qc.invalidateQueries({ queryKey: ["factory", "warehouse-hub-ops"] });
+    qc.invalidateQueries({ queryKey: ["factory", "dept-quick-stock"] });
+  };
   const cancel = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) => api(`/api/factory/prep/preparations/${id}/cancel`, { method: "POST", json: { reason } }),
     onSuccess: refresh,
   });
   const incubated = useMutation({ mutationFn: (id: string) => api(`/api/factory/prep/preparations/${id}/incubated`, { method: "POST", json: {} }), onSuccess: refresh });
+  const confirmQc = useMutation({
+    mutationFn: ({ id, result, notes }: { id: string; result: "PASS" | "FAIL"; notes?: string }) =>
+      api(`/api/factory/prep/preparations/${id}/qc`, {
+        method: "POST",
+        json: { result, notes: notes || undefined },
+      }),
+    onSuccess: () => {
+      setQcTargetPrepId(null);
+      setQcNotes("");
+      refresh();
+    },
+  });
+  const confirmAllPendingQc = useMutation({
+    mutationFn: async (ids: string[]) => {
+      for (const id of ids) {
+        await api(`/api/factory/prep/preparations/${id}/qc`, {
+          method: "POST",
+          json: { result: "PASS", notes: "Đạt kiểm tra QC nội bộ sau pha chế — giải phóng đưa lên kệ sử dụng" },
+        });
+      }
+    },
+    onSuccess: () => {
+      setQcTargetPrepId(null);
+      setQcNotes("");
+      refresh();
+    },
+  });
   const orders = useQuery({
     queryKey: ["factory", "prep-orders", deptScope],
     queryFn: () => api<PrepOrder[]>(`/api/factory/prep/orders?dept=${deptScope}`),
@@ -684,6 +718,30 @@ export function PreparationView({
         actions={
           allPreps.length > 0 ? (
             <div className="flex flex-wrap items-center gap-2">
+              {(() => {
+                const pendingQcIds = filteredPreps
+                  .filter(
+                    (p) =>
+                      p.status === "DONE" &&
+                      ["QUARANTINE", "PENDING_QC"].includes(p.lot_status) &&
+                      (!p.incubation_until || Boolean(p.incubated_at))
+                  )
+                  .map((p) => p.id);
+                if (!canExecute && !canManage) return null;
+                if (pendingQcIds.length === 0) return null;
+                return (
+                  <Button
+                    type="button"
+                    disabled={confirmAllPendingQc.isPending}
+                    onClick={() => confirmAllPendingQc.mutate(pendingQcIds)}
+                    title="Xác nhận Đạt QC cho tất cả các lô pha chế đang ở trạng thái Biệt trữ — chờ QC và tự động chuyển lên kệ chính (A1) để sử dụng"
+                  >
+                    {confirmAllPendingQc.isPending
+                      ? "Đang duyệt QC..."
+                      : `✅ Duyệt Đạt QC tất cả (${pendingQcIds.length} lô chờ QC)`}
+                  </Button>
+                );
+              })()}
               <input
                 className={`${inputClass} w-64`}
                 placeholder="🔍 Tìm mã lệnh, công thức, số lô pha..."
@@ -707,35 +765,164 @@ export function PreparationView({
           ) : undefined
         }
       >
-        <ErrorNote error={preps.error ?? cancel.error ?? incubated.error} />
+        <ErrorNote error={preps.error ?? cancel.error ?? incubated.error ?? confirmQc.error ?? confirmAllPendingQc.error} />
         {allPreps.length === 0 && <Empty>Chưa có lệnh pha.</Empty>}
         {allPreps.length > 0 && filteredPreps.length === 0 && <Empty>Không có nhật ký pha chế nào khớp bộ lọc.</Empty>}
         {filteredPreps.length > 0 && (
-          <Table head={["Lệnh", "Công thức", "Lô pha", "Lượng", "Nguyên liệu đã dùng (lô)", "Hạn dùng", "Người / lúc", ""]}>
-            {filteredPreps.map((p) => (
-              <tr key={p.id} className={p.status === "CANCELLED" ? "opacity-50" : ""}>
-                <td className="py-1.5 pr-3 font-mono text-xs">{p.code}{p.status === "CANCELLED" && <div className="font-sans text-rose-600">Đã hủy: {p.cancel_reason}</div>}</td>
-                <td className="py-1.5 pr-3 text-xs">{p.formula_code} · {p.formula_name}</td>
-                <td className="py-1.5 pr-3 text-xs"><span className="font-mono">{p.lot_code}</span> <StatusBadge status={p.lot_status} label={LOT_STATUS[p.lot_status]} /></td>
-                <td className="py-1.5 pr-3 text-right text-xs whitespace-nowrap">{fmtQty(p.qty_out)} {p.uom_out}</td>
-                <td className="py-1.5 pr-3 text-xs">{p.lines.map((l) => `${l.item_code} ${l.lot_code ?? ""} ${fmtQty(l.qty_base)} ${l.uom}`).join(" · ")}</td>
-                <td className="py-1.5 pr-3 text-xs">
-                  {fmtDate(p.expiry_date)}
-                  {p.incubation_until && !p.incubated_at && <div className="text-amber-700 dark:text-amber-400">Đang ủ đến {fmtDate(p.incubation_until)}</div>}
-                  {p.incubated_at && <div className="text-slate-500">Ủ xong {fmtDate(p.incubated_at)}</div>}
-                </td>
-                <td className="py-1.5 pr-3 text-xs whitespace-nowrap">{p.prepared_by_name ?? ""} · {new Date(p.prepared_at).toLocaleString("vi-VN")}</td>
-                <td className="py-1.5 pr-3 text-right whitespace-nowrap">
-                  <Button variant="ghost" onClick={() => printPreparation(p.id).catch((e) => window.alert(e.message))}>In phiếu</Button>
-                  {canExecute && p.status === "DONE" && p.incubation_until && !p.incubated_at && (
-                    <Button variant="ghost" disabled={p.incubation_until > today || incubated.isPending} title={p.incubation_until > today ? "Chưa đủ thời gian ủ" : undefined} onClick={() => incubated.mutate(p.id)}>Ủ xong</Button>
+          <Table head={["Lệnh", "Công thức", "Lô pha", "Lượng", "Nguyên liệu đã dùng (lô)", "Hạn dùng", "Người / lúc", "Thao tác"]}>
+            {filteredPreps.map((p) => {
+              const needsQcConfirm =
+                p.status === "DONE" &&
+                ["QUARANTINE", "PENDING_QC"].includes(p.lot_status) &&
+                (!p.incubation_until || Boolean(p.incubated_at));
+              const isConfirmingThis = qcTargetPrepId === p.id;
+              return (
+                <React.Fragment key={p.id}>
+                  <tr
+                    className={`${p.status === "CANCELLED" ? "opacity-50" : ""} ${
+                      isConfirmingThis ? "bg-emerald-50/60 dark:bg-emerald-950/30" : ""
+                    }`}
+                  >
+                    <td className="py-1.5 pr-3 font-mono text-xs">
+                      {p.code}
+                      {p.status === "CANCELLED" && <div className="font-sans text-rose-600">Đã hủy: {p.cancel_reason}</div>}
+                    </td>
+                    <td className="py-1.5 pr-3 text-xs">
+                      <div>{p.formula_code} · {p.formula_name}</div>
+                      {p.notes && <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">{p.notes}</div>}
+                    </td>
+                    <td className="py-1.5 pr-3 text-xs">
+                      <span className="font-mono font-bold">{p.lot_code}</span>{" "}
+                      <StatusBadge status={p.lot_status} label={LOT_STATUS[p.lot_status]} />
+                    </td>
+                    <td className="py-1.5 pr-3 text-right text-xs whitespace-nowrap">
+                      {fmtQty(p.qty_out)} {p.uom_out}
+                    </td>
+                    <td className="py-1.5 pr-3 text-xs">
+                      {p.lines.map((l) => `${l.item_code} ${l.lot_code ?? ""} ${fmtQty(l.qty_base)} ${l.uom}`).join(" · ")}
+                    </td>
+                    <td className="py-1.5 pr-3 text-xs">
+                      {fmtDate(p.expiry_date)}
+                      {p.incubation_until && !p.incubated_at && (
+                        <div className="text-amber-700 dark:text-amber-400">Đang ủ đến {fmtDate(p.incubation_until)}</div>
+                      )}
+                      {p.incubated_at && <div className="text-slate-500">Ủ xong {fmtDate(p.incubated_at)}</div>}
+                    </td>
+                    <td className="py-1.5 pr-3 text-xs whitespace-nowrap">
+                      {p.prepared_by_name ?? ""} · {new Date(p.prepared_at).toLocaleString("vi-VN")}
+                    </td>
+                    <td className="py-1.5 pr-3 text-right whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1">
+                        {(canExecute || canManage) && needsQcConfirm && (
+                          <Button
+                            type="button"
+                            variant={isConfirmingThis ? "primary" : "secondary"}
+                            onClick={() => {
+                              if (isConfirmingThis) {
+                                setQcTargetPrepId(null);
+                              } else {
+                                setQcTargetPrepId(p.id);
+                                setQcNotes("");
+                              }
+                            }}
+                          >
+                            {isConfirmingThis ? "Đóng QC" : "✅ Xác nhận QC"}
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          onClick={() => printPreparation(p.id).catch((e) => window.alert(e.message))}
+                        >
+                          In phiếu
+                        </Button>
+                        {canExecute && p.status === "DONE" && p.incubation_until && !p.incubated_at && (
+                          <Button
+                            variant="ghost"
+                            disabled={p.incubation_until > today || incubated.isPending}
+                            title={p.incubation_until > today ? "Chưa đủ thời gian ủ" : undefined}
+                            onClick={() => incubated.mutate(p.id)}
+                          >
+                            Ủ xong
+                          </Button>
+                        )}
+                        {canExecute && p.status === "DONE" && (
+                          <Button
+                            variant="ghost"
+                            onClick={() => {
+                              const r = window.prompt("Lý do hủy lệnh pha (chỉ hủy được khi lô pha chưa dùng):");
+                              if (r) cancel.mutate({ id: p.id, reason: r });
+                            }}
+                          >
+                            Hủy
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                  {isConfirmingThis && needsQcConfirm && (
+                    <tr className="bg-emerald-50/40 dark:bg-emerald-950/25">
+                      <td colSpan={8} className="p-3 border-b-2 border-emerald-400 dark:border-emerald-700">
+                        <div className="flex flex-wrap items-center justify-between gap-2.5 text-xs">
+                          <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[260px]">
+                            <span className="font-bold text-emerald-900 dark:text-emerald-200 whitespace-nowrap">
+                              🧪 Xác nhận kết quả QC lô pha <span className="font-mono">{p.lot_code}</span> ({p.formula_code} ·{" "}
+                              {fmtQty(p.qty_out)} {p.uom_out}):
+                            </span>
+                            <input
+                              className={`${inputClass} flex-1 min-w-[220px]`}
+                              placeholder="Ghi chú kết quả QC / cảm quan / nồng độ (tùy chọn khi Đạt, bắt buộc khi Không đạt)..."
+                              value={qcNotes}
+                              onChange={(e) => setQcNotes(e.target.value)}
+                            />
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Button
+                              type="button"
+                              disabled={confirmQc.isPending}
+                              onClick={() =>
+                                confirmQc.mutate({
+                                  id: p.id,
+                                  result: "PASS",
+                                  notes: qcNotes.trim() || "Đạt kiểm tra QC nội bộ sau pha chế",
+                                })
+                              }
+                            >
+                              ✅ Đạt QC — Giải phóng &amp; Cất lên kệ A1 sử dụng
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="danger"
+                              disabled={confirmQc.isPending}
+                              onClick={() => {
+                                const failNote =
+                                  qcNotes.trim() ||
+                                  window.prompt(
+                                    `Nhập lý do lô pha ${p.lot_code} không đạt QC:`,
+                                    "Dung dịch không đạt cảm quan / nồng độ"
+                                  ) ||
+                                  "";
+                                if (failNote.trim().length >= 3) {
+                                  confirmQc.mutate({
+                                    id: p.id,
+                                    result: "FAIL",
+                                    notes: failNote.trim(),
+                                  });
+                                }
+                              }}
+                            >
+                              ❌ Không đạt (Loại lô)
+                            </Button>
+                            <Button type="button" variant="ghost" onClick={() => setQcTargetPrepId(null)}>
+                              Đóng
+                            </Button>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
                   )}
-                  {canExecute && p.status === "DONE" && (
-                    <Button variant="ghost" onClick={() => { const r = window.prompt("Lý do hủy lệnh pha (chỉ hủy được khi lô pha chưa dùng):"); if (r) cancel.mutate({ id: p.id, reason: r }); }}>Hủy</Button>
-                  )}
-                </td>
-              </tr>
-            ))}
+                </React.Fragment>
+              );
+            })}
           </Table>
         )}
       </Card>

@@ -144,9 +144,11 @@ interface StockGroupCounts {
 export function StockView({
   warehouses,
   initialWarehouseId = "",
+  initialStatus = "",
 }: {
   warehouses: { id: string; code: string; name: string; owner_name?: string; owner_module_key?: string }[];
   initialWarehouseId?: string;
+  initialStatus?: string;
 }) {
   const me = useFactoryMe();
   const perms = new Set(me.data?.permissions ?? []);
@@ -158,7 +160,7 @@ export function StockView({
   const [itemTypeFilter, setItemTypeFilter] = useState("");
   const [q, setQ] = useState("");
   const debouncedQ = useDebouncedValue(q, 300);
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState(initialStatus);
   const [page, setPage] = useState(1);
   const [lotId, setLotId] = useState<string | null>(null);
 
@@ -235,7 +237,6 @@ export function StockView({
 
   return (
     <>
-    {lotId && <LotPanel key={lotId} lotId={lotId} onClose={() => setLotId(null)} />}
     <Card title="Tồn kho theo lô và vị trí (Kho Tổng & Kho Nhánh Phòng Ban)">
       {warehouses.length > 1 && (
         <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
@@ -451,53 +452,97 @@ export function StockView({
       {stock.data && stock.data.rows.length === 0 && <Empty>Chưa có tồn kho phù hợp bộ lọc.</Empty>}
       {stock.data && stock.data.rows.length > 0 && (
         <>
-          <Table head={["Vật tư", "Phân loại", "Lô / Lô NSX", "Trạng thái", "Hạn dùng", "Kho · Vị trí", "Tồn", "Giữ chỗ", "Khả dụng"]}>
-            {stock.data.rows.map((r) => (
-              <tr key={r.id}>
-                <td className="py-2 pr-3">
-                  <div className="font-semibold">{r.item_code}</div>
-                  <div className="text-slate-500 dark:text-slate-400">{r.item_name}</div>
-                </td>
-                <td className="py-2 pr-3">
-                  <StockCategoryBadge
-                    itemType={r.item_type}
-                    itemGroup={r.item_group}
-                    canEdit={canManageItem && typeof r.item_version === "number"}
-                    isUpdating={updateTypeMut.isPending}
-                    onChangeType={(nextType) => {
-                      if (typeof r.item_version !== "number" || nextType === r.item_type) return;
-                      updateTypeMut.mutate({
-                        itemId: r.item_id,
-                        version: r.item_version,
-                        item_type: nextType,
-                        code: r.item_code,
-                      });
-                    }}
-                  />
-                </td>
-                <td className="py-2 pr-3 whitespace-nowrap">
-                  {r.lot_id ? (
-                    <button className="font-mono text-sky-700 dark:text-sky-400 underline underline-offset-2 cursor-pointer" onClick={() => setLotId(r.lot_id)} title="Xem lô, QC và thao tác chất lượng">
-                      {r.lot_code}
-                    </button>
-                  ) : (
-                    <div className="font-mono">—</div>
+          <Table head={["Vật tư", "Phân loại", "Lô / Lô NSX", "Trạng thái", "Hạn dùng", "Kho · Vị trí", "Tồn", "Giữ chỗ", "Khả dụng", "Thao tác"]}>
+            {stock.data.rows.map((r) => {
+              const isLotOpen = Boolean(r.lot_id && lotId === r.lot_id);
+              return (
+                <React.Fragment key={r.id}>
+                  <tr className={isLotOpen ? "bg-sky-50/70 dark:bg-sky-950/30" : ""}>
+                    <td className="py-2 pr-3">
+                      <div className="font-semibold">{r.item_code}</div>
+                      <div className="text-slate-500 dark:text-slate-400">{r.item_name}</div>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <StockCategoryBadge
+                        itemType={r.item_type}
+                        itemGroup={r.item_group}
+                        canEdit={canManageItem && typeof r.item_version === "number"}
+                        isUpdating={updateTypeMut.isPending}
+                        onChangeType={(nextType) => {
+                          if (typeof r.item_version !== "number" || nextType === r.item_type) return;
+                          updateTypeMut.mutate({
+                            itemId: r.item_id,
+                            version: r.item_version,
+                            item_type: nextType,
+                            code: r.item_code,
+                          });
+                        }}
+                      />
+                    </td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      {r.lot_id ? (
+                        <button
+                          className="font-mono font-bold text-sky-700 dark:text-sky-400 underline underline-offset-2 cursor-pointer"
+                          onClick={() => setLotId(isLotOpen ? null : r.lot_id)}
+                          title="Xem lô, QC và thao tác chất lượng"
+                        >
+                          {r.lot_code}
+                        </button>
+                      ) : (
+                        <div className="font-mono">—</div>
+                      )}
+                      <div className="text-slate-500 dark:text-slate-400">{r.mfr_lot_no ?? ""}</div>
+                    </td>
+                    <td className="py-2 pr-3">
+                      {r.lot_status ? <StatusBadge status={r.lot_status} /> : "—"}
+                      {r.incubation_until && (
+                        <div className="text-[11px] text-amber-700 dark:text-amber-400">
+                          Đang ủ đến {fmtDate(r.incubation_until)}
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 whitespace-nowrap">{fmtDate(r.expiry_date)}</td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      {r.warehouse_code} · {r.location_code}
+                      {r.is_quarantine && <span className="ml-1 text-amber-600 dark:text-amber-400">(biệt trữ)</span>}
+                    </td>
+                    <td className="py-2 pr-3 text-right whitespace-nowrap">
+                      {fmtQty(r.qty_on_hand)} {r.base_uom}
+                    </td>
+                    <td className="py-2 pr-3 text-right whitespace-nowrap">{fmtQty(r.qty_reserved)}</td>
+                    <td className="py-2 pr-3 text-right whitespace-nowrap font-semibold">{fmtQty(r.qty_available)}</td>
+                    <td className="py-2 pr-3 text-right whitespace-nowrap">
+                      {r.lot_id && (
+                        <button
+                          type="button"
+                          onClick={() => setLotId(isLotOpen ? null : r.lot_id)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
+                            isLotOpen
+                              ? "bg-sky-600 text-white border-sky-500"
+                              : r.lot_status === "QUARANTINE" || r.lot_status === "PENDING_QC"
+                                ? "bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/40 hover:bg-amber-500/25"
+                                : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-200"
+                          }`}
+                        >
+                          {isLotOpen
+                            ? "Đóng lô"
+                            : r.lot_status === "QUARANTINE" || r.lot_status === "PENDING_QC"
+                              ? "🧪 Xem & Duyệt QC"
+                              : "Chi tiết lô"}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                  {isLotOpen && r.lot_id && (
+                    <tr className="bg-sky-50/40 dark:bg-sky-950/20">
+                      <td colSpan={10} className="p-3 border-b-2 border-sky-400 dark:border-sky-700">
+                        <LotPanel key={r.lot_id} lotId={r.lot_id} onClose={() => setLotId(null)} />
+                      </td>
+                    </tr>
                   )}
-                  <div className="text-slate-500 dark:text-slate-400">{r.mfr_lot_no ?? ""}</div>
-                </td>
-                <td className="py-2 pr-3">{r.lot_status ? <StatusBadge status={r.lot_status} /> : "—"}{r.incubation_until && <div className="text-[11px] text-amber-700 dark:text-amber-400">Đang ủ đến {fmtDate(r.incubation_until)}</div>}</td>
-                <td className="py-2 pr-3 whitespace-nowrap">{fmtDate(r.expiry_date)}</td>
-                <td className="py-2 pr-3 whitespace-nowrap">
-                  {r.warehouse_code} · {r.location_code}
-                  {r.is_quarantine && <span className="ml-1 text-amber-600 dark:text-amber-400">(biệt trữ)</span>}
-                </td>
-                <td className="py-2 pr-3 text-right whitespace-nowrap">
-                  {fmtQty(r.qty_on_hand)} {r.base_uom}
-                </td>
-                <td className="py-2 pr-3 text-right whitespace-nowrap">{fmtQty(r.qty_reserved)}</td>
-                <td className="py-2 pr-3 text-right whitespace-nowrap font-semibold">{fmtQty(r.qty_available)}</td>
-              </tr>
-            ))}
+                </React.Fragment>
+              );
+            })}
           </Table>
           <Pager page={stock.data.page} pageSize={stock.data.page_size} total={stock.data.total} onPage={setPage} />
         </>

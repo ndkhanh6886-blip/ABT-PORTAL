@@ -32,8 +32,9 @@ export function FactoryWarehouseModule() {
   ];
   const visible = tabs.filter((t) => t.show);
   const [tab, setTab] = useState<SubTab | null>(null);
-  // warehouse chosen on the hub ("Chi tiết →" / the card): the stock tab opens filtered on it
+  // warehouse & optional lot status chosen on the hub ("Chi tiết →" / "Biệt trữ BT" / "Kệ A1")
   const [stockWarehouse, setStockWarehouse] = useState("");
+  const [stockStatus, setStockStatus] = useState("");
   const active = visible.find((t) => t.key === tab)?.key ?? visible[0]?.key;
 
   if (me.isLoading) return <div className="text-sm text-slate-400 p-6">Đang tải…</div>;
@@ -57,8 +58,23 @@ export function FactoryWarehouseModule() {
           </button>
         ))}
       </div>
-      {active === "hub" && <WarehouseHubView onOpenStock={(id) => { setStockWarehouse(id); setTab("stock"); }} />}
-      {active === "stock" && <StockView key={stockWarehouse} warehouses={warehouses.data ?? []} initialWarehouseId={stockWarehouse} />}
+      {active === "hub" && (
+        <WarehouseHubView
+          onOpenStock={(id, status) => {
+            setStockWarehouse(id);
+            setStockStatus(status ?? "");
+            setTab("stock");
+          }}
+        />
+      )}
+      {active === "stock" && (
+        <StockView
+          key={`${stockWarehouse}:${stockStatus}`}
+          warehouses={warehouses.data ?? []}
+          initialWarehouseId={stockWarehouse}
+          initialStatus={stockStatus}
+        />
+      )}
       {active === "documents" && <DocumentsView warehouses={warehouses.data ?? []} canCreate={perms.has("inv.document.create") && perms.has("inv.document.post")} />}
       {active === "items" && <ItemsView canManage={perms.has("master.item.manage")} />}
       {active === "warehouses" && <WarehousesView warehouses={warehouses.data ?? []} canManage={perms.has("master.warehouse.manage")} error={warehouses.error} />}

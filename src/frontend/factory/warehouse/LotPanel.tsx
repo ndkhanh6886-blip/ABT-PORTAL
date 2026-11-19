@@ -1,11 +1,11 @@
 "use client";
 
-import React from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import React, { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActionBar, type AllowedAction } from "../actions";
 import { api, fmtDate, fmtQty, useFactoryMe } from "../api";
 import { PutAway } from "./PutAway";
-import { Button, Card, ErrorNote, StatusBadge } from "../ui";
+import { Button, Card, ErrorNote, inputClass, StatusBadge } from "../ui";
 
 interface LotDetail {
   id: string;
@@ -43,13 +43,34 @@ const QC_STATUS: Record<string, string> = {
 export function LotPanel({ lotId, onClose }: { lotId: string; onClose: () => void }) {
   const qc = useQueryClient();
   const me = useFactoryMe();
+  const [prepQcNote, setPrepQcNote] = useState("");
   const lot = useQuery({ queryKey: ["factory", "lot", lotId], queryFn: () => api<LotDetail>(`/api/factory/inv/lots/${lotId}`) });
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["factory", "lot", lotId] });
     qc.invalidateQueries({ queryKey: ["factory", "stock"] });
     qc.invalidateQueries({ queryKey: ["factory", "qc-tests"] });
+    qc.invalidateQueries({ queryKey: ["factory", "prep-log"] });
+    qc.invalidateQueries({ queryKey: ["factory", "warehouse-hub-ops"] });
   };
+  const prepQcMut = useMutation({
+    mutationFn: ({ result, notes }: { result: "PASS" | "FAIL"; notes?: string }) =>
+      api(`/api/factory/prep/preparations/${lotId}/qc`, {
+        method: "POST",
+        json: { result, notes: notes || undefined },
+      }),
+    onSuccess: () => {
+      setPrepQcNote("");
+      refresh();
+    },
+  });
   const l = lot.data;
+  const canConfirmPrepQc = Boolean(
+    me.data?.is_root ||
+      me.data?.is_admin ||
+      me.data?.permissions.some((p) =>
+        ["prep.execute", "prep.formula.manage", "inv.lot.release", "qms.qc.review"].includes(p)
+      )
+  );
 
   return (
     <Card title={l ? `Lô ${l.code} — ${l.item_code} ${l.item_name}` : "Lô"} actions={<Button variant="ghost" onClick={onClose}>Đóng</Button>}>
@@ -93,6 +114,50 @@ export function LotPanel({ lotId, onClose }: { lotId: string; onClose: () => voi
               ❄️ +1 Ghi nhận Rã đông
             </Button>
           </div>
+          {l.origin === "PREPARATION" && ["QUARANTINE", "PENDING_QC", "ON_HOLD"].includes(l.status) && canConfirmPrepQc && (
+            <div className="rounded-xl border-2 border-emerald-400/80 dark:border-emerald-700 bg-emerald-50/70 dark:bg-emerald-950/30 p-3 space-y-2 text-xs">
+              <div className="font-bold text-emerald-900 dark:text-emerald-200">
+                🧪 Xác nhận Kết quả QC Nội bộ cho Lô Hóa chất Pha chế ({l.code} — {l.item_code} {l.item_name})
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  className={`${inputClass} flex-1 min-w-[220px]`}
+                  placeholder="Ghi chú kết quả kiểm tra QC / cảm quan / nồng độ (tùy chọn khi Đạt, bắt buộc khi Không đạt)..."
+                  value={prepQcNote}
+                  onChange={(e) => setPrepQcNote(e.target.value)}
+                />
+                <Button
+                  type="button"
+                  disabled={prepQcMut.isPending}
+                  onClick={() =>
+                    prepQcMut.mutate({
+                      result: "PASS",
+                      notes: prepQcNote.trim() || "Đạt kiểm tra QC nội bộ sau pha chế",
+                    })
+                  }
+                >
+                  ✅ Đạt QC — Giải phóng &amp; Cất lên kệ A1 sử dụng
+                </Button>
+                <Button
+                  type="button"
+                  variant="danger"
+                  disabled={prepQcMut.isPending}
+                  onClick={() => {
+                    const failReason =
+                      prepQcNote.trim() ||
+                      window.prompt(`Nhập lý do lô ${l.code} không đạt QC:`, "Dung dịch không đạt cảm quan / nồng độ") ||
+                      "";
+                    if (failReason.trim().length >= 3) {
+                      prepQcMut.mutate({ result: "FAIL", notes: failReason.trim() });
+                    }
+                  }}
+                >
+                  ❌ Không đạt (Loại lô)
+                </Button>
+              </div>
+              <ErrorNote error={prepQcMut.error} />
+            </div>
+          )}
           <ActionBar endpoint={`/api/factory/inv/lots/${l.id}/actions`} version={l.version} actions={l.actions} labels={LOT_ACTION_LABEL} onDone={refresh} />
           <div>
             <h3 className="text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">Phiếu QC của lô</h3>

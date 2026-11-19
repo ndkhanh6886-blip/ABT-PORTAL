@@ -151,7 +151,7 @@ const WH_META: Record<string, { badge: string; temp: string; desc: string }> = {
   },
 };
 
-export function WarehouseHubView({ onOpenStock }: { onOpenStock?: (warehouseId: string) => void }) {
+export function WarehouseHubView({ onOpenStock }: { onOpenStock?: (warehouseId: string, initialStatus?: string) => void }) {
   const qc = useQueryClient();
   const [radarTab, setRadarTab] = useState<"dispatch" | "putaway" | "low_stock" | "expiry">("dispatch");
   const [toast, setToast] = useState<string | null>(null);
@@ -299,17 +299,32 @@ export function WarehouseHubView({ onOpenStock }: { onOpenStock?: (warehouseId: 
                 </div>
 
                 <div className="grid grid-cols-3 gap-2 mt-3">
-                  <div className="rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 p-2 text-center">
+                  <div
+                    role={onOpenStock ? "button" : undefined}
+                    tabIndex={onOpenStock ? 0 : undefined}
+                    onClick={() => onOpenStock?.(khoTong.id, "RELEASED")}
+                    className="rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 p-2 text-center hover:ring-1 hover:ring-emerald-500 cursor-pointer"
+                  >
                     <div className="text-[10px] text-emerald-700 dark:text-emerald-300 font-semibold">Kệ Chính ({khoTong.a1_location_code ?? "A1"})</div>
                     <div className="text-base font-extrabold text-emerald-700 dark:text-emerald-300">{khoTong.released_lot_count} lô</div>
                     <div className="text-[10px] text-emerald-600">Sẵn sàng cấp FEFO</div>
                   </div>
-                  <div className="rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 p-2 text-center">
+                  <div
+                    role={onOpenStock ? "button" : undefined}
+                    tabIndex={onOpenStock ? 0 : undefined}
+                    onClick={() => onOpenStock?.(khoTong.id, "QUARANTINE")}
+                    className="rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 p-2 text-center hover:ring-1 hover:ring-amber-500 cursor-pointer"
+                  >
                     <div className="text-[10px] text-amber-700 dark:text-amber-300 font-semibold">Biệt Trữ ({khoTong.bt_location_code ?? "BT"})</div>
                     <div className="text-base font-extrabold text-amber-700 dark:text-amber-300">{khoTong.quarantine_lot_count} lô</div>
                     <div className="text-[10px] text-amber-600">Chờ QC / Khóa xuất</div>
                   </div>
-                  <div className="rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900 p-2 text-center">
+                  <div
+                    role={onOpenStock ? "button" : undefined}
+                    tabIndex={onOpenStock ? 0 : undefined}
+                    onClick={() => setRadarTab("putaway")}
+                    className="rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900 p-2 text-center hover:ring-1 hover:ring-indigo-500 cursor-pointer"
+                  >
                     <div className="text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold">Chờ Cất Kệ</div>
                     <div className="text-base font-extrabold text-indigo-700 dark:text-indigo-300">{khoTong.ready_putaway_count} lô</div>
                     <div className="text-[10px] text-indigo-600">BT ➔ A1</div>
@@ -373,11 +388,29 @@ export function WarehouseHubView({ onOpenStock }: { onOpenStock?: (warehouseId: 
                     <div className="text-[10px] text-slate-500 mt-1">🌡️ {meta.temp}</div>
 
                     <div className="grid grid-cols-2 gap-1.5 mt-2.5 text-xs">
-                      <div className="rounded-lg bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/70 dark:border-emerald-900 px-2 py-1">
+                      <div
+                        role={onOpenStock ? "button" : undefined}
+                        tabIndex={onOpenStock ? 0 : undefined}
+                        title={`Xem các lô Đạt / Khả dụng trên kệ ${w.a1_location_code ?? "A1"} của ${w.code}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenStock?.(w.id, "RELEASED");
+                        }}
+                        className="rounded-lg bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/70 dark:border-emerald-900 px-2 py-1 hover:ring-1 hover:ring-emerald-500 cursor-pointer"
+                      >
                         <span className="text-[10px] text-slate-500 block">Kệ {w.a1_location_code ?? "A1"} (Khả dụng)</span>
                         <b className="text-emerald-700 dark:text-emerald-400">{w.released_lot_count} lô</b>
                       </div>
-                      <div className="rounded-lg bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/70 dark:border-amber-900 px-2 py-1">
+                      <div
+                        role={onOpenStock ? "button" : undefined}
+                        tabIndex={onOpenStock ? 0 : undefined}
+                        title={`Xem các lô Biệt trữ — chờ QC tại vị trí ${w.bt_location_code ?? "BT"} của ${w.code}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenStock?.(w.id, "QUARANTINE");
+                        }}
+                        className="rounded-lg bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/70 dark:border-amber-900 px-2 py-1 hover:ring-1 hover:ring-amber-500 cursor-pointer"
+                      >
                         <span className="text-[10px] text-slate-500 block">Biệt trữ {w.bt_location_code ?? "BT"}</span>
                         <b className="text-amber-700 dark:text-amber-400">{w.quarantine_lot_count} lô</b>
                       </div>

@@ -3,7 +3,7 @@ import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
 import { authorize, authorizeAnywhere, hasFactoryPermission, registerPermissions, type AuthzActor } from "../core/authz";
 import { addDays, vnToday } from "../core/dates";
-import { conflict, invalid, notFound } from "../core/errors";
+import { conflict, forbidden, invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { parseInput } from "../core/records";
 import { runTransition } from "../core/stateMachine";
@@ -303,7 +303,7 @@ export async function prepare(tx: Tx, actor: AuthzActor, input: unknown) {
   const expiries = used.map((u) => u.expiry_date).filter((x): x is string => Boolean(x));
   const shelf = f.shelf_life_days ? addDays(today, f.shelf_life_days) : null;
   const expiry = [shelf, ...expiries].filter((x): x is string => Boolean(x)).sort()[0] ?? null;
-  const qcNeeded = f.requires_qc || outItem.receipt_qc_required;
+  const qcNeeded = Boolean(f.requires_qc);
   // an incubated reagent waits in quarantine until "incubated" is confirmed (then QC, or released and put away)
   const incubate = Number(f.incubation_days) > 0;
   const hold = qcNeeded || incubate;
@@ -376,7 +376,7 @@ export async function listPreparations(tx: Tx, actor: AuthzActor, deptScopeRaw?:
   const scope = normalizePrepDeptScope(deptScopeRaw);
   const rows = (
     await tx.query(
-      `SELECT p.id, p.code, p.status, p.qty_out::float AS qty_out, p.uom_out, p.prepared_at, p.lines, p.notes, p.cancel_reason, p.warehouse_id, p.incubation_until, p.incubated_at, p.to_location_id,
+      `SELECT p.id, p.code, p.status, p.qty_out::float AS qty_out, p.uom_out, p.prepared_at, p.lines, p.notes, p.cancel_reason, p.warehouse_id, p.lot_id, p.incubation_until, p.incubated_at, p.to_location_id,
               f.code AS formula_code, f.name AS formula_name, f.dept_scope, l.code AS lot_code, l.status AS lot_status, l.expiry_date, u.display_name AS prepared_by_name, w.owner_org_unit_id
          FROM prep.preparation p JOIN prep.formula f ON f.id = p.formula_id JOIN inv.lot l ON l.id = p.lot_id JOIN master.warehouse w ON w.id = p.warehouse_id
          LEFT JOIN core.user_profile u ON u.user_id = p.prepared_by
@@ -388,6 +388,182 @@ export async function listPreparations(tx: Tx, actor: AuthzActor, deptScopeRaw?:
   const out = [];
   for (const r of rows) if ((await hasFactoryPermission(tx, actor, "prep.execute", r.owner_org_unit_id)) || (await hasFactoryPermission(tx, actor, "inv.stock.view", r.owner_org_unit_id))) out.push(r);
   return out;
+}
+
+const confirmPrepQcSchema = z.object({
+  result: z.enum(["PASS", "FAIL"]).default("PASS"),
+  to_location_id: z.string().uuid().optional().nullable(),
+  notes: z.string().trim().max(500).optional().nullable(),
+});
+
+/**
+ * Confirms QC result for an in-house prepared reagent lot (`prep.preparation` / `inv.lot` in QUARANTINE or PENDING_QC).
+ * - PASS: marks the lot as `RELEASED` and automatically transfers its quarantine balance (`BT`) onto the active shelf (`A1` / `to_location_id`).
+ * - FAIL: marks the lot as `REJECTED` with the failure reason audited.
+ * Accepts either `prep.preparation.id` or `inv.lot.id`.
+ */
+export async function confirmPreparationQc(tx: Tx, actor: AuthzActor, idOrLotId: string, input: unknown) {
+  const targetId = parseInput(z.string().uuid("ID lệnh pha hoặc lô pha không hợp lệ."), idOrLotId);
+  const d = parseInput(confirmPrepQcSchema, input ?? {});
+
+  const p = (
+    await tx.query(
+      `SELECT p.*, w.owner_org_unit_id, w.code AS warehouse_code,
+              f.code AS formula_code, f.name AS formula_name, f.output_item_id,
+              l.code AS lot_code, l.status AS lot_status, l.version AS lot_version
+         FROM prep.preparation p
+         JOIN master.warehouse w ON w.id = p.warehouse_id
+         JOIN prep.formula f ON f.id = p.formula_id
+         JOIN inv.lot l ON l.id = p.lot_id
+        WHERE p.id = $1 OR p.lot_id = $1
+        FOR UPDATE OF p, l`,
+      [targetId]
+    )
+  ).rows[0];
+  if (!p) throw notFound("lô hóa chất pha chế");
+
+  const canConfirm =
+    Boolean(actor.isRootAdmin || actor.isPortalAdmin) ||
+    (await hasFactoryPermission(tx, actor, "prep.execute", p.owner_org_unit_id)) ||
+    (await hasFactoryPermission(tx, actor, "prep.formula.manage", p.owner_org_unit_id)) ||
+    (await hasFactoryPermission(tx, actor, "inv.lot.release", p.owner_org_unit_id)) ||
+    (await hasFactoryPermission(tx, actor, "qms.qc.review", p.owner_org_unit_id));
+  if (!canConfirm) {
+    throw forbidden("Bạn không có quyền xác nhận kết quả QC cho lô hóa chất pha chế này.");
+  }
+
+  if (p.status !== "DONE") {
+    throw invalid("Lệnh pha chế này đã hủy, không thể xác nhận QC.");
+  }
+  if (!["QUARANTINE", "PENDING_QC", "ON_HOLD"].includes(p.lot_status)) {
+    throw conflict(`Lô ${p.lot_code} đang ở trạng thái ${p.lot_status}, không còn ở trạng thái chờ QC.`, "LOT_ALREADY_DECIDED");
+  }
+
+  const outItem = await getItem(tx, p.output_item_id);
+  const noteText = d.notes?.trim() || (d.result === "PASS" ? "Đạt kiểm tra QC nội bộ sau pha chế" : "Không đạt QC nội bộ");
+
+  if (d.result === "FAIL") {
+    if (!d.notes || d.notes.trim().length < 3) {
+      throw invalid("Vui lòng nhập lý do / kết quả không đạt QC (tối thiểu 3 ký tự).");
+    }
+    await tx.query(
+      "UPDATE inv.lot SET status = 'REJECTED', version = version + 1, updated_at = now(), updated_by = $2 WHERE id = $1",
+      [p.lot_id, actor.userId]
+    );
+    const mergedNotes = [p.notes, `[QC KHÔNG ĐẠT - ${actor.name}]: ${noteText}`].filter(Boolean).join(" · ");
+    await tx.query(
+      "UPDATE prep.preparation SET notes = $2, version = version + 1 WHERE id = $1",
+      [p.id, mergedNotes]
+    );
+    await writeAudit(tx, actor, {
+      entityType: "preparation",
+      entityId: p.id,
+      action: "qc_reject",
+      reason: noteText,
+      changes: { lot_status: [p.lot_status, "REJECTED"], lot_code: [p.lot_code, p.lot_code] },
+    });
+    await writeAudit(tx, actor, {
+      entityType: "lot",
+      entityId: p.lot_id,
+      action: "reject",
+      reason: noteText,
+      changes: { status: [p.lot_status, "REJECTED"] },
+    });
+    return { ok: true, id: p.id, lot_id: p.lot_id, lot_code: p.lot_code, lot_status: "REJECTED" };
+  }
+
+  // PASS -> Resolve target non-quarantine shelf location (A1)
+  let targetLocId = d.to_location_id ?? p.to_location_id ?? null;
+  if (targetLocId) {
+    const checkLoc = (
+      await tx.query(
+        "SELECT id FROM master.location WHERE id = $1 AND warehouse_id = $2 AND status = 'ACTIVE' AND NOT is_quarantine",
+        [targetLocId, p.warehouse_id]
+      )
+    ).rows[0];
+    if (!checkLoc) targetLocId = null;
+  }
+  if (!targetLocId) {
+    targetLocId = (
+      await tx.query(
+        "SELECT id FROM master.location WHERE warehouse_id = $1 AND status = 'ACTIVE' AND NOT is_quarantine ORDER BY CASE WHEN code = 'A1' THEN 0 ELSE 1 END, code LIMIT 1",
+        [p.warehouse_id]
+      )
+    ).rows[0]?.id ?? null;
+  }
+  if (!targetLocId) {
+    throw invalid(`Kho ${p.warehouse_code} chưa có vị trí kệ thường (A1) để cất lô sau khi duyệt QC.`);
+  }
+
+  await tx.query(
+    "UPDATE inv.lot SET status = 'RELEASED', version = version + 1, updated_at = now(), updated_by = $2 WHERE id = $1",
+    [p.lot_id, actor.userId]
+  );
+
+  // Move any balance currently sitting on a quarantine location (BT) onto targetLocId (A1)
+  const qBalances = (
+    await tx.query(
+      `SELECT b.location_id, b.qty_on_hand::float AS q
+         FROM inv.stock_balance b
+         JOIN master.location loc ON loc.id = b.location_id
+        WHERE b.lot_id = $1 AND b.qty_on_hand > 0 AND loc.is_quarantine = true`,
+      [p.lot_id]
+    )
+  ).rows;
+
+  if (qBalances.length > 0) {
+    const doc = await createStockDocument(
+      tx,
+      actor,
+      {
+        doc_type: "TRANSFER",
+        reason_code: "PUTAWAY",
+        warehouse_id: p.warehouse_id,
+        source_entity_type: "PREPARATION",
+        source_entity_id: p.id,
+        notes: `Giải phóng QC & cất kệ lô pha chế ${p.lot_code} (${p.code}): ${noteText}`,
+        lines: qBalances.map((b) => ({
+          item_id: outItem.id,
+          lot_id: p.lot_id,
+          from_location_id: b.location_id,
+          to_location_id: targetLocId,
+          qty: b.q,
+          uom: outItem.base_uom,
+        })),
+      },
+      { trusted: true }
+    );
+    await runTransition(
+      tx,
+      stockDocumentMachine,
+      actor,
+      { id: doc.id, action: "post", expectedVersion: doc.version },
+      { trusted: true }
+    );
+  }
+
+  const mergedNotes = [p.notes, `[QC ĐẠT - ${actor.name}]: ${noteText}`].filter(Boolean).join(" · ");
+  await tx.query(
+    "UPDATE prep.preparation SET notes = $2, to_location_id = $3, version = version + 1 WHERE id = $1",
+    [p.id, mergedNotes, targetLocId]
+  );
+
+  await writeAudit(tx, actor, {
+    entityType: "preparation",
+    entityId: p.id,
+    action: "qc_release",
+    reason: noteText,
+    changes: { lot_status: [p.lot_status, "RELEASED"], lot_code: [p.lot_code, p.lot_code] },
+  });
+  await writeAudit(tx, actor, {
+    entityType: "lot",
+    entityId: p.lot_id,
+    action: "release",
+    reason: noteText,
+    changes: { status: [p.lot_status, "RELEASED"] },
+  });
+
+  return { ok: true, id: p.id, lot_id: p.lot_id, lot_code: p.lot_code, lot_status: "RELEASED", to_location_id: targetLocId };
 }
 
 /** Warehouses where the user may prepare, with their normal (non-quarantine) locations. */

@@ -136,7 +136,7 @@ export async function finishIncubation(tx: Tx, actor: AuthzActor, prepId: string
   if (p.incubation_until > vnToday()) throw invalid(`Chưa đủ thời gian ủ (đến ${p.incubation_until}).`, undefined, "INCUBATING");
   const f = await getFormula(tx, p.formula_id);
   const item = await getItem(tx, f.output_item_id);
-  const qcNeeded = f.requires_qc || item.receipt_qc_required;
+  const qcNeeded = Boolean(f.requires_qc);
   await tx.query("UPDATE prep.preparation SET incubated_at = now(), incubated_by = $2, version = version + 1 WHERE id = $1", [prepId, actor.userId]);
   if (!qcNeeded) {
     const target = d.to_location_id ?? p.to_location_id;
