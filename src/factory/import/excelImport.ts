@@ -2024,7 +2024,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       }
     }
   } else if (templateKey === "OLIGO_POST_METHOD") {
-    await authorizeAnywhere(tx, actor, "oligo.sop.manage");
+    await authorizeAnywhereOneOf(tx, actor, ["oligo.sop.manage", "oligo.post.manage", "oligo.sop.edit"]);
     let lastCategory = "";
     let lastMethodName = "";
     const grouped = new Map<string, Record<string, unknown>[]>();
@@ -2045,8 +2045,8 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
         )
       );
       if (!name && !hasFieldData) continue;
-      const effectiveCat = (cat || lastCategory || "Tinh sạch").slice(0, 60);
-      const effectiveName = (name || lastMethodName).slice(0, 100);
+      const effectiveCat = (cat || lastCategory || "Tinh sạch").slice(0, 150);
+      const effectiveName = (name || lastMethodName).slice(0, 300);
       if (cat) lastCategory = effectiveCat;
       if (name) lastMethodName = effectiveName;
       if (!effectiveName) continue;
@@ -2084,7 +2084,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
             normStr(row.field_type || row["Loại thông số"] || row["Kiểu"]),
             Boolean(rawItemCode)
           );
-          const label = (rawLabel || rawItemCode || rawKey).slice(0, 100);
+          const label = (rawLabel || rawItemCode || rawKey).slice(0, 200);
           const key = toMethodFieldKey(rawKey || label, idx, usedKeys);
           const required = parseBoolFlag(row.required ?? row["Bắt buộc"], true);
 
@@ -2120,7 +2120,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
               uom: itemRes.base_uom.slice(0, 20),
             });
           } else {
-            const unit = normStr(row.unit || row.uom || row["Đơn vị"]) || null;
+            const unit = normStr(row.unit || row.uom || row["Đơn vị"]) || (fType === "EQUIPMENT" && rawItemCode ? rawItemCode : null);
             fields.push({
               key,
               label,
@@ -2131,12 +2131,20 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
           }
         }
 
-        const existing = (
+        let existing = (
           await tx.query(
             "SELECT id, version FROM oligo.ps_method WHERE lower(trim(category)) = lower(trim($1)) AND lower(trim(name)) = lower(trim($2)) LIMIT 1",
             [category, methodName]
           )
         ).rows[0];
+        if (!existing && methodName.length > 100) {
+          existing = (
+            await tx.query(
+              "SELECT id, version FROM oligo.ps_method WHERE lower(trim(category)) = lower(trim($1)) AND length(name) = 100 AND lower(name) = lower($2) LIMIT 1",
+              [category, methodName.slice(0, 100)]
+            )
+          ).rows[0];
+        }
         await saveMethod(tx, actor, existing?.id ?? null, {
           category,
           name: methodName,
@@ -2155,14 +2163,14 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       }
     }
   } else if (templateKey === "OLIGO_POST_WORKFLOW") {
-    await authorizeAnywhere(tx, actor, "oligo.sop.manage");
+    await authorizeAnywhereOneOf(tx, actor, ["oligo.sop.manage", "oligo.post.manage", "oligo.sop.edit"]);
     let lastWfName = "";
     const grouped = new Map<string, Record<string, unknown>[]>();
     for (const r of rawRows) {
       const wfName = normStr(r.workflow_name || r.name || r["Tên quy trình"] || r["Tên quy trình SOP"]);
       const mName = normStr(r.method_name || r["Phương pháp"] || r["Tên phương pháp"]);
       if (!wfName && !mName) continue;
-      const effectiveWfName = (wfName || lastWfName).slice(0, 100);
+      const effectiveWfName = (wfName || lastWfName).slice(0, 300);
       if (wfName) lastWfName = effectiveWfName;
       if (!effectiveWfName) continue;
       const arr = grouped.get(effectiveWfName) ?? [];

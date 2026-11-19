@@ -21,10 +21,51 @@ registerPermissions([
 
 const PURIFICATIONS = ["DESALT", "OPC", "HPLC", "PAGE"] as const;
 
+let sopWideColsEnsured = false;
+async function ensureOligoSopWideColumns(tx: Tx): Promise<void> {
+  if (sopWideColsEnsured) return;
+  await tx.query("SAVEPOINT sp_oligo_sop_wide");
+  try {
+    await tx.query("ALTER TABLE oligo.ps_method ALTER COLUMN category TYPE varchar(150)");
+    await tx.query("ALTER TABLE oligo.ps_method ALTER COLUMN name TYPE varchar(300)");
+    await tx.query("ALTER TABLE oligo.ps_workflow ALTER COLUMN name TYPE varchar(300)");
+    await tx.query("RELEASE SAVEPOINT sp_oligo_sop_wide");
+    sopWideColsEnsured = true;
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_oligo_sop_wide").catch(() => {});
+  }
+}
+
+async function authorizeSopEdit(tx: Tx, actor: AuthzActor): Promise<void> {
+  if (actor.isRootAdmin || actor.isPortalAdmin) return;
+  for (const perm of ["oligo.sop.manage", "oligo.post.manage", "oligo.sop.edit"]) {
+    try {
+      await authorizeAnywhere(tx, actor, perm);
+      return;
+    } catch (err: any) {
+      if (err?.code !== "FORBIDDEN") throw err;
+    }
+  }
+  await authorizeAnywhere(tx, actor, "oligo.sop.manage");
+}
+
+async function authorizeSopDelete(tx: Tx, actor: AuthzActor): Promise<void> {
+  if (actor.isRootAdmin || actor.isPortalAdmin) return;
+  for (const perm of ["oligo.sop.delete", "oligo.sop.edit", "oligo.sop.manage", "oligo.post.manage"]) {
+    try {
+      await authorizeAnywhere(tx, actor, perm);
+      return;
+    } catch (err: any) {
+      if (err?.code !== "FORBIDDEN") throw err;
+    }
+  }
+  await authorizeAnywhere(tx, actor, "oligo.sop.delete");
+}
+
 const fieldSchema = z
   .object({
     key: z.string().trim().regex(/^[a-z][a-z0-9_]{0,39}$/, "mã trường: chữ thường, số, _"),
-    label: z.string().trim().min(1).max(100),
+    label: z.string().trim().min(1).max(200),
     type: z.enum(["NUMBER", "TEXT", "EQUIPMENT", "REAGENT", "COLUMN"]),
     unit: z.string().trim().max(20).optional().nullable(),
     required: z.boolean().default(true),
@@ -36,8 +77,8 @@ const fieldSchema = z
 export type StepField = z.infer<typeof fieldSchema>;
 
 const methodSchema = z.object({
-  category: z.string().trim().min(1).max(60),
-  name: z.string().trim().min(1).max(100),
+  category: z.string().trim().min(1).max(150),
+  name: z.string().trim().min(1).max(300),
   kind: z.enum(["STANDARD", "QUANTIFICATION"]).default("STANDARD"),
   target_hours: z.coerce.number().positive().max(1000).optional().nullable(),
   fields: z.array(fieldSchema).max(30),
@@ -50,14 +91,8 @@ function checkFields(fields: StepField[]) {
 
 /** Library of step methods: what is recorded at a step (numbers, text, equipment used, reagents consumed). */
 export async function saveMethod(tx: Tx, actor: AuthzActor, id: string | null, input: unknown) {
-  if (!id) {
-    await authorizeAnywhere(tx, actor, "oligo.sop.manage").catch((err) => {
-      if (err?.code === "FORBIDDEN") return authorizeAnywhere(tx, actor, "oligo.sop.edit");
-      throw err;
-    });
-  } else {
-    await authorizeAnywhere(tx, actor, "oligo.sop.edit");
-  }
+  await ensureOligoSopWideColumns(tx);
+  await authorizeSopEdit(tx, actor);
   const raw = (input ?? {}) as Record<string, unknown>;
   const data = parseInput(methodSchema, input);
   checkFields(data.fields);
@@ -89,9 +124,9 @@ export async function saveMethod(tx: Tx, actor: AuthzActor, id: string | null, i
   return (await tx.query("SELECT * FROM oligo.ps_method WHERE id = $1", [id])).rows[0];
 }
 
-/** Delete a step method (Admin only). */
+/** Delete a step method. */
 export async function deleteMethod(tx: Tx, actor: AuthzActor, id: string, input: unknown) {
-  await authorizeAnywhere(tx, actor, "oligo.sop.delete");
+  await authorizeSopDelete(tx, actor);
   const methodId = parseInput(z.string().uuid("ID phương pháp không hợp lệ."), id);
   const raw = (input ?? {}) as Record<string, unknown>;
   const reason = parseInput(
@@ -137,10 +172,10 @@ export async function deleteMethod(tx: Tx, actor: AuthzActor, id: string, input:
 }
 
 const workflowSchema = z.object({
-  name: z.string().trim().min(1).max(100),
+  name: z.string().trim().min(1).max(300),
   description: z.string().trim().max(1000).optional().nullable(),
   purifications: z.array(z.enum(PURIFICATIONS)).max(4).default([]),
-  steps: z.array(z.object({ method_id: z.string().uuid(), name: z.string().trim().max(100).optional().nullable() })).min(1, "quy trình cần ít nhất một bước").max(30),
+  steps: z.array(z.object({ method_id: z.string().uuid(), name: z.string().trim().max(300).optional().nullable() })).min(1, "quy trình cần ít nhất một bước").max(30),
   status: z.enum(["ACTIVE", "INACTIVE"]).default("ACTIVE"),
 });
 
@@ -149,14 +184,8 @@ const workflowSchema = z.object({
  * OD / nmol from there). A change is a new revision; records already started keep the steps they started with.
  */
 export async function saveWorkflow(tx: Tx, actor: AuthzActor, id: string | null, input: unknown) {
-  if (!id) {
-    await authorizeAnywhere(tx, actor, "oligo.sop.manage").catch((err) => {
-      if (err?.code === "FORBIDDEN") return authorizeAnywhere(tx, actor, "oligo.sop.edit");
-      throw err;
-    });
-  } else {
-    await authorizeAnywhere(tx, actor, "oligo.sop.edit");
-  }
+  await ensureOligoSopWideColumns(tx);
+  await authorizeSopEdit(tx, actor);
   const raw = (input ?? {}) as Record<string, unknown>;
   const data = parseInput(workflowSchema, input);
   const methods = (await tx.query("SELECT id, name, kind, status FROM oligo.ps_method WHERE id = ANY($1::uuid[])", [data.steps.map((s) => s.method_id)])).rows;
@@ -201,9 +230,9 @@ export async function saveWorkflow(tx: Tx, actor: AuthzActor, id: string | null,
   return (await tx.query("SELECT * FROM oligo.ps_workflow WHERE id = $1", [id])).rows[0];
 }
 
-/** Delete an SOP workflow (Admin only). */
+/** Delete an SOP workflow. */
 export async function deleteWorkflow(tx: Tx, actor: AuthzActor, id: string, input: unknown) {
-  await authorizeAnywhere(tx, actor, "oligo.sop.delete");
+  await authorizeSopDelete(tx, actor);
   const workflowId = parseInput(z.string().uuid("ID quy trình không hợp lệ."), id);
   const raw = (input ?? {}) as Record<string, unknown>;
   const reason = parseInput(

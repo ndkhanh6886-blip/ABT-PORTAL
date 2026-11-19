@@ -126,9 +126,12 @@ function MethodEditor({ base, isClone, onClose }: { base?: Method; isClone?: boo
     mutationFn: () => {
       const body = { ...m, target_hours: m.target_hours ? Number(m.target_hours) : null, fields: buildUniqueMethodFields(fields) };
       if (!isEdit) return api("/api/factory/oligo/sop/methods", { method: "POST", idempotent: true, json: body });
-      const reason = window.prompt("Lý do sửa phương pháp:");
-      if (!reason) throw new Error("Cần lý do sửa.");
-      return api(`/api/factory/oligo/sop/methods/${base!.id}`, { method: "PUT", json: { ...body, version: base!.version, reason } });
+      const reason = window.prompt("Lý do sửa phương pháp:", "Cập nhật thông tin phương pháp SOP");
+      if (reason === null) throw new Error("Đã hủy thao tác sửa.");
+      return api(`/api/factory/oligo/sop/methods/${base!.id}`, {
+        method: "PUT",
+        json: { ...body, version: base!.version, reason: reason.trim() || "Cập nhật thông tin phương pháp SOP" },
+      });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["factory", "oligo-sop"] });
@@ -216,9 +219,12 @@ function WorkflowEditor({ base, isClone, methods, onClose }: { base?: Workflow; 
     mutationFn: () => {
       const body = { ...w, steps: steps.map((s) => ({ method_id: s.method_id, name: s.name || null })) };
       if (!isEdit) return api("/api/factory/oligo/sop/workflows", { method: "POST", idempotent: true, json: body });
-      const reason = window.prompt("Lý do sửa quy trình (các hồ sơ đang làm giữ bản cũ):");
-      if (!reason) throw new Error("Cần lý do sửa.");
-      return api(`/api/factory/oligo/sop/workflows/${base!.id}`, { method: "PUT", json: { ...body, version: base!.version, reason } });
+      const reason = window.prompt("Lý do sửa quy trình (các hồ sơ đang làm giữ bản cũ):", "Cập nhật quy trình SOP");
+      if (reason === null) throw new Error("Đã hủy thao tác sửa.");
+      return api(`/api/factory/oligo/sop/workflows/${base!.id}`, {
+        method: "PUT",
+        json: { ...body, version: base!.version, reason: reason.trim() || "Cập nhật quy trình SOP" },
+      });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["factory", "oligo-sop"] });
@@ -282,16 +288,44 @@ export function SopConfigView({ canManage }: { canManage: boolean }) {
   const qc = useQueryClient();
   const me = useFactoryMe();
   const perms = new Set(me.data?.permissions ?? []);
-  const canEditSop = Boolean(me.data?.is_root || perms.has("oligo.sop.edit"));
-  const canDeleteSop = Boolean(me.data?.is_root || perms.has("oligo.sop.delete"));
-  const canCreateOrClone = Boolean(canManage || canEditSop);
+  const hasSopManage = Boolean(
+    canManage ||
+      me.data?.is_root ||
+      perms.has("oligo.sop.manage") ||
+      perms.has("oligo.post.manage") ||
+      perms.has("oligo.sop.edit")
+  );
+  const canEditSop = hasSopManage;
+  const canDeleteSop = Boolean(hasSopManage || perms.has("oligo.sop.delete"));
+  const canCreateOrClone = hasSopManage;
 
   const sop = useQuery({ queryKey: ["factory", "oligo-sop"], queryFn: () => api<{ methods: Method[]; workflows: Workflow[] }>("/api/factory/oligo/sop") });
   const [methodState, setMethodState] = useState<{ item?: Method; isClone?: boolean } | null>(null);
   const [workflowState, setWorkflowState] = useState<{ item?: Workflow; isClone?: boolean } | null>(null);
+  const [methodQ, setMethodQ] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
   const methods = sop.data?.methods ?? [];
   const workflows = sop.data?.workflows ?? [];
   const nameOf = (id: string) => methods.find((m) => m.id === id)?.name ?? "?";
+
+  const categoryCounts = React.useMemo(() => {
+    const map = new Map<string, number>();
+    for (const m of methods) {
+      const cat = (m.category || "Khác").trim();
+      map.set(cat, (map.get(cat) ?? 0) + 1);
+    }
+    return Array.from(map.entries());
+  }, [methods]);
+
+  const filteredMethods = React.useMemo(() => {
+    const q = methodQ.trim().toLowerCase();
+    return methods.filter((m) => {
+      if (categoryFilter && (m.category || "Khác").trim() !== categoryFilter) return false;
+      if (!q) return true;
+      const fieldsStr = m.fields.map((f) => `${f.label} ${f.item_code ?? ""} ${f.unit ?? ""}`).join(" ");
+      return `${m.category} ${m.name} ${fieldsStr}`.toLowerCase().includes(q);
+    });
+  }, [methods, methodQ, categoryFilter]);
 
   const deleteMethodMut = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) =>
@@ -317,11 +351,11 @@ export function SopConfigView({ canManage }: { canManage: boolean }) {
         actions={
           <div className="flex flex-wrap gap-1.5">
             {methods.length > 0 && (
-              <Button type="button" variant="ghost" onClick={() => exportMethodsExcel(methods)}>
+              <Button type="button" variant="ghost" onClick={() => exportMethodsExcel(filteredMethods)}>
                 📤 Xuất Excel (.xlsx)
               </Button>
             )}
-            {canManage && (
+            {canCreateOrClone && (
               <Button
                 type="button"
                 variant="ghost"
@@ -337,7 +371,7 @@ export function SopConfigView({ canManage }: { canManage: boolean }) {
                 📥 Nhập Excel Phương pháp ↗
               </Button>
             )}
-            {canManage && !methodState && (
+            {canCreateOrClone && !methodState && (
               <Button type="button" onClick={() => setMethodState({})}>
                 + Tạo phương pháp bước mới
               </Button>
@@ -353,17 +387,57 @@ export function SopConfigView({ canManage }: { canManage: boolean }) {
             onClose={() => setMethodState(null)}
           />
         )}
+        {methods.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3 p-2 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setCategoryFilter("")}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                  categoryFilter === ""
+                    ? "bg-sky-700 text-white border-sky-700"
+                    : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
+                }`}
+              >
+                Tất cả ({methods.length})
+              </button>
+              {categoryCounts.map(([cat, cnt]) => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setCategoryFilter(categoryFilter === cat ? "" : cat)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                    categoryFilter === cat
+                      ? "bg-sky-700 text-white border-sky-700"
+                      : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  {cat} ({cnt})
+                </button>
+              ))}
+            </div>
+            <input
+              className={`${inputClass} w-72`}
+              placeholder="🔍 Tìm tên phương pháp, nhóm bước, mã hóa chất..."
+              value={methodQ}
+              onChange={(e) => setMethodQ(e.target.value)}
+            />
+          </div>
+        )}
         {sop.data && methods.length === 0 && !methodState && (
           <Empty>
             <div className="flex flex-col items-center gap-2">
               <span>Chưa có phương pháp. Thêm các bước như cắt &amp; khử bảo vệ, tinh sạch HPLC/PAGE/OPC, đo OD.</span>
-              {canManage && <Button type="button" onClick={() => setMethodState({})}>+ Tạo phương pháp bước đầu tiên</Button>}
+              {canCreateOrClone && <Button type="button" onClick={() => setMethodState({})}>+ Tạo phương pháp bước đầu tiên</Button>}
             </div>
           </Empty>
         )}
-        {methods.length > 0 && (
-          <Table head={["Nhóm bước", "Phương pháp", "Thời gian chuẩn", "Thông số ghi", "Trạng thái", ""]}>
-            {methods.map((m) => (
+        {methods.length > 0 && filteredMethods.length === 0 && (
+          <Empty>Không tìm thấy phương pháp nào khớp từ khóa hoặc nhóm bước đang chọn.</Empty>
+        )}
+        {filteredMethods.length > 0 && (
+          <Table head={["Nhóm bước", "Phương pháp", "Thời gian chuẩn", "Thông số ghi", "Trạng thái", "Thao tác"]}>
+            {filteredMethods.map((m) => (
               <tr key={m.id} className={m.status === "ACTIVE" ? "" : "opacity-50"}>
                 <td className="py-1.5 pr-3 text-xs">{m.category}</td>
                 <td className="py-1.5 pr-3">{m.name}{m.kind === "QUANTIFICATION" && <span className="text-sky-700 dark:text-sky-400 text-xs"> · đo OD</span>}</td>
