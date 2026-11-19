@@ -344,7 +344,7 @@ export function downloadOligoSequenceExcelTemplate(filename = "Mau_Nhap_Trinh_Tu
   const guideRows = [
     { "Cột thông tin": "Tên trình tự", "Bắt buộc": "Khuyến nghị", "Giá trị hợp lệ / Ghi chú": "Tên Primer / Probe / Amplicon (VD: HBV-F2, DEN1-PRB, SARS2-PC)" },
     { "Cột thông tin": "Trình tự 5'-3'", "Bắt buộc": "Bắt buộc *", "Giá trị hợp lệ / Ghi chú": "Chuỗi nucleotide 5'->3' (A, C, G, T, U, base suy biến IUPAC). Hỗ trợ biến đổi huỳnh quang [FAM]...[BHQ1], [HEX], [ROX], [CY5], [VIC] hoặc /FAM/.../BHQ1/" },
-    { "Cột thông tin": "Thang tổng hợp", "Bắt buộc": "Tùy chọn", "Giá trị hợp lệ / Ghi chú": "25NMOL, 50NMOL, 100NMOL, 200NMOL, 1000NMOL (Nếu để trống sẽ lấy theo Thang mặc định trên màn hình)" },
+    { "Cột thông tin": "Thang tổng hợp", "Bắt buộc": "Tùy chọn", "Giá trị hợp lệ / Ghi chú": "25NMOL, 50NMOL, 100NMOL, 200NMOL, 250NMOL, 500NMOL, 1000NMOL (Nếu để trống sẽ lấy theo Thang mặc định trên màn hình)" },
     { "Cột thông tin": "Tinh sạch", "Bắt buộc": "Tùy chọn", "Giá trị hợp lệ / Ghi chú": "DESALT, OPC, HPLC, PAGE (Nếu để trống sẽ lấy theo Tinh sạch mặc định)" },
     { "Cột thông tin": "Định dạng", "Bắt buộc": "Tùy chọn", "Giá trị hợp lệ / Ghi chú": "LYOPHILIZED (Đông khô) hoặc LIQUID (Dung dịch)" },
     { "Cột thông tin": "Phân loại", "Bắt buộc": "Tùy chọn", "Giá trị hợp lệ / Ghi chú": "PRIMER, PROBE, TEMPLATE (Amplicon/Chứng dương). Nếu để trống hệ thống tự nhận diện theo độ dài & huỳnh quang" },
@@ -542,6 +542,8 @@ export function OligoSequenceRowsEditor({
           { code: "50NMOL", label: "50 nmol", synth_nmol: 50 },
           { code: "100NMOL", label: "100 nmol", synth_nmol: 100 },
           { code: "200NMOL", label: "200 nmol", synth_nmol: 200 },
+          { code: "250NMOL", label: "250 nmol", synth_nmol: 250 },
+          { code: "500NMOL", label: "500 nmol", synth_nmol: 500 },
           { code: "1000NMOL", label: "1000 nmol", synth_nmol: 1000 },
         ];
 

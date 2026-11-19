@@ -576,7 +576,7 @@ export async function dispatchInternalOrderLineToProduction(tx: Tx, actor: Authz
 const addOligoSequencesSchema = z.object({
   order_id: z.string().uuid(),
   sequences_text: z.string().trim().min(3, "Vui lòng nhập ít nhất 1 trình tự Primer/Probe (5'→3')"),
-  scale_code: z.enum(["25NMOL", "50NMOL", "100NMOL", "200NMOL", "1000NMOL"]).default("200NMOL"),
+  scale_code: z.enum(["25NMOL", "50NMOL", "100NMOL", "200NMOL", "250NMOL", "500NMOL", "1000NMOL"]).default("200NMOL"),
   purification: z.enum(["DESALT", "OPC", "HPLC", "PAGE"]).default("OPC"),
   format: z.enum(["LYOPHILIZED", "LIQUID_100UM", "LIQUID_10UM"]).default("LYOPHILIZED"),
 });

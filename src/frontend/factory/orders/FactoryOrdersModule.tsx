@@ -264,7 +264,7 @@ function NewInternalOrderForm({ onDone }: { onDone: (createdId: string) => void 
     {
       name: string;
       sequence: string;
-      scale_code: "25NMOL" | "50NMOL" | "100NMOL" | "200NMOL" | "1000NMOL";
+      scale_code: "25NMOL" | "50NMOL" | "100NMOL" | "200NMOL" | "250NMOL" | "500NMOL" | "1000NMOL";
       purification: "DESALT" | "OPC" | "HPLC" | "PAGE";
       format: "LYOPHILIZED" | "LIQUID_100UM" | "LIQUID_10UM";
     }[]
@@ -699,7 +699,7 @@ function NewInternalOrderForm({ onDone }: { onDone: (createdId: string) => void 
                           parsed.rows.map((r) => ({
                             name: r.name,
                             sequence: r.sequence,
-                            scale_code: (["25NMOL", "50NMOL", "100NMOL", "200NMOL", "1000NMOL"].includes(r.scale_code)
+                            scale_code: (["25NMOL", "50NMOL", "100NMOL", "200NMOL", "250NMOL", "500NMOL", "1000NMOL"].includes(r.scale_code)
                               ? r.scale_code
                               : "200NMOL") as any,
                             purification: (["DESALT", "OPC", "HPLC", "PAGE"].includes(r.purification)
@@ -789,6 +789,8 @@ function NewInternalOrderForm({ onDone }: { onDone: (createdId: string) => void 
                             <option value="50NMOL">50 nmol</option>
                             <option value="100NMOL">100 nmol</option>
                             <option value="200NMOL">200 nmol</option>
+                            <option value="250NMOL">250 nmol</option>
+                            <option value="500NMOL">500 nmol</option>
                             <option value="1000NMOL">1000 nmol</option>
                           </select>
                         </Field>
