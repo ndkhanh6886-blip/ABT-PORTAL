@@ -111,26 +111,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         // Phiên đăng nhập bắt buộc phải được máy chủ xác thực qua cookie httpOnly (HMAC-SHA256).
         // Tuyệt đối không mở giao diện nếu chỉ có dữ liệu trong localStorage mà không có phiên máy chủ hợp lệ.
-        fetch("/api/auth?action=session", { cache: "no-store" })
-            .then(async r => {
-                if (!r.ok) {
-                    dropSession();
-                    return;
-                }
-                const d = await r.json().catch(() => null);
-                if (d?.user) {
-                    const refreshed = mapServerUser(d.user, parsedUser!);
-                    setUser(refreshed);
-                    try {
-                        localStorage.setItem("current_user", JSON.stringify(refreshed));
-                        localStorage.setItem("tbr_current_user", JSON.stringify(refreshed));
-                    } catch (err) {}
-                } else {
-                    dropSession();
-                }
-            })
-            .catch(() => dropSession())
-            .finally(() => setLoading(false));
+        // Chỉ bỏ phiên khi máy chủ trả lời rõ ràng là phiên không hợp lệ (401 / 403, hoặc trả lời được mà không có user).
+        // Lỗi tạm thời (máy chủ đang khởi động lại khi deploy: 502/503/504, mất mạng, lỗi 5xx) KHÔNG bỏ phiên: giữ màn
+        // hình đang tải và hỏi lại sau 1, 2, 4… giây (tối đa 10 giây). Trước đây mỗi lần deploy, ai đang dùng đều bị đẩy
+        // về màn hình đăng nhập dù phiên vẫn còn hạn (nhật ký ghi hàng chục lần LOGIN liên tiếp).
+        // Không hủy vòng thử lại khi effect được dọn dẹp: sessionCheckedRef chặn lần chạy sau, nên hủy ở đây sẽ treo
+        // màn hình đang tải (Strict Mode / đổi pathname). AuthProvider sống suốt phiên dùng ứng dụng.
+        let attempt = 0;
+        const checkSession = () => {
+            fetch("/api/auth?action=session", { cache: "no-store" })
+                .then(async r => {
+                    if (r.status === 401 || r.status === 403) {
+                        dropSession();
+                        setLoading(false);
+                        return;
+                    }
+                    if (!r.ok) {
+                        retryLater();
+                        return;
+                    }
+                    const d = await r.json().catch(() => undefined);
+                    if (d === undefined) {
+                        // 200 nhưng không đọc được nội dung (trang lỗi của proxy khi đang deploy): coi là lỗi tạm thời
+                        retryLater();
+                        return;
+                    }
+                    if (d?.user) {
+                        const refreshed = mapServerUser(d.user, parsedUser!);
+                        setUser(refreshed);
+                        try {
+                            localStorage.setItem("current_user", JSON.stringify(refreshed));
+                            localStorage.setItem("tbr_current_user", JSON.stringify(refreshed));
+                        } catch (err) {}
+                    } else {
+                        dropSession();
+                    }
+                    setLoading(false);
+                })
+                .catch(() => retryLater());
+        };
+        const retryLater = () => {
+            attempt += 1;
+            const delay = Math.min(10_000, 1000 * 2 ** (attempt - 1));
+            console.warn(`[auth] Máy chủ chưa sẵn sàng khi kiểm tra phiên, thử lại sau ${delay / 1000}s (lần ${attempt})`);
+            window.setTimeout(checkSession, delay);
+        };
+        checkSession();
     }, [pathname]);
 
     // Máy chủ báo phiên hết hạn / không hợp lệ -> quay về màn hình đăng nhập (không xóa dữ liệu đệm chưa đồng bộ)

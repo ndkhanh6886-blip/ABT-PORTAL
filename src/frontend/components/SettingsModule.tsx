@@ -62,6 +62,7 @@ import {
   Factory
 } from "lucide-react";
 import { employeeCodeVariants, formatDate, normalizePersonText, personNameKey } from "@/backend/services/utils";
+import { formatVNDateTime } from "@/backend/services/dates";
 import { classifyEditDeletePermission, FactoryAccessSection, FactoryFeatureGroups } from "@/frontend/factory/settings/FactoryAccessSection";
 import { FactorySettingsModule } from "@/frontend/factory/settings/FactorySettingsModule";
 import { PERMISSION_GROUPS, ROLE_PRESETS, DEPARTMENT_MODULES, DepartmentModule, resolveRolePreset, getDefaultDepartmentPermissions, getEffectivePermissions, hasPermission, inferSystemRoleFromPosition, COMPANY_DEPARTMENTS } from "@/backend/services/permissions";
@@ -2905,7 +2906,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {logs.map((l) => (
                   <tr key={l.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
-                    <td className="py-3 px-4 text-slate-400 whitespace-nowrap font-mono text-[11px]">{formatDate(l.created_at)}</td>
+                    <td className="py-3 px-4 text-slate-400 whitespace-nowrap font-mono text-[11px]">{formatVNDateTime(l.created_at, formatDate(l.created_at))}</td>
                     <td className="py-3 px-4">
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-50 dark:bg-orange-950 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-blue-800 font-mono">
                         {l.action}
