@@ -5,7 +5,30 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActionBar, type AllowedAction } from "../actions";
 import { api, fmtDate, fmtQty, useFactoryMe } from "../api";
 import { PutAway } from "./PutAway";
-import { Button, Card, ErrorNote, inputClass, StatusBadge } from "../ui";
+import { Button, Card, ErrorNote, inputClass, StatusBadge, Table } from "../ui";
+
+const LOT_MOVEMENT_REASON_LABEL: Record<string, string> = {
+  INITIAL_BALANCE: "📦 Tồn kho đầu kỳ",
+  PURCHASE_RECEIPT: "📥 Nhập mua hàng (NCC)",
+  PO_RECEIPT: "📥 Nhập mua hàng (PO)",
+  GOODS_RECEIPT: "📥 Nhập hàng mua về",
+  PREPARATION: "🧪 Nhập bán thành phẩm pha chế",
+  PRODUCTION_OUTPUT: "🏭 Nhập thành phẩm sản xuất",
+  PUTAWAY: "📦 Cất lên kệ chính (BT ➔ A1)",
+  DEPT_SUPPLY: "🚚 Cấp phát sang Kho Nhánh",
+  INTER_WAREHOUSE: "🔄 Điều chuyển Liên kho",
+  REPLENISHMENT: "🚚 Bổ sung tồn kho nhánh",
+  RELOCATE: "Đổi vị trí trong kho",
+  PRODUCTION: "📤 Xuất sản xuất",
+  SYNTHESIS: "🧬 Xuất chạy Mẻ tổng hợp Oligo",
+  POST_SYNTHESIS: "🧪 Xuất Hậu tổng hợp Oligo",
+  RND: "🔬 Xuất Nghiên cứu R&D",
+  QC_SAMPLE: "🛡️ Xuất mẫu kiểm nghiệm QC",
+  SCRAP: "🗑️ Xuất hủy",
+  RETURN_TO_SUPPLIER: "↩️ Xuất trả nhà cung cấp",
+  COUNT_DIFF: "⚖️ Điều chỉnh kiểm kê",
+  DAMAGE: "⚠️ Điều chỉnh hư hỏng",
+};
 
 interface LotDetail {
   id: string;
@@ -21,6 +44,22 @@ interface LotDetail {
   version: number;
   balances: { location_id: string; location_code: string; is_quarantine: boolean; warehouse_id: string; warehouse_code: string; qty_on_hand: string; qty_reserved: string }[];
   qc_tests: { id: string; code: string; test_kind: string; status: string; overall_result: string | null; created_at: string }[];
+  movements?: {
+    line_id: string;
+    document_id: string;
+    document_code: string;
+    doc_type: string;
+    reason_code: string;
+    notes: string | null;
+    occurred_at: string;
+    performed_by_name: string | null;
+    from_wh_code: string | null;
+    from_loc_code: string | null;
+    to_wh_code: string | null;
+    to_loc_code: string | null;
+    qty: number;
+    uom: string;
+  }[];
   actions: AllowedAction[];
 }
 
@@ -176,6 +215,41 @@ export function LotPanel({ lotId, onClose }: { lotId: string; onClose: () => voi
               </ul>
             )}
           </div>
+          {Array.isArray(l.movements) && l.movements.length > 0 && (
+            <div className="pt-2 border-t border-slate-200 dark:border-slate-800">
+              <h3 className="text-xs font-bold text-slate-700 dark:text-slate-200 mb-1.5">
+                📜 Lịch sử Nhập kho – Cấp phát – Xuất dùng của Lô {l.code} ({l.movements.length} giao dịch)
+              </h3>
+              <Table head={["Ngày giờ", "Mã phiếu", "Nghiệp vụ", "Từ Kho · Vị trí", "Đến Kho · Vị trí", "Số lượng", "Người thực hiện"]}>
+                {l.movements.map((mv) => (
+                  <tr key={mv.line_id} className="text-xs">
+                    <td className="py-1.5 pr-3 whitespace-nowrap text-slate-500">
+                      {new Date(mv.occurred_at).toLocaleString("vi-VN", {
+                        timeZone: "Asia/Ho_Chi_Minh",
+                        dateStyle: "short",
+                        timeStyle: "short",
+                      })}
+                    </td>
+                    <td className="py-1.5 pr-3 font-mono font-bold text-sky-700 dark:text-sky-400">{mv.document_code}</td>
+                    <td className="py-1.5 pr-3 font-medium">
+                      {LOT_MOVEMENT_REASON_LABEL[mv.reason_code] ?? mv.reason_code}
+                      {mv.notes && <div className="text-[11px] text-slate-500">{mv.notes}</div>}
+                    </td>
+                    <td className="py-1.5 pr-3 font-mono">
+                      {mv.from_wh_code ? `${mv.from_wh_code} · ${mv.from_loc_code ?? ""}` : "—"}
+                    </td>
+                    <td className="py-1.5 pr-3 font-mono font-semibold text-emerald-700 dark:text-emerald-400">
+                      {mv.to_wh_code ? `${mv.to_wh_code} · ${mv.to_loc_code ?? ""}` : "—"}
+                    </td>
+                    <td className="py-1.5 pr-3 font-mono font-bold whitespace-nowrap">
+                      {fmtQty(mv.qty)} {mv.uom}
+                    </td>
+                    <td className="py-1.5 pr-3">{mv.performed_by_name ?? "Hệ thống"}</td>
+                  </tr>
+                ))}
+              </Table>
+            </div>
+          )}
         </div>
       )}
     </Card>

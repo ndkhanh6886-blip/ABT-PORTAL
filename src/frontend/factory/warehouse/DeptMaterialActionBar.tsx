@@ -2,11 +2,12 @@
 
 import React, { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, Boxes, PackagePlus, ShoppingCart } from "lucide-react";
+import { ArrowUpRight, Boxes, FileStack, PackagePlus, ShoppingCart } from "lucide-react";
 import { api, fmtDate, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { openExcelImportTemplate } from "../import/FactoryExcelImportModule";
 import { CatalogItemCombobox, type CatalogMasterItemOption } from "./CatalogItemCombobox";
+import { DocumentDetail, REASON_VI_LABEL, renderWarehouseFlow } from "./DocumentsView";
 import { StockCategoryBadge, type StockItemGroup } from "./StockView";
 import { DepartmentWorkTasksBar } from "@/frontend/components/DepartmentWorkTasksBar";
 
@@ -118,7 +119,10 @@ export function DeptMaterialActionBar({
   defaultReasonPlaceholder?: string;
 }) {
   const qc = useQueryClient();
-  const [panel, setPanel] = useState<"none" | "stock" | "requisition" | "pr">("none");
+  const [panel, setPanel] = useState<"none" | "stock" | "history" | "requisition" | "pr">("none");
+  const [historyFlow, setHistoryFlow] = useState<"" | "PURCHASE_IN" | "SUPPLY_TRANSFER" | "PRODUCTION_OUT">("");
+  const [historyQ, setHistoryQ] = useState("");
+  const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
 
   const warehouses = useQuery({
     queryKey: ["factory", "warehouses"],
@@ -150,6 +154,16 @@ export function DeptMaterialActionBar({
         `/api/factory/inv/stock?page_size=25${currentWhId ? `&warehouse_id=${currentWhId}` : ""}${stockGroup ? `&item_group=${stockGroup}` : ""}${stockQ.trim() ? `&q=${encodeURIComponent(stockQ.trim())}` : ""}`
       ),
     enabled: panel === "stock" || panel === "requisition",
+  });
+
+  // Quick Department Warehouse Receipt / Issue / Supply History
+  const deptHistory = useQuery({
+    queryKey: ["factory", "dept-quick-history", currentWhId, historyFlow, historyQ],
+    queryFn: () =>
+      api<{ rows: any[]; total: number }>(
+        `/api/factory/inv/documents?view=ledger&page_size=30${currentWhId ? `&warehouse_id=${currentWhId}` : ""}${historyFlow ? `&flow=${historyFlow}` : ""}${historyQ.trim() ? `&q=${encodeURIComponent(historyQ.trim())}` : ""}`
+      ),
+    enabled: panel === "history",
   });
 
   // Quick Issue / Requisition state
@@ -352,6 +366,19 @@ export function DeptMaterialActionBar({
 
           <button
             type="button"
+            onClick={() => setPanel(panel === "history" ? "none" : "history")}
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl font-bold transition-colors cursor-pointer ${
+              panel === "history"
+                ? "bg-indigo-700 text-white"
+                : "bg-white dark:bg-slate-800 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-50"
+            }`}
+          >
+            <FileStack className="w-3.5 h-3.5" />
+            Phiếu Nhập / Xuất &amp; Lịch sử kho
+          </button>
+
+          <button
+            type="button"
             onClick={() => setPanel(panel === "requisition" ? "none" : "requisition")}
             className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl font-bold transition-colors cursor-pointer ${
               panel === "requisition"
@@ -496,7 +523,7 @@ export function DeptMaterialActionBar({
           <ErrorNote error={deptStock.error} />
           {deptStock.data?.rows.length === 0 && <Empty>Không có lô tồn kho nào khớp bộ lọc.</Empty>}
           {deptStock.data && deptStock.data.rows.length > 0 && (
-            <Table head={["Vật tư", "Phân loại", "Số lô", "Trạng thái", "Hạn dùng", "Kho · Vị trí", "Tồn", "Khả dụng"]}>
+            <Table head={["Vật tư", "Phân loại", "Số lô", "Trạng thái", "Hạn dùng", "Kho · Vị trí", "Tồn", "Khả dụng", "Lịch sử"]}>
               {deptStock.data.rows.map((r) => (
                 <tr key={r.id}>
                   <td className="py-1.5 pr-3 text-xs">
@@ -513,11 +540,172 @@ export function DeptMaterialActionBar({
                   <td className="py-1.5 pr-3 text-right text-xs font-bold text-emerald-700 dark:text-emerald-400">
                     {fmtQty(r.qty_available)} {r.base_uom}
                   </td>
+                  <td className="py-1.5 pr-2 text-xs whitespace-nowrap">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHistoryQ(r.item_code);
+                        setPanel("history");
+                      }}
+                      className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline cursor-pointer"
+                    >
+                      📜 Lịch sử
+                    </button>
+                  </td>
                 </tr>
               ))}
             </Table>
           )}
         </Card>
+      )}
+
+      {/* 1B. Quick Department Warehouse Receipt / Supply / Issue History Drawer */}
+      {panel === "history" && (
+        <div className="space-y-3">
+          {selectedDocId && <DocumentDetail key={selectedDocId} id={selectedDocId} onClose={() => setSelectedDocId(null)} />}
+          <Card
+            title={`📜 Phiếu Nhập / Xuất & Lịch sử Cấp phát Kho — ${deptLabel}`}
+            actions={<Button variant="ghost" onClick={() => setPanel("none")}>Đóng</Button>}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setHistoryFlow("")}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                    historyFlow === ""
+                      ? "bg-indigo-700 text-white border-indigo-700"
+                      : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                  }`}
+                >
+                  📋 Tất cả giao dịch
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHistoryFlow("SUPPLY_TRANSFER")}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                    historyFlow === "SUPPLY_TRANSFER"
+                      ? "bg-sky-700 text-white border-sky-700"
+                      : "bg-white dark:bg-slate-800 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800"
+                  }`}
+                >
+                  🚚 Lịch sử Cấp phát (Kho Tổng ➔ Kho Phòng)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHistoryFlow("PURCHASE_IN")}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                    historyFlow === "PURCHASE_IN"
+                      ? "bg-emerald-700 text-white border-emerald-700"
+                      : "bg-white dark:bg-slate-800 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"
+                  }`}
+                >
+                  📥 Nhập mua hàng / Pha chế mới
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHistoryFlow("PRODUCTION_OUT")}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                    historyFlow === "PRODUCTION_OUT"
+                      ? "bg-rose-700 text-white border-rose-700"
+                      : "bg-white dark:bg-slate-800 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800"
+                  }`}
+                >
+                  📤 Phiếu Xuất tiêu hao tại phòng
+                </button>
+              </div>
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-2 mb-3">
+              <select
+                className={inputClass}
+                value={currentWhId}
+                onChange={(e) => setSelectedWhId(e.target.value)}
+              >
+                <option value="">🌐 Tất cả các kho (Tra cứu cả Kho Tổng &amp; Kho Phòng)</option>
+                {(warehouses.data ?? []).map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.code} — {w.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                className={inputClass}
+                placeholder="🔍 Tìm mã vật tư, tên hóa chất, số lô, mã phiếu..."
+                value={historyQ}
+                onChange={(e) => setHistoryQ(e.target.value)}
+              />
+            </div>
+
+            <ErrorNote error={deptHistory.error} />
+            {deptHistory.data?.rows.length === 0 && (
+              <Empty>Chưa có lịch sử phiếu nhập / cấp phát / phiếu xuất nào khớp bộ lọc.</Empty>
+            )}
+            {deptHistory.data && deptHistory.data.rows.length > 0 && (
+              <Table
+                head={[
+                  "Ngày giờ",
+                  "Mã phiếu",
+                  "Nghiệp vụ",
+                  "Vật tư / Hóa chất",
+                  "Số lô",
+                  "Từ Kho ➔ Đến Kho",
+                  "Số lượng",
+                  "Người thực hiện",
+                ]}
+              >
+                {deptHistory.data.rows.map((mv) => (
+                  <tr
+                    key={mv.line_id}
+                    onClick={() => setSelectedDocId(mv.document_id)}
+                    className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs align-top"
+                  >
+                    <td className="py-2 pr-3 whitespace-nowrap text-slate-500">
+                      {new Date(mv.occurred_at).toLocaleString("vi-VN", {
+                        timeZone: "Asia/Ho_Chi_Minh",
+                        dateStyle: "short",
+                        timeStyle: "short",
+                      })}
+                    </td>
+                    <td className="py-2 pr-3 font-mono font-bold text-sky-700 dark:text-sky-400 whitespace-nowrap">
+                      {mv.document_code}
+                    </td>
+                    <td className="py-2 pr-3">
+                      <div className="font-semibold text-slate-900 dark:text-slate-100">
+                        {REASON_VI_LABEL[mv.reason_code] ?? mv.reason_code}
+                      </div>
+                      {mv.notes && <div className="text-[11px] text-slate-500">{mv.notes}</div>}
+                    </td>
+                    <td className="py-2 pr-3">
+                      <b>{mv.item_code}</b> — {mv.item_name}
+                    </td>
+                    <td className="py-2 pr-3 font-mono">{mv.lot_code ?? "—"}</td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      {renderWarehouseFlow(mv.doc_type, mv.doc_warehouse_code, mv)}
+                    </td>
+                    <td
+                      className={`py-2 pr-3 font-mono font-bold whitespace-nowrap ${
+                        mv.doc_type === "RECEIPT" || mv.doc_type === "RETURN"
+                          ? "text-emerald-700 dark:text-emerald-400"
+                          : mv.doc_type === "ISSUE"
+                            ? "text-rose-700 dark:text-rose-400"
+                            : "text-sky-700 dark:text-sky-400"
+                      }`}
+                    >
+                      {mv.doc_type === "RECEIPT" || mv.doc_type === "RETURN"
+                        ? "+"
+                        : mv.doc_type === "ISSUE"
+                          ? "-"
+                          : "➔ "}
+                      {fmtQty(mv.qty)} {mv.uom}
+                    </td>
+                    <td className="py-2 pr-3 whitespace-nowrap">{mv.performed_by_name ?? "Hệ thống"}</td>
+                  </tr>
+                ))}
+              </Table>
+            )}
+          </Card>
+        </div>
       )}
 
       {/* 2. Quick Material Issue / Consumption Drawer */}

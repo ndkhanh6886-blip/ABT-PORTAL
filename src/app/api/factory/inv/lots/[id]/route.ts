@@ -38,5 +38,26 @@ export const GET = factoryRoute(async (tx, { actor, params }) => {
       [params.id]
     )
   ).rows;
-  return { ...lot, qc_tests: tests, balances, actions: await allowedActionsFor(tx, lotMachine, actor, lot) };
+  const movements = (
+    await tx.query(
+      `SELECT l.id AS line_id,
+              d.id AS document_id, d.code AS document_code, d.doc_type, d.reason_code, d.notes,
+              COALESCE(d.posted_at, d.created_at) AS occurred_at,
+              up.display_name AS performed_by_name,
+              fw.code AS from_wh_code, fl.code AS from_loc_code,
+              tw.code AS to_wh_code, tl.code AS to_loc_code,
+              l.qty::float AS qty, l.uom
+         FROM inv.stock_document_line l
+         JOIN inv.stock_document d ON d.id = l.document_id AND d.status = 'POSTED'
+         LEFT JOIN master.location fl ON fl.id = l.from_location_id
+         LEFT JOIN master.warehouse fw ON fw.id = fl.warehouse_id
+         LEFT JOIN master.location tl ON tl.id = l.to_location_id
+         LEFT JOIN master.warehouse tw ON tw.id = tl.warehouse_id
+         LEFT JOIN core.user_profile up ON up.user_id = COALESCE(d.posted_by, d.created_by)
+        WHERE l.lot_id = $1
+        ORDER BY COALESCE(d.posted_at, d.created_at) DESC, d.code DESC`,
+      [params.id]
+    )
+  ).rows;
+  return { ...lot, qc_tests: tests, balances, movements, actions: await allowedActionsFor(tx, lotMachine, actor, lot) };
 });
