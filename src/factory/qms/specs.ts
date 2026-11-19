@@ -196,6 +196,159 @@ export async function updateSpecDraft(tx: Tx, actor: AuthzActor, id: string, inp
   return upd;
 }
 
+/**
+ * Direct in-place update of a QC specification (DRAFT, EFFECTIVE, or OBSOLETE) by authorized QA/QC managers
+ * or administrators, preserving parameter IDs by sequence index so existing QC test results remain linked.
+ */
+export async function updateSpecDirect(tx: Tx, actor: AuthzActor, id: string, input: unknown): Promise<QcSpec> {
+  await ensureSpecItemsSchema(tx);
+  await authorize(tx, actor, "qms.spec.manage");
+  const { version, reason, ...rest } = parseInput(
+    draftSchema.extend({
+      version: z.number().int().min(0),
+      reason: z.string().trim().max(500).optional().nullable(),
+    }),
+    input
+  );
+  const cur = (await tx.query("SELECT * FROM qms.qc_spec WHERE id = $1 FOR UPDATE", [id])).rows[0];
+  if (!cur) throw notFound("tiêu chuẩn QC");
+  if (cur.version !== version) throw conflict("Tiêu chuẩn vừa được người khác sửa. Tải lại rồi thực hiện lại.", "STALE_VERSION");
+  oligoOnly(rest.applies_to, rest.parameters);
+  const resolvedItemIds = Array.from(new Set([...(rest.item_ids ?? []), ...(rest.item_id ? [rest.item_id] : [])]));
+  const primaryItemId = resolvedItemIds[0] ?? null;
+  if (["ITEM", "RECEIPT", "PRODUCT"].includes(rest.applies_to) && !primaryItemId) {
+    throw invalid("Tiêu chuẩn cho vật tư / thành phẩm phải chọn ít nhất một vật tư / sản phẩm.");
+  }
+
+  const existingParams = (
+    await tx.query("SELECT id, seq FROM qms.qc_spec_parameter WHERE spec_id = $1 ORDER BY seq", [id])
+  ).rows as { id: string; seq: number }[];
+
+  for (let i = 0; i < rest.parameters.length; i++) {
+    const p = rest.parameters[i];
+    const seq = i + 1;
+    const ex = existingParams[i];
+    if (ex) {
+      await tx.query(
+        `UPDATE qms.qc_spec_parameter
+            SET seq = $2, name = $3, method = $4, unit = $5, value_type = $6,
+                lower_limit = $7, upper_limit = $8, target = $9, is_critical = $10,
+                derived_metric = $11, oligo_purifications = $12
+          WHERE id = $1`,
+        [
+          ex.id,
+          seq,
+          p.name,
+          p.method ?? null,
+          p.unit ?? null,
+          p.value_type,
+          p.lower_limit ?? null,
+          p.upper_limit ?? null,
+          p.target ?? null,
+          p.is_critical,
+          p.derived_metric ?? null,
+          p.oligo_purifications?.length ? p.oligo_purifications : null,
+        ]
+      );
+    } else {
+      await tx.query(
+        `INSERT INTO qms.qc_spec_parameter (spec_id, seq, name, method, unit, value_type, lower_limit, upper_limit, target, is_critical, derived_metric, oligo_purifications)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [
+          id,
+          seq,
+          p.name,
+          p.method ?? null,
+          p.unit ?? null,
+          p.value_type,
+          p.lower_limit ?? null,
+          p.upper_limit ?? null,
+          p.target ?? null,
+          p.is_critical,
+          p.derived_metric ?? null,
+          p.oligo_purifications?.length ? p.oligo_purifications : null,
+        ]
+      );
+    }
+  }
+
+  if (existingParams.length > rest.parameters.length) {
+    const extraIds = existingParams.slice(rest.parameters.length).map((x) => x.id);
+    await tx.query(
+      `DELETE FROM qms.qc_spec_parameter
+        WHERE id = ANY($1::uuid[])
+          AND NOT EXISTS (SELECT 1 FROM qms.qc_result r WHERE r.parameter_id = qms.qc_spec_parameter.id)`,
+      [extraIds]
+    );
+  }
+
+  const upd = (
+    await tx.query(
+      "UPDATE qms.qc_spec SET name = $2, applies_to = $3, item_id = $4, notes = $5, version = version + 1, updated_at = now(), updated_by = $6 WHERE id = $1 RETURNING *",
+      [id, rest.name, rest.applies_to, primaryItemId, rest.notes ?? null, actor.userId]
+    )
+  ).rows[0] as QcSpec;
+  await syncSpecItems(tx, id, resolvedItemIds);
+  await writeAudit(tx, actor, {
+    entityType: "qc_spec",
+    entityId: id,
+    action: "update",
+    reason: reason?.trim() || "Cập nhật tiêu chuẩn QC",
+    changes: { name: [cur.name, rest.name], parameters: [existingParams.length, rest.parameters.length] },
+  });
+  return upd;
+}
+
+/**
+ * Deletes a QC specification if it is not referenced by reviewed/completed QC tests,
+ * unlinking any BOM reference and logging the deletion in the audit trail.
+ */
+export async function deleteSpec(tx: Tx, actor: AuthzActor, id: string, input?: unknown): Promise<{ deleted: boolean; code: string }> {
+  await ensureSpecItemsSchema(tx);
+  await authorize(tx, actor, "qms.spec.manage");
+  const parsed = input && typeof input === "object" ? (input as { reason?: string }) : {};
+  const cur = (await tx.query("SELECT * FROM qms.qc_spec WHERE id = $1 FOR UPDATE", [id])).rows[0];
+  if (!cur) throw notFound("tiêu chuẩn QC");
+
+  const activeTests = (
+    await tx.query(
+      "SELECT code, status FROM qms.qc_test WHERE spec_id = $1 AND status IN ('IN_PROGRESS', 'RESULTS_ENTERED', 'REVIEWED') LIMIT 1",
+      [id]
+    )
+  ).rows[0];
+  if (activeTests) {
+    throw conflict(
+      `Tiêu chuẩn ${cur.code} đã phát sinh phiếu kiểm nghiệm ${activeTests.code} (${activeTests.status}) nên không thể xóa vĩnh viễn. Vui lòng chuyển sang trạng thái Ngừng hiệu lực.`,
+      "SPEC_IN_USE"
+    );
+  }
+
+  // Unlink planned/cancelled tests and BOM references if any
+  await tx.query(
+    "DELETE FROM qms.qc_result WHERE test_id IN (SELECT id FROM qms.qc_test WHERE spec_id = $1)",
+    [id]
+  );
+  await tx.query("DELETE FROM qms.qc_test WHERE spec_id = $1", [id]);
+  await tx.query("SAVEPOINT sp_unlink_bom_spec");
+  await tx.query("UPDATE kit.bom SET qc_spec_id = NULL WHERE qc_spec_id = $1", [id]).catch(async () => {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_unlink_bom_spec");
+  });
+
+  await tx.query("DELETE FROM qms.qc_spec_item WHERE spec_id = $1", [id]);
+  await tx.query("DELETE FROM qms.qc_spec_parameter WHERE spec_id = $1", [id]);
+  await tx.query("DELETE FROM qms.qc_spec WHERE id = $1", [id]);
+
+  await writeAudit(tx, actor, {
+    entityType: "qc_spec",
+    entityId: id,
+    action: "delete",
+    reason: parsed.reason?.trim() || `Xóa tiêu chuẩn QC ${cur.code}`,
+    changes: { code: [`${cur.code} rev ${cur.spec_version}`, null], name: [cur.name, null] },
+  });
+
+  return { deleted: true, code: cur.code as string };
+}
+
 /** Approval makes the draft effective and, in the same transaction, supersedes the previous effective revision. */
 export async function approveSpec(tx: Tx, actor: AuthzActor, req: TransitionRequest, signed: boolean): Promise<QcSpec> {
   const draft = (await tx.query("SELECT * FROM qms.qc_spec WHERE id = $1", [req.id])).rows[0] as QcSpec | undefined;

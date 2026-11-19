@@ -369,7 +369,7 @@ function SpecEditor({ base, mode, onClose }: { base?: SpecDetail; mode: "new" | 
           oligo_purifications: head.applies_to === "OLIGO" && p.oligo_purifications.length ? p.oligo_purifications : null,
         })),
       };
-      if (mode === "edit") return api(`/api/factory/qms/specs/${base!.id}`, { method: "PATCH", json: { ...body, version: base!.version } });
+      if (mode === "edit") return api(`/api/factory/qms/specs/${base!.id}`, { method: "PUT", json: { ...body, version: base!.version } });
       return api("/api/factory/qms/specs", { method: "POST", idempotent: true, json: mode === "revision" ? { ...body, from_code: base!.code } : body });
     },
     onSuccess: () => {
@@ -381,7 +381,7 @@ function SpecEditor({ base, mode, onClose }: { base?: SpecDetail; mode: "new" | 
   const setP = (i: number, patch: Partial<Param>) => setParams(params.map((p, j) => (j === i ? { ...p, ...patch } : p)));
 
   return (
-    <Card title={mode === "new" ? "Tiêu chuẩn QC mới" : mode === "revision" ? `Phiên bản mới của ${base!.code}` : `Sửa bản nháp ${base!.code}`}>
+    <Card title={mode === "new" ? "Tiêu chuẩn QC mới" : mode === "revision" ? `Phiên bản mới của ${base!.code}` : `Chỉnh sửa Tiêu chuẩn QC ${base!.code} (rev ${base!.spec_version})`}>
       <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Tên tiêu chuẩn *"><input className={inputClass} value={head.name} onChange={(e) => setHead({ ...head, name: e.target.value })} required /></Field>
@@ -460,7 +460,9 @@ function SpecEditor({ base, mode, onClose }: { base?: SpecDetail; mode: "new" | 
         <ErrorNote error={save.error} />
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onClose}>Hủy</Button>
-          <Button type="submit" disabled={save.isPending}>{save.isPending ? "Đang lưu…" : "Lưu bản nháp"}</Button>
+          <Button type="submit" disabled={save.isPending}>
+            {save.isPending ? "Đang lưu…" : mode === "edit" ? "Lưu cập nhật tiêu chuẩn" : "Lưu tiêu chuẩn"}
+          </Button>
         </div>
       </form>
     </Card>
@@ -469,19 +471,26 @@ function SpecEditor({ base, mode, onClose }: { base?: SpecDetail; mode: "new" | 
 
 function SpecDetailPanel({
   id,
+  initialEditing = null,
   onClose,
   onOpenAssign,
+  onDelete,
 }: {
   id: string;
+  initialEditing?: "revision" | "edit" | null;
   onClose: () => void;
   onOpenAssign: (s: SpecRow, mode: "ASSIGN" | "CLONE") => void;
+  onDelete: (s: SpecRow) => void;
 }) {
   const qc = useQueryClient();
   const me = useFactoryMe();
-  const [editing, setEditing] = useState<"revision" | "edit" | null>(null);
+  const [editing, setEditing] = useState<"revision" | "edit" | null>(initialEditing);
+  useEffect(() => {
+    setEditing(initialEditing);
+  }, [id, initialEditing]);
   const spec = useQuery({ queryKey: ["factory", "spec", id], queryFn: () => api<SpecDetail>(`/api/factory/qms/specs/${id}`) });
   const s = spec.data;
-  const canManage = me.data?.permissions.includes("qms.spec.manage");
+  const canManage = Boolean(me.data?.is_root || me.data?.permissions.includes("qms.spec.manage"));
   if (s && editing) return <SpecEditor base={s} mode={editing} onClose={() => setEditing(null)} />;
   return (
     <Card title={s ? `${s.code} rev ${s.spec_version} — ${s.name}` : "Tiêu chuẩn"} actions={<Button variant="ghost" onClick={onClose}>Đóng</Button>}>
@@ -496,7 +505,7 @@ function SpecDetailPanel({
               {renderAssignedBadges(s)}
             </div>
             {canManage && (
-              <div className="inline-flex items-center gap-1 whitespace-nowrap">
+              <div className="inline-flex flex-wrap items-center gap-1 whitespace-nowrap">
                 <button
                   type="button"
                   title="Gán / Chọn một hoặc nhiều sản phẩm áp dụng tiêu chuẩn này"
@@ -512,6 +521,22 @@ function SpecDetailPanel({
                   onClick={() => onOpenAssign(s, "CLONE")}
                 >
                   📋 Sao chép
+                </button>
+                <button
+                  type="button"
+                  title="Sửa tên, phân loại, sản phẩm áp dụng và các chỉ tiêu kiểm nghiệm"
+                  className="px-2 py-1 rounded-lg text-[11px] font-semibold border border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/50 text-sky-800 dark:text-sky-300 hover:bg-sky-100 cursor-pointer"
+                  onClick={() => setEditing("edit")}
+                >
+                  ✏️ Sửa
+                </button>
+                <button
+                  type="button"
+                  title="Xóa tiêu chuẩn QC này"
+                  className="px-2 py-1 rounded-lg text-[11px] font-semibold border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 hover:bg-rose-100 cursor-pointer"
+                  onClick={() => onDelete(s)}
+                >
+                  🗑️ Xóa
                 </button>
               </div>
             )}
@@ -538,8 +563,8 @@ function SpecDetailPanel({
           </Table>
           <ActionBar endpoint={`/api/factory/qms/specs/${s.id}/actions`} version={s.version} actions={s.actions} labels={ACTION_LABEL} onDone={() => { qc.invalidateQueries({ queryKey: ["factory", "spec", id] }); qc.invalidateQueries({ queryKey: ["factory", "specs"] }); }} />
           {canManage && (
-            <div className="flex gap-2">
-              {s.status === "DRAFT" && <Button variant="ghost" onClick={() => setEditing("edit")}>✏️ Sửa bản nháp &amp; chỉ tiêu</Button>}
+            <div className="flex flex-wrap gap-2">
+              <Button variant="ghost" onClick={() => setEditing("edit")}>✏️ Sửa tiêu chuẩn &amp; chỉ tiêu</Button>
               {s.status === "EFFECTIVE" && <Button variant="ghost" onClick={() => setEditing("revision")}>➕ Tạo phiên bản mới (Revision)</Button>}
             </div>
           )}
@@ -552,8 +577,12 @@ function SpecDetailPanel({
 export function SpecsView() {
   const qc = useQueryClient();
   const me = useFactoryMe();
+  const canManage = Boolean(me.data?.is_root || me.data?.permissions.includes("qms.spec.manage"));
   const [selected, setSelected] = useState<string | null>(null);
+  const [selectedInitialEdit, setSelectedInitialEdit] = useState<"revision" | "edit" | null>(null);
   const [creating, setCreating] = useState(false);
+  const [searchQ, setSearchQ] = useState("");
+  const [appliesFilter, setAppliesFilter] = useState("");
   const [assignTarget, setAssignTarget] = useState<{
     spec: SpecRow;
     mode: "ASSIGN" | "CLONE";
@@ -565,6 +594,34 @@ export function SpecsView() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const specs = useQuery({ queryKey: ["factory", "specs"], queryFn: () => api<SpecRow[]>("/api/factory/qms/specs") });
+
+  const deleteMut = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      api<{ deleted: boolean; code: string }>(`/api/factory/qms/specs/${id}`, {
+        method: "DELETE",
+        json: { reason },
+      }),
+    onSuccess: (res, vars) => {
+      if (selected === vars.id) {
+        setSelected(null);
+        setSelectedInitialEdit(null);
+      }
+      qc.invalidateQueries({ queryKey: ["factory", "specs"] });
+      qc.invalidateQueries({ queryKey: ["factory", "spec"] });
+      qc.invalidateQueries({ queryKey: ["factory", "qa-ops"] });
+      setNotice(`🗑️ Đã xóa tiêu chuẩn QC ${res.code}.`);
+    },
+    onError: (err) => window.alert((err as Error).message),
+  });
+
+  const handleDeleteSpec = (s: SpecRow) => {
+    const reason = window.prompt(
+      `Nhập lý do xóa tiêu chuẩn ${s.code} (rev ${s.spec_version} — ${s.name}):`,
+      "Xóa tiêu chuẩn trùng hoặc không còn áp dụng"
+    );
+    if (reason === null) return;
+    deleteMut.mutate({ id: s.id, reason: reason.trim() || `Xóa tiêu chuẩn ${s.code}` });
+  };
 
   const assignMut = useMutation({
     mutationFn: (payload: any) =>
@@ -737,21 +794,26 @@ export function SpecsView() {
 
       {selected && !creating && (
         <SpecDetailPanel
-          key={selected}
+          key={`${selected}-${selectedInitialEdit ?? "view"}`}
           id={selected}
-          onClose={() => setSelected(null)}
+          initialEditing={selectedInitialEdit}
+          onClose={() => {
+            setSelected(null);
+            setSelectedInitialEdit(null);
+          }}
           onOpenAssign={(s, mode) => openAssignModal(s, mode)}
+          onDelete={(s) => handleDeleteSpec(s)}
         />
       )}
 
       <Card
         title="Tiêu chuẩn QC (Gán Một hoặc Nhiều Sản phẩm ↔ Bộ Chỉ tiêu Kiểm nghiệm)"
         actions={
-          me.data?.permissions.includes("qms.spec.manage") &&
+          canManage &&
           !creating && <Button onClick={() => setCreating(true)}>+ Tiêu chuẩn mới</Button>
         }
       >
-        <ErrorNote error={specs.error} />
+        <ErrorNote error={specs.error ?? deleteMut.error} />
         {notice && (
           <div className="mb-3 p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs font-semibold text-emerald-800 dark:text-emerald-200 flex items-center justify-between">
             <span>{notice}</span>
@@ -760,11 +822,68 @@ export function SpecsView() {
             </button>
           </div>
         )}
+        {specs.data && specs.data.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3 p-2 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setAppliesFilter("")}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                  appliesFilter === ""
+                    ? "bg-sky-700 text-white border-sky-700"
+                    : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
+                }`}
+              >
+                Tất cả ({specs.data.length})
+              </button>
+              {Object.entries(APPLIES).map(([k, label]) => {
+                const cnt = specs.data!.filter((x) => x.applies_to === k).length;
+                if (cnt === 0) return null;
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => setAppliesFilter(appliesFilter === k ? "" : k)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                      appliesFilter === k
+                        ? "bg-sky-700 text-white border-sky-700"
+                        : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    {label} ({cnt})
+                  </button>
+                );
+              })}
+            </div>
+            <input
+              className={`${inputClass} w-72`}
+              placeholder="🔍 Tìm mã TC, tên tiêu chuẩn, mã/tên sản phẩm..."
+              value={searchQ}
+              onChange={(e) => setSearchQ(e.target.value)}
+            />
+          </div>
+        )}
         {specs.data?.length === 0 && <Empty>Chưa có tiêu chuẩn QC. Không có tiêu chuẩn hiệu lực thì không lấy mẫu QC được.</Empty>}
         {specs.data && specs.data.length > 0 && (
           <Table head={["Mã", "Rev", "Tên", "Áp dụng", "Vật tư / Sản phẩm được gán", "Chỉ tiêu", "Trạng thái", "Thao tác"]}>
-            {specs.data.map((s) => (
-              <tr key={s.id} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setSelected(s.id)}>
+            {specs.data
+              .filter((s) => {
+                if (appliesFilter && s.applies_to !== appliesFilter) return false;
+                const q = searchQ.trim().toLowerCase();
+                if (!q) return true;
+                const assignedText = (s.assigned_items ?? []).map((x) => `${x.code} ${x.name}`).join(" ");
+                const hay = `${s.code} ${s.name} ${s.item_code ?? ""} ${s.item_name ?? ""} ${assignedText}`.toLowerCase();
+                return hay.includes(q);
+              })
+              .map((s) => (
+              <tr
+                key={s.id}
+                className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                onClick={() => {
+                  setSelectedInitialEdit(null);
+                  setSelected(s.id);
+                }}
+              >
                 <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">{s.code}</td>
                 <td className="py-2 pr-3">{s.spec_version}</td>
                 <td className="py-2 pr-3">{s.name}</td>
@@ -790,6 +909,30 @@ export function SpecsView() {
                     >
                       📋 Sao chép
                     </button>
+                    {canManage && (
+                      <>
+                        <button
+                          type="button"
+                          title="Sửa tiêu chuẩn QC và các chỉ tiêu kiểm nghiệm"
+                          className="px-2 py-1 rounded-lg text-[11px] font-semibold border border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/50 text-sky-800 dark:text-sky-300 hover:bg-sky-100 cursor-pointer"
+                          onClick={() => {
+                            setSelected(s.id);
+                            setSelectedInitialEdit("edit");
+                          }}
+                        >
+                          ✏️ Sửa
+                        </button>
+                        <button
+                          type="button"
+                          disabled={deleteMut.isPending}
+                          title="Xóa tiêu chuẩn QC này"
+                          className="px-2 py-1 rounded-lg text-[11px] font-semibold border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 hover:bg-rose-100 cursor-pointer"
+                          onClick={() => handleDeleteSpec(s)}
+                        >
+                          🗑️ Xóa
+                        </button>
+                      </>
+                    )}
                   </div>
                 </td>
               </tr>
