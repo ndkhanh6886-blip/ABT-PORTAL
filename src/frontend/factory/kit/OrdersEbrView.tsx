@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import QRCode from "qrcode";
