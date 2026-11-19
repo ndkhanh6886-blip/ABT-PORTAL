@@ -1786,81 +1786,90 @@ export function InstrumentsView({
             }}
           />
         )}
-        {canManage && editAsset && (
-          <EditInstrumentPanel key={editAsset.id} asset={editAsset} onDone={() => setEditAssetId(null)} />
-        )}
         <ErrorNote error={assets.error ?? removeAsset.error} />
         {assets.data && list.length === 0 && <Empty>Chưa khai báo thiết bị.</Empty>}
         {list.length > 0 && (
           <Table head={["Mã thiết bị", "Tên thiết bị", "Loại", "Trạng thái", "Phòng", "Model / Serial", "Hạn hiệu chuẩn", "Thao tác"]}>
-            {list.map((a) => (
-              <tr key={a.id} className={open === a.id || editAssetId === a.id ? "bg-sky-50/70 dark:bg-sky-950/30" : ""}>
-                <td className="py-1.5 pr-3 font-mono font-bold text-xs">{a.code}</td>
-                <td className="py-1.5 pr-3 font-medium">{a.name}</td>
-                <td className="py-1.5 pr-3 text-xs">
-                  <span className={`px-1.5 py-0.5 rounded font-bold text-[11px] ${a.asset_type === "HPLC" ? "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300" : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"}`}>
-                    {TYPES[a.asset_type] ?? a.asset_type}
-                  </span>
-                </td>
-                <td className="py-1.5 pr-3 text-xs">{ASSET_STATUS_LABELS[a.status] ?? a.status}</td>
-                <td className="py-1.5 pr-3 text-xs">{a.owner_name}</td>
-                <td className="py-1.5 pr-3 text-xs">{[a.model, a.serial_no].filter(Boolean).join(" / ") || "—"}</td>
-                <td className="py-1.5 pr-3 text-xs">{fmtDate(a.next_calibration_due)}</td>
-                <td className="py-1.5 pr-3 text-right">
-                  <div className="flex flex-wrap justify-end gap-1.5">
-                    {canManage && (
-                      <>
-                        <Button
-                          type="button"
-                          variant={editAssetId === a.id ? "primary" : "ghost"}
-                          onClick={() => setEditAssetId(editAssetId === a.id ? null : a.id)}
-                        >
-                          ✏️ Sửa / Cài đặt
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          className="text-rose-600 dark:text-rose-400"
-                          disabled={removeAsset.isPending}
-                          onClick={() => {
-                            const reason = window.prompt(
-                              `Nhập lý do xóa thiết bị ${a.code} (${a.name}):`,
-                              "Khai báo nhầm / loại bỏ thiết bị chưa phát sinh hồ sơ"
-                            );
-                            if (reason && reason.trim().length >= 3) {
-                              removeAsset.mutate({ id: a.id, reason: reason.trim() });
-                            }
-                          }}
-                        >
-                          🗑️ Xóa
-                        </Button>
-                      </>
-                    )}
-                    {onNavigateToRules ? (
-                      <Button type="button" variant="ghost" onClick={onNavigateToRules}>
-                        🧪 Định mức & Chai hóa chất ↗
-                      </Button>
-                    ) : (
-                      <Button
-                        type="button"
-                        variant={open === a.id ? "primary" : "ghost"}
-                        onClick={() => {
-                          if (open === a.id) {
-                            setDismissed(true);
-                            setOpen(null);
-                          } else {
-                            setDismissed(false);
-                            setOpen(a.id);
-                          }
-                        }}
-                      >
-                        🧪 {a.asset_type === "HPLC" ? "Hóa chất & Khấu hao HPLC" : "Vị trí hóa chất"}
-                      </Button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {list.map((a) => {
+              const isRowEditing = canManage && editAssetId === a.id;
+              return (
+                <React.Fragment key={a.id}>
+                  <tr className={open === a.id || isRowEditing ? "bg-sky-50/70 dark:bg-sky-950/30" : ""}>
+                    <td className="py-1.5 pr-3 font-mono font-bold text-xs">{a.code}</td>
+                    <td className="py-1.5 pr-3 font-medium">{a.name}</td>
+                    <td className="py-1.5 pr-3 text-xs">
+                      <span className={`px-1.5 py-0.5 rounded font-bold text-[11px] ${a.asset_type === "HPLC" ? "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300" : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"}`}>
+                        {TYPES[a.asset_type] ?? a.asset_type}
+                      </span>
+                    </td>
+                    <td className="py-1.5 pr-3 text-xs">{ASSET_STATUS_LABELS[a.status] ?? a.status}</td>
+                    <td className="py-1.5 pr-3 text-xs">{a.owner_name}</td>
+                    <td className="py-1.5 pr-3 text-xs">{[a.model, a.serial_no].filter(Boolean).join(" / ") || "—"}</td>
+                    <td className="py-1.5 pr-3 text-xs">{fmtDate(a.next_calibration_due)}</td>
+                    <td className="py-1.5 pr-3 text-right">
+                      <div className="flex flex-wrap justify-end gap-1.5">
+                        {canManage && (
+                          <>
+                            <Button
+                              type="button"
+                              variant={isRowEditing ? "primary" : "ghost"}
+                              onClick={() => setEditAssetId(isRowEditing ? null : a.id)}
+                            >
+                              {isRowEditing ? "Đóng sửa" : "✏️ Sửa / Cài đặt"}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              className="text-rose-600 dark:text-rose-400"
+                              disabled={removeAsset.isPending}
+                              onClick={() => {
+                                const reason = window.prompt(
+                                  `Nhập lý do xóa thiết bị ${a.code} (${a.name}):`,
+                                  "Khai báo nhầm / loại bỏ thiết bị chưa phát sinh hồ sơ"
+                                );
+                                if (reason && reason.trim().length >= 3) {
+                                  removeAsset.mutate({ id: a.id, reason: reason.trim() });
+                                }
+                              }}
+                            >
+                              🗑️ Xóa
+                            </Button>
+                          </>
+                        )}
+                        {onNavigateToRules ? (
+                          <Button type="button" variant="ghost" onClick={onNavigateToRules}>
+                            🧪 Định mức & Chai hóa chất ↗
+                          </Button>
+                        ) : (
+                          <Button
+                            type="button"
+                            variant={open === a.id ? "primary" : "ghost"}
+                            onClick={() => {
+                              if (open === a.id) {
+                                setDismissed(true);
+                                setOpen(null);
+                              } else {
+                                setDismissed(false);
+                                setOpen(a.id);
+                              }
+                            }}
+                          >
+                            🧪 {a.asset_type === "HPLC" ? "Hóa chất & Khấu hao HPLC" : "Vị trí hóa chất"}
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                  {isRowEditing && (
+                    <tr className="bg-amber-50/30 dark:bg-amber-950/20">
+                      <td colSpan={8} className="p-2.5 border-b-2 border-amber-300 dark:border-amber-700">
+                        <EditInstrumentPanel key={a.id} asset={a} onDone={() => setEditAssetId(null)} />
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </Table>
         )}
       </Card>

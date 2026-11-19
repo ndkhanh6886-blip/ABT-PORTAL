@@ -365,56 +365,71 @@ export function EquipmentView({
         {canManageAssets && showAddSynth && (
           <NewSynthesizer onClose={() => setShowAddSynth(false)} />
         )}
-        {canManageAssets && editingSynth && (
-          <EditSynthesizerPanel key={editingSynth.id} asset={editingSynth} onClose={() => setEditingSynth(null)} />
-        )}
         <ErrorNote error={assets.error ?? deleteSynth.error} />
         {assets.data?.length === 0 && <Empty>Chưa khai báo máy tổng hợp.</Empty>}
         {assets.data && assets.data.length > 0 && (
           <Table head={["Mã máy", "Tên máy tổng hợp", "Phòng", "Model / Serial", "Số cột CPG", "Thang hỗ trợ", "Hạn hiệu chuẩn", "Trạng thái", "Thao tác"]}>
-            {assets.data.map((a) => (
-              <tr key={a.id}>
-                <td className="py-1.5 pr-3 font-mono font-bold text-xs">{a.code}</td>
-                <td className="py-1.5 pr-3 font-medium">{a.name}</td>
-                <td className="py-1.5 pr-3 text-xs">{a.owner_name}</td>
-                <td className="py-1.5 pr-3 text-xs">{[a.model, a.serial_no].filter(Boolean).join(" / ") || "—"}</td>
-                <td className="py-1.5 pr-3 text-right font-mono font-bold">{a.column_positions} cột</td>
-                <td className="py-1.5 pr-3 text-xs">{a.supported_scales?.length ? a.supported_scales.join(", ") : "Mọi thang"}</td>
-                <td className="py-1.5 pr-3 text-xs">{fmtDate(a.next_calibration_due)}</td>
-                <td className="py-1.5 pr-3 text-xs">
-                  <span className={`px-1.5 py-0.5 rounded text-[11px] font-medium ${a.status === "IN_SERVICE" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300" : "bg-amber-100 text-amber-800"}`}>
-                    {ASSET_STATUS[a.status] ?? a.status}
-                  </span>
-                </td>
-                <td className="py-1.5 pr-3 text-right whitespace-nowrap">
-                  <div className="inline-flex items-center gap-1">
-                    {canManageAssets && (
-                      <>
-                        <Button variant="ghost" onClick={() => { setEditingSynth(a); setShowAddSynth(false); }}>
-                          ✏️ Sửa / Cài đặt
+            {assets.data.map((a) => {
+              const isRowEditing = canManageAssets && editingSynth?.id === a.id;
+              return (
+                <React.Fragment key={a.id}>
+                  <tr className={isRowEditing ? "bg-amber-50/70 dark:bg-amber-950/30" : ""}>
+                    <td className="py-1.5 pr-3 font-mono font-bold text-xs">{a.code}</td>
+                    <td className="py-1.5 pr-3 font-medium">{a.name}</td>
+                    <td className="py-1.5 pr-3 text-xs">{a.owner_name}</td>
+                    <td className="py-1.5 pr-3 text-xs">{[a.model, a.serial_no].filter(Boolean).join(" / ") || "—"}</td>
+                    <td className="py-1.5 pr-3 text-right font-mono font-bold">{a.column_positions} cột</td>
+                    <td className="py-1.5 pr-3 text-xs">{a.supported_scales?.length ? a.supported_scales.join(", ") : "Mọi thang"}</td>
+                    <td className="py-1.5 pr-3 text-xs">{fmtDate(a.next_calibration_due)}</td>
+                    <td className="py-1.5 pr-3 text-xs">
+                      <span className={`px-1.5 py-0.5 rounded text-[11px] font-medium ${a.status === "IN_SERVICE" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300" : "bg-amber-100 text-amber-800"}`}>
+                        {ASSET_STATUS[a.status] ?? a.status}
+                      </span>
+                    </td>
+                    <td className="py-1.5 pr-3 text-right whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1">
+                        {canManageAssets && (
+                          <>
+                            <Button
+                              variant={isRowEditing ? "primary" : "ghost"}
+                              onClick={() => {
+                                setEditingSynth(isRowEditing ? null : a);
+                                setShowAddSynth(false);
+                              }}
+                            >
+                              {isRowEditing ? "Đóng sửa" : "✏️ Sửa / Cài đặt"}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              className="text-rose-600 dark:text-rose-400"
+                              disabled={deleteSynth.isPending}
+                              onClick={() => {
+                                const reason = window.prompt(`Nhập lý do xóa máy ${a.code} (${a.name}):`, "Khai báo nhầm / loại bỏ thiết bị chưa phát sinh lô");
+                                if (reason && reason.trim().length >= 3) {
+                                  deleteSynth.mutate({ id: a.id, reason: reason.trim() });
+                                }
+                              }}
+                            >
+                              🗑️ Xóa
+                            </Button>
+                          </>
+                        )}
+                        <Button variant="ghost" onClick={() => setPortsOf(a.id)}>
+                          🧪 Cổng hóa chất
                         </Button>
-                        <Button
-                          variant="ghost"
-                          className="text-rose-600 dark:text-rose-400"
-                          disabled={deleteSynth.isPending}
-                          onClick={() => {
-                            const reason = window.prompt(`Nhập lý do xóa máy ${a.code} (${a.name}):`, "Khai báo nhầm / loại bỏ thiết bị chưa phát sinh lô");
-                            if (reason && reason.trim().length >= 3) {
-                              deleteSynth.mutate({ id: a.id, reason: reason.trim() });
-                            }
-                          }}
-                        >
-                          🗑️ Xóa
-                        </Button>
-                      </>
-                    )}
-                    <Button variant="ghost" onClick={() => setPortsOf(a.id)}>
-                      🧪 Cổng hóa chất
-                    </Button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+                      </div>
+                    </td>
+                  </tr>
+                  {isRowEditing && (
+                    <tr className="bg-amber-50/30 dark:bg-amber-950/20">
+                      <td colSpan={9} className="p-2.5 border-b-2 border-amber-300 dark:border-amber-700">
+                        <EditSynthesizerPanel key={a.id} asset={a} onClose={() => setEditingSynth(null)} />
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </Table>
         )}
       </Card>

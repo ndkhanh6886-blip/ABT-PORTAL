@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import { ActionBar } from "../actions";
-import { api, fmtQty, vnToday } from "../api";
+import { api, fmtQty, useFactoryMe, vnToday } from "../api";
 import { printElementHtml } from "../coa";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import {
@@ -171,6 +171,8 @@ export function BomRoutingView({
   onRefreshOptions: () => void;
   onJumpToOrder?: (orderId: string) => void;
 }) {
+  const me = useFactoryMe();
+  const isAdminRouting = Boolean(me.data?.is_root || me.data?.is_admin);
   const [subTab, setSubTab] = useState<"bom" | "routing">("bom");
   const [boms, setBoms] = useState<any[]>([]);
   const [routings, setRoutings] = useState<any[]>([]);
@@ -178,6 +180,17 @@ export function BomRoutingView({
   const [bomDetail, setBomDetail] = useState<any | null>(null);
   const [selectedRoutingId, setSelectedRoutingId] = useState<string>("");
   const [routingDetail, setRoutingDetail] = useState<any | null>(null);
+  const [editingRoutingId, setEditingRoutingId] = useState<string | null>(null);
+  const [savingRoutingMeta, setSavingRoutingMeta] = useState(false);
+  const [editRoutingForm, setEditRoutingForm] = useState({
+    code: "",
+    org_unit_id: options.units[0]?.id ?? "",
+    routing_category: "PCR Kit",
+    name: "",
+    status: "EFFECTIVE",
+    notes: "",
+    reason: "",
+  });
   const [error, setError] = useState<unknown>(null);
 
   // High-scale search & filter for thousands of BOM formulas and thousands of raw material lines
@@ -1938,6 +1951,79 @@ export function BomRoutingView({
       });
       await loadList();
       await loadRoutingDetail(id);
+    } catch (err) {
+      setError(err);
+    }
+  };
+
+  const handleStartEditRouting = (r: any) => {
+    setError(null);
+    setSelectedRoutingId(r.id);
+    setEditingRoutingId(r.id);
+    setEditRoutingForm({
+      code: String(r.code || ""),
+      org_unit_id: String(r.org_unit_id || options.units[0]?.id || ""),
+      routing_category: String(r.routing_category || "PCR Kit"),
+      name: String(r.name || ""),
+      status: String(r.status || "EFFECTIVE"),
+      notes: String(r.notes || ""),
+      reason: "",
+    });
+  };
+
+  const handleSaveRoutingMeta = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingRoutingId) return;
+    setError(null);
+    setSavingRoutingMeta(true);
+    try {
+      await api(`/api/factory/kit/routings/${editingRoutingId}`, {
+        method: "PATCH",
+        json: {
+          code: editRoutingForm.code.trim() || undefined,
+          org_unit_id: editRoutingForm.org_unit_id || options.units[0]?.id,
+          routing_category: editRoutingForm.routing_category || "PCR Kit",
+          name: editRoutingForm.name.trim(),
+          status: editRoutingForm.status || "EFFECTIVE",
+          notes: editRoutingForm.notes.trim() || null,
+          reason: editRoutingForm.reason.trim() || "Admin chỉnh sửa thông tin quy trình công đoạn (Routing)",
+        },
+      });
+      setEditingRoutingId(null);
+      await loadList();
+      await loadRoutingDetail(editingRoutingId);
+      onRefreshOptions();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setSavingRoutingMeta(false);
+    }
+  };
+
+  const handleDeleteRouting = async (r: any) => {
+    const linkedCount = Number(r.linked_bom_count ?? 0);
+    const defaultReason = `Admin xóa quy trình công đoạn ${r.code}`;
+    const promptMsg =
+      linkedCount > 0
+        ? `[Quyền Admin] Quy trình ${r.code} (${r.name}) đang gắn với ${linkedCount} công thức BOM. Khi xóa, các BOM này sẽ được gỡ liên kết quy trình.\n\nNhập lý do xóa quy trình ${r.code}:`
+        : `[Quyền Admin] Nhập lý do xóa quy trình công đoạn ${r.code} (${r.name}):`;
+    const reason = window.prompt(promptMsg, defaultReason);
+    if (reason === null) return;
+    setError(null);
+    try {
+      await api(`/api/factory/kit/routings/${r.id}`, {
+        method: "DELETE",
+        json: { reason: reason.trim() || defaultReason },
+      });
+      if (selectedRoutingId === r.id) {
+        setSelectedRoutingId("");
+        setRoutingDetail(null);
+      }
+      if (editingRoutingId === r.id) {
+        setEditingRoutingId(null);
+      }
+      await loadList();
+      onRefreshOptions();
     } catch (err) {
       setError(err);
     }
@@ -5555,7 +5641,7 @@ export function BomRoutingView({
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
-          <div className={`${routingDetail && !showCreateRouting ? "lg:col-span-4" : "lg:col-span-12"} space-y-4`}>
+          <div className="lg:col-span-12 space-y-4">
             <Card
               title="Danh sách phiên bản Quy trình Công đoạn (Routing)"
               actions={
@@ -6215,58 +6301,1258 @@ export function BomRoutingView({
                       </div>
                     </div>
 
-                    <Table head={["Mã Quy trình", "Tên quy trình & Nhóm dùng chung", "Số BOM áp dụng", "Số bước", "Trạng thái", ""]}>
+                    <Table head={["Mã Quy trình", "Tên quy trình & Nhóm dùng chung", "Số BOM áp dụng", "Số bước", "Trạng thái", "Thao tác"]}>
                       {pagedRoutings.map((r) => {
                         const isSelected = selectedRoutingId === r.id;
+                        const isEditingMeta = editingRoutingId === r.id;
+                        const canEditSteps =
+                          routingDetail?.routing?.id === r.id &&
+                          (routingDetail.routing.status === "DRAFT" || isAdminRouting);
                         return (
-                          <tr
-                            key={r.id}
-                            onClick={() => {
-                              setSelectedRoutingId(r.id);
-                              setTimeout(() => {
-                                rtDetailRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-                              }, 80);
-                            }}
-                            className={`cursor-pointer transition-colors hover:bg-sky-500/10 ${
-                              isSelected ? "bg-sky-500/15 ring-1 ring-inset ring-sky-500/40" : ""
-                            }`}
-                          >
-                            <td className="px-2.5 py-2 text-xs whitespace-nowrap">
-                              <div className="font-mono font-bold text-sky-600 dark:text-sky-400">
-                                {r.code} · v{r.routing_version}
-                              </div>
-                              <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
-                                {r.routing_category || (r.product_code ? `SP: ${r.product_code}` : "Dùng chung")}
-                              </div>
-                            </td>
-                            <td className="px-2.5 py-2 text-xs max-w-[260px]">
-                              <div className="font-semibold text-slate-800 dark:text-slate-100 truncate" title={r.name}>
-                                {r.name}
-                              </div>
-                            </td>
-                            <td className="px-2.5 py-2 text-xs whitespace-nowrap">
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-500/15 border border-indigo-400/40 text-indigo-700 dark:text-indigo-200 font-bold text-[11px]">
-                                🔗 {r.linked_bom_count ?? 0} BOM
-                              </span>
-                            </td>
-                            <td className="px-2.5 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 whitespace-nowrap">
-                              {r.step_count} bước
-                            </td>
-                            <td className="px-2.5 py-2 whitespace-nowrap">
-                              <StatusBadge status={r.status} />
-                            </td>
-                            <td className="px-2.5 py-2 text-right whitespace-nowrap">
-                              <span
-                                className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold border transition ${
-                                  isSelected
-                                    ? "bg-sky-600 text-white border-sky-500"
-                                    : "bg-sky-500/10 text-sky-600 dark:text-sky-300 border-sky-500/30 hover:bg-sky-500/20"
-                                }`}
+                          <React.Fragment key={r.id}>
+                            <tr
+                              onClick={() => {
+                                if (isSelected && !isEditingMeta) {
+                                  setSelectedRoutingId("");
+                                  setRoutingDetail(null);
+                                } else {
+                                  setSelectedRoutingId(r.id);
+                                }
+                              }}
+                              className={`cursor-pointer transition-colors hover:bg-sky-500/10 ${
+                                isSelected ? "bg-sky-500/15 ring-1 ring-inset ring-sky-500/40" : ""
+                              }`}
+                            >
+                              <td className="px-2.5 py-2 text-xs whitespace-nowrap">
+                                <div className="font-mono font-bold text-sky-600 dark:text-sky-400">
+                                  {r.code} · v{r.routing_version}
+                                </div>
+                                <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                                  {r.routing_category || (r.product_code ? `SP: ${r.product_code}` : "Dùng chung")}
+                                </div>
+                              </td>
+                              <td className="px-2.5 py-2 text-xs max-w-[360px]">
+                                <div className="font-semibold text-slate-800 dark:text-slate-100 truncate" title={r.name}>
+                                  {r.name}
+                                </div>
+                                {r.notes && (
+                                  <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate" title={r.notes}>
+                                    {r.notes}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-2.5 py-2 text-xs whitespace-nowrap">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-500/15 border border-indigo-400/40 text-indigo-700 dark:text-indigo-200 font-bold text-[11px]">
+                                  🔗 {r.linked_bom_count ?? 0} BOM
+                                </span>
+                              </td>
+                              <td className="px-2.5 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 whitespace-nowrap">
+                                {r.step_count} bước
+                              </td>
+                              <td className="px-2.5 py-2 whitespace-nowrap">
+                                <StatusBadge status={r.status} />
+                              </td>
+                              <td
+                                className="px-2.5 py-2 text-right whitespace-nowrap"
+                                onClick={(e) => e.stopPropagation()}
                               >
-                                {isSelected ? "Đang xem" : "Chi tiết →"}
-                              </span>
-                            </td>
-                          </tr>
+                                <div className="inline-flex items-center justify-end gap-1.5">
+                                  {isAdminRouting && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (isEditingMeta) {
+                                            setEditingRoutingId(null);
+                                          } else {
+                                            handleStartEditRouting(r);
+                                          }
+                                        }}
+                                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
+                                          isEditingMeta
+                                            ? "bg-amber-600 text-white border-amber-500"
+                                            : "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30 hover:bg-amber-500/20"
+                                        }`}
+                                      >
+                                        {isEditingMeta ? "Đóng sửa" : "✏️ Sửa"}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleDeleteRouting(r)}
+                                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold border bg-rose-500/10 text-rose-600 dark:text-rose-300 border-rose-500/30 hover:bg-rose-500/20 transition cursor-pointer"
+                                      >
+                                        🗑️ Xóa
+                                      </button>
+                                    </>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (isSelected && !isEditingMeta) {
+                                        setSelectedRoutingId("");
+                                        setRoutingDetail(null);
+                                      } else {
+                                        setSelectedRoutingId(r.id);
+                                      }
+                                    }}
+                                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
+                                      isSelected
+                                        ? "bg-sky-600 text-white border-sky-500"
+                                        : "bg-sky-500/10 text-sky-600 dark:text-sky-300 border-sky-500/30 hover:bg-sky-500/20"
+                                    }`}
+                                  >
+                                    {isSelected ? "Đóng chi tiết" : "Chi tiết →"}
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                            {(isSelected || isEditingMeta) && (
+                              <tr className="bg-slate-50/70 dark:bg-slate-950/60">
+                                <td colSpan={6} className="p-3 border-b-2 border-sky-400/50 dark:border-sky-700">
+                                  <div ref={rtDetailRef} className="space-y-3">
+                                    {isAdminRouting && isEditingMeta && (
+                                      <form
+                                        onSubmit={handleSaveRoutingMeta}
+                                        className="p-3.5 rounded-xl border-2 border-amber-400/70 dark:border-amber-700 bg-amber-50/70 dark:bg-amber-950/30 space-y-3"
+                                      >
+                                        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-amber-200 dark:border-amber-800/60">
+                                          <div className="flex items-center gap-2">
+                                            <span className="px-2 py-0.5 rounded bg-amber-600 text-white text-[11px] font-bold">
+                                              🛡️ Quyền Admin
+                                            </span>
+                                            <span className="text-xs font-extrabold text-amber-950 dark:text-amber-200">
+                                              ✏️ Chỉnh sửa Quy trình Công đoạn (Routing): {r.code} · v{r.routing_version}
+                                            </span>
+                                          </div>
+                                          <div className="flex items-center gap-1.5">
+                                            <Button
+                                              type="button"
+                                              variant="danger"
+                                              onClick={() => void handleDeleteRouting(r)}
+                                            >
+                                              🗑️ Xóa quy trình này
+                                            </Button>
+                                            <Button
+                                              type="button"
+                                              variant="ghost"
+                                              onClick={() => setEditingRoutingId(null)}
+                                            >
+                                              Đóng khung sửa
+                                            </Button>
+                                          </div>
+                                        </div>
+                                        <div className="grid grid-cols-1 md:grid-cols-6 gap-2.5">
+                                          <Field label="Mã quy trình *">
+                                            <input
+                                              className={`${inputClass} font-mono font-bold`}
+                                              value={editRoutingForm.code}
+                                              onChange={(e) =>
+                                                setEditRoutingForm((p) => ({ ...p, code: e.target.value.toUpperCase() }))
+                                              }
+                                              required
+                                            />
+                                          </Field>
+                                          <div className="md:col-span-2">
+                                            <Field label="Tên quy trình công đoạn *">
+                                              <input
+                                                className={inputClass}
+                                                value={editRoutingForm.name}
+                                                onChange={(e) =>
+                                                  setEditRoutingForm((p) => ({ ...p, name: e.target.value }))
+                                                }
+                                                required
+                                              />
+                                            </Field>
+                                          </div>
+                                          <Field label="Nhóm quy trình dùng chung *">
+                                            <select
+                                              className={inputClass}
+                                              value={editRoutingForm.routing_category}
+                                              onChange={(e) =>
+                                                setEditRoutingForm((p) => ({ ...p, routing_category: e.target.value }))
+                                              }
+                                            >
+                                              <option value="PCR Kit">🧬 Nhóm Kit Real-time PCR / RT-qPCR</option>
+                                              <option value="Kit PCR Đông khô">❄️ Nhóm Kit PCR Đông khô — Lyophilized</option>
+                                              <option value="Tách chiết / Khác">🧪 Nhóm Kit Tách chiết / Hệ đệm Buffer</option>
+                                              <option value="Bán thành phẩm (BTP)">🫙 Nhóm Bán thành phẩm (BTP)</option>
+                                              <option value="Dùng chung mọi sản phẩm">⚙️ Quy trình tùy chỉnh dùng chung</option>
+                                            </select>
+                                          </Field>
+                                          <Field label="Phòng quản lý">
+                                            <select
+                                              className={inputClass}
+                                              value={editRoutingForm.org_unit_id}
+                                              onChange={(e) =>
+                                                setEditRoutingForm((p) => ({ ...p, org_unit_id: e.target.value }))
+                                              }
+                                            >
+                                              {options.units.map((u) => (
+                                                <option key={u.id} value={u.id}>
+                                                  {u.code} — {u.name}
+                                                </option>
+                                              ))}
+                                            </select>
+                                          </Field>
+                                          <Field label="Trạng thái">
+                                            <select
+                                              className={inputClass}
+                                              value={editRoutingForm.status}
+                                              onChange={(e) =>
+                                                setEditRoutingForm((p) => ({ ...p, status: e.target.value }))
+                                              }
+                                            >
+                                              <option value="EFFECTIVE">Đang hiệu lực (EFFECTIVE)</option>
+                                              <option value="DRAFT">Bản nháp (DRAFT)</option>
+                                              <option value="IN_REVIEW">Chờ duyệt (IN_REVIEW)</option>
+                                              <option value="OBSOLETE">Hết hiệu lực (OBSOLETE)</option>
+                                            </select>
+                                          </Field>
+                                        </div>
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 items-end">
+                                          <Field label="Ghi chú phạm vi áp dụng">
+                                            <input
+                                              className={inputClass}
+                                              placeholder="Ghi chú mô tả quy trình..."
+                                              value={editRoutingForm.notes}
+                                              onChange={(e) =>
+                                                setEditRoutingForm((p) => ({ ...p, notes: e.target.value }))
+                                              }
+                                            />
+                                          </Field>
+                                          <Field label="Lý do chỉnh sửa (Lưu Audit Trail)">
+                                            <input
+                                              className={inputClass}
+                                              placeholder="VD: Admin cập nhật tên / nhóm quy trình chuẩn"
+                                              value={editRoutingForm.reason}
+                                              onChange={(e) =>
+                                                setEditRoutingForm((p) => ({ ...p, reason: e.target.value }))
+                                              }
+                                            />
+                                          </Field>
+                                          <div className="flex items-center justify-end gap-2">
+                                            <Button
+                                              type="button"
+                                              variant="ghost"
+                                              onClick={() => setEditingRoutingId(null)}
+                                            >
+                                              Hủy
+                                            </Button>
+                                            <Button type="submit" disabled={savingRoutingMeta}>
+                                              {savingRoutingMeta ? "Đang lưu..." : "💾 Lưu thông tin quy trình"}
+                                            </Button>
+                                          </div>
+                                        </div>
+                                      </form>
+                                    )}
+
+                                    {routingDetail?.routing?.id === r.id ? (
+                                      <div className="space-y-3">
+                                        <Card
+                                          title={`${routingDetail.routing.code} (v${routingDetail.routing.routing_version}) — ${routingDetail.routing.name}`}
+                                          actions={
+                                            <div className="flex flex-wrap items-center gap-1.5">
+                                              <StatusBadge status={routingDetail.routing.status} />
+                                              {isAdminRouting && (
+                                                <>
+                                                  <Button
+                                                    variant={isEditingMeta ? "secondary" : "ghost"}
+                                                    onClick={() => {
+                                                      if (isEditingMeta) {
+                                                        setEditingRoutingId(null);
+                                                      } else {
+                                                        handleStartEditRouting(routingDetail.routing);
+                                                      }
+                                                    }}
+                                                  >
+                                                    {isEditingMeta ? "Đóng sửa thông tin" : "✏️ Sửa quy trình"}
+                                                  </Button>
+                                                  <Button
+                                                    variant="danger"
+                                                    onClick={() => void handleDeleteRouting(routingDetail.routing)}
+                                                  >
+                                                    🗑️ Xóa quy trình
+                                                  </Button>
+                                                </>
+                                              )}
+                                              <Button
+                                                variant="ghost"
+                                                onClick={() => {
+                                                  setSelectedRoutingId("");
+                                                  setRoutingDetail(null);
+                                                  setEditingRoutingId(null);
+                                                }}
+                                              >
+                                                Đóng chi tiết
+                                              </Button>
+                                            </div>
+                                          }
+                                        >
+                                          <div className="space-y-3">
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                              <ActionBar
+                                                endpoint={`/api/factory/kit/routings/${routingDetail.routing.id}/actions`}
+                                                version={routingDetail.routing.version}
+                                                actions={routingDetail.allowed_actions}
+                                                labels={ACTION_LABELS}
+                                                onDone={() => {
+                                                  loadList();
+                                                  loadRoutingDetail(routingDetail.routing.id);
+                                                }}
+                                              />
+                                              <div className="flex flex-wrap items-center gap-1.5">
+                                                {canEditSteps && (
+                                                  <div className="flex items-center gap-1">
+                                                    <select
+                                                      className={`${inputClass} py-1 text-xs max-w-[230px]`}
+                                                      value={selectedTemplateForLoad}
+                                                      onChange={(e) => setSelectedTemplateForLoad(e.target.value)}
+                                                    >
+                                                      {ROUTING_STANDARD_TEMPLATES.map((tpl) => (
+                                                        <option key={tpl.key} value={tpl.key}>
+                                                          {tpl.label}
+                                                        </option>
+                                                      ))}
+                                                    </select>
+                                                    <Button
+                                                      variant="ghost"
+                                                      onClick={() =>
+                                                        handleLoadStandardSteps(
+                                                          routingDetail.routing.id,
+                                                          selectedTemplateForLoad
+                                                        )
+                                                      }
+                                                    >
+                                                      ⚡ Nạp khung mẫu chuẩn
+                                                    </Button>
+                                                  </div>
+                                                )}
+                                                {routingDetail.routing.status !== "EFFECTIVE" && (
+                                                  <Button
+                                                    variant="secondary"
+                                                    onClick={() => handleFastActivateRouting(routingDetail.routing.id)}
+                                                  >
+                                                    ✅ Kích hoạt Hiệu lực ngay (EFFECTIVE)
+                                                  </Button>
+                                                )}
+                                                <Button
+                                                  variant="ghost"
+                                                  onClick={() => handleCloneRouting(routingDetail.routing.id)}
+                                                >
+                                                  📋 Nhân bản phiên bản mới (Clone v
+                                                  {Number(routingDetail.routing.routing_version || 1) + 1})
+                                                </Button>
+                                              </div>
+                                            </div>
+
+                                            <div className="p-2.5 rounded-xl border border-indigo-500/30 bg-indigo-950/25 flex flex-wrap items-center justify-between gap-2 text-xs">
+                                              <div className="flex flex-wrap items-center gap-2">
+                                                <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-400/40 text-indigo-200 font-bold text-[11px]">
+                                                  ⚙️ Nhóm quy trình:{" "}
+                                                  {routingDetail.routing.routing_category || "Dùng chung nhiều BOM"}
+                                                </span>
+                                                <span className="text-slate-300">
+                                                  Đang được chọn áp dụng trong{" "}
+                                                  <b className="text-sky-300">
+                                                    {routingDetail.routing.linked_bom_count ??
+                                                      (routingDetail.linked_boms?.length || 0)}{" "}
+                                                    công thức BOM
+                                                  </b>{" "}
+                                                  (Thay đổi quy trình tại từng BOM ở Tab 1)
+                                                </span>
+                                              </div>
+                                              {Array.isArray(routingDetail.linked_boms) &&
+                                                routingDetail.linked_boms.length > 0 && (
+                                                  <div className="flex flex-wrap items-center gap-1 w-full pt-1 border-t border-indigo-500/20">
+                                                    <span className="text-[11px] text-slate-400 mr-1">
+                                                      Các BOM tiêu biểu đang dùng:
+                                                    </span>
+                                                    {routingDetail.linked_boms.slice(0, 12).map((lb: any) => (
+                                                      <button
+                                                        key={lb.id}
+                                                        type="button"
+                                                        onClick={() => {
+                                                          setSelectedBomId(lb.id);
+                                                          setSubTab("bom");
+                                                        }}
+                                                        title={`${lb.code} — ${lb.product_name || lb.name}`}
+                                                        className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-sky-900/60 border border-slate-700 text-[10px] font-mono font-semibold text-sky-300 cursor-pointer transition"
+                                                      >
+                                                        {lb.product_code} ({lb.code})
+                                                      </button>
+                                                    ))}
+                                                    {(routingDetail.routing.linked_bom_count ?? 0) > 12 && (
+                                                      <span className="text-[10px] text-slate-400">
+                                                        +{(routingDetail.routing.linked_bom_count ?? 0) - 12} BOM
+                                                        khác...
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                )}
+                                            </div>
+
+                                            {routingDetail.steps.length > 0 && (
+                                              <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/50 space-y-2">
+                                                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                                                  <span className="font-bold text-slate-800 dark:text-slate-200">
+                                                    ⛓️ Sơ đồ Luồng Công đoạn Chuẩn ({routingDetail.steps.length} bước
+                                                    nối tiếp):
+                                                  </span>
+                                                  <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                                                    ⏱️ Tổng thời gian định mức:{" "}
+                                                    <b>
+                                                      {routingDetail.steps.reduce(
+                                                        (acc: number, s: any) =>
+                                                          acc + Number(s.std_duration_min || 30),
+                                                        0
+                                                      )}{" "}
+                                                      phút
+                                                    </b>{" "}
+                                                    · 🛡️ Chốt chặn IPQC Gate:{" "}
+                                                    <b>{routingDetail.steps.filter((s: any) => s.is_qc).length} bước</b>
+                                                  </span>
+                                                </div>
+                                                <div className="flex flex-wrap items-center gap-1.5">
+                                                  {routingDetail.steps.map((s: any, i: number) => {
+                                                    const fnKey =
+                                                      s.step_function ||
+                                                      (s.is_qc ? "IPQC_PH_GATE" : s.category || "FORMULATION_MIXING");
+                                                    const fnSpec = resolveStepFunctionSpec(fnKey, mergedStepFunctions);
+                                                    return (
+                                                      <React.Fragment key={s.id}>
+                                                        <div
+                                                          onClick={() => {
+                                                            if (canEditSteps) handleStartEditStep(s);
+                                                          }}
+                                                          className={`px-2.5 py-1.5 rounded-lg border text-xs transition-all ${
+                                                            canEditSteps
+                                                              ? "cursor-pointer hover:ring-1 hover:ring-sky-500"
+                                                              : ""
+                                                          } ${
+                                                            s.is_qc
+                                                              ? "border-amber-400 bg-amber-50/90 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200"
+                                                              : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-200"
+                                                          }`}
+                                                        >
+                                                          <div className="flex items-center gap-1 font-bold">
+                                                            <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-white dark:bg-sky-700">
+                                                              B{s.seq}
+                                                            </span>
+                                                            <span>{fnSpec.icon}</span>
+                                                            <span>{s.step_name}</span>
+                                                          </div>
+                                                          <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 flex items-center gap-1.5">
+                                                            <span>{fnSpec.shortLabel}</span>
+                                                            {s.std_duration_min ? (
+                                                              <span>• {s.std_duration_min}p</span>
+                                                            ) : null}
+                                                            {s.is_qc ? (
+                                                              <span className="font-bold text-amber-700 dark:text-amber-300">
+                                                                • 🛡️ IPQC Gate
+                                                              </span>
+                                                            ) : null}
+                                                          </div>
+                                                        </div>
+                                                        {i < routingDetail.steps.length - 1 && (
+                                                          <span className="text-slate-400 font-bold text-xs">➔</span>
+                                                        )}
+                                                      </React.Fragment>
+                                                    );
+                                                  })}
+                                                </div>
+                                              </div>
+                                            )}
+                                          </div>
+                                        </Card>
+
+                                        <Card
+                                          title={`Các bước công đoạn chuẩn (${routingDetail.steps.length} bước — Tự động sinh Hồ sơ lô EBR khi chạy PO)`}
+                                          actions={
+                                            <div className="flex flex-wrap gap-1.5">
+                                              {canEditSteps && (
+                                                <Button
+                                                  variant={showAddStep && !editingStepId ? "secondary" : "primary"}
+                                                  onClick={() => {
+                                                    if (showAddStep && !editingStepId) {
+                                                      setShowAddStep(false);
+                                                    } else {
+                                                      handleStartAddNewStep();
+                                                    }
+                                                  }}
+                                                >
+                                                  {showAddStep && !editingStepId
+                                                    ? "Đóng form thêm bước"
+                                                    : "+ Thêm bước công đoạn mới"}
+                                                </Button>
+                                              )}
+                                            </div>
+                                          }
+                                        >
+                                          {routingDetail.steps.length === 0 ? (
+                                            <Empty>
+                                              Chưa có bước công đoạn nào. Hãy chọn khung mẫu ở trên rồi bấm &ldquo;⚡
+                                              Nạp khung mẫu chuẩn&rdquo; hoặc bấm &ldquo;+ Thêm bước công đoạn
+                                              mới&rdquo;.
+                                            </Empty>
+                                          ) : (
+                                            <Table
+                                              head={[
+                                                "Bước",
+                                                "Mã & Tên công đoạn / Hướng dẫn",
+                                                "Chức năng & Khu vực",
+                                                "SOP / Thiết bị / TG",
+                                                "Thông số kiểm soát (EBR)",
+                                                "Cờ chức năng & Chữ ký",
+                                                ...(canEditSteps ? ["Thao tác"] : []),
+                                              ]}
+                                            >
+                                              {routingDetail.steps.map((s: any, idx: number) => {
+                                                const fnKey =
+                                                  s.step_function ||
+                                                  (s.is_qc ? "IPQC_PH_GATE" : s.category || "FORMULATION_MIXING");
+                                                const fnSpec = resolveStepFunctionSpec(fnKey, mergedStepFunctions);
+                                                const flags =
+                                                  s.functional_flags && typeof s.functional_flags === "object"
+                                                    ? s.functional_flags
+                                                    : {};
+                                                const isEditingThisStep = showAddStep && editingStepId === s.id;
+                                                return (
+                                                  <tr
+                                                    key={s.id}
+                                                    className={`align-top ${
+                                                      isEditingThisStep ? "bg-amber-50/60 dark:bg-amber-950/30" : ""
+                                                    }`}
+                                                  >
+                                                    <td className="px-3 py-2.5 font-mono text-xs font-bold text-slate-800 dark:text-slate-100">
+                                                      <span className="inline-block px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700">
+                                                        #{s.seq}
+                                                      </span>
+                                                    </td>
+                                                    <td className="px-3 py-2.5 text-xs max-w-[260px]">
+                                                      <div className="font-bold text-slate-900 dark:text-slate-100">
+                                                        <span className="font-mono text-sky-700 dark:text-sky-300">
+                                                          {s.step_code}
+                                                        </span>{" "}
+                                                        — {s.step_name}
+                                                      </div>
+                                                      <div className="text-slate-600 dark:text-slate-400 mt-0.5 leading-snug">
+                                                        {s.instructions}
+                                                      </div>
+                                                      {s.expected_output && (
+                                                        <div className="text-[11px] text-emerald-700 dark:text-emerald-300 font-medium mt-1">
+                                                          🎯 Đầu ra: {s.expected_output}
+                                                        </div>
+                                                      )}
+                                                    </td>
+                                                    <td className="px-3 py-2.5 text-xs space-y-1">
+                                                      <div>
+                                                        <span
+                                                          className={`inline-block px-2 py-0.5 rounded border text-[11px] font-bold ${fnSpec.badgeClass}`}
+                                                        >
+                                                          {fnSpec.icon} {fnSpec.shortLabel}
+                                                        </span>
+                                                      </div>
+                                                      <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                                                        Nhóm: {STEP_CATEGORY_LABELS[s.category] ?? s.category}
+                                                      </div>
+                                                      {s.work_center && (
+                                                        <div className="text-[11px] font-medium text-slate-700 dark:text-slate-300">
+                                                          📍 {s.work_center}
+                                                        </div>
+                                                      )}
+                                                    </td>
+                                                    <td className="px-3 py-2.5 text-xs space-y-1">
+                                                      {s.sop_doc_code && (
+                                                        <div className="font-mono font-semibold text-sky-800 dark:text-sky-300">
+                                                          📄 {s.sop_doc_code}
+                                                        </div>
+                                                      )}
+                                                      {s.std_duration_min && (
+                                                        <div className="text-[11px] text-slate-600 dark:text-slate-300">
+                                                          ⏱️ Định mức: {s.std_duration_min} phút
+                                                        </div>
+                                                      )}
+                                                      {flags.equipment_group && (
+                                                        <div className="text-[11px] font-medium text-indigo-700 dark:text-indigo-300">
+                                                          🔧 Nhóm TB:{" "}
+                                                          {formatEquipmentGroupLabel(flags.equipment_group)}
+                                                        </div>
+                                                      )}
+                                                      {s.asset_code && (
+                                                        <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                                                          ⚙️ TB mặc định: <b>{s.asset_code}</b>
+                                                        </div>
+                                                      )}
+                                                    </td>
+                                                    <td className="px-3 py-2.5 text-xs space-y-1">
+                                                      {(s.param_schema || []).length === 0 ? (
+                                                        <span className="text-slate-400 text-[11px]">
+                                                          Không yêu cầu nhập số đo
+                                                        </span>
+                                                      ) : (
+                                                        (s.param_schema || []).map((p: any) => (
+                                                          <div
+                                                            key={p.key}
+                                                            className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-[11px]"
+                                                          >
+                                                            <b>{p.label}</b>: [{p.min ?? "-"} .. {p.max ?? "-"}]{" "}
+                                                            {p.unit}
+                                                          </div>
+                                                        ))
+                                                      )}
+                                                    </td>
+                                                    <td className="px-3 py-2.5 text-xs space-y-1">
+                                                      <div className="flex flex-wrap gap-1">
+                                                        {s.is_qc && (
+                                                          <span
+                                                            title="Bước Kiểm soát Chất lượng Trung gian Xen kẽ (IPQC Gate): Các bước phía sau trong Hồ sơ lô (EBR) sẽ tự động khóa cho tới khi bước này được QA/QC xác nhận thông qua"
+                                                            className="inline-block px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[10px]"
+                                                          >
+                                                            🛡️ Chốt chặn IPQC Gate
+                                                          </span>
+                                                        )}
+                                                        <span className="inline-block px-2 py-0.5 rounded bg-sky-50 dark:bg-sky-950/60 text-sky-800 dark:text-sky-200 border border-sky-200 dark:border-sky-800 font-semibold text-[10px]">
+                                                          {s.requires_check_signature
+                                                            ? "✍️ Ký 2 lớp (4-Eyes)"
+                                                            : "✍️ Ký 1 lớp"}
+                                                        </span>
+                                                        {flags.require_line_clearance && (
+                                                          <span className="inline-block px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-medium">
+                                                            🧹 Line Clearance
+                                                          </span>
+                                                        )}
+                                                        {flags.require_material_scan && (
+                                                          <span className="inline-block px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-800 dark:text-indigo-200 text-[10px] font-medium">
+                                                            📦 Quét Lô FEFO
+                                                          </span>
+                                                        )}
+                                                        {flags.require_env_log && (
+                                                          <span className="inline-block px-1.5 py-0.5 rounded bg-teal-50 dark:bg-teal-950/60 text-teal-800 dark:text-teal-200 text-[10px] font-medium">
+                                                            🌡️ Nhiệt-Ẩm
+                                                          </span>
+                                                        )}
+                                                        {flags.require_yield_reconcile && (
+                                                          <span className="inline-block px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-950/60 text-purple-800 dark:text-purple-200 text-[10px] font-medium">
+                                                            ⚖️ Cân bằng lượng
+                                                          </span>
+                                                        )}
+                                                        {flags.require_label_ifu_check && (
+                                                          <span className="inline-block px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-200 text-[10px] font-medium">
+                                                            🏷️ Soát Nhãn &amp; IFU
+                                                          </span>
+                                                        )}
+                                                        {flags.require_asset && (
+                                                          <span className="inline-block px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-800 dark:text-indigo-200 border border-indigo-200 dark:border-indigo-800 text-[10px] font-semibold">
+                                                            🔧 Ghi nhận Thiết bị &amp; HC
+                                                          </span>
+                                                        )}
+                                                      </div>
+                                                    </td>
+                                                    {canEditSteps && (
+                                                      <td className="px-3 py-2.5 text-xs">
+                                                        <div className="flex flex-wrap gap-1">
+                                                          <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            disabled={idx === 0}
+                                                            onClick={() => handleMoveRoutingStep(s.id, "UP")}
+                                                          >
+                                                            ↑
+                                                          </Button>
+                                                          <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            disabled={idx === routingDetail.steps.length - 1}
+                                                            onClick={() => handleMoveRoutingStep(s.id, "DOWN")}
+                                                          >
+                                                            ↓
+                                                          </Button>
+                                                          <Button
+                                                            type="button"
+                                                            variant={isEditingThisStep ? "primary" : "ghost"}
+                                                            onClick={() => {
+                                                              if (isEditingThisStep) {
+                                                                setEditingStepId(null);
+                                                                setShowAddStep(false);
+                                                              } else {
+                                                                handleStartEditStep(s);
+                                                              }
+                                                            }}
+                                                          >
+                                                            {isEditingThisStep ? "Đóng sửa" : "✏️ Sửa"}
+                                                          </Button>
+                                                          <Button
+                                                            type="button"
+                                                            variant="danger"
+                                                            onClick={() => handleDeleteRoutingStep(s.id)}
+                                                          >
+                                                            🗑️
+                                                          </Button>
+                                                        </div>
+                                                      </td>
+                                                    )}
+                                                  </tr>
+                                                );
+                                              })}
+                                            </Table>
+                                          )}
+
+                                          {canEditSteps && showAddStep && (
+                                            <form
+                                              onSubmit={handleAddRoutingStep}
+                                              className="mt-4 p-3.5 rounded-xl border border-sky-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-900/70 space-y-3"
+                                            >
+                                              <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
+                                                <div>
+                                                  <div className="text-xs font-extrabold text-slate-900 dark:text-slate-100">
+                                                    {editingStepId
+                                                      ? `✏️ Cập nhật Bước #${stepForm.seq} (${stepForm.step_code} — ${stepForm.step_name})`
+                                                      : "➕ Thêm Bước Công đoạn Mới vào Quy trình Routing"}
+                                                  </div>
+                                                  <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                                                    Chọn chức năng chuẩn để tự động điền thông số gợi ý, hoặc tùy chỉnh
+                                                    toàn bộ các cờ kiểm soát và danh sách thông số đo EBR.
+                                                  </div>
+                                                </div>
+                                                <Button
+                                                  type="button"
+                                                  variant="ghost"
+                                                  onClick={() => {
+                                                    setEditingStepId(null);
+                                                    setShowAddStep(false);
+                                                  }}
+                                                >
+                                                  Đóng
+                                                </Button>
+                                              </div>
+
+                                              <div className="space-y-1">
+                                                <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                                                  Chọn nhanh Chức năng chuẩn của Bước (Click để nạp cấu hình gợi ý):
+                                                </div>
+                                                <div className="flex flex-wrap gap-1.5">
+                                                  {stepFunctionList.map((fn) => {
+                                                    const active = stepForm.step_function === fn.key;
+                                                    return (
+                                                      <button
+                                                        key={fn.key}
+                                                        type="button"
+                                                        onClick={() => handleSelectStepFunctionInForm(fn.key)}
+                                                        title={fn.description || fn.label}
+                                                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+                                                          active
+                                                            ? "border-sky-600 bg-sky-600 text-white shadow-2xs"
+                                                            : fn.isCustom
+                                                              ? "border-dashed border-indigo-300 dark:border-indigo-700 bg-indigo-50/70 dark:bg-indigo-950/30 text-indigo-900 dark:text-indigo-100 hover:border-indigo-500"
+                                                              : "border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-sky-400"
+                                                        }`}
+                                                      >
+                                                        {fn.icon} {fn.shortLabel}
+                                                      </button>
+                                                    );
+                                                  })}
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => handleOpenStepFnManager("step_form")}
+                                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+                                                      stepFnManagerHost === "step_form"
+                                                        ? "border-indigo-600 bg-indigo-600 text-white"
+                                                        : "border-indigo-300 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-200 hover:bg-indigo-100"
+                                                    }`}
+                                                  >
+                                                    ✨ + Tạo / Quản lý Chức năng mới
+                                                  </button>
+                                                </div>
+                                                {stepFnManagerHost === "step_form" && renderStepFunctionManager()}
+                                              </div>
+
+                                              <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
+                                                <Field label="Thứ tự (seq) *">
+                                                  <input
+                                                    type="number"
+                                                    className={inputClass}
+                                                    value={stepForm.seq}
+                                                    onChange={(e) =>
+                                                      setStepForm({ ...stepForm, seq: e.target.value })
+                                                    }
+                                                    required
+                                                  />
+                                                </Field>
+                                                <Field label="Mã bước *">
+                                                  <input
+                                                    className={`${inputClass} font-mono`}
+                                                    value={stepForm.step_code}
+                                                    onChange={(e) =>
+                                                      setStepForm({ ...stepForm, step_code: e.target.value })
+                                                    }
+                                                    required
+                                                  />
+                                                </Field>
+                                                <div className="md:col-span-2">
+                                                  <Field label="Tên công đoạn hiển thị *">
+                                                    <input
+                                                      className={inputClass}
+                                                      value={stepForm.step_name}
+                                                      onChange={(e) =>
+                                                        setStepForm({ ...stepForm, step_name: e.target.value })
+                                                      }
+                                                      required
+                                                    />
+                                                  </Field>
+                                                </div>
+                                                <Field label="Nhóm công đoạn">
+                                                  <select
+                                                    className={inputClass}
+                                                    value={stepForm.category}
+                                                    onChange={(e) =>
+                                                      setStepForm({ ...stepForm, category: e.target.value })
+                                                    }
+                                                  >
+                                                    {Object.entries(STEP_CATEGORY_LABELS).map(([k, v]) => (
+                                                      <option key={k} value={k}>
+                                                        {v}
+                                                      </option>
+                                                    ))}
+                                                  </select>
+                                                </Field>
+                                                <Field label="Định mức (phút)">
+                                                  <input
+                                                    type="number"
+                                                    min={1}
+                                                    className={inputClass}
+                                                    value={stepForm.std_duration_min}
+                                                    onChange={(e) =>
+                                                      setStepForm({ ...stepForm, std_duration_min: e.target.value })
+                                                    }
+                                                  />
+                                                </Field>
+                                              </div>
+
+                                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                                <Field label="Phòng sạch / Khu vực sản xuất (Work Center)">
+                                                  <input
+                                                    list="work-center-presets-list"
+                                                    className={inputClass}
+                                                    placeholder="VD: Phòng sạch Pha chế (Class 10,000 / ISO 7)"
+                                                    value={stepForm.work_center}
+                                                    onChange={(e) =>
+                                                      setStepForm({ ...stepForm, work_center: e.target.value })
+                                                    }
+                                                  />
+                                                </Field>
+                                                <Field label="Mã SOP hướng dẫn">
+                                                  <input
+                                                    className={`${inputClass} font-mono`}
+                                                    value={stepForm.sop_doc_code}
+                                                    onChange={(e) =>
+                                                      setStepForm({ ...stepForm, sop_doc_code: e.target.value })
+                                                    }
+                                                  />
+                                                </Field>
+                                              </div>
+
+                                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                                <Field label="Nhóm thiết bị hiển thị để chọn khi SX (Tùy chọn)">
+                                                  <select
+                                                    className={inputClass}
+                                                    value={stepForm.functional_flags.equipment_group}
+                                                    onChange={(e) => {
+                                                      const nextGroup = e.target.value;
+                                                      const curAsset = options.assets.find(
+                                                        (a) => a.id === stepForm.required_asset_id
+                                                      );
+                                                      const keepAsset =
+                                                        curAsset && matchesEquipmentGroup(curAsset, nextGroup)
+                                                          ? stepForm.required_asset_id
+                                                          : "";
+                                                      setStepForm({
+                                                        ...stepForm,
+                                                        required_asset_id: keepAsset,
+                                                        functional_flags: {
+                                                          ...stepForm.functional_flags,
+                                                          equipment_group: nextGroup,
+                                                          require_asset: Boolean(
+                                                            nextGroup ||
+                                                              keepAsset ||
+                                                              stepForm.functional_flags.require_asset
+                                                          ),
+                                                        },
+                                                      });
+                                                    }}
+                                                  >
+                                                    {renderEquipmentGroupOptions()}
+                                                  </select>
+                                                </Field>
+                                                <Field label="Thiết bị cố định / Mặc định (Tùy chọn)">
+                                                  <select
+                                                    className={inputClass}
+                                                    value={stepForm.required_asset_id}
+                                                    onChange={(e) => {
+                                                      const nextAssetId = e.target.value;
+                                                      setStepForm({
+                                                        ...stepForm,
+                                                        required_asset_id: nextAssetId,
+                                                        functional_flags: {
+                                                          ...stepForm.functional_flags,
+                                                          require_asset: Boolean(
+                                                            nextAssetId ||
+                                                              stepForm.functional_flags.equipment_group ||
+                                                              stepForm.functional_flags.require_asset
+                                                          ),
+                                                        },
+                                                      });
+                                                    }}
+                                                  >
+                                                    <option value="">-- Chọn máy thực tế khi chạy Lệnh SX --</option>
+                                                    {filterAssetsByGroup(
+                                                      stepForm.functional_flags.equipment_group
+                                                    ).map((a) => (
+                                                      <option key={a.id} value={a.id}>
+                                                        {a.code} — {a.name}
+                                                        {a.equipment_category ? ` [${a.equipment_category}]` : ""}
+                                                        {a.status !== "IN_SERVICE" ? ` (${a.status})` : ""}
+                                                      </option>
+                                                    ))}
+                                                  </select>
+                                                </Field>
+                                              </div>
+
+                                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                                <Field label="Hướng dẫn thao tác chuẩn *">
+                                                  <input
+                                                    className={inputClass}
+                                                    value={stepForm.instructions}
+                                                    onChange={(e) =>
+                                                      setStepForm({ ...stepForm, instructions: e.target.value })
+                                                    }
+                                                    required
+                                                  />
+                                                </Field>
+                                                <Field label="Kết quả / Bán thành phẩm đầu ra mong đợi (Expected Output)">
+                                                  <input
+                                                    className={inputClass}
+                                                    placeholder="VD: Dung dịch Master Mix đồng nhất, đạt pH chuẩn"
+                                                    value={stepForm.expected_output}
+                                                    onChange={(e) =>
+                                                      setStepForm({ ...stepForm, expected_output: e.target.value })
+                                                    }
+                                                  />
+                                                </Field>
+                                              </div>
+
+                                              <div className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 space-y-2">
+                                                <div className="flex items-center justify-between">
+                                                  <span className="text-[11px] font-bold text-slate-800 dark:text-slate-200">
+                                                    📊 Danh sách Thông số Kiểm soát Định lượng trên Hồ sơ lô EBR (
+                                                    {stepForm.params.length} thông số):
+                                                  </span>
+                                                  <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    onClick={() =>
+                                                      setStepForm((prev) => ({
+                                                        ...prev,
+                                                        params: [
+                                                          ...prev.params,
+                                                          {
+                                                            key: `param_${prev.params.length + 1}`,
+                                                            label: "",
+                                                            type: "number",
+                                                            unit: "",
+                                                            min: "",
+                                                            max: "",
+                                                            required: true,
+                                                          },
+                                                        ],
+                                                      }))
+                                                    }
+                                                  >
+                                                    + Thêm thông số đo
+                                                  </Button>
+                                                </div>
+                                                {stepForm.params.length === 0 ? (
+                                                  <div className="text-[11px] text-slate-400">
+                                                    Bước này chưa khai báo thông số đo định lượng. Nhấn &ldquo;+ Thêm
+                                                    thông số đo&rdquo; nếu cần ghi nhận nhiệt độ, độ ẩm, pH, thể
+                                                    tích...
+                                                  </div>
+                                                ) : (
+                                                  <div className="space-y-1.5">
+                                                    {stepForm.params.map((pm, pIdx) => (
+                                                      <div
+                                                        key={pIdx}
+                                                        className="grid grid-cols-1 md:grid-cols-12 gap-1.5 items-center"
+                                                      >
+                                                        <div className="md:col-span-2">
+                                                          <input
+                                                            className={`${inputClass} font-mono text-xs`}
+                                                            placeholder="Mã key (vd: ph_val)"
+                                                            value={pm.key}
+                                                            onChange={(e) =>
+                                                              setStepForm((prev) => ({
+                                                                ...prev,
+                                                                params: prev.params.map((item, i) =>
+                                                                  i === pIdx ? { ...item, key: e.target.value } : item
+                                                                ),
+                                                              }))
+                                                            }
+                                                          />
+                                                        </div>
+                                                        <div className="md:col-span-4">
+                                                          <input
+                                                            className={`${inputClass} text-xs`}
+                                                            placeholder="Tên thông số hiển thị (vd: Độ pH dung dịch)"
+                                                            value={pm.label}
+                                                            onChange={(e) =>
+                                                              setStepForm((prev) => ({
+                                                                ...prev,
+                                                                params: prev.params.map((item, i) =>
+                                                                  i === pIdx
+                                                                    ? { ...item, label: e.target.value }
+                                                                    : item
+                                                                ),
+                                                              }))
+                                                            }
+                                                          />
+                                                        </div>
+                                                        <div className="md:col-span-2">
+                                                          <input
+                                                            type="number"
+                                                            step="any"
+                                                            className={`${inputClass} text-xs`}
+                                                            placeholder="Ngưỡng Min"
+                                                            value={pm.min ?? ""}
+                                                            onChange={(e) =>
+                                                              setStepForm((prev) => ({
+                                                                ...prev,
+                                                                params: prev.params.map((item, i) =>
+                                                                  i === pIdx ? { ...item, min: e.target.value } : item
+                                                                ),
+                                                              }))
+                                                            }
+                                                          />
+                                                        </div>
+                                                        <div className="md:col-span-2">
+                                                          <input
+                                                            type="number"
+                                                            step="any"
+                                                            className={`${inputClass} text-xs`}
+                                                            placeholder="Ngưỡng Max"
+                                                            value={pm.max ?? ""}
+                                                            onChange={(e) =>
+                                                              setStepForm((prev) => ({
+                                                                ...prev,
+                                                                params: prev.params.map((item, i) =>
+                                                                  i === pIdx ? { ...item, max: e.target.value } : item
+                                                                ),
+                                                              }))
+                                                            }
+                                                          />
+                                                        </div>
+                                                        <div className="md:col-span-1">
+                                                          <input
+                                                            className={`${inputClass} text-xs`}
+                                                            placeholder="Đơn vị"
+                                                            value={pm.unit ?? ""}
+                                                            onChange={(e) =>
+                                                              setStepForm((prev) => ({
+                                                                ...prev,
+                                                                params: prev.params.map((item, i) =>
+                                                                  i === pIdx ? { ...item, unit: e.target.value } : item
+                                                                ),
+                                                              }))
+                                                            }
+                                                          />
+                                                        </div>
+                                                        <div className="md:col-span-1 flex justify-end">
+                                                          <Button
+                                                            type="button"
+                                                            variant="danger"
+                                                            onClick={() =>
+                                                              setStepForm((prev) => ({
+                                                                ...prev,
+                                                                params: prev.params.filter((_, i) => i !== pIdx),
+                                                              }))
+                                                            }
+                                                          >
+                                                            ✕
+                                                          </Button>
+                                                        </div>
+                                                      </div>
+                                                    ))}
+                                                  </div>
+                                                )}
+                                              </div>
+
+                                              <div className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 space-y-1.5">
+                                                <div className="text-[11px] font-bold text-slate-800 dark:text-slate-200">
+                                                  🏷️ Đánh dấu Chức năng Kiểm soát tại Bước này:
+                                                </div>
+                                                <div className="flex flex-wrap gap-3 text-xs">
+                                                  <label className="flex items-center gap-1.5 font-bold text-amber-800 dark:text-amber-300 cursor-pointer">
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={stepForm.is_qc}
+                                                      onChange={(e) =>
+                                                        setStepForm({ ...stepForm, is_qc: e.target.checked })
+                                                      }
+                                                    />
+                                                    🛡️ Chốt chặn IPQC Gate (Cần QC xác nhận PASS mới mở khóa bước kế
+                                                    tiếp)
+                                                  </label>
+                                                  <label className="flex items-center gap-1.5 font-semibold text-slate-800 dark:text-slate-200 cursor-pointer">
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={stepForm.requires_check_signature}
+                                                      onChange={(e) =>
+                                                        setStepForm({
+                                                          ...stepForm,
+                                                          requires_check_signature: e.target.checked,
+                                                        })
+                                                      }
+                                                    />
+                                                    ✍️ Yêu cầu chữ ký kiểm tra chéo (2 người — 4-Eyes)
+                                                  </label>
+                                                  <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 cursor-pointer">
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={stepForm.functional_flags.require_line_clearance}
+                                                      onChange={(e) =>
+                                                        setStepForm({
+                                                          ...stepForm,
+                                                          functional_flags: {
+                                                            ...stepForm.functional_flags,
+                                                            require_line_clearance: e.target.checked,
+                                                          },
+                                                        })
+                                                      }
+                                                    />
+                                                    🧹 Checklist Dọn dây chuyền &amp; Khử trùng UV
+                                                  </label>
+                                                  <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 cursor-pointer">
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={stepForm.functional_flags.require_material_scan}
+                                                      onChange={(e) =>
+                                                        setStepForm({
+                                                          ...stepForm,
+                                                          functional_flags: {
+                                                            ...stepForm.functional_flags,
+                                                            require_material_scan: e.target.checked,
+                                                          },
+                                                        })
+                                                      }
+                                                    />
+                                                    📦 Quét đối chiếu Lô NVL FEFO
+                                                  </label>
+                                                  <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 cursor-pointer">
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={stepForm.functional_flags.require_env_log}
+                                                      onChange={(e) =>
+                                                        setStepForm({
+                                                          ...stepForm,
+                                                          functional_flags: {
+                                                            ...stepForm.functional_flags,
+                                                            require_env_log: e.target.checked,
+                                                          },
+                                                        })
+                                                      }
+                                                    />
+                                                    🌡️ Nhật ký Nhiệt độ / Độ ẩm phòng sạch
+                                                  </label>
+                                                  <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 cursor-pointer">
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={stepForm.functional_flags.require_yield_reconcile}
+                                                      onChange={(e) =>
+                                                        setStepForm({
+                                                          ...stepForm,
+                                                          functional_flags: {
+                                                            ...stepForm.functional_flags,
+                                                            require_yield_reconcile: e.target.checked,
+                                                          },
+                                                        })
+                                                      }
+                                                    />
+                                                    ⚖️ Cân bằng lượng &amp; Hao hụt bán thành phẩm
+                                                  </label>
+                                                  <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 cursor-pointer">
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={stepForm.functional_flags.require_label_ifu_check}
+                                                      onChange={(e) =>
+                                                        setStepForm({
+                                                          ...stepForm,
+                                                          functional_flags: {
+                                                            ...stepForm.functional_flags,
+                                                            require_label_ifu_check: e.target.checked,
+                                                          },
+                                                        })
+                                                      }
+                                                    />
+                                                    🏷️ Kiểm tra đối chiếu 100% Nhãn &amp; Tờ HDSD (IFU)
+                                                  </label>
+                                                  <label className="flex items-center gap-1.5 font-semibold text-indigo-800 dark:text-indigo-300 cursor-pointer">
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={Boolean(stepForm.functional_flags.require_asset)}
+                                                      onChange={(e) =>
+                                                        setStepForm({
+                                                          ...stepForm,
+                                                          functional_flags: {
+                                                            ...stepForm.functional_flags,
+                                                            require_asset: e.target.checked,
+                                                          },
+                                                        })
+                                                      }
+                                                    />
+                                                    🔧 Bắt buộc chọn &amp; ghi nhận Thiết bị (Kiểm soát hạn HC)
+                                                  </label>
+                                                  <label className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400 cursor-pointer">
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={stepForm.allow_skip}
+                                                      onChange={(e) =>
+                                                        setStepForm({ ...stepForm, allow_skip: e.target.checked })
+                                                      }
+                                                    />
+                                                    Cho phép bỏ qua có duyệt
+                                                  </label>
+                                                </div>
+                                              </div>
+
+                                              <div className="flex justify-end gap-2 pt-1">
+                                                <Button
+                                                  type="button"
+                                                  variant="ghost"
+                                                  onClick={() => {
+                                                    setEditingStepId(null);
+                                                    setShowAddStep(false);
+                                                  }}
+                                                >
+                                                  Hủy
+                                                </Button>
+                                                <Button type="submit">
+                                                  {editingStepId
+                                                    ? "💾 Lưu cập nhật bước công đoạn"
+                                                    : "💾 Lưu bước công đoạn vào Routing"}
+                                                </Button>
+                                              </div>
+                                            </form>
+                                          )}
+                                        </Card>
+                                      </div>
+                                    ) : (
+                                      <div className="text-xs text-slate-500 py-2">
+                                        Đang tải chi tiết quy trình công đoạn...
+                                      </div>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
                         );
                       })}
                     </Table>
@@ -6275,828 +7561,6 @@ export function BomRoutingView({
               })()}
             </Card>
           </div>
-
-          {routingDetail && !showCreateRouting && (
-            <div ref={rtDetailRef} className="lg:col-span-8 space-y-4">
-              <Card
-                title={`${routingDetail.routing.code} (v${routingDetail.routing.routing_version}) — ${routingDetail.routing.name}`}
-                actions={
-                  <div className="flex flex-wrap items-center gap-2">
-                    <StatusBadge status={routingDetail.routing.status} />
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        setSelectedRoutingId("");
-                        setRoutingDetail(null);
-                      }}
-                    >
-                      Đóng chi tiết
-                    </Button>
-                  </div>
-                }
-              >
-                <div className="space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <ActionBar
-                      endpoint={`/api/factory/kit/routings/${routingDetail.routing.id}/actions`}
-                      version={routingDetail.routing.version}
-                      actions={routingDetail.allowed_actions}
-                      labels={ACTION_LABELS}
-                      onDone={() => {
-                        loadList();
-                        loadRoutingDetail(routingDetail.routing.id);
-                      }}
-                    />
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {routingDetail.routing.status === "DRAFT" && (
-                        <div className="flex items-center gap-1">
-                          <select
-                            className={`${inputClass} py-1 text-xs max-w-[230px]`}
-                            value={selectedTemplateForLoad}
-                            onChange={(e) => setSelectedTemplateForLoad(e.target.value)}
-                          >
-                            {ROUTING_STANDARD_TEMPLATES.map((tpl) => (
-                              <option key={tpl.key} value={tpl.key}>
-                                {tpl.label}
-                              </option>
-                            ))}
-                          </select>
-                          <Button
-                            variant="ghost"
-                            onClick={() => handleLoadStandardSteps(routingDetail.routing.id, selectedTemplateForLoad)}
-                          >
-                            ⚡ Nạp khung mẫu chuẩn
-                          </Button>
-                        </div>
-                      )}
-                      {routingDetail.routing.status !== "EFFECTIVE" && (
-                        <Button
-                          variant="secondary"
-                          onClick={() => handleFastActivateRouting(routingDetail.routing.id)}
-                        >
-                          ✅ Kích hoạt Hiệu lực ngay (EFFECTIVE)
-                        </Button>
-                      )}
-                      <Button
-                        variant="ghost"
-                        onClick={() => handleCloneRouting(routingDetail.routing.id)}
-                      >
-                        📋 Nhân bản phiên bản mới (Clone v{Number(routingDetail.routing.routing_version || 1) + 1})
-                      </Button>
-                    </div>
-                  </div>
-
-                  {/* Thông tin nhóm dùng chung & danh sách công thức BOM đang áp dụng quy trình này */}
-                  <div className="p-2.5 rounded-xl border border-indigo-500/30 bg-indigo-950/25 flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-400/40 text-indigo-200 font-bold text-[11px]">
-                        ⚙️ Nhóm quy trình: {routingDetail.routing.routing_category || "Dùng chung nhiều BOM"}
-                      </span>
-                      <span className="text-slate-300">
-                        Đang được chọn áp dụng trong{" "}
-                        <b className="text-sky-300">{routingDetail.routing.linked_bom_count ?? (routingDetail.linked_boms?.length || 0)} công thức BOM</b>
-                        {" "}(Thay đổi quy trình tại từng BOM ở Tab 1)
-                      </span>
-                    </div>
-                    {Array.isArray(routingDetail.linked_boms) && routingDetail.linked_boms.length > 0 && (
-                      <div className="flex flex-wrap items-center gap-1 w-full pt-1 border-t border-indigo-500/20">
-                        <span className="text-[11px] text-slate-400 mr-1">Các BOM tiêu biểu đang dùng:</span>
-                        {routingDetail.linked_boms.slice(0, 12).map((lb: any) => (
-                          <button
-                            key={lb.id}
-                            type="button"
-                            onClick={() => {
-                              setSelectedBomId(lb.id);
-                              setSubTab("bom");
-                            }}
-                            title={`${lb.code} — ${lb.product_name || lb.name}`}
-                            className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-sky-900/60 border border-slate-700 text-[10px] font-mono font-semibold text-sky-300 cursor-pointer transition"
-                          >
-                            {lb.product_code} ({lb.code})
-                          </button>
-                        ))}
-                        {(routingDetail.routing.linked_bom_count ?? 0) > 12 && (
-                          <span className="text-[10px] text-slate-400">
-                            +{(routingDetail.routing.linked_bom_count ?? 0) - 12} BOM khác...
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Sơ đồ luồng công đoạn trực quan (Visual Process Flow) */}
-                  {routingDetail.steps.length > 0 && (
-                    <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/50 space-y-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                        <span className="font-bold text-slate-800 dark:text-slate-200">
-                          ⛓️ Sơ đồ Luồng Công đoạn Chuẩn ({routingDetail.steps.length} bước nối tiếp):
-                        </span>
-                        <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
-                          ⏱️ Tổng thời gian định mức:{" "}
-                          <b>{routingDetail.steps.reduce((acc: number, s: any) => acc + Number(s.std_duration_min || 30), 0)} phút</b> ·{" "}
-                          🛡️ Chốt chặn IPQC Gate: <b>{routingDetail.steps.filter((s: any) => s.is_qc).length} bước</b>
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {routingDetail.steps.map((s: any, i: number) => {
-                          const fnKey = s.step_function || (s.is_qc ? "IPQC_PH_GATE" : s.category || "FORMULATION_MIXING");
-                          const fnSpec = resolveStepFunctionSpec(fnKey, mergedStepFunctions);
-                          return (
-                            <React.Fragment key={s.id}>
-                              <div
-                                onClick={() => {
-                                  if (routingDetail.routing.status === "DRAFT") handleStartEditStep(s);
-                                }}
-                                className={`px-2.5 py-1.5 rounded-lg border text-xs transition-all ${
-                                  routingDetail.routing.status === "DRAFT" ? "cursor-pointer hover:ring-1 hover:ring-sky-500" : ""
-                                } ${
-                                  s.is_qc
-                                    ? "border-amber-400 bg-amber-50/90 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200"
-                                    : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-200"
-                                }`}
-                              >
-                                <div className="flex items-center gap-1 font-bold">
-                                  <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-white dark:bg-sky-700">
-                                    B{s.seq}
-                                  </span>
-                                  <span>{fnSpec.icon}</span>
-                                  <span>{s.step_name}</span>
-                                </div>
-                                <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 flex items-center gap-1.5">
-                                  <span>{fnSpec.shortLabel}</span>
-                                  {s.std_duration_min ? <span>• {s.std_duration_min}p</span> : null}
-                                  {s.is_qc ? <span className="font-bold text-amber-700 dark:text-amber-300">• 🛡️ IPQC Gate</span> : null}
-                                </div>
-                              </div>
-                              {i < routingDetail.steps.length - 1 && (
-                                <span className="text-slate-400 font-bold text-xs">➔</span>
-                              )}
-                            </React.Fragment>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </Card>
-
-              <Card
-                title={`Các bước công đoạn chuẩn (${routingDetail.steps.length} bước — Tự động sinh Hồ sơ lô EBR khi chạy PO)`}
-                actions={
-                  <div className="flex flex-wrap gap-1.5">
-                    {routingDetail.routing.status === "DRAFT" && (
-                      <Button
-                        variant={showAddStep && !editingStepId ? "secondary" : "primary"}
-                        onClick={() => {
-                          if (showAddStep && !editingStepId) {
-                            setShowAddStep(false);
-                          } else {
-                            handleStartAddNewStep();
-                          }
-                        }}
-                      >
-                        {showAddStep && !editingStepId ? "Đóng form thêm bước" : "+ Thêm bước công đoạn mới"}
-                      </Button>
-                    )}
-                  </div>
-                }
-              >
-                {routingDetail.steps.length === 0 ? (
-                  <Empty>
-                    Chưa có bước công đoạn nào. Hãy chọn khung mẫu ở trên rồi bấm &ldquo;⚡ Nạp khung mẫu chuẩn&rdquo; hoặc bấm &ldquo;+ Thêm bước công đoạn mới&rdquo;.
-                  </Empty>
-                ) : (
-                  <Table
-                    head={[
-                      "Bước",
-                      "Mã & Tên công đoạn / Hướng dẫn",
-                      "Chức năng & Khu vực",
-                      "SOP / Thiết bị / TG",
-                      "Thông số kiểm soát (EBR)",
-                      "Cờ chức năng & Chữ ký",
-                      ...(routingDetail.routing.status === "DRAFT" ? ["Thao tác"] : []),
-                    ]}
-                  >
-                    {routingDetail.steps.map((s: any, idx: number) => {
-                      const fnKey = s.step_function || (s.is_qc ? "IPQC_PH_GATE" : s.category || "FORMULATION_MIXING");
-                      const fnSpec = resolveStepFunctionSpec(fnKey, mergedStepFunctions);
-                      const flags = s.functional_flags && typeof s.functional_flags === "object" ? s.functional_flags : {};
-                      return (
-                        <tr key={s.id} className="align-top">
-                          <td className="px-3 py-2.5 font-mono text-xs font-bold text-slate-800 dark:text-slate-100">
-                            <span className="inline-block px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700">
-                              #{s.seq}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2.5 text-xs max-w-[260px]">
-                            <div className="font-bold text-slate-900 dark:text-slate-100">
-                              <span className="font-mono text-sky-700 dark:text-sky-300">{s.step_code}</span> — {s.step_name}
-                            </div>
-                            <div className="text-slate-600 dark:text-slate-400 mt-0.5 leading-snug">{s.instructions}</div>
-                            {s.expected_output && (
-                              <div className="text-[11px] text-emerald-700 dark:text-emerald-300 font-medium mt-1">
-                                🎯 Đầu ra: {s.expected_output}
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-3 py-2.5 text-xs space-y-1">
-                            <div>
-                              <span className={`inline-block px-2 py-0.5 rounded border text-[11px] font-bold ${fnSpec.badgeClass}`}>
-                                {fnSpec.icon} {fnSpec.shortLabel}
-                              </span>
-                            </div>
-                            <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                              Nhóm: {STEP_CATEGORY_LABELS[s.category] ?? s.category}
-                            </div>
-                            {s.work_center && (
-                              <div className="text-[11px] font-medium text-slate-700 dark:text-slate-300">
-                                📍 {s.work_center}
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-3 py-2.5 text-xs space-y-1">
-                            {s.sop_doc_code && (
-                              <div className="font-mono font-semibold text-sky-800 dark:text-sky-300">📄 {s.sop_doc_code}</div>
-                            )}
-                            {s.std_duration_min && (
-                              <div className="text-[11px] text-slate-600 dark:text-slate-300">⏱️ Định mức: {s.std_duration_min} phút</div>
-                            )}
-                            {flags.equipment_group && (
-                              <div className="text-[11px] font-medium text-indigo-700 dark:text-indigo-300">
-                                🔧 Nhóm TB: {formatEquipmentGroupLabel(flags.equipment_group)}
-                              </div>
-                            )}
-                            {s.asset_code && (
-                              <div className="text-[11px] text-slate-600 dark:text-slate-400">
-                                ⚙️ TB mặc định: <b>{s.asset_code}</b>
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-3 py-2.5 text-xs space-y-1">
-                            {(s.param_schema || []).length === 0 ? (
-                              <span className="text-slate-400 text-[11px]">Không yêu cầu nhập số đo</span>
-                            ) : (
-                              (s.param_schema || []).map((p: any) => (
-                                <div
-                                  key={p.key}
-                                  className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-[11px]"
-                                >
-                                  <b>{p.label}</b>: [{p.min ?? "-"} .. {p.max ?? "-"}] {p.unit}
-                                </div>
-                              ))
-                            )}
-                          </td>
-                          <td className="px-3 py-2.5 text-xs space-y-1">
-                            <div className="flex flex-wrap gap-1">
-                              {s.is_qc && (
-                                <span
-                                  title="Bước Kiểm soát Chất lượng Trung gian Xen kẽ (IPQC Gate): Các bước phía sau trong Hồ sơ lô (EBR) sẽ tự động khóa cho tới khi bước này được QA/QC xác nhận thông qua"
-                                  className="inline-block px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[10px]"
-                                >
-                                  🛡️ Chốt chặn IPQC Gate
-                                </span>
-                              )}
-                              <span className="inline-block px-2 py-0.5 rounded bg-sky-50 dark:bg-sky-950/60 text-sky-800 dark:text-sky-200 border border-sky-200 dark:border-sky-800 font-semibold text-[10px]">
-                                {s.requires_check_signature ? "✍️ Ký 2 lớp (4-Eyes)" : "✍️ Ký 1 lớp"}
-                              </span>
-                              {flags.require_line_clearance && (
-                                <span className="inline-block px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-medium">
-                                  🧹 Line Clearance
-                                </span>
-                              )}
-                              {flags.require_material_scan && (
-                                <span className="inline-block px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-800 dark:text-indigo-200 text-[10px] font-medium">
-                                  📦 Quét Lô FEFO
-                                </span>
-                              )}
-                              {flags.require_env_log && (
-                                <span className="inline-block px-1.5 py-0.5 rounded bg-teal-50 dark:bg-teal-950/60 text-teal-800 dark:text-teal-200 text-[10px] font-medium">
-                                  🌡️ Nhiệt-Ẩm
-                                </span>
-                              )}
-                              {flags.require_yield_reconcile && (
-                                <span className="inline-block px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-950/60 text-purple-800 dark:text-purple-200 text-[10px] font-medium">
-                                  ⚖️ Cân bằng lượng
-                                </span>
-                              )}
-                              {flags.require_label_ifu_check && (
-                                <span className="inline-block px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-200 text-[10px] font-medium">
-                                  🏷️ Soát Nhãn &amp; IFU
-                                </span>
-                              )}
-                              {flags.require_asset && (
-                                <span className="inline-block px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-800 dark:text-indigo-200 border border-indigo-200 dark:border-indigo-800 text-[10px] font-semibold">
-                                  🔧 Ghi nhận Thiết bị &amp; HC
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          {routingDetail.routing.status === "DRAFT" && (
-                            <td className="px-3 py-2.5 text-xs">
-                              <div className="flex flex-wrap gap-1">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  disabled={idx === 0}
-                                  onClick={() => handleMoveRoutingStep(s.id, "UP")}
-                                >
-                                  ↑
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  disabled={idx === routingDetail.steps.length - 1}
-                                  onClick={() => handleMoveRoutingStep(s.id, "DOWN")}
-                                >
-                                  ↓
-                                </Button>
-                                <Button type="button" variant="ghost" onClick={() => handleStartEditStep(s)}>
-                                  ✏️ Sửa
-                                </Button>
-                                <Button type="button" variant="danger" onClick={() => handleDeleteRoutingStep(s.id)}>
-                                  🗑️
-                                </Button>
-                              </div>
-                            </td>
-                          )}
-                        </tr>
-                      );
-                    })}
-                  </Table>
-                )}
-
-                {routingDetail.routing.status === "DRAFT" && showAddStep && (
-                  <form
-                    onSubmit={handleAddRoutingStep}
-                    className="mt-4 p-3.5 rounded-xl border border-sky-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-900/70 space-y-3"
-                  >
-                    <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
-                      <div>
-                        <div className="text-xs font-extrabold text-slate-900 dark:text-slate-100">
-                          {editingStepId
-                            ? `✏️ Cập nhật Bước #${stepForm.seq} (${stepForm.step_code} — ${stepForm.step_name})`
-                            : "➕ Thêm Bước Công đoạn Mới vào Quy trình Routing"}
-                        </div>
-                        <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                          Chọn chức năng chuẩn để tự động điền thông số gợi ý, hoặc tùy chỉnh toàn bộ các cờ kiểm soát và danh sách thông số đo EBR.
-                        </div>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        onClick={() => {
-                          setEditingStepId(null);
-                          setShowAddStep(false);
-                        }}
-                      >
-                        Đóng
-                      </Button>
-                    </div>
-
-                    {/* Chọn nhanh chức năng chuẩn & tùy chỉnh */}
-                    <div className="space-y-1">
-                      <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
-                        Chọn nhanh Chức năng chuẩn của Bước (Click để nạp cấu hình gợi ý):
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {stepFunctionList.map((fn) => {
-                          const active = stepForm.step_function === fn.key;
-                          return (
-                            <button
-                              key={fn.key}
-                              type="button"
-                              onClick={() => handleSelectStepFunctionInForm(fn.key)}
-                              title={fn.description || fn.label}
-                              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
-                                active
-                                  ? "border-sky-600 bg-sky-600 text-white shadow-2xs"
-                                  : fn.isCustom
-                                    ? "border-dashed border-indigo-300 dark:border-indigo-700 bg-indigo-50/70 dark:bg-indigo-950/30 text-indigo-900 dark:text-indigo-100 hover:border-indigo-500"
-                                    : "border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-sky-400"
-                              }`}
-                            >
-                              {fn.icon} {fn.shortLabel}
-                            </button>
-                          );
-                        })}
-                        <button
-                          type="button"
-                          onClick={() => handleOpenStepFnManager("step_form")}
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
-                            stepFnManagerHost === "step_form"
-                              ? "border-indigo-600 bg-indigo-600 text-white"
-                              : "border-indigo-300 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-200 hover:bg-indigo-100"
-                          }`}
-                        >
-                          ✨ + Tạo / Quản lý Chức năng mới
-                        </button>
-                      </div>
-                      {stepFnManagerHost === "step_form" && renderStepFunctionManager()}
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
-                      <Field label="Thứ tự (seq) *">
-                        <input
-                          type="number"
-                          className={inputClass}
-                          value={stepForm.seq}
-                          onChange={(e) => setStepForm({ ...stepForm, seq: e.target.value })}
-                          required
-                        />
-                      </Field>
-                      <Field label="Mã bước *">
-                        <input
-                          className={`${inputClass} font-mono`}
-                          value={stepForm.step_code}
-                          onChange={(e) => setStepForm({ ...stepForm, step_code: e.target.value })}
-                          required
-                        />
-                      </Field>
-                      <div className="md:col-span-2">
-                        <Field label="Tên công đoạn hiển thị *">
-                          <input
-                            className={inputClass}
-                            value={stepForm.step_name}
-                            onChange={(e) => setStepForm({ ...stepForm, step_name: e.target.value })}
-                            required
-                          />
-                        </Field>
-                      </div>
-                      <Field label="Nhóm công đoạn">
-                        <select
-                          className={inputClass}
-                          value={stepForm.category}
-                          onChange={(e) => setStepForm({ ...stepForm, category: e.target.value })}
-                        >
-                          {Object.entries(STEP_CATEGORY_LABELS).map(([k, v]) => (
-                            <option key={k} value={k}>
-                              {v}
-                            </option>
-                          ))}
-                        </select>
-                      </Field>
-                      <Field label="Định mức (phút)">
-                        <input
-                          type="number"
-                          min={1}
-                          className={inputClass}
-                          value={stepForm.std_duration_min}
-                          onChange={(e) => setStepForm({ ...stepForm, std_duration_min: e.target.value })}
-                        />
-                      </Field>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      <Field label="Phòng sạch / Khu vực sản xuất (Work Center)">
-                        <input
-                          list="work-center-presets-list"
-                          className={inputClass}
-                          placeholder="VD: Phòng sạch Pha chế (Class 10,000 / ISO 7)"
-                          value={stepForm.work_center}
-                          onChange={(e) => setStepForm({ ...stepForm, work_center: e.target.value })}
-                        />
-                      </Field>
-                      <Field label="Mã SOP hướng dẫn">
-                        <input
-                          className={`${inputClass} font-mono`}
-                          value={stepForm.sop_doc_code}
-                          onChange={(e) => setStepForm({ ...stepForm, sop_doc_code: e.target.value })}
-                        />
-                      </Field>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      <Field label="Nhóm thiết bị hiển thị để chọn khi SX (Tùy chọn)">
-                        <select
-                          className={inputClass}
-                          value={stepForm.functional_flags.equipment_group}
-                          onChange={(e) => {
-                            const nextGroup = e.target.value;
-                            const curAsset = options.assets.find((a) => a.id === stepForm.required_asset_id);
-                            const keepAsset = curAsset && matchesEquipmentGroup(curAsset, nextGroup) ? stepForm.required_asset_id : "";
-                            setStepForm({
-                              ...stepForm,
-                              required_asset_id: keepAsset,
-                              functional_flags: {
-                                ...stepForm.functional_flags,
-                                equipment_group: nextGroup,
-                                require_asset: Boolean(nextGroup || keepAsset || stepForm.functional_flags.require_asset),
-                              },
-                            });
-                          }}
-                        >
-                          {renderEquipmentGroupOptions()}
-                        </select>
-                      </Field>
-                      <Field label="Thiết bị cố định / Mặc định (Tùy chọn)">
-                        <select
-                          className={inputClass}
-                          value={stepForm.required_asset_id}
-                          onChange={(e) => {
-                            const nextAssetId = e.target.value;
-                            setStepForm({
-                              ...stepForm,
-                              required_asset_id: nextAssetId,
-                              functional_flags: {
-                                ...stepForm.functional_flags,
-                                require_asset: Boolean(nextAssetId || stepForm.functional_flags.equipment_group || stepForm.functional_flags.require_asset),
-                              },
-                            });
-                          }}
-                        >
-                          <option value="">-- Chọn máy thực tế khi chạy Lệnh SX --</option>
-                          {filterAssetsByGroup(stepForm.functional_flags.equipment_group).map((a) => (
-                            <option key={a.id} value={a.id}>
-                              {a.code} — {a.name}
-                              {a.equipment_category ? ` [${a.equipment_category}]` : ""}
-                              {a.status !== "IN_SERVICE" ? ` (${a.status})` : ""}
-                            </option>
-                          ))}
-                        </select>
-                      </Field>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      <Field label="Hướng dẫn thao tác chuẩn *">
-                        <input
-                          className={inputClass}
-                          value={stepForm.instructions}
-                          onChange={(e) => setStepForm({ ...stepForm, instructions: e.target.value })}
-                          required
-                        />
-                      </Field>
-                      <Field label="Kết quả / Bán thành phẩm đầu ra mong đợi (Expected Output)">
-                        <input
-                          className={inputClass}
-                          placeholder="VD: Dung dịch Master Mix đồng nhất, đạt pH chuẩn"
-                          value={stepForm.expected_output}
-                          onChange={(e) => setStepForm({ ...stepForm, expected_output: e.target.value })}
-                        />
-                      </Field>
-                    </div>
-
-                    {/* Quản lý danh sách nhiều thông số kiểm soát EBR */}
-                    <div className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-bold text-slate-800 dark:text-slate-200">
-                          📊 Danh sách Thông số Kiểm soát Định lượng trên Hồ sơ lô EBR ({stepForm.params.length} thông số):
-                        </span>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          onClick={() =>
-                            setStepForm((prev) => ({
-                              ...prev,
-                              params: [
-                                ...prev.params,
-                                {
-                                  key: `param_${prev.params.length + 1}`,
-                                  label: "",
-                                  type: "number",
-                                  unit: "",
-                                  min: "",
-                                  max: "",
-                                  required: true,
-                                },
-                              ],
-                            }))
-                          }
-                        >
-                          + Thêm thông số đo
-                        </Button>
-                      </div>
-                      {stepForm.params.length === 0 ? (
-                        <div className="text-[11px] text-slate-400">
-                          Bước này chưa khai báo thông số đo định lượng. Nhấn &ldquo;+ Thêm thông số đo&rdquo; nếu cần ghi nhận nhiệt độ, độ ẩm, pH, thể tích...
-                        </div>
-                      ) : (
-                        <div className="space-y-1.5">
-                          {stepForm.params.map((pm, pIdx) => (
-                            <div key={pIdx} className="grid grid-cols-1 md:grid-cols-12 gap-1.5 items-center">
-                              <div className="md:col-span-2">
-                                <input
-                                  className={`${inputClass} font-mono text-xs`}
-                                  placeholder="Mã key (vd: ph_val)"
-                                  value={pm.key}
-                                  onChange={(e) =>
-                                    setStepForm((prev) => ({
-                                      ...prev,
-                                      params: prev.params.map((item, i) => (i === pIdx ? { ...item, key: e.target.value } : item)),
-                                    }))
-                                  }
-                                />
-                              </div>
-                              <div className="md:col-span-4">
-                                <input
-                                  className={`${inputClass} text-xs`}
-                                  placeholder="Tên thông số hiển thị (vd: Độ pH dung dịch)"
-                                  value={pm.label}
-                                  onChange={(e) =>
-                                    setStepForm((prev) => ({
-                                      ...prev,
-                                      params: prev.params.map((item, i) => (i === pIdx ? { ...item, label: e.target.value } : item)),
-                                    }))
-                                  }
-                                />
-                              </div>
-                              <div className="md:col-span-2">
-                                <input
-                                  type="number"
-                                  step="any"
-                                  className={`${inputClass} text-xs`}
-                                  placeholder="Ngưỡng Min"
-                                  value={pm.min ?? ""}
-                                  onChange={(e) =>
-                                    setStepForm((prev) => ({
-                                      ...prev,
-                                      params: prev.params.map((item, i) =>
-                                        i === pIdx ? { ...item, min: e.target.value } : item
-                                      ),
-                                    }))
-                                  }
-                                />
-                              </div>
-                              <div className="md:col-span-2">
-                                <input
-                                  type="number"
-                                  step="any"
-                                  className={`${inputClass} text-xs`}
-                                  placeholder="Ngưỡng Max"
-                                  value={pm.max ?? ""}
-                                  onChange={(e) =>
-                                    setStepForm((prev) => ({
-                                      ...prev,
-                                      params: prev.params.map((item, i) =>
-                                        i === pIdx ? { ...item, max: e.target.value } : item
-                                      ),
-                                    }))
-                                  }
-                                />
-                              </div>
-                              <div className="md:col-span-1">
-                                <input
-                                  className={`${inputClass} text-xs`}
-                                  placeholder="Đơn vị"
-                                  value={pm.unit ?? ""}
-                                  onChange={(e) =>
-                                    setStepForm((prev) => ({
-                                      ...prev,
-                                      params: prev.params.map((item, i) => (i === pIdx ? { ...item, unit: e.target.value } : item)),
-                                    }))
-                                  }
-                                />
-                              </div>
-                              <div className="md:col-span-1 flex justify-end">
-                                <Button
-                                  type="button"
-                                  variant="danger"
-                                  onClick={() =>
-                                    setStepForm((prev) => ({
-                                      ...prev,
-                                      params: prev.params.filter((_, i) => i !== pIdx),
-                                    }))
-                                  }
-                                >
-                                  ✕
-                                </Button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Các cờ chức năng đánh dấu cho bước */}
-                    <div className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 space-y-1.5">
-                      <div className="text-[11px] font-bold text-slate-800 dark:text-slate-200">
-                        🏷️ Đánh dấu Chức năng Kiểm soát tại Bước này:
-                      </div>
-                      <div className="flex flex-wrap gap-3 text-xs">
-                        <label className="flex items-center gap-1.5 font-bold text-amber-800 dark:text-amber-300 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={stepForm.is_qc}
-                            onChange={(e) => setStepForm({ ...stepForm, is_qc: e.target.checked })}
-                          />
-                          🛡️ Chốt chặn IPQC Gate (Cần QC xác nhận PASS mới mở khóa bước kế tiếp)
-                        </label>
-                        <label className="flex items-center gap-1.5 font-semibold text-slate-800 dark:text-slate-200 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={stepForm.requires_check_signature}
-                            onChange={(e) => setStepForm({ ...stepForm, requires_check_signature: e.target.checked })}
-                          />
-                          ✍️ Yêu cầu chữ ký kiểm tra chéo (2 người — 4-Eyes)
-                        </label>
-                        <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={stepForm.functional_flags.require_line_clearance}
-                            onChange={(e) =>
-                              setStepForm({
-                                ...stepForm,
-                                functional_flags: { ...stepForm.functional_flags, require_line_clearance: e.target.checked },
-                              })
-                            }
-                          />
-                          🧹 Checklist Dọn dây chuyền &amp; Khử trùng UV
-                        </label>
-                        <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={stepForm.functional_flags.require_material_scan}
-                            onChange={(e) =>
-                              setStepForm({
-                                ...stepForm,
-                                functional_flags: { ...stepForm.functional_flags, require_material_scan: e.target.checked },
-                              })
-                            }
-                          />
-                          📦 Quét đối chiếu Lô NVL FEFO
-                        </label>
-                        <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={stepForm.functional_flags.require_env_log}
-                            onChange={(e) =>
-                              setStepForm({
-                                ...stepForm,
-                                functional_flags: { ...stepForm.functional_flags, require_env_log: e.target.checked },
-                              })
-                            }
-                          />
-                          🌡️ Nhật ký Nhiệt độ / Độ ẩm phòng sạch
-                        </label>
-                        <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={stepForm.functional_flags.require_yield_reconcile}
-                            onChange={(e) =>
-                              setStepForm({
-                                ...stepForm,
-                                functional_flags: { ...stepForm.functional_flags, require_yield_reconcile: e.target.checked },
-                              })
-                            }
-                          />
-                          ⚖️ Cân bằng lượng &amp; Hao hụt bán thành phẩm
-                        </label>
-                        <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={stepForm.functional_flags.require_label_ifu_check}
-                            onChange={(e) =>
-                              setStepForm({
-                                ...stepForm,
-                                functional_flags: { ...stepForm.functional_flags, require_label_ifu_check: e.target.checked },
-                              })
-                            }
-                          />
-                          🏷️ Kiểm tra đối chiếu 100% Nhãn &amp; Tờ HDSD (IFU)
-                        </label>
-                        <label className="flex items-center gap-1.5 font-semibold text-indigo-800 dark:text-indigo-300 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={Boolean(stepForm.functional_flags.require_asset)}
-                            onChange={(e) =>
-                              setStepForm({
-                                ...stepForm,
-                                functional_flags: { ...stepForm.functional_flags, require_asset: e.target.checked },
-                              })
-                            }
-                          />
-                          🔧 Bắt buộc chọn &amp; ghi nhận Thiết bị (Kiểm soát hạn HC)
-                        </label>
-                        <label className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={stepForm.allow_skip}
-                            onChange={(e) => setStepForm({ ...stepForm, allow_skip: e.target.checked })}
-                          />
-                          Cho phép bỏ qua có duyệt
-                        </label>
-                      </div>
-                    </div>
-
-                    <div className="flex justify-end gap-2 pt-1">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        onClick={() => {
-                          setEditingStepId(null);
-                          setShowAddStep(false);
-                        }}
-                      >
-                        Hủy
-                      </Button>
-                      <Button type="submit">
-                        {editingStepId ? "💾 Lưu cập nhật bước công đoạn" : "💾 Lưu bước công đoạn vào Routing"}
-                      </Button>
-                    </div>
-                  </form>
-                )}
-              </Card>
-            </div>
-          )}
         </div>
       )}
     </div>

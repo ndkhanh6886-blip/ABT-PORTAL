@@ -2,7 +2,7 @@ import { z } from "zod/v3";
 import { onCommit, type Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
 import { authorize, authorizeAnywhere, hasFactoryPermission, type AuthzActor } from "../core/authz";
-import { conflict, invalid, notFound } from "../core/errors";
+import { conflict, forbidden, invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { insertRecord, parseInput } from "../core/records";
 import { defineMachine, listAllowedActions, runTransition, type Guard } from "../core/stateMachine";
@@ -1731,6 +1731,157 @@ export async function createRouting(tx: Tx, actor: AuthzActor, input: unknown) {
   return created;
 }
 
+export function isAdminRoutingActor(actor: AuthzActor): boolean {
+  return Boolean(actor.isRootAdmin || actor.isPortalAdmin);
+}
+
+export function assertAdminRoutingAccess(
+  actor: AuthzActor,
+  actionLabel = "chỉnh sửa hoặc xóa quy trình công đoạn (Routing)"
+): void {
+  if (!isAdminRoutingActor(actor)) {
+    throw forbidden(`Chỉ Quản trị viên hệ thống (Admin) mới được phép ${actionLabel}.`);
+  }
+}
+
+const updateRoutingSchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9_.-]{2,40}$/, "Mã quy trình gồm chữ, số, gạch ngang")
+    .transform((s) => s.toUpperCase())
+    .optional(),
+  org_unit_id: z.string().uuid("chọn phòng Sản xuất Kit").optional(),
+  product_item_id: z.string().uuid().optional().nullable().or(z.literal("")),
+  routing_category: z.string().trim().max(80).optional().nullable(),
+  name: z.string().trim().min(3, "nhập tên quy trình công đoạn (Routing)").max(250),
+  status: z.enum(["DRAFT", "IN_REVIEW", "EFFECTIVE", "OBSOLETE"]).optional(),
+  notes: z.string().trim().max(2000).optional().nullable(),
+  reason: z.string().trim().max(500).optional().nullable(),
+  steps: z.array(routingStepItemSchema).max(100).optional(),
+});
+
+export async function updateRouting(tx: Tx, actor: AuthzActor, routingId: string, input: unknown) {
+  await ensureKitBomRoutingAndIfuSchema(tx);
+  assertAdminRoutingAccess(actor, "chỉnh sửa quy trình công đoạn (Routing)");
+  const d = parseInput(updateRoutingSchema, input);
+
+  const rtg = (await tx.query("SELECT * FROM kit.routing WHERE id = $1 FOR UPDATE", [routingId])).rows[0] as
+    | (KitRoutingRow & { routing_category?: string | null })
+    | undefined;
+  if (!rtg) throw notFound("quy trình công đoạn (Routing)");
+
+  const nextCode = d.code && d.code.trim() ? d.code.trim().toUpperCase() : rtg.code;
+  if (nextCode !== rtg.code) {
+    const dup = await tx.query("SELECT 1 FROM kit.routing WHERE upper(code) = upper($1) AND id <> $2", [nextCode, routingId]);
+    if (dup.rowCount) throw conflict(`Mã quy trình Routing ${nextCode} đã tồn tại.`, "DUPLICATE_CODE");
+  }
+
+  const nextOrgUnitId = d.org_unit_id || rtg.org_unit_id;
+  const nextProductItemId =
+    d.product_item_id !== undefined
+      ? d.product_item_id && String(d.product_item_id).trim()
+        ? String(d.product_item_id).trim()
+        : null
+      : rtg.product_item_id ?? null;
+  const nextCategory =
+    d.routing_category !== undefined
+      ? d.routing_category && d.routing_category.trim()
+        ? d.routing_category.trim()
+        : null
+      : rtg.routing_category ?? null;
+  const nextStatus = d.status ?? rtg.status;
+  const nextNotes = d.notes !== undefined ? (d.notes && d.notes.trim() ? d.notes.trim() : null) : rtg.notes;
+
+  const updated = (
+    await tx.query(
+      `UPDATE kit.routing
+          SET code = $2,
+              org_unit_id = $3,
+              product_item_id = $4,
+              routing_category = $5,
+              name = $6,
+              status = $7,
+              notes = $8,
+              approved_by = CASE WHEN $7 = 'EFFECTIVE' AND approved_by IS NULL THEN $9 ELSE approved_by END,
+              approved_at = CASE WHEN $7 = 'EFFECTIVE' AND approved_at IS NULL THEN now() ELSE approved_at END,
+              version = version + 1,
+              updated_at = now(),
+              updated_by = $9
+        WHERE id = $1
+        RETURNING *`,
+      [routingId, nextCode, nextOrgUnitId, nextProductItemId, nextCategory, d.name.trim(), nextStatus, nextNotes, actor.userId]
+    )
+  ).rows[0];
+
+  if (d.steps && d.steps.length > 0) {
+    await replaceAllRoutingSteps(tx, actor, routingId, d.steps);
+  }
+
+  await writeAudit(tx, actor, {
+    entityType: "kit_routing",
+    entityId: routingId,
+    action: "admin_update_routing",
+    reason: d.reason?.trim() || "Admin chỉnh sửa thông tin quy trình công đoạn (Routing)",
+    changes: {
+      code: [rtg.code, updated.code],
+      name: [rtg.name, updated.name],
+      routing_category: [rtg.routing_category ?? null, updated.routing_category ?? null],
+      status: [rtg.status, updated.status],
+      notes: [rtg.notes ?? null, updated.notes ?? null],
+    },
+  });
+
+  return getRoutingDetail(tx, actor, routingId);
+}
+
+export async function deleteRouting(tx: Tx, actor: AuthzActor, routingId: string, input?: unknown) {
+  await ensureKitBomRoutingAndIfuSchema(tx);
+  assertAdminRoutingAccess(actor, "xóa quy trình công đoạn (Routing)");
+
+  const rtg = (await tx.query("SELECT * FROM kit.routing WHERE id = $1 FOR UPDATE", [routingId])).rows[0] as
+    | (KitRoutingRow & { routing_category?: string | null })
+    | undefined;
+  if (!rtg) throw notFound("quy trình công đoạn (Routing)");
+
+  const rawReason =
+    input && typeof input === "object" && typeof (input as Record<string, unknown>).reason === "string"
+      ? String((input as Record<string, unknown>).reason).trim()
+      : "";
+  const reason = rawReason || `Admin xóa quy trình công đoạn ${rtg.code} (${rtg.name})`;
+
+  const unlinkedBoms = await tx.query(
+    "UPDATE kit.bom SET routing_id = NULL, updated_at = now() WHERE routing_id = $1 RETURNING id, code",
+    [routingId]
+  );
+  await tx.query(
+    "UPDATE kit.production_step SET routing_step_id = NULL WHERE routing_step_id IN (SELECT id FROM kit.routing_step WHERE routing_id = $1)",
+    [routingId]
+  );
+  await tx.query("UPDATE kit.production_order SET routing_id = NULL WHERE routing_id = $1", [routingId]);
+  await tx.query("DELETE FROM kit.routing_step WHERE routing_id = $1", [routingId]);
+  await tx.query("DELETE FROM kit.routing WHERE id = $1", [routingId]);
+
+  await writeAudit(tx, actor, {
+    entityType: "kit_routing",
+    entityId: routingId,
+    action: "admin_delete_routing",
+    reason,
+    changes: {
+      code: [rtg.code, null],
+      name: [rtg.name, null],
+      unlinked_bom_count: [unlinkedBoms.rowCount ?? 0, 0],
+    },
+  });
+
+  return {
+    deleted: true,
+    id: routingId,
+    code: rtg.code,
+    unlinked_bom_count: unlinkedBoms.rowCount ?? 0,
+  };
+}
+
 export async function addRoutingStep(tx: Tx, actor: AuthzActor, input: unknown) {
   await ensureKitBomRoutingAndIfuSchema(tx);
   const d = parseInput(routingStepSchema, input);
@@ -1739,7 +1890,13 @@ export async function addRoutingStep(tx: Tx, actor: AuthzActor, input: unknown) 
     | undefined;
   if (!rtg) throw notFound("quy trình công đoạn (Routing)");
   await authorize(tx, actor, "kit.bom.manage", rtg.org_unit_id);
-  if (rtg.status !== "DRAFT") throw invalid("Chỉ được thêm bước công đoạn khi quy trình Routing đang ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
+  if (rtg.status !== "DRAFT" && !isAdminRoutingActor(actor)) {
+    throw invalid(
+      "Chỉ được thêm bước công đoạn khi quy trình Routing đang ở trạng thái Nháp (DRAFT) hoặc bởi tài khoản Admin. Vui lòng tạo phiên bản mới.",
+      undefined,
+      "IMMUTABLE_EFFECTIVE_SPEC"
+    );
+  }
 
   const seq =
     d.seq ??
@@ -1820,7 +1977,13 @@ export async function updateRoutingStep(tx: Tx, actor: AuthzActor, routingId: st
     | undefined;
   if (!rtg) throw notFound("quy trình công đoạn (Routing)");
   await authorize(tx, actor, "kit.bom.manage", rtg.org_unit_id);
-  if (rtg.status !== "DRAFT") throw invalid("Chỉ được chỉnh sửa bước công đoạn khi quy trình Routing đang ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
+  if (rtg.status !== "DRAFT" && !isAdminRoutingActor(actor)) {
+    throw invalid(
+      "Chỉ được chỉnh sửa bước công đoạn khi quy trình Routing đang ở trạng thái Nháp (DRAFT) hoặc bởi tài khoản Admin. Vui lòng tạo phiên bản mới.",
+      undefined,
+      "IMMUTABLE_EFFECTIVE_SPEC"
+    );
+  }
 
   const existing = (await tx.query("SELECT * FROM kit.routing_step WHERE id = $1 AND routing_id = $2", [stepId, routingId])).rows[0];
   if (!existing) throw notFound("bước công đoạn Routing");
@@ -1924,11 +2087,18 @@ export async function deleteRoutingStep(tx: Tx, actor: AuthzActor, routingId: st
     | undefined;
   if (!rtg) throw notFound("quy trình công đoạn (Routing)");
   await authorize(tx, actor, "kit.bom.manage", rtg.org_unit_id);
-  if (rtg.status !== "DRAFT") throw invalid("Chỉ được xóa bước công đoạn khi quy trình Routing đang ở trạng thái Nháp (DRAFT). Vui lòng tạo phiên bản mới.", undefined, "IMMUTABLE_EFFECTIVE_SPEC");
+  if (rtg.status !== "DRAFT" && !isAdminRoutingActor(actor)) {
+    throw invalid(
+      "Chỉ được xóa bước công đoạn khi quy trình Routing đang ở trạng thái Nháp (DRAFT) hoặc bởi tài khoản Admin. Vui lòng tạo phiên bản mới.",
+      undefined,
+      "IMMUTABLE_EFFECTIVE_SPEC"
+    );
+  }
 
   const existing = (await tx.query("SELECT * FROM kit.routing_step WHERE id = $1 AND routing_id = $2", [stepId, routingId])).rows[0];
   if (!existing) throw notFound("bước công đoạn Routing");
 
+  await tx.query("UPDATE kit.production_step SET routing_step_id = NULL WHERE routing_step_id = $1", [stepId]);
   await tx.query("DELETE FROM kit.routing_step WHERE id = $1 AND routing_id = $2", [stepId, routingId]);
   await tx.query(
     `WITH ordered AS (
@@ -1998,6 +2168,10 @@ export async function replaceAllRoutingSteps(
   if (rtg.status === "OBSOLETE") throw invalid("Không thể cập nhật bước công đoạn khi quy trình Routing đã hết hiệu lực (OBSOLETE).");
 
   const parsedSteps = z.array(routingStepItemSchema).min(1, "Quy trình phải có ít nhất 1 bước công đoạn").max(100).parse(rawSteps);
+  await tx.query(
+    "UPDATE kit.production_step SET routing_step_id = NULL WHERE routing_step_id IN (SELECT id FROM kit.routing_step WHERE routing_id = $1)",
+    [routingId]
+  );
   await tx.query("DELETE FROM kit.routing_step WHERE routing_id = $1", [routingId]);
 
   for (let i = 0; i < parsedSteps.length; i++) {
@@ -2415,6 +2589,8 @@ export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
        ADD COLUMN IF NOT EXISTS is_stocked boolean NOT NULL DEFAULT true,
        ADD COLUMN IF NOT EXISTS is_integer_qty boolean NOT NULL DEFAULT false`
   );
+  await tx.query("ALTER TABLE kit.production_step ALTER COLUMN routing_step_id DROP NOT NULL");
+  await tx.query("ALTER TABLE kit.production_order ALTER COLUMN routing_id DROP NOT NULL");
 
   // Backfill neutral operational defaults (never inject fake registration numbers or PDF file sizes)
   await tx.query(`
@@ -2657,10 +2833,16 @@ export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
     }
   }
 
-  // Ensure the 4 Standard Shared Master Routings (dùng chung cho nhiều công thức BOM) exist and have steps
+  // Ensure the 4 Standard Shared Master Routings (dùng chung cho nhiều công thức BOM) exist on initial seed only
+  // (so that if an Admin edits or deletes one of these routings, it is not resurrected on server restart)
+  const sharedSeededCheck = await tx.query(
+    "SELECT 1 FROM core.setting WHERE key = 'kit.shared_master_routings_seeded'"
+  );
   const defaultKitOrg =
-    (await tx.query("SELECT id FROM core.org_unit WHERE code = 'P-KIT' LIMIT 1")).rows[0]?.id ??
-    (await tx.query("SELECT id FROM core.org_unit WHERE status = 'ACTIVE' ORDER BY code LIMIT 1")).rows[0]?.id;
+    sharedSeededCheck.rowCount === 0
+      ? ((await tx.query("SELECT id FROM core.org_unit WHERE code = 'P-KIT' LIMIT 1")).rows[0]?.id ??
+        (await tx.query("SELECT id FROM core.org_unit WHERE status = 'ACTIVE' ORDER BY code LIMIT 1")).rows[0]?.id)
+      : null;
   if (defaultKitOrg) {
     const sharedMasterRoutings = [
       {
@@ -2752,6 +2934,11 @@ export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
              END
        WHERE b.routing_id IS NULL
     `);
+    await tx.query(
+      `INSERT INTO core.setting (key, value, description, version, updated_at)
+       VALUES ('kit.shared_master_routings_seeded', 'true'::jsonb, 'Đã khởi tạo 4 quy trình Routing dùng chung mặc định', 1, now())
+       ON CONFLICT (key) DO NOTHING`
+    );
   }
 
   // Only once committed: if this request's transaction rolls back (deadlock, error), the DDL above is undone too
@@ -3381,9 +3568,13 @@ export async function loadStandardKitRoutingSteps(
   if (!opts.trusted) {
     await authorize(tx, actor, "kit.bom.manage", rtg.org_unit_id);
   }
-  if (rtg.status !== "DRAFT") {
-    throw invalid("Chỉ được nạp mẫu bước công đoạn khi quy trình (Routing) đang ở trạng thái Bản nháp (DRAFT). Hãy bấm 'Nhân bản phiên bản mới' trước.");
+  if (rtg.status !== "DRAFT" && !isAdminRoutingActor(actor)) {
+    throw invalid("Chỉ được nạp mẫu bước công đoạn khi quy trình (Routing) đang ở trạng thái Bản nháp (DRAFT) hoặc bởi tài khoản Admin. Hãy bấm 'Nhân bản phiên bản mới' trước.");
   }
+  await tx.query(
+    "UPDATE kit.production_step SET routing_step_id = NULL WHERE routing_step_id IN (SELECT id FROM kit.routing_step WHERE routing_id = $1)",
+    [routingId]
+  );
   await tx.query("DELETE FROM kit.routing_step WHERE routing_id = $1", [routingId]);
 
   const stdSteps = STANDARD_ROUTING_STEP_TEMPLATES[templateKey] ?? STANDARD_ROUTING_STEP_TEMPLATES.PCR_5_STEPS;

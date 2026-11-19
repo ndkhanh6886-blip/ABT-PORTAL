@@ -4143,7 +4143,7 @@ export async function listProductionOrders(tx: Tx, actor: AuthzActor) {
          FROM kit.production_order o
          JOIN master.item i ON i.id = o.product_item_id
          JOIN kit.bom b ON b.id = o.bom_id
-         JOIN kit.routing r ON r.id = o.routing_id
+         LEFT JOIN kit.routing r ON r.id = o.routing_id
          JOIN master.warehouse w ON w.id = o.warehouse_id
          LEFT JOIN inv.lot l ON l.id = o.lot_id
          LEFT JOIN qms.qc_test qt ON qt.id = o.qc_test_id
@@ -4197,7 +4197,7 @@ export async function getProductionOrderDetail(tx: Tx, actor: AuthzActor, id: st
             ORDER BY (pb.status = 'EFFECTIVE') DESC, pb.bom_version DESC
             LIMIT 1
          ) base_b ON true
-         JOIN kit.routing r ON r.id = o.routing_id
+         LEFT JOIN kit.routing r ON r.id = o.routing_id
          JOIN master.warehouse w ON w.id = o.warehouse_id
          LEFT JOIN inv.lot l ON l.id = o.lot_id
          LEFT JOIN core.user_profile cp ON cp.user_id = o.confirmed_by

@@ -2,12 +2,14 @@ import { factoryRoute } from "@/factory/http";
 import {
   addRoutingStep,
   cloneRouting,
+  deleteRouting,
   deleteRoutingStep,
   fastActivateRouting,
   getRoutingDetail,
   loadStandardKitRoutingSteps,
   moveRoutingStep,
   replaceAllRoutingSteps,
+  updateRouting,
   updateRoutingStep,
 } from "@/factory/kit/bomRouting";
 
@@ -15,8 +17,26 @@ export const GET = factoryRoute(async (tx, { actor, params }) => {
   return getRoutingDetail(tx, actor, params.id);
 });
 
+export const PATCH = factoryRoute(async (tx, { actor, params, body }) => {
+  return updateRouting(tx, actor, params.id, body);
+});
+
+export const PUT = factoryRoute(async (tx, { actor, params, body }) => {
+  return updateRouting(tx, actor, params.id, body);
+});
+
+export const DELETE = factoryRoute(async (tx, { actor, params, body }) => {
+  return deleteRouting(tx, actor, params.id, body);
+});
+
 export const POST = factoryRoute(async (tx, { actor, params, body }) => {
   const b = body as Record<string, unknown>;
+  if (b.operation === "update_routing") {
+    return updateRouting(tx, actor, params.id, b);
+  }
+  if (b.operation === "delete_routing") {
+    return deleteRouting(tx, actor, params.id, b);
+  }
   if (b.operation === "clone") {
     const routing = await cloneRouting(tx, actor, params.id);
     return { routing };

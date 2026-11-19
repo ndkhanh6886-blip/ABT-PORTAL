@@ -6,5 +6,10 @@ import { ensureFactoryBootstrapped } from "@/factory/bootstrap";
 export const GET = factoryRoute(async (tx, { actor }) => {
   await ensureFactoryBootstrapped(tx, actor);
   const profile = (await tx.query("SELECT user_id, display_name, org_unit_id, (pin_hash IS NOT NULL) AS has_pin FROM core.user_profile WHERE user_id = $1", [actor.userId])).rows[0];
-  return { profile, is_root: Boolean(actor.isRootAdmin), permissions: await heldPermissions(tx, actor) };
+  return {
+    profile,
+    is_root: Boolean(actor.isRootAdmin || actor.isPortalAdmin),
+    is_admin: Boolean(actor.isRootAdmin || actor.isPortalAdmin),
+    permissions: await heldPermissions(tx, actor),
+  };
 });
