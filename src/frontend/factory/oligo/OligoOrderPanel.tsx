@@ -472,65 +472,262 @@ export async function parseOligoSequenceExcelFile(
   return { rows, text };
 }
 
-function AddSequences({ orderId, onDone }: { orderId: string; onDone: () => void }) {
+export interface OligoSequenceRowDraft {
+  name: string;
+  sequence: string;
+  scale_code: string;
+  purification: string;
+  format: string;
+}
+
+export function createEmptyOligoSequenceRow(
+  idx = 1,
+  defaults: { scale_code?: string; purification?: string; format?: string } = {}
+): OligoSequenceRowDraft {
+  return {
+    name: `Oligo-${idx}`,
+    sequence: "",
+    scale_code: defaults.scale_code || "200NMOL",
+    purification: defaults.purification || "OPC",
+    format: defaults.format || "LYOPHILIZED",
+  };
+}
+
+export function serializeOligoSequenceRows(rows: OligoSequenceRowDraft[]): string {
+  return rows
+    .filter((r) => r.sequence.trim().length > 0)
+    .map((r, idx) => {
+      const name = r.name.trim().replace(/;/g, ",") || `Oligo-${idx + 1}`;
+      const seq = r.sequence.trim().replace(/\s+/g, "");
+      return `${name}; ${seq}; ${r.scale_code || "200NMOL"}; ${r.purification || "OPC"}; ${r.format || "LYOPHILIZED"}`;
+    })
+    .join("\n");
+}
+
+function countCleanNucleotides(raw: string): { bases: number; hasMod: boolean } {
+  const s = (raw || "").trim();
+  if (!s) return { bases: 0, hasMod: false };
+  const hasBracketMod = /\[[^\]]+\]/.test(s) || /\/[^/]+\//.test(s);
+  const cleaned = s
+    .replace(/\[[^\]]+\]/g, "")
+    .replace(/\/[^/]+\//g, "")
+    .replace(/[^ACGTRYMKSWHBVDNUacgtrymkswhbvdnu]/g, "");
+  return { bases: cleaned.length, hasMod: hasBracketMod };
+}
+
+export function OligoSequenceRowsEditor({
+  rows,
+  onChange,
+  lineErrors = [],
+}: {
+  rows: OligoSequenceRowDraft[];
+  onChange: React.Dispatch<React.SetStateAction<OligoSequenceRowDraft[]>>;
+  lineErrors?: { line: number; message: string }[];
+}) {
   const scales = useScales();
-  const [text, setText] = useState("");
-  const [excelNotice, setExcelNotice] = useState<string | null>(null);
-  const [d, setD] = useState({ scale_code: "200NMOL", purification: "OPC", format: "LYOPHILIZED" });
-  const add = useMutation({
-    mutationFn: () => api(`/api/factory/oligo/orders/${orderId}/sequences`, { method: "POST", idempotent: true, json: { text, defaults: d } }),
-    onSuccess: () => {
-      setText("");
-      setExcelNotice(null);
-      onDone();
-    },
+  const [defaults, setDefaults] = useState({
+    scale_code: "200NMOL",
+    purification: "OPC",
+    format: "LYOPHILIZED",
   });
-  const lineErrors = add.error instanceof ApiError && Array.isArray(add.error.details) ? (add.error.details as { line: number; message: string }[]) : [];
+  const [excelNotice, setExcelNotice] = useState<string | null>(null);
+  const [showQuickPaste, setShowQuickPaste] = useState(false);
+  const [quickPasteText, setQuickPasteText] = useState("");
+
+  const scaleOptions =
+    scales.data && scales.data.length > 0
+      ? scales.data
+      : [
+          { code: "25NMOL", label: "25 nmol", synth_nmol: 25 },
+          { code: "50NMOL", label: "50 nmol", synth_nmol: 50 },
+          { code: "100NMOL", label: "100 nmol", synth_nmol: 100 },
+          { code: "200NMOL", label: "200 nmol", synth_nmol: 200 },
+          { code: "1000NMOL", label: "1000 nmol", synth_nmol: 1000 },
+        ];
+
+  const updateRow = (idx: number, patch: Partial<OligoSequenceRowDraft>) => {
+    onChange((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+  };
+
+  const addSingleRow = () => {
+    onChange((prev) => [...prev, createEmptyOligoSequenceRow(prev.length + 1, defaults)]);
+  };
+
+  const addPrimerProbeTriplet = () => {
+    onChange((prev) => {
+      const hasOnlyEmptyFirst = prev.length === 1 && !prev[0].sequence.trim();
+      const baseList = hasOnlyEmptyFirst ? [] : prev;
+      const setNo = Math.floor(baseList.length / 3) + 1;
+      const suffix = setNo > 1 ? `-${setNo}` : "";
+      return [
+        ...baseList,
+        {
+          name: `Primer-F${suffix}`,
+          sequence: "",
+          scale_code: defaults.scale_code,
+          purification: defaults.purification,
+          format: defaults.format,
+        },
+        {
+          name: `Primer-R${suffix}`,
+          sequence: "",
+          scale_code: defaults.scale_code,
+          purification: defaults.purification,
+          format: defaults.format,
+        },
+        {
+          name: `Probe${suffix}`,
+          sequence: "",
+          scale_code: defaults.scale_code,
+          purification: "HPLC",
+          format: defaults.format,
+        },
+      ];
+    });
+  };
+
+  const applyDefaultsToAll = (patch: Partial<typeof defaults>) => {
+    const next = { ...defaults, ...patch };
+    setDefaults(next);
+    onChange((prev) => prev.map((r) => ({ ...r, ...patch })));
+  };
 
   const handleExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
     try {
-      const parsed = await parseOligoSequenceExcelFile(file, d);
+      const parsed = await parseOligoSequenceExcelFile(file, defaults);
       if (parsed.rows.length === 0) {
         window.alert("Không tìm thấy dòng trình tự hợp lệ nào trong file Excel.");
         return;
       }
-      setText((prev) => (prev.trim() ? `${prev.trim()}\n${parsed.text}` : parsed.text));
-      setExcelNotice(`✅ Đã đọc ${parsed.rows.length} trình tự từ file "${file.name}". Kiểm tra nội dung bên dưới và bấm "Lưu & Thêm trình tự" để hoàn tất.`);
+      const importedRows: OligoSequenceRowDraft[] = parsed.rows.map((r) => ({
+        name: r.name,
+        sequence: r.sequence,
+        scale_code: r.scale_code || defaults.scale_code,
+        purification: r.purification || defaults.purification,
+        format: r.format || defaults.format,
+      }));
+      onChange((prev) => {
+        const nonEmpty = prev.filter((x) => x.sequence.trim().length > 0);
+        return [...nonEmpty, ...importedRows];
+      });
+      setExcelNotice(`✅ Đã nạp ${importedRows.length} trình tự từ file "${file.name}" vào bảng bên dưới.`);
     } catch (err: any) {
       window.alert(`Lỗi đọc file Excel: ${err?.message || "Định dạng file không hợp lệ"}`);
     }
   };
 
+  const handleParseQuickPaste = () => {
+    const lines = quickPasteText
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    if (!lines.length) return;
+    const parsedRows: OligoSequenceRowDraft[] = lines.map((line, i) => {
+      const cols = line.split(/\t|;/).map((c) => c.trim());
+      if (cols.length === 1) {
+        return {
+          name: `Oligo-${i + 1}`,
+          sequence: cols[0],
+          scale_code: defaults.scale_code,
+          purification: defaults.purification,
+          format: defaults.format,
+        };
+      }
+      const [name, seq, sc, pur, fmt] = cols;
+      const cleanPur = (pur || "").toUpperCase();
+      const cleanFmt = (fmt || "").toUpperCase();
+      return {
+        name: name || `Oligo-${i + 1}`,
+        sequence: seq || "",
+        scale_code: sc ? sc.toUpperCase().replace(/\s+/g, "") : defaults.scale_code,
+        purification: ["DESALT", "OPC", "HPLC", "PAGE"].includes(cleanPur) ? cleanPur : defaults.purification,
+        format:
+          cleanFmt === "LIQUID" || cleanFmt.includes("DUNG DICH") || cleanFmt.includes("DUNG DỊCH")
+            ? "LIQUID"
+            : defaults.format,
+      };
+    });
+    onChange((prev) => {
+      const nonEmpty = prev.filter((x) => x.sequence.trim().length > 0);
+      return [...nonEmpty, ...parsedRows];
+    });
+    setQuickPasteText("");
+    setShowQuickPaste(false);
+  };
+
+  const validCount = rows.filter((r) => r.sequence.trim().length > 0).length;
+  const errByLine = new Map(lineErrors.map((e) => [e.line, e.message]));
+
   return (
-    <div className="flex flex-col gap-2.5 p-3.5 rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50/40 dark:bg-purple-950/20">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div className="text-xs font-extrabold text-purple-950 dark:text-purple-200">
-            🧬 Nhập Danh Sách Trình Tự Oligo (Nhập tay hoặc Nhập từ File Excel)
-          </div>
-          <div className="text-[11px] text-slate-500">
-            Mỗi dòng: <code>Tên; Trình tự 5&apos;-3&apos;; Thang; Tinh sạch; Định dạng</code> (chỉ trình tự là bắt buộc, cột thiếu lấy mặc định).
+    <div className="flex flex-col gap-2.5">
+      {/* Thanh công cụ & Thiết lập mặc định */}
+      <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-purple-200/80 dark:border-purple-800/60">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-extrabold text-purple-950 dark:text-purple-200">
+            🧬 Danh sách trình tự Oligo ({validCount}/{rows.length} dòng đã nhập chuỗi)
+          </span>
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px] bg-white dark:bg-slate-900 px-2.5 py-1 rounded-xl border border-slate-200 dark:border-slate-800">
+            <span className="font-semibold text-slate-500">Áp dụng nhanh cho các dòng:</span>
+            <select
+              aria-label="Thang mặc định"
+              value={defaults.scale_code}
+              onChange={(e) => applyDefaultsToAll({ scale_code: e.target.value })}
+              className="rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2 py-0.5 text-xs font-semibold text-slate-800 dark:text-slate-100 cursor-pointer"
+            >
+              {scaleOptions.map((s) => (
+                <option key={s.code} value={s.code}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="Tinh sạch mặc định"
+              value={defaults.purification}
+              onChange={(e) => applyDefaultsToAll({ purification: e.target.value })}
+              className="rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2 py-0.5 text-xs font-semibold text-slate-800 dark:text-slate-100 cursor-pointer"
+            >
+              {Object.entries(PURIFICATION).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="Định dạng mặc định"
+              value={defaults.format}
+              onChange={(e) => applyDefaultsToAll({ format: e.target.value })}
+              className="rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2 py-0.5 text-xs font-semibold text-slate-800 dark:text-slate-100 cursor-pointer"
+            >
+              {Object.entries(FORMAT).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
+
         <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
-            onClick={() => downloadOligoSequenceExcelTemplate()}
-            className="px-2.5 py-1.5 rounded-xl border border-emerald-400 dark:border-emerald-700 bg-white dark:bg-slate-900 hover:bg-emerald-50 text-emerald-800 dark:text-emerald-300 font-bold text-xs cursor-pointer shadow-2xs"
+            onClick={() => setShowQuickPaste((v) => !v)}
+            className="px-2.5 py-1.5 rounded-xl border border-purple-300 dark:border-purple-700 bg-white dark:bg-slate-900 hover:bg-purple-50 text-purple-800 dark:text-purple-200 font-bold text-xs cursor-pointer"
           >
-            📥 Tải file Excel mẫu (.xlsx)
+            {showQuickPaste ? "Đóng khung dán nhanh" : "📋 Dán nhanh nhiều dòng"}
           </button>
-          <label className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer shadow-2xs inline-flex items-center gap-1">
-            <span>📤 Nhập trình tự từ file Excel (.xlsx / .csv)</span>
-            <input
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              className="hidden"
-              onChange={handleExcelUpload}
-            />
+          <button
+            type="button"
+            onClick={() => downloadOligoSequenceExcelTemplate()}
+            className="px-2.5 py-1.5 rounded-xl border border-emerald-400 dark:border-emerald-700 bg-white dark:bg-slate-900 hover:bg-emerald-50 text-emerald-800 dark:text-emerald-300 font-bold text-xs cursor-pointer"
+          >
+            📥 File Excel mẫu (.xlsx)
+          </button>
+          <label className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer inline-flex items-center gap-1">
+            <span>📤 Nhập từ Excel (.xlsx / .csv)</span>
+            <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleExcelUpload} />
           </label>
         </div>
       </div>
@@ -544,43 +741,260 @@ function AddSequences({ orderId, onDone }: { orderId: string; onDone: () => void
         </div>
       )}
 
-      <div className="grid gap-2 sm:grid-cols-3">
-        <Field label="Thang mặc định">
-          <select className={inputClass} value={d.scale_code} onChange={(e) => setD({ ...d, scale_code: e.target.value })}>
-            {scales.data?.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
-          </select>
-        </Field>
-        <Field label="Tinh sạch mặc định">
-          <select className={inputClass} value={d.purification} onChange={(e) => setD({ ...d, purification: e.target.value })}>
-            {Object.entries(PURIFICATION).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-        </Field>
-        <Field label="Định dạng mặc định">
-          <select className={inputClass} value={d.format} onChange={(e) => setD({ ...d, format: e.target.value })}>
-            {Object.entries(FORMAT).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-        </Field>
-      </div>
-      <textarea
-        className="w-full min-h-28 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 p-2 font-mono text-xs"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder={"Primer F; ATGCTTTAGCAGGACAGTC\nProbe; /FAM/ATGCTTTAGCAGGAC/BHQ1/; 200NMOL; HPLC"}
-        spellCheck={false}
-      />
-      {lineErrors.length > 0 ? (
-        <ul className="text-xs text-rose-600 list-disc pl-4">{lineErrors.map((e) => <li key={e.line}>Dòng {e.line}: {e.message}</li>)}</ul>
-      ) : (
-        <ErrorNote error={add.error} />
+      {showQuickPaste && (
+        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-purple-300 dark:border-purple-800 flex flex-col gap-2">
+          <div className="text-[11px] text-slate-600 dark:text-slate-300 font-semibold">
+            Dán danh sách từ Excel hoặc văn bản (mỗi dòng: <code>Tên; Trình tự 5&apos;-3&apos;; Thang; Tinh sạch; Định dạng</code>), hệ thống sẽ tách thành từng dòng bên dưới:
+          </div>
+          <textarea
+            rows={3}
+            className={`${inputClass} font-mono text-xs`}
+            value={quickPasteText}
+            onChange={(e) => setQuickPasteText(e.target.value)}
+            placeholder={"Primer-F; ATGCTTTAGCAGGACAGTC\nProbe; [FAM]ATGCTTTAGCAGGAC[BHQ1]; 200NMOL; HPLC"}
+            spellCheck={false}
+          />
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" onClick={() => setShowQuickPaste(false)}>
+              Hủy
+            </Button>
+            <Button type="button" disabled={!quickPasteText.trim()} onClick={handleParseQuickPaste}>
+              Chuyển thành từng dòng trình tự
+            </Button>
+          </div>
+        </div>
       )}
-      <div className="flex items-center justify-end gap-2">
-        {text.trim() && (
-          <Button variant="ghost" onClick={() => { setText(""); setExcelNotice(null); }}>
-            Xóa nội dung đang nhập
-          </Button>
-        )}
-        <Button onClick={() => add.mutate()} disabled={add.isPending || !text.trim()}>
-          {add.isPending ? "Đang lưu…" : "💾 Lưu & Thêm trình tự vào đơn"}
+
+      {/* Bảng nhập từng dòng trình tự */}
+      <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xs">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="bg-slate-100/90 dark:bg-slate-800/80 text-slate-700 dark:text-slate-200 border-b border-slate-200 dark:border-slate-700 text-left">
+              <th className="py-2 px-2.5 w-9 text-center font-bold">#</th>
+              <th className="py-2 px-2.5 w-44 font-bold">Tên trình tự (Mồi / Probe) *</th>
+              <th className="py-2 px-2.5 min-w-[280px] font-bold">
+                Trình tự Nucleotide (5&apos; → 3&apos;) *{" "}
+                <span className="font-normal text-[11px] text-slate-500">(Hỗ trợ [FAM]...[BHQ1] hoặc /FAM/.../BHQ1/)</span>
+              </th>
+              <th className="py-2 px-2 w-24 text-center font-bold">Độ dài</th>
+              <th className="py-2 px-2 w-32 font-bold">Thang</th>
+              <th className="py-2 px-2 w-28 font-bold">Tinh sạch</th>
+              <th className="py-2 px-2 w-28 font-bold">Định dạng</th>
+              <th className="py-2 px-2 w-16 text-center font-bold"></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            {rows.map((r, idx) => {
+              const { bases, hasMod } = countCleanNucleotides(r.sequence);
+              const rowErr = errByLine.get(idx + 1);
+              return (
+                <React.Fragment key={idx}>
+                  <tr className="hover:bg-purple-50/30 dark:hover:bg-slate-800/40 transition-colors">
+                    <td className="py-1.5 px-2.5 text-center font-mono font-bold text-slate-400">{idx + 1}</td>
+                    <td className="py-1.5 px-2">
+                      <input
+                        type="text"
+                        className={`${inputClass} font-semibold`}
+                        placeholder={`VD: Primer-${idx + 1}`}
+                        value={r.name}
+                        onChange={(e) => updateRow(idx, { name: e.target.value })}
+                      />
+                    </td>
+                    <td className="py-1.5 px-2">
+                      <input
+                        type="text"
+                        className={`${inputClass} font-mono`}
+                        placeholder="Nhập chuỗi 5'→3' (VD: ATGCTTTAGCAGGACAGTC hoặc [FAM]CCAYTCRT[BHQ1])"
+                        value={r.sequence}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const isMod = /\[[^\]]+\]/.test(val) || /\/[^/]+\//.test(val);
+                          updateRow(idx, {
+                            sequence: val,
+                            ...(isMod && r.purification === "OPC" ? { purification: "HPLC" } : {}),
+                          });
+                        }}
+                        spellCheck={false}
+                      />
+                    </td>
+                    <td className="py-1.5 px-2 text-center whitespace-nowrap">
+                      {bases > 0 ? (
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-mono font-bold border ${
+                            hasMod
+                              ? "bg-purple-100 text-purple-900 border-purple-300 dark:bg-purple-950/70 dark:text-purple-200 dark:border-purple-800"
+                              : "bg-sky-50 text-sky-800 border-sky-200 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-800"
+                          }`}
+                        >
+                          {hasMod ? "Probe · " : ""}
+                          {bases} nt
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-slate-400">—</span>
+                      )}
+                    </td>
+                    <td className="py-1.5 px-2">
+                      <select
+                        className={inputClass}
+                        value={r.scale_code}
+                        onChange={(e) => updateRow(idx, { scale_code: e.target.value })}
+                        aria-label={`Thang dòng ${idx + 1}`}
+                      >
+                        {scaleOptions.map((s) => (
+                          <option key={s.code} value={s.code}>
+                            {s.label}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="py-1.5 px-2">
+                      <select
+                        className={inputClass}
+                        value={r.purification}
+                        onChange={(e) => updateRow(idx, { purification: e.target.value })}
+                        aria-label={`Tinh sạch dòng ${idx + 1}`}
+                      >
+                        {Object.entries(PURIFICATION).map(([k, v]) => (
+                          <option key={k} value={k}>
+                            {v}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="py-1.5 px-2">
+                      <select
+                        className={inputClass}
+                        value={r.format}
+                        onChange={(e) => updateRow(idx, { format: e.target.value })}
+                        aria-label={`Định dạng dòng ${idx + 1}`}
+                      >
+                        {Object.entries(FORMAT).map(([k, v]) => (
+                          <option key={k} value={k}>
+                            {v}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="py-1.5 px-2 text-center whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1">
+                        <button
+                          type="button"
+                          title="Nhân bản dòng trình tự này"
+                          onClick={() =>
+                            onChange((prev) => {
+                              const copy = [...prev];
+                              copy.splice(idx + 1, 0, {
+                                ...r,
+                                name: r.name ? `${r.name}-2` : `Oligo-${prev.length + 1}`,
+                              });
+                              return copy;
+                            })
+                          }
+                          className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                        >
+                          📋
+                        </button>
+                        <button
+                          type="button"
+                          title="Xóa dòng này"
+                          onClick={() =>
+                            onChange((prev) =>
+                              prev.length > 1 ? prev.filter((_, i) => i !== idx) : [createEmptyOligoSequenceRow(1, defaults)]
+                            )
+                          }
+                          className="p-1.5 rounded-lg border border-rose-200 dark:border-rose-800/70 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 font-bold cursor-pointer"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  {rowErr && (
+                    <tr className="bg-rose-50/80 dark:bg-rose-950/40">
+                      <td colSpan={8} className="py-1 px-3 text-[11px] font-semibold text-rose-700 dark:text-rose-300">
+                        ⚠️ Dòng #{idx + 1}: {rowErr}
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Thanh nút Thêm trình tự mới */}
+      <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={addSingleRow}
+            className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs shadow-2xs cursor-pointer inline-flex items-center gap-1"
+          >
+            <span>+ Thêm trình tự</span>
+          </button>
+          <button
+            type="button"
+            onClick={addPrimerProbeTriplet}
+            className="px-3 py-1.5 rounded-xl border border-purple-300 dark:border-purple-700 bg-white dark:bg-slate-900 hover:bg-purple-50 text-purple-800 dark:text-purple-200 font-bold text-xs cursor-pointer"
+          >
+            + Thêm bộ 3 chuỗi (Primer F / Primer R / Probe)
+          </button>
+          {rows.length > 1 && (
+            <button
+              type="button"
+              onClick={() => {
+                onChange([createEmptyOligoSequenceRow(1, defaults)]);
+                setExcelNotice(null);
+              }}
+              className="px-2.5 py-1.5 rounded-xl text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+            >
+              Xóa tất cả dòng
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AddSequences({ orderId, onDone }: { orderId: string; onDone: () => void }) {
+  const [rows, setRows] = useState<OligoSequenceRowDraft[]>(() => [
+    { name: "Primer-F", sequence: "", scale_code: "200NMOL", purification: "OPC", format: "LYOPHILIZED" },
+    { name: "Primer-R", sequence: "", scale_code: "200NMOL", purification: "OPC", format: "LYOPHILIZED" },
+    { name: "Probe", sequence: "", scale_code: "200NMOL", purification: "HPLC", format: "LYOPHILIZED" },
+  ]);
+
+  const builtText = React.useMemo(() => serializeOligoSequenceRows(rows), [rows]);
+  const validCount = rows.filter((r) => r.sequence.trim().length > 0).length;
+
+  const add = useMutation({
+    mutationFn: () =>
+      api(`/api/factory/oligo/orders/${orderId}/sequences`, {
+        method: "POST",
+        idempotent: true,
+        json: {
+          text: builtText,
+          defaults: { scale_code: "200NMOL", purification: "OPC", format: "LYOPHILIZED" },
+        },
+      }),
+    onSuccess: () => {
+      setRows([createEmptyOligoSequenceRow(1)]);
+      onDone();
+    },
+  });
+  const lineErrors =
+    add.error instanceof ApiError && Array.isArray(add.error.details)
+      ? (add.error.details as { line: number; message: string }[])
+      : [];
+
+  return (
+    <div className="flex flex-col gap-3 p-3.5 rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50/40 dark:bg-purple-950/20">
+      <OligoSequenceRowsEditor rows={rows} onChange={setRows} lineErrors={lineErrors} />
+      {lineErrors.length === 0 && <ErrorNote error={add.error} />}
+      <div className="flex items-center justify-end gap-2 border-t border-purple-200/70 dark:border-purple-800/50 pt-2.5">
+        <Button onClick={() => add.mutate()} disabled={add.isPending || validCount === 0}>
+          {add.isPending ? "Đang lưu…" : `💾 Lưu & Thêm ${validCount} trình tự vào đơn`}
         </Button>
       </div>
     </div>
@@ -1026,156 +1440,6 @@ export function OligoOrderPanel({
             )}
           </div>
 
-          {/* 5. Bảng Tính Tiền Tổng Hợp Oligo & Kê Khai Hạng Mục Hóa Đơn (OLG-...) */}
-          <div className="p-3 rounded-xl bg-emerald-50/60 dark:bg-emerald-950/25 border border-emerald-200 dark:border-emerald-800/70 flex flex-col gap-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="font-extrabold text-emerald-950 dark:text-emerald-200">
-                  💰 Tính Tiền Tổng Hợp Oligo ({o.code}):
-                </span>
-                <span className="px-2 py-0.5 rounded bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-700 font-bold text-[11px] text-emerald-800 dark:text-emerald-300">
-                  Chế độ:{" "}
-                  {o.pricing_type === "percentage"
-                    ? `Giá Dealer (${o.price_percentage ?? 100}%)`
-                    : o.pricing_type === "custom"
-                    ? "Đơn giá tự do"
-                    : o.pricing_type === "demo"
-                    ? "Đơn Demo (0đ)"
-                    : "Giá End (100%)"}
-                </span>
-                <span>
-                  Trước VAT: <b className="font-mono">{subtotalVnd.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ</b>
-                </span>
-                <span>
-                  VAT ({vatRate}%): <b className="font-mono">{vatAmountVnd.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ</b>
-                </span>
-                <span className="px-2.5 py-0.5 rounded-lg bg-emerald-600 text-white font-extrabold font-mono">
-                  Tổng cộng: {grandTotalVnd.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} VNĐ
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() =>
-                    printOligoInvoiceSchedule(o, aggregatedInvoiceLines, subtotalVnd, vatRate, vatAmountVnd, grandTotalVnd)
-                  }
-                  className="px-2.5 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-2xs cursor-pointer"
-                  title="Xem trước & In Bảng kê xuất hóa đơn VAT kèm Phụ lục trình tự Oligo chuẩn A4"
-                >
-                  🖨️ In Bảng Kê Xuất Hóa Đơn VAT (A4)
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    exportOligoInvoiceCsv(o, aggregatedInvoiceLines, subtotalVnd, vatRate, vatAmountVnd, grandTotalVnd)
-                  }
-                  className="px-2.5 py-1 rounded-xl border border-emerald-400 dark:border-emerald-700 bg-white dark:bg-slate-900 hover:bg-emerald-50 text-emerald-800 dark:text-emerald-300 font-bold text-xs cursor-pointer"
-                  title="Tải file Excel (.csv UTF-8) Bảng kê mã hàng hóa đơn VAT và Phụ lục trình tự Oligo"
-                >
-                  📥 Xuất Excel Bảng Kê (.csv)
-                </button>
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setPricingDraft({
-                      pricing_type: o.pricing_type || "auto",
-                      price_percentage: String(o.price_percentage ?? 100),
-                      custom_unit_price: "0",
-                      vat_rate: String(o.vat_rate ?? 8),
-                    });
-                    setEditingPricing((v) => !v);
-                  }}
-                >
-                  {editingPricing ? "Đóng cấu hình giá" : "🧮 Đổi chế độ giá / Tính lại tiền"}
-                </Button>
-              </div>
-            </div>
-
-            {editingPricing && (
-              <div className="pt-2 border-t border-emerald-200 dark:border-emerald-800/60 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-5 items-end">
-                <Field label="Chế độ tính giá">
-                  <select
-                    className={inputClass}
-                    value={pricingDraft.pricing_type}
-                    onChange={(e) => setPricingDraft({ ...pricingDraft, pricing_type: e.target.value })}
-                  >
-                    <option value="auto">Giá End (100% bảng giá chuẩn)</option>
-                    <option value="percentage">Giá Dealer / Chiết khấu theo %</option>
-                    <option value="custom">Đơn giá tự do (VNĐ / base)</option>
-                    <option value="demo">Đơn hàng Demo (0 VNĐ)</option>
-                  </select>
-                </Field>
-                {pricingDraft.pricing_type === "percentage" && (
-                  <Field label="Tỷ lệ % so với Giá End">
-                    <input
-                      type="number"
-                      className={inputClass}
-                      value={pricingDraft.price_percentage}
-                      onChange={(e) => setPricingDraft({ ...pricingDraft, price_percentage: e.target.value })}
-                    />
-                  </Field>
-                )}
-                {pricingDraft.pricing_type === "custom" && (
-                  <Field label="Đơn giá tự nhập (VNĐ / base)">
-                    <input
-                      type="number"
-                      className={inputClass}
-                      value={pricingDraft.custom_unit_price}
-                      onChange={(e) => setPricingDraft({ ...pricingDraft, custom_unit_price: e.target.value })}
-                    />
-                  </Field>
-                )}
-                <Field label="Thuế suất VAT (%)">
-                  <input
-                    type="number"
-                    className={inputClass}
-                    value={pricingDraft.vat_rate}
-                    onChange={(e) => setPricingDraft({ ...pricingDraft, vat_rate: e.target.value })}
-                  />
-                </Field>
-                <div className="flex items-center gap-1.5">
-                  <Button
-                    disabled={recalcPricing.isPending}
-                    onClick={() =>
-                      recalcPricing.mutate({
-                        pricing_type: pricingDraft.pricing_type,
-                        price_percentage: Number(pricingDraft.price_percentage) || 100,
-                        custom_unit_price: Number(pricingDraft.custom_unit_price) || 0,
-                        vat_rate: Number(pricingDraft.vat_rate) || 0,
-                      })
-                    }
-                  >
-                    {recalcPricing.isPending ? "Đang tính…" : "💾 Áp dụng & Tính lại toàn bộ đơn"}
-                  </Button>
-                </div>
-              </div>
-            )}
-
-            {aggregatedInvoiceLines.length > 0 && (
-              <details className="text-[11px]">
-                <summary className="cursor-pointer font-bold text-emerald-800 dark:text-emerald-300 select-none">
-                  📋 Xem Bảng kê chi tiết mã hàng hóa đơn VAT ({aggregatedInvoiceLines.length} dòng hạng mục OLG-...)
-                </summary>
-                <div className="mt-2 bg-white dark:bg-slate-950 rounded-xl p-2 border border-emerald-200 dark:border-emerald-900">
-                  <Table head={["Mã hàng hóa đơn", "Tên hạng mục", "ĐVT", "Tổng SL", "Đơn giá (VNĐ)", "Thành tiền (VNĐ)"]}>
-                    {aggregatedInvoiceLines.map((l, i) => (
-                      <tr key={i}>
-                        <td className="py-1 pr-3 font-mono font-bold text-sky-700 dark:text-sky-400">{l.code}</td>
-                        <td className="py-1 pr-3">{l.name}</td>
-                        <td className="py-1 pr-3 text-slate-500">{l.unit}</td>
-                        <td className="py-1 pr-3 text-right font-mono">{l.qty}</td>
-                        <td className="py-1 pr-3 text-right font-mono">{Number(l.unit_price).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ</td>
-                        <td className="py-1 pr-3 text-right font-mono font-bold text-emerald-700 dark:text-emerald-400">
-                          {Number(l.amount).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ
-                        </td>
-                      </tr>
-                    ))}
-                  </Table>
-                </div>
-              </details>
-            )}
-          </div>
-
           {!["COMPLETED", "DELIVERED", "CANCELLED"].includes(o.status) && (o.sequences.length === 0 || showAddSeq) && (
             <AddSequences
               orderId={o.id}
@@ -1185,7 +1449,7 @@ export function OligoOrderPanel({
               }}
             />
           )}
-          <Table head={["Mã", "Tên", "Trình tự", "Dài", "Loại", "Thang / tinh sạch", "MW (Da)", "Tm (°C)", "GC %", "nmol/OD", "Thành tiền (VNĐ)", "Trạng thái", ""]}>
+          <Table head={["Mã", "Tên", "Trình tự", "Dài", "Loại", "Thang / tinh sạch", "MW (Da)", "Tm (°C)", "GC %", "nmol/OD", "Trạng thái", ""]}>
             {o.sequences.map((s) => (
               <tr key={s.id} className={s.status === "CANCELLED" ? "opacity-50" : ""}>
                 <td className="py-2 pr-3 font-mono">{s.code}</td>
@@ -1203,14 +1467,6 @@ export function OligoOrderPanel({
                 <td className="py-2 pr-3 text-right">{s.tm.toLocaleString("vi-VN")}</td>
                 <td className="py-2 pr-3 text-right">{s.gc_percent.toLocaleString("vi-VN")}</td>
                 <td className="py-2 pr-3 text-right">{s.nmol_per_od.toLocaleString("vi-VN")}</td>
-                <td className="py-2 pr-3 text-right whitespace-nowrap">
-                  <div className="font-mono font-bold text-emerald-700 dark:text-emerald-400">
-                    {Number(s.price ?? 0).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ
-                  </div>
-                  <div className="font-mono text-[10px] text-slate-500">
-                    {Number(s.unit_price ?? 0).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ/nt
-                  </div>
-                </td>
                 <td className="py-2 pr-3 whitespace-nowrap">
                   <StatusBadge status={SEQ_STATUS[s.status][0]} label={SEQ_STATUS[s.status][1]} />
                 </td>

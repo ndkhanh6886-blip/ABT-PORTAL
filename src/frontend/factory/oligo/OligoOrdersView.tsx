@@ -6,9 +6,10 @@ import { api, fmtDate } from "../api";
 import { printOrderCoa } from "../coa";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import {
-  downloadOligoSequenceExcelTemplate,
   OligoOrderPanel,
-  parseOligoSequenceExcelFile,
+  OligoSequenceRowsEditor,
+  serializeOligoSequenceRows,
+  type OligoSequenceRowDraft,
 } from "./OligoOrderPanel";
 import { ORDER_STATUS } from "./shared";
 
@@ -32,8 +33,12 @@ function NewOrder({ onCreated }: { onCreated: (id: string) => void }) {
     due_date: "",
     notes: "",
   });
-  const [seqText, setSeqText] = useState("");
-  const [excelNotice, setExcelNotice] = useState<string | null>(null);
+  const [seqRows, setSeqRows] = useState<OligoSequenceRowDraft[]>(() => [
+    { name: "Primer-F", sequence: "", scale_code: "200NMOL", purification: "OPC", format: "LYOPHILIZED" },
+    { name: "Primer-R", sequence: "", scale_code: "200NMOL", purification: "OPC", format: "LYOPHILIZED" },
+    { name: "Probe", sequence: "", scale_code: "200NMOL", purification: "HPLC", format: "LYOPHILIZED" },
+  ]);
+  const builtSeqText = React.useMemo(() => serializeOligoSequenceRows(seqRows), [seqRows]);
   const unit =
     options.data?.find((o) => o.id === f.org_unit_id) ??
     (options.data?.length === 1 ? options.data[0] : undefined);
@@ -54,12 +59,12 @@ function NewOrder({ onCreated }: { onCreated: (id: string) => void }) {
           notes: f.notes || null,
         },
       });
-      if (seqText.trim()) {
+      if (builtSeqText.trim()) {
         await api(`/api/factory/oligo/orders/${o.id}/sequences`, {
           method: "POST",
           idempotent: true,
           json: {
-            text: seqText.trim(),
+            text: builtSeqText.trim(),
             defaults: { scale_code: "200NMOL", purification: "OPC", format: "LYOPHILIZED" },
           },
         });
@@ -72,27 +77,6 @@ function NewOrder({ onCreated }: { onCreated: (id: string) => void }) {
       onCreated(o.id);
     },
   });
-
-  const handleExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    try {
-      const parsed = await parseOligoSequenceExcelFile(file, {
-        scale_code: "200NMOL",
-        purification: "OPC",
-        format: "LYOPHILIZED",
-      });
-      if (parsed.rows.length === 0) {
-        window.alert("Không tìm thấy trình tự hợp lệ nào trong file Excel.");
-        return;
-      }
-      setSeqText((prev) => (prev.trim() ? `${prev.trim()}\n${parsed.text}` : parsed.text));
-      setExcelNotice(`✅ Đã đọc ${parsed.rows.length} trình tự từ file "${file.name}"`);
-    } catch (err: any) {
-      window.alert(`Lỗi đọc file Excel: ${err?.message || "Định dạng không hợp lệ"}`);
-    }
-  };
 
   if (options.data && !options.data.length)
     return (
@@ -185,38 +169,8 @@ function NewOrder({ onCreated }: { onCreated: (id: string) => void }) {
         {create.isPending ? "Đang tạo đơn…" : "+ Tạo đơn Oligo"}
       </Button>
 
-      <div className="sm:col-span-2 lg:col-span-6 p-3 rounded-xl bg-purple-50/60 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800/70 flex flex-col gap-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="text-xs font-bold text-purple-950 dark:text-purple-200">
-            🧬 Nhập trình tự ngay khi tạo đơn (Tùy chọn — có thể tải mẫu Excel &amp; nhập từ file Excel):
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => downloadOligoSequenceExcelTemplate()}
-              className="px-2.5 py-1 rounded-lg border border-emerald-400 dark:border-emerald-700 bg-white dark:bg-slate-900 hover:bg-emerald-50 text-emerald-800 dark:text-emerald-300 font-bold text-xs cursor-pointer"
-            >
-              📥 Tải file Excel mẫu (.xlsx)
-            </button>
-            <label className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer inline-flex items-center gap-1">
-              <span>📤 Nhập trình tự từ file Excel (.xlsx / .csv)</span>
-              <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleExcelUpload} />
-            </label>
-          </div>
-        </div>
-        {excelNotice && (
-          <div className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">{excelNotice}</div>
-        )}
-        <textarea
-          rows={3}
-          className={`${inputClass} font-mono text-xs`}
-          value={seqText}
-          onChange={(e) => setSeqText(e.target.value)}
-          placeholder={
-            "Mỗi dòng: Tên; Trình tự 5'-3'; Thang; Tinh sạch; Định dạng\nVD: HBV-F2; GAGTGTGGATTCGCACTCCT; 200NMOL; OPC; LYOPHILIZED"
-          }
-          spellCheck={false}
-        />
+      <div className="sm:col-span-2 lg:col-span-6 p-3 rounded-xl bg-purple-50/60 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800/70">
+        <OligoSequenceRowsEditor rows={seqRows} onChange={setSeqRows} />
       </div>
 
       {isDateDelayedFromIo && (
@@ -467,7 +421,7 @@ export function OligoOrdersView({
           </div>
 
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-12 items-center">
-            <div className="sm:col-span-2 lg:col-span-4 relative">
+            <div className="sm:col-span-2 lg:col-span-5 relative">
               <input
                 className={`${inputClass} pr-8`}
                 placeholder="🔍 Tìm mã đơn, khách hàng, Đơn nội bộ/PO, tên mồi/probe, chuỗi 5'-3', ghi chú..."
@@ -514,7 +468,7 @@ export function OligoOrdersView({
               </select>
             </div>
 
-            <div className="lg:col-span-2">
+            <div className="lg:col-span-3 flex items-center gap-1.5">
               <select
                 className={inputClass}
                 value={dueFilter}
@@ -526,21 +480,6 @@ export function OligoOrdersView({
                 <option value="NEXT_7_DAYS">📅 Giao trong 7 ngày tới</option>
                 <option value="DELAYED_SLA">⚠️ Trễ hơn ngày KD yêu cầu</option>
                 <option value="RESCHEDULED">🔄 Đã từng dời lịch giao</option>
-              </select>
-            </div>
-
-            <div className="lg:col-span-2 flex items-center gap-1.5">
-              <select
-                className={inputClass}
-                value={pricingFilter}
-                onChange={(e) => setPricingFilter(e.target.value)}
-                aria-label="Lọc chính sách giá"
-              >
-                <option value="">Mọi chính sách giá</option>
-                <option value="auto">Giá End 100%</option>
-                <option value="percentage">Giá Dealer (%)</option>
-                <option value="custom">Giá tự do</option>
-                <option value="demo">Đơn Demo 0đ</option>
               </select>
               {hasActiveFilters && (
                 <button
@@ -582,7 +521,6 @@ export function OligoOrdersView({
               "Khách / Yêu cầu",
               "Ghi chú đơn hàng",
               "Số trình tự (PP / Amplicon)",
-              "Thành tiền (VNĐ)",
               "Hạn giao & Cảnh báo",
               "Trạng thái",
               "Xuất COA Đơn Hàng",
@@ -661,20 +599,6 @@ export function OligoOrdersView({
                     </div>
                     <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">
                       Đã giao: {o.delivered_count ?? 0}/{o.sequence_count}
-                    </div>
-                  </td>
-                  <td className="py-2 pr-3 whitespace-nowrap text-right">
-                    <div className="font-mono font-bold text-emerald-700 dark:text-emerald-400 text-xs">
-                      {Number(o.total_price ?? 0).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ
-                    </div>
-                    <div className="text-[10px] text-slate-500">
-                      {o.pricing_type === "percentage"
-                        ? `Dealer ${o.price_percentage ?? 100}%`
-                        : o.pricing_type === "custom"
-                        ? "Giá tự do"
-                        : o.pricing_type === "demo"
-                        ? "Demo 0đ"
-                        : "Giá End 100%"}
                     </div>
                   </td>
                   <td className="py-2 pr-3 whitespace-nowrap">

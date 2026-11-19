@@ -9,7 +9,10 @@ import { printOrderCoa } from "../coa";
 import {
   downloadOligoSequenceExcelTemplate,
   OligoOrderPanel,
+  OligoSequenceRowsEditor,
   parseOligoSequenceExcelFile,
+  serializeOligoSequenceRows,
+  type OligoSequenceRowDraft,
 } from "../oligo/OligoOrderPanel";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { ShipmentForm, type OrderLine } from "./ShipmentForm";
@@ -925,9 +928,12 @@ function OrderPanel({ id, onClose }: { id: string; onClose: () => void }) {
   const [dateChangeReason, setDateChangeReason] = useState("");
   const [confirmDateWarning, setConfirmDateWarning] = useState(false);
   const [addingOligoSeq, setAddingOligoSeq] = useState(false);
-  const [newSeqText, setNewSeqText] = useState(
-    "PRIMER-NEW-F; GAGTGTGGATTCGCACTCCT; 200NMOL; OPC; LYOPHILIZED\nPRIMER-NEW-R; GAGGAGTTGGGGGAGGAGATT; 200NMOL; OPC; LYOPHILIZED"
-  );
+  const [newSeqRows, setNewSeqRows] = useState<OligoSequenceRowDraft[]>(() => [
+    { name: "Primer-F", sequence: "", scale_code: "200NMOL", purification: "OPC", format: "LYOPHILIZED" },
+    { name: "Primer-R", sequence: "", scale_code: "200NMOL", purification: "OPC", format: "LYOPHILIZED" },
+    { name: "Probe", sequence: "", scale_code: "200NMOL", purification: "HPLC", format: "LYOPHILIZED" },
+  ]);
+  const newSeqText = React.useMemo(() => serializeOligoSequenceRows(newSeqRows), [newSeqRows]);
 
   const order = useQuery({
     queryKey: ["factory", "internal-order", id],
@@ -1286,20 +1292,10 @@ function OrderPanel({ id, onClose }: { id: string; onClose: () => void }) {
               </div>
 
               {addingOligoSeq && (
-                <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-800 flex flex-col gap-2">
-                  <Field
-                    label="Nhập hoặc dán danh sách trình tự Primer / Probe / Amplicon (Mỗi dòng: Tên; Trình tự 5'→3'; Scale; Tinh sạch; Định dạng)"
-                    hint="Ví dụ: HBV-F2; GAGTGTGGATTCGCACTCCT; 200NMOL; OPC; LYOPHILIZED | HBV-PRB2; [FAM]CCAYTCRTCCBGCRGGBTR[BHQ1]; 200NMOL; HPLC; LYOPHILIZED"
-                  >
-                    <textarea
-                      rows={4}
-                      className={`${inputClass} font-mono text-xs`}
-                      value={newSeqText}
-                      onChange={(e) => setNewSeqText(e.target.value)}
-                    />
-                  </Field>
+                <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-800 flex flex-col gap-2.5">
+                  <OligoSequenceRowsEditor rows={newSeqRows} onChange={setNewSeqRows} />
                   <ErrorNote error={addOligoSeqMut.error} />
-                  <div className="flex justify-end gap-2">
+                  <div className="flex justify-end gap-2 border-t border-purple-100 dark:border-purple-900/50 pt-2">
                     <Button variant="ghost" onClick={() => setAddingOligoSeq(false)}>
                       Hủy
                     </Button>

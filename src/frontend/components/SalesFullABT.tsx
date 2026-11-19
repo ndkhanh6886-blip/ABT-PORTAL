@@ -33087,6 +33087,299 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             );
                         })()}
 
+                        {/* Bảng Kê Xuất Hóa Đơn VAT (Chỉ hiển thị ở Đơn SO của Phòng Kinh Doanh) */}
+                        {!checkIsPureStock(viewingFactoryOrderItems) && (() => {
+                            const soItems: any[] = viewingFactoryOrderItems.items || [];
+                            if (soItems.length === 0) return null;
+                            const soSubtotal = Number(viewingFactoryOrderItems.subtotal ?? soItems.reduce((s: number, it: any) => {
+                                const up = it.unitPrice !== undefined ? Number(it.unitPrice) : Number(it.price || 0);
+                                const tp = it.totalPrice !== undefined ? Number(it.totalPrice) : ((Number(it.quantity) || 0) * up);
+                                return s + (Number.isFinite(tp) ? tp : 0);
+                            }, 0)) || 0;
+                            const soVatRate = Number(viewingFactoryOrderItems.vat_rate ?? viewingFactoryOrderItems.vatRate ?? 8) || 8;
+                            const soVatAmount = Number(viewingFactoryOrderItems.vat_amount ?? viewingFactoryOrderItems.vatAmount ?? Math.round((soSubtotal * soVatRate) / 100)) || 0;
+                            const soGrandTotal = Number(viewingFactoryOrderItems.total_amount ?? viewingFactoryOrderItems.totalAmount ?? (soSubtotal + soVatAmount)) || (soSubtotal + soVatAmount);
+                            const soOrderCode = String(viewingFactoryOrderItems.order_code || viewingFactoryOrderItems.orderCode || viewingFactoryOrderItems.id || "SO");
+                            const soCustomerName = String(
+                                viewingFactoryOrderItems.vat_company_name ||
+                                viewingFactoryOrderItems.vatCompanyName ||
+                                viewingFactoryOrderItems.customer_company ||
+                                viewingFactoryOrderItems.customerCompany ||
+                                viewingFactoryOrderItems.customer_name ||
+                                viewingFactoryOrderItems.customerName ||
+                                "Khách hàng"
+                            );
+                            const soTaxCode = String(viewingFactoryOrderItems.vat_tax_code || viewingFactoryOrderItems.vatTaxCode || "");
+                            const soAddress = String(
+                                viewingFactoryOrderItems.vat_company_address ||
+                                viewingFactoryOrderItems.vatCompanyAddress ||
+                                viewingFactoryOrderItems.delivery_address ||
+                                viewingFactoryOrderItems.deliveryAddress ||
+                                ""
+                            );
+
+                            // Gom nhóm mặt hàng theo SKU + Đơn giá để xuất bảng kê hóa đơn
+                            const groupedInvoiceMap = new Map<string, {
+                                sku: string;
+                                name: string;
+                                uom: string;
+                                qty: number;
+                                unitPrice: number;
+                                amount: number;
+                                note: string;
+                            }>();
+                            for (const it of soItems) {
+                                const sku = String(it?.productCode || it?.product_code || it?.code || "SP").trim();
+                                const name = String(it?.productName || it?.product_name || it?.name || sku).trim();
+                                const uom = String(it?.packaging || it?.unit || "Đơn vị").trim();
+                                const qty = Number(it?.quantity) || 0;
+                                const unitPrice = it?.unitPrice !== undefined ? Number(it.unitPrice) : Number(it?.price || 0);
+                                const amount = it?.totalPrice !== undefined ? Number(it.totalPrice) : Math.round(qty * unitPrice);
+                                const key = `${sku}__${unitPrice}`;
+                                const prev = groupedInvoiceMap.get(key);
+                                if (prev) {
+                                    prev.qty += qty;
+                                    prev.amount += amount;
+                                } else {
+                                    groupedInvoiceMap.set(key, {
+                                        sku,
+                                        name,
+                                        uom,
+                                        qty,
+                                        unitPrice,
+                                        amount,
+                                        note: String(it?.note || "").trim(),
+                                    });
+                                }
+                            }
+                            const invoiceLines = Array.from(groupedInvoiceMap.values());
+
+                            // Gom danh sách trình tự Oligo đính kèm (nếu đơn SO có mặt hàng Oligo)
+                            const oligoSeqAppendix: Array<{
+                                label: string;
+                                seq: string;
+                                baseCount: number;
+                                skus: string;
+                            }> = [];
+                            const seenSeqKeys = new Set<string>();
+                            for (const it of soItems) {
+                                const resolvedSeq = resolveItemGroupSequence(soItems, it);
+                                if (!resolvedSeq) continue;
+                                const seqLabel = String((it as any)?.oligoSeqLabel || it?.productName || it?.productCode || "Oligo").trim();
+                                const groupId = String((it as any)?.oligoGroupId || `${seqLabel}__${resolvedSeq}`);
+                                if (seenSeqKeys.has(groupId)) continue;
+                                seenSeqKeys.add(groupId);
+                                const groupSkus = soItems
+                                    .filter((x: any) => {
+                                        if ((it as any)?.oligoGroupId && x?.oligoGroupId) return x.oligoGroupId === (it as any).oligoGroupId;
+                                        return resolveItemGroupSequence(soItems, x) === resolvedSeq;
+                                    })
+                                    .map((x: any) => `${x?.productCode || ""} (${x?.quantity || 0})`)
+                                    .filter(Boolean)
+                                    .join(" + ");
+                                oligoSeqAppendix.push({
+                                    label: seqLabel,
+                                    seq: resolvedSeq,
+                                    baseCount: countNucleotideBases(resolvedSeq).count,
+                                    skus: groupSkus || String(it?.productCode || ""),
+                                });
+                            }
+
+                            const printSoInvoiceSchedule = () => {
+                                const esc = (s: unknown) =>
+                                    String(s ?? "")
+                                        .replace(/&/g, "&amp;")
+                                        .replace(/</g, "&lt;")
+                                        .replace(/>/g, "&gt;")
+                                        .replace(/"/g, "&quot;");
+                                const fmtVnd = (n: unknown) => Number(n || 0).toLocaleString("vi-VN");
+                                const w = window.open("", "_blank", "width=1020,height=820");
+                                if (!w) return;
+                                const linesHtml = invoiceLines
+                                    .map(
+                                        (l, idx) => `<tr>
+                                            <td class="c">${idx + 1}</td>
+                                            <td><b>${esc(l.sku)}</b></td>
+                                            <td>${esc(l.name)}</td>
+                                            <td class="c">${esc(l.uom)}</td>
+                                            <td class="r"><b>${fmtVnd(l.qty)}</b></td>
+                                            <td class="r">${fmtVnd(l.unitPrice)}</td>
+                                            <td class="r"><b>${fmtVnd(l.amount)}</b></td>
+                                        </tr>`
+                                    )
+                                    .join("");
+                                const seqHtml = oligoSeqAppendix
+                                    .map(
+                                        (s, idx) => `<tr>
+                                            <td class="c">${idx + 1}</td>
+                                            <td><b>${esc(s.label)}</b></td>
+                                            <td class="mono">${esc(s.seq)}</td>
+                                            <td class="c">${s.baseCount} nt</td>
+                                            <td style="font-size:10px">${esc(s.skus)}</td>
+                                        </tr>`
+                                    )
+                                    .join("");
+                                writeSafePrintDocument(
+                                    w,
+                                    `<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Bảng Kê Xuất Hóa Đơn - ${esc(soOrderCode)}</title>
+                                    <style>
+                                        @page { size: A4 portrait; margin: 12mm; }
+                                        body { font-family: "Segoe UI", Arial, sans-serif; font-size: 11px; color: #0f172a; margin: 0; }
+                                        .hdr { display: flex; justify-content: space-between; border-bottom: 2px solid #0f172a; padding-bottom: 8px; margin-bottom: 10px; }
+                                        .title { text-align: center; margin: 8px 0 12px; }
+                                        .title h1 { font-size: 16px; margin: 0; text-transform: uppercase; }
+                                        .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; }
+                                        table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+                                        th, td { border: 1px solid #94a3b8; padding: 5px 7px; text-align: left; }
+                                        th { background: #e2e8f0; font-size: 10px; text-transform: uppercase; }
+                                        .c { text-align: center; }
+                                        .r { text-align: right; font-variant-numeric: tabular-nums; }
+                                        .mono { font-family: Consolas, monospace; font-size: 10px; word-break: break-all; }
+                                        .totals td { font-weight: bold; background: #f1f5f9; }
+                                        .sig { display: grid; grid-template-columns: 1fr 1fr 1fr; text-align: center; margin-top: 20px; page-break-inside: avoid; }
+                                        @media print { .no-print { display: none; } }
+                                    </style></head><body>
+                                    <div class="no-print" style="padding:8px;background:#0f172a;color:#fff;display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;border-radius:6px;">
+                                        <span><b>Bảng Kê Xuất Hóa Đơn GTGT (VAT) — Đơn SO ${esc(soOrderCode)}</b></span>
+                                        <button onclick="window.print()" style="background:#10b981;color:#fff;border:0;padding:6px 14px;border-radius:4px;cursor:pointer;font-weight:bold;">🖨️ In / Lưu PDF (A4)</button>
+                                    </div>
+                                    <div class="hdr">
+                                        <div>
+                                            <div style="font-weight:800;font-size:13px;">CÔNG TY TNHH GIẢI PHÁP Y SINH ABT (ABT BIOMEDICAL SOLUTIONS)</div>
+                                            <div style="font-size:10px;color:#475569;">Phòng Kinh Doanh — Bảng kê chi tiết mặt hàng xuất hóa đơn GTGT</div>
+                                        </div>
+                                        <div style="text-align:right;font-size:10px;">
+                                            <div>Mã đơn SO: <b>${esc(soOrderCode)}</b></div>
+                                            <div>Ngày in: <b>${new Date().toLocaleDateString("vi-VN")}</b></div>
+                                        </div>
+                                    </div>
+                                    <div class="title">
+                                        <h1>BẢNG KÊ CHI TIẾT XUẤT HÓA ĐƠN GTGT (VAT)</h1>
+                                        <div style="font-size:11px;color:#475569;">Đính kèm Đơn đặt hàng (Sales Order) số <b>${esc(soOrderCode)}</b></div>
+                                    </div>
+                                    <div class="meta">
+                                        <div><b>Đơn vị mua hàng / Xuất HĐ:</b> ${esc(soCustomerName)}</div>
+                                        <div><b>Mã số thuế:</b> ${esc(soTaxCode || "—")}</div>
+                                        <div style="grid-column: span 2;"><b>Địa chỉ xuất hóa đơn / giao hàng:</b> ${esc(soAddress || "—")}</div>
+                                    </div>
+                                    <div style="font-weight:bold;margin:6px 0 4px;text-transform:uppercase;font-size:11px;">I. Bảng kê hạng mục hàng hóa xuất hóa đơn GTGT (Gom theo Mã SKU)</div>
+                                    <table>
+                                        <thead>
+                                            <tr>
+                                                <th class="c" style="width:32px">STT</th>
+                                                <th style="width:95px">Mã hàng (SKU)</th>
+                                                <th>Tên hàng hóa, dịch vụ trên hóa đơn</th>
+                                                <th class="c" style="width:70px">ĐVT / Quy cách</th>
+                                                <th class="r" style="width:65px">Số lượng</th>
+                                                <th class="r" style="width:85px">Đơn giá (VNĐ)</th>
+                                                <th class="r" style="width:95px">Thành tiền (VNĐ)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${linesHtml}
+                                            <tr class="totals"><td colspan="6" class="r">Cộng tiền hàng (Trước thuế GTGT):</td><td class="r">${fmtVnd(soSubtotal)}</td></tr>
+                                            <tr class="totals"><td colspan="6" class="r">Thuế suất GTGT (${soVatRate}%):</td><td class="r">${fmtVnd(soVatAmount)}</td></tr>
+                                            <tr class="totals"><td colspan="6" class="r" style="font-size:12px;">TỔNG CỘNG THANH TOÁN (VNĐ):</td><td class="r" style="font-size:12px;color:#047857;">${fmtVnd(soGrandTotal)}</td></tr>
+                                        </tbody>
+                                    </table>
+                                    ${oligoSeqAppendix.length > 0 ? `
+                                        <div style="font-weight:bold;margin:10px 0 4px;text-transform:uppercase;font-size:11px;">II. Phụ lục chi tiết danh sách trình tự Oligo đính kèm (${oligoSeqAppendix.length} trình tự)</div>
+                                        <table>
+                                            <thead>
+                                                <tr>
+                                                    <th class="c" style="width:32px">#</th>
+                                                    <th style="width:140px">Tên trình tự (Mồi / Probe)</th>
+                                                    <th>Trình tự Nucleotide (5' → 3')</th>
+                                                    <th class="c" style="width:60px">Số base</th>
+                                                    <th style="width:150px">Mã SKU quy đổi</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>${seqHtml}</tbody>
+                                        </table>
+                                    ` : ""}
+                                    <div class="sig">
+                                        <div><b>Người lập bảng kê (Kinh doanh)</b><br/><span style="font-size:10px;color:#64748b;">(Ký, ghi rõ họ tên)</span></div>
+                                        <div><b>Kế toán xuất hóa đơn</b><br/><span style="font-size:10px;color:#64748b;">(Ký, ghi rõ họ tên)</span></div>
+                                        <div><b>Xác nhận khách hàng</b><br/><span style="font-size:10px;color:#64748b;">(Ký, ghi rõ họ tên)</span></div>
+                                    </div>
+                                    </body></html>`
+                                );
+                            };
+
+                            const exportSoInvoiceCsv = () => {
+                                const csvCell = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+                                const rows: string[] = [
+                                    [
+                                        "BẢNG KÊ CHI TIẾT XUẤT HÓA ĐƠN GTGT (VAT) — PHÒNG KINH DOANH",
+                                        `Mã SO: ${soOrderCode}`,
+                                        `Khách hàng: ${soCustomerName}`,
+                                        `MST: ${soTaxCode}`,
+                                    ].map(csvCell).join(","),
+                                    "",
+                                    ["PHẦN I: HẠNG MỤC XUẤT HÓA ĐƠN GTGT"].map(csvCell).join(","),
+                                    ["STT", "Mã hàng (SKU)", "Tên hàng hóa, dịch vụ", "ĐVT / Quy cách", "Số lượng", "Đơn giá (VNĐ)", "Thành tiền (VNĐ)", "Ghi chú"].map(csvCell).join(","),
+                                    ...invoiceLines.map((l, idx) =>
+                                        [idx + 1, l.sku, l.name, l.uom, l.qty, l.unitPrice, l.amount, l.note].map(csvCell).join(",")
+                                    ),
+                                    ["", "", "Cộng tiền hàng (Trước VAT)", "", "", "", soSubtotal, ""].map(csvCell).join(","),
+                                    ["", "", `Thuế GTGT (${soVatRate}%)`, "", "", "", soVatAmount, ""].map(csvCell).join(","),
+                                    ["", "", "TỔNG CỘNG THANH TOÁN (VNĐ)", "", "", "", soGrandTotal, ""].map(csvCell).join(","),
+                                ];
+                                if (oligoSeqAppendix.length > 0) {
+                                    rows.push(
+                                        "",
+                                        ["PHẦN II: PHỤ LỤC CHI TIẾT TRÌNH TỰ OLIGO ĐÍNH KÈM"].map(csvCell).join(","),
+                                        ["STT", "Tên trình tự", "Trình tự 5'-3'", "Số base (nt)", "Mã SKU quy đổi"].map(csvCell).join(","),
+                                        ...oligoSeqAppendix.map((s, idx) =>
+                                            [idx + 1, s.label, s.seq, s.baseCount, s.skus].map(csvCell).join(",")
+                                        )
+                                    );
+                                }
+                                const blob = new Blob(["\uFEFF" + rows.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement("a");
+                                a.href = url;
+                                a.download = `Bang_Ke_Hoa_Don_${soOrderCode}.csv`;
+                                a.click();
+                                URL.revokeObjectURL(url);
+                            };
+
+                            return (
+                                <div className="bg-emerald-950/30 border border-emerald-700/50 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <span className="font-bold text-emerald-300">
+                                            🧾 Bảng Kê Xuất Hóa Đơn GTGT (SO {soOrderCode}):
+                                        </span>
+                                        <span className="text-slate-300">
+                                            Trước VAT: <b className="font-mono text-white">{soSubtotal.toLocaleString("vi-VN")} đ</b>
+                                        </span>
+                                        <span className="text-slate-300">
+                                            VAT ({soVatRate}%): <b className="font-mono text-white">{soVatAmount.toLocaleString("vi-VN")} đ</b>
+                                        </span>
+                                        <span className="px-2.5 py-0.5 rounded-full bg-emerald-700 text-white font-bold font-mono">
+                                            Tổng cộng: {soGrandTotal.toLocaleString("vi-VN")} VNĐ
+                                        </span>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                        <button
+                                            type="button"
+                                            onClick={printSoInvoiceSchedule}
+                                            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold transition-colors shadow-sm cursor-pointer"
+                                        >
+                                            🖨️ In Bảng Kê Xuất Hóa Đơn VAT (A4)
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={exportSoInvoiceCsv}
+                                            className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-emerald-500/60 text-emerald-200 text-[11px] font-bold transition-colors cursor-pointer"
+                                        >
+                                            📥 Xuất Excel Bảng Kê (.csv)
+                                        </button>
+                                    </div>
+                                </div>
+                            );
+                        })()}
+
                         {/* Items Table */}
                         <div className="space-y-2">
                             <div className="text-[11px] font-bold text-slate-300 uppercase tracking-wider flex items-center justify-between px-1">
