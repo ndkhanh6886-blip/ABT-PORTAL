@@ -135,7 +135,13 @@ function parseBoolFlag(val: unknown, fallback = false): boolean {
 }
 
 function extractStockQty(r: Record<string, unknown>): number {
-  const directRaw = r.qty_on_hand ?? r.qty ?? r.total_qty ?? r["Số lượng tồn"] ?? r["Số lượng tồn kho"];
+  const directRaw =
+    r.qty_on_hand ??
+    r.qty ??
+    r.total_qty ??
+    r["Số lượng tồn"] ??
+    r["Số Lượng Tồn"] ??
+    r["Số lượng tồn kho"];
   if (directRaw !== undefined && directRaw !== null && String(directRaw).trim() !== "") {
     return Math.max(0, normNum(directRaw, 0));
   }
@@ -550,15 +556,33 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       const sp = `sp_inv_${i}`;
       await tx.query(`SAVEPOINT ${sp}`);
       try {
-        const itemCode = normCode(
-          r.item_code || r.material_code || r["Mã vật tư"] || r["Mã vật tư (SKU)"] || r["Mã NVL"]
-        );
         const itemName = normStr(
-          r.item_name || r.material_name || r["Tên vật tư"] || r["Tên vật tư / Sản phẩm"] || r["Tên NVL"]
+          r.item_name ||
+            r.material_name ||
+            r["Tên vật tư"] ||
+            r["Tên vật tư *"] ||
+            r["Tên vật tư / Sản phẩm"] ||
+            r["Tên NVL"] ||
+            r["Tên Nguyên Liệu"] ||
+            r["Tên nguyên liệu"]
         );
+        const itemCode =
+          normCode(
+            r.item_code ||
+              r.material_code ||
+              r["Mã vật tư"] ||
+              r["Mã vật tư *"] ||
+              r["Mã vật tư (SKU)"] ||
+              r["Mã NVL"] ||
+              r["Mã Nguyên Liệu"] ||
+              r["Mã nguyên liệu"]
+          ) || normCode(itemName);
         if (!itemCode || !itemName) {
           throw new Error("Thiếu Mã vật tư (item_code) hoặc Tên vật tư (item_name)");
         }
+        const rawLocation = normStr(r.location || r["Vị Trí"] || r["Vị trí"]);
+        const rawNotes = normStr(r.notes || r["Ghi chú"]);
+        const combinedNotes = [rawNotes, rawLocation ? `Vị trí: ${rawLocation}` : ""].filter(Boolean).join(" · ") || null;
         const itemRes = await ensureItemByCode(
           tx,
           actor,
@@ -566,14 +590,23 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
             code: itemCode,
             name: itemName,
             item_type: normStr(
-              r.item_type || r.category || r["Phân loại"] || r["Loại hàng"] || r["Nhóm vật tư"],
+              r.item_type ||
+                r.category ||
+                r["Phân loại"] ||
+                r["Phân loại *"] ||
+                r["Loại hàng"] ||
+                r["Nhóm vật tư"] ||
+                r["Danh Mục"] ||
+                r["Danh mục"],
               "RAW_MATERIAL"
             ),
-            base_uom: normStr(r.base_uom || r.unit || r["Đơn vị"] || r["Đơn vị tính"]),
-            storage_condition: normStr(r.storage_condition || r["Bảo quản"], "RT"),
+            base_uom: normStr(
+              r.base_uom || r.unit || r["Đơn vị"] || r["Đơn vị *"] || r["Đơn Vị"] || r["Đơn vị tính"]
+            ),
+            storage_condition: normStr(r.storage_condition || r["Bảo quản"] || rawLocation, "RT"),
             shelf_life_days: normNum(r.shelf_life_days || r["Hạn dùng (ngày)"], 365),
             min_stock: normNum(r.min_stock || r["Tồn tối thiểu"] || r["Định mức (Min)"], 0),
-            notes: normStr(r.notes || r["Ghi chú"]) || null,
+            notes: combinedNotes,
           },
           uomCache
         );
@@ -588,7 +621,14 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
           const lotStatus = canReleaseOpeningLot ? "RELEASED" : "QUARANTINE";
           const mfgDate = normDate(r.mfg_date || r["Ngày SX"] || r["Ngày sản xuất"]);
           let expiryDate =
-            normDate(r.expiry_date || r.expire_date || r["Hạn dùng"] || r["Hạn sử dụng"] || r["HSD"]) || "2027-12-31";
+            normDate(
+              r.expiry_date ||
+                r.expire_date ||
+                r["Hạn dùng"] ||
+                r["Hạn Dùng"] ||
+                r["Hạn sử dụng"] ||
+                r["HSD"]
+            ) || "2027-12-31";
           if (mfgDate && expiryDate && expiryDate < mfgDate) {
             expiryDate = mfgDate;
           }
