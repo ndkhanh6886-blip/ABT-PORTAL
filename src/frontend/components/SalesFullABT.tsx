@@ -2249,6 +2249,8 @@ export function SalesFullABT() {
                                 isCreditBlocked: raw0.is_credit_blocked !== undefined ? Boolean(raw0.is_credit_blocked) : undefined,
                                 creditBlockReason: raw0.credit_block_reason ?? undefined,
                                 priceApprovalStatus: raw0.price_approval_status ?? undefined,
+                                // Bản trùng tên kiểu CSDL: trước đây không cập nhật nên vẫn ghi "chờ duyệt" sau khi đã duyệt
+                                price_approval_status: raw0.price_approval_status ?? undefined,
                                 hasZeroPriceItems: raw0.has_zero_price_items ?? undefined,
                                 approval_status: raw0.approval_status ?? undefined,
                                 // PR / PO links saved with the order when the PR was sent are authoritative
@@ -2487,14 +2489,41 @@ export function SalesFullABT() {
         // Do not overwrite server-backed React state from localStorage on random 'storage' events:
         // when localStorage hits the 5MB browser quota, localStorage holds stale data (e.g. only 1 old target)
         // and reading it back here used to overwrite the server copy.
-        loadServerSalesData();
+        // Tải lại từ máy chủ, không chạy chồng hai lần cùng lúc
+        let lastSalesLoadAt = 0;
+        let salesLoadInFlight: Promise<void> | null = null;
+        const reloadSalesData = () => {
+            if (salesLoadInFlight) return salesLoadInFlight;
+            lastSalesLoadAt = Date.now();
+            salesLoadInFlight = loadServerSalesData().finally(() => { salesLoadInFlight = null; });
+            return salesLoadInFlight;
+        };
+        reloadSalesData();
         const onRevalidated = (e: any) => {
             if (e?.detail?.pathname === "/api/sales" || (e?.detail?.pathname === "/api/storage" && String(e?.detail?.search || "").includes("sales_contracts"))) {
-                loadServerSalesData();
+                reloadSalesData();
             }
         };
+        // Trước đây dữ liệu chỉ tải một lần khi mở trang: tab để mở lâu vẫn hiện trạng thái cũ (đơn đã bị đặt lại
+        // "chờ duyệt" mà máy NVKD vẫn thấy "đã duyệt"), mỗi tài khoản thấy một kiểu, và thao tác trên đơn ghi lại
+        // dữ liệu cũ. Nay tải lại khi quay lại tab (sau 1 phút) và định kỳ 5 phút khi tab đang mở.
+        const STALE_ON_FOCUS_MS = 60_000;
+        const PERIODIC_MS = 300_000;
+        const onVisible = () => {
+            if (document.visibilityState === "visible" && Date.now() - lastSalesLoadAt > STALE_ON_FOCUS_MS) reloadSalesData();
+        };
+        const timer = window.setInterval(() => {
+            if (document.visibilityState === "visible" && Date.now() - lastSalesLoadAt >= PERIODIC_MS - 1000) reloadSalesData();
+        }, PERIODIC_MS);
         window.addEventListener("tbr:api-revalidated", onRevalidated);
-        return () => window.removeEventListener("tbr:api-revalidated", onRevalidated);
+        document.addEventListener("visibilitychange", onVisible);
+        window.addEventListener("focus", onVisible);
+        return () => {
+            window.removeEventListener("tbr:api-revalidated", onRevalidated);
+            document.removeEventListener("visibilitychange", onVisible);
+            window.removeEventListener("focus", onVisible);
+            window.clearInterval(timer);
+        };
     }, []);
 
     // Filter and search states

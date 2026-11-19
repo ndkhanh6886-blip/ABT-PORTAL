@@ -31,7 +31,36 @@ type GuardRule = {
   pendingStatus: string;
   verify: (item: any, prev: any, user: AuthorizedUser | null) => Promise<boolean>;
   stamp?: (item: any, user: AuthorizedUser) => any;
+  /** Trả về bản đã sửa nếu lần lưu đưa một quyết định đã có hiệu lực về trạng thái chờ (dữ liệu cũ), null nếu hợp lệ */
+  keepDecision?: (item: any, prev: any) => Promise<any | null>;
 };
+
+/**
+ * Tab mở lâu (dữ liệu cũ) lưu lại đơn với "Pending" trong khi CSDL ghi đơn đã duyệt và không cần duyệt lại:
+ * giữ trạng thái đã duyệt. Việc đặt lại "chờ duyệt" hợp lệ (đơn bị sửa nội dung) luôn được ghi vào sales_orders trước.
+ */
+async function keepApprovedOrder(item: any, prev: any): Promise<any | null> {
+  if (!prev || prev.status !== "Approved" || item?.status !== "Pending") return null;
+  const code = String(item?.order_code || item?.id || "").trim();
+  if (!code) return null;
+  const row = (await query(
+    "SELECT approval_status, is_credit_blocked, price_approval_status, approval_note FROM sales_orders WHERE order_code = $1 LIMIT 1",
+    [code]
+  )).rows[0];
+  if (!row) return null;
+  const stillApproved = String(row.approval_status || "").toUpperCase() === "APPROVED"
+    && !row.is_credit_blocked
+    && row.price_approval_status !== "PENDING_APPROVAL"
+    && !String(row.approval_note || "").startsWith("Cần duyệt lại");
+  if (!stillApproved) return null;
+  return {
+    ...item,
+    status: prev.status,
+    priceApprovalStatus: prev.priceApprovalStatus ?? item.priceApprovalStatus,
+    approvedBy: prev.approvedBy ?? item.approvedBy,
+    approvedAt: prev.approvedAt ?? item.approvedAt,
+  };
+}
 
 async function orderDecisionAllowed(item: any, prev: any, user: AuthorizedUser | null): Promise<boolean> {
   const code = String(item?.order_code || item?.id || "").trim();
@@ -61,6 +90,7 @@ const RULES: Record<string, GuardRule> = {
     decisions: new Set(["Approved", "Rejected"]),
     pendingStatus: "Pending",
     verify: orderDecisionAllowed,
+    keepDecision: keepApprovedOrder,
   },
   sales_specialized_plans: {
     decisions: new Set(["Approved", "Rejected"]),
@@ -92,6 +122,14 @@ export async function enforceApprovalGuards(key: string, current: any, incoming:
     const id = itemIdentity(item);
     const prev = id !== null ? currentMap.get(id) : undefined;
     const nextStatus = item?.status;
+    if (item && rule.keepDecision) {
+      const kept = await rule.keepDecision(item, prev);
+      if (kept) {
+        console.warn(`[approvalGuard] ${user?.username || "?"} saved ${key} ${id} -> ${nextStatus} from stale data; kept ${kept.status}`);
+        result.push(kept);
+        continue;
+      }
+    }
     if (!item || !rule.decisions.has(nextStatus) || (prev && prev.status === nextStatus)) {
       result.push(item);
       continue;
