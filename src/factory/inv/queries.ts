@@ -17,6 +17,104 @@ export async function syncItemTypesFromBomAndFormula(tx: Tx, force = false): Pro
   if (!force && now - lastBomTypeSyncAt < 30_000) return;
   await tx.query("SAVEPOINT sp_sync_bom_item_types");
   try {
+    // Unify any legacy <FORMULA_CODE>-OUT product items back into <FORMULA_CODE> (1 formula code = 1 product item)
+    const outRows = (
+      await tx.query(
+        `SELECT f.id AS formula_id, f.code AS formula_code, f.name AS formula_name, f.output_item_id
+           FROM prep.formula f
+           JOIN master.item i ON i.id = f.output_item_id
+          WHERE upper(i.code) = upper(f.code || '-OUT')`
+      )
+    ).rows;
+    for (const r of outRows) {
+      const fCodeU = String(r.formula_code).trim().toUpperCase();
+      const outItemId = r.output_item_id as string;
+      const selfIngredient = (
+        await tx.query(
+          `SELECT 1 FROM prep.formula_line fl
+             JOIN master.item ing ON ing.id = fl.item_id
+            WHERE fl.formula_id = $1 AND upper(ing.code) = $2 LIMIT 1`,
+          [r.formula_id, fCodeU]
+        )
+      ).rowCount;
+      if (selfIngredient) continue;
+      const baseItem = (
+        await tx.query("SELECT id FROM master.item WHERE upper(code) = $1 AND id <> $2 LIMIT 1", [fCodeU, outItemId])
+      ).rows[0];
+      if (!baseItem) {
+        await tx.query(
+          `UPDATE master.item
+              SET code = $2,
+                  name = COALESCE(NULLIF($3, ''), name),
+                  updated_at = now()
+            WHERE id = $1`,
+          [outItemId, fCodeU, r.formula_name]
+        );
+      } else {
+        const targetId = baseItem.id as string;
+        await tx.query(
+          `UPDATE master.item
+              SET name = COALESCE(NULLIF($2, ''), name),
+                  item_type = CASE WHEN item_type = 'RAW_MATERIAL' THEN 'SEMI_FINISHED' ELSE item_type END,
+                  is_manufacturable = true,
+                  status = 'ACTIVE',
+                  updated_at = now()
+            WHERE id = $1`,
+          [targetId, r.formula_name]
+        );
+        await tx.query("UPDATE prep.formula SET output_item_id = $2 WHERE output_item_id = $1", [outItemId, targetId]);
+        await tx.query("UPDATE oligo.reagent_rule SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
+        await tx.query("UPDATE oligo.synth_port SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
+        await tx.query("UPDATE oligo.batch_port_use SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
+        await tx.query("UPDATE oligo.synthesis_reagent_use SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
+        await tx.query("UPDATE oligo.modification SET amidite_item_id = $2 WHERE amidite_item_id = $1", [outItemId, targetId]);
+        await tx.query("UPDATE asset.reagent_slot SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
+        await tx.query("UPDATE asset.reagent_usage SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
+        const outLots = (await tx.query("SELECT id, code FROM inv.lot WHERE item_id = $1", [outItemId])).rows;
+        for (const lt of outLots) {
+          const clash = (
+            await tx.query("SELECT id FROM inv.lot WHERE item_id = $1 AND code = $2 LIMIT 1", [targetId, lt.code])
+          ).rows[0];
+          if (clash) {
+            await tx.query("UPDATE inv.lot SET item_id = $2, code = $3 WHERE id = $1", [lt.id, targetId, `${lt.code}-P`]);
+          } else {
+            await tx.query("UPDATE inv.lot SET item_id = $2 WHERE id = $1", [lt.id, targetId]);
+          }
+        }
+        await tx.query("UPDATE inv.stock_balance SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
+        await tx.query("UPDATE inv.reservation SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
+        await tx.query("UPDATE inv.stock_document_line SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
+        await tx.query("UPDATE inv.stock_ledger SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
+        await tx.query(
+          `UPDATE oligo.ps_method
+              SET fields = (
+                SELECT coalesce(
+                  jsonb_agg(
+                    CASE
+                      WHEN elem->>'item_id' = $1 THEN jsonb_set(elem, '{item_id}', to_jsonb($2::text))
+                      ELSE elem
+                    END
+                  ),
+                  '[]'::jsonb
+                )
+                FROM jsonb_array_elements(fields) AS elem
+              )
+            WHERE fields::text LIKE '%' || $1 || '%'`,
+          [outItemId, targetId]
+        );
+        const deleted = await tx
+          .query("DELETE FROM master.item WHERE id = $1", [outItemId])
+          .then(() => true)
+          .catch(() => false);
+        if (!deleted) {
+          await tx.query("UPDATE master.item SET status = 'INACTIVE', code = $2 WHERE id = $1", [
+            outItemId,
+            `OLD-${fCodeU}-OUT`,
+          ]);
+        }
+      }
+    }
+
     await tx.query(`
       UPDATE master.item i
          SET item_type = 'FINISHED_KIT',

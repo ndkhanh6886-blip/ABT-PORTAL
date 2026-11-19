@@ -75,7 +75,7 @@ const formulaSchema = z.object({
   name: z.string().trim().min(1).max(200),
   category: z.string().trim().max(60).optional().nullable(),
   dept_scope: z.enum(["OLIGO", "RD", "KIT"]).optional(),
-  output_item_id: z.string().uuid("chọn mã hàng thành phẩm pha"),
+  output_item_id: z.string().uuid("chọn mã hàng thành phẩm pha").optional().nullable(),
   basis_qty: z.coerce.number().positive(),
   basis_uom: z.string().min(1),
   shelf_life_days: z.coerce.number().int().positive().optional().nullable(),
@@ -89,15 +89,50 @@ const formulaSchema = z.object({
 /** A formula: ingredients per `basis_qty` of the prepared item. Edits are audited old → new; preparations keep what they used. */
 export async function saveFormula(tx: Tx, actor: AuthzActor, id: string | null, input: unknown) {
   const raw = (input ?? {}) as Record<string, unknown>;
-  const normalizedInput =
-    raw.dept_scope !== undefined && raw.dept_scope !== null && raw.dept_scope !== ""
-      ? { ...raw, dept_scope: normalizePrepDeptScope(raw.dept_scope) ?? raw.dept_scope }
-      : raw;
+  const normalizedInput = {
+    ...raw,
+    ...(raw.dept_scope !== undefined && raw.dept_scope !== null && raw.dept_scope !== ""
+      ? { dept_scope: normalizePrepDeptScope(raw.dept_scope) ?? raw.dept_scope }
+      : {}),
+    ...(raw.output_item_id === "" ? { output_item_id: null } : {}),
+  };
   const d = parseInput(formulaSchema, normalizedInput);
-  const out = await getItem(tx, d.output_item_id);
+  let resolvedOutputItemId = d.output_item_id ?? null;
+  if (!resolvedOutputItemId) {
+    // Một mã công thức cho ra đúng một sản phẩm tương ứng (tự động gắn hoặc tạo mã vật tư trùng mã công thức)
+    const ingItemIds = new Set(d.lines.map((l) => l.item_id));
+    let targetCode = d.code.trim().toUpperCase();
+    let existingItem = (await tx.query("SELECT id FROM master.item WHERE upper(code) = $1 LIMIT 1", [targetCode])).rows[0];
+    if (existingItem && ingItemIds.has(existingItem.id)) {
+      targetCode = `PREP-${targetCode}`;
+      existingItem = (await tx.query("SELECT id FROM master.item WHERE upper(code) = $1 LIMIT 1", [targetCode])).rows[0];
+    }
+    if (existingItem) {
+      resolvedOutputItemId = existingItem.id as string;
+    } else {
+      await tx.query(
+        `INSERT INTO master.uom (code, name, dimension)
+         VALUES ($1, $1, 'OTHER')
+         ON CONFLICT (code) DO NOTHING`,
+        [d.basis_uom]
+      );
+      const createdItem = (
+        await tx.query(
+          `INSERT INTO master.item (
+             code, name, item_type, base_uom, tracking, shelf_life_days,
+             receipt_qc_required, is_purchasable, is_manufacturable, status, created_by, updated_by
+           ) VALUES ($1, $2, 'SEMI_FINISHED', $3, 'LOT', $4, false, false, true, 'ACTIVE', $5, $5)
+           RETURNING id`,
+          [targetCode, d.name, d.basis_uom, d.shelf_life_days ?? 180, actor.userId]
+        )
+      ).rows[0];
+      resolvedOutputItemId = createdItem.id as string;
+    }
+  }
+  const out = await getItem(tx, resolvedOutputItemId);
   await toBaseQty(tx, out, d.basis_qty, d.basis_uom); // the unit must convert to the item's base unit
   for (const l of d.lines) {
-    if (l.item_id === d.output_item_id) throw invalid("Nguyên liệu không được trùng hóa chất thành phẩm.");
+    if (l.item_id === resolvedOutputItemId) throw invalid("Nguyên liệu không được trùng hóa chất thành phẩm.");
     await toBaseQty(tx, await getItem(tx, l.item_id), l.qty, l.uom);
   }
   let formulaId = id;
@@ -111,7 +146,7 @@ export async function saveFormula(tx: Tx, actor: AuthzActor, id: string | null, 
       await tx.query(
         `INSERT INTO prep.formula (code, name, category, dept_scope, output_item_id, basis_qty, basis_uom, shelf_life_days, requires_qc, instructions, status, created_by, updated_by, incubation_days)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13) RETURNING id`,
-        [d.code, d.name, d.category ?? null, targetScope, d.output_item_id, d.basis_qty, d.basis_uom, d.shelf_life_days ?? null, d.requires_qc, d.instructions ?? null, d.status, actor.userId, d.incubation_days]
+        [d.code, d.name, d.category ?? null, targetScope, resolvedOutputItemId, d.basis_qty, d.basis_uom, d.shelf_life_days ?? null, d.requires_qc, d.instructions ?? null, d.status, actor.userId, d.incubation_days]
       )
     ).rows[0].id;
     await writeAudit(tx, actor, { entityType: "prep_formula", entityId: formulaId!, action: "create", changes: { code: [null, d.code], dept_scope: [null, targetScope], lines: [null, d.lines.length] } });
@@ -125,7 +160,7 @@ export async function saveFormula(tx: Tx, actor: AuthzActor, id: string | null, 
     await tx.query(
       `UPDATE prep.formula SET name = $2, category = $3, output_item_id = $4, basis_qty = $5, basis_uom = $6, shelf_life_days = $7, requires_qc = $8, instructions = $9, status = $10,
               incubation_days = $12, version = version + 1, updated_at = now(), updated_by = $11 WHERE id = $1`,
-      [id, d.name, d.category ?? null, d.output_item_id, d.basis_qty, d.basis_uom, d.shelf_life_days ?? null, d.requires_qc, d.instructions ?? null, d.status, actor.userId, d.incubation_days]
+      [id, d.name, d.category ?? null, resolvedOutputItemId, d.basis_qty, d.basis_uom, d.shelf_life_days ?? null, d.requires_qc, d.instructions ?? null, d.status, actor.userId, d.incubation_days]
     );
     await tx.query("DELETE FROM prep.formula_line WHERE formula_id = $1", [id]);
     await writeAudit(tx, actor, {
@@ -160,11 +195,156 @@ export async function getFormula(tx: Tx, id: string) {
   return f;
 }
 
+let unifiedOutItemsNormalized = false;
+
+/**
+ * Unifies any legacy `<FORMULA_CODE>-OUT` items back into a single product item `<FORMULA_CODE>`
+ * matching the preparation formula's code & name, migrating any existing lots, stock balances,
+ * stock documents, reagent rules, and synthesizer/equipment ports cleanly.
+ */
+export async function normalizeFormulaOutputItems(tx: Tx): Promise<void> {
+  if (unifiedOutItemsNormalized) return;
+  const rows = (
+    await tx.query(
+      `SELECT f.id AS formula_id, f.code AS formula_code, f.name AS formula_name, f.basis_uom, f.shelf_life_days,
+              f.output_item_id, i.code AS out_code, i.name AS out_name, i.base_uom AS out_uom
+         FROM prep.formula f
+         JOIN master.item i ON i.id = f.output_item_id
+        WHERE upper(i.code) = upper(f.code || '-OUT')`
+    )
+  ).rows;
+
+  if (rows.length === 0) {
+    unifiedOutItemsNormalized = true;
+    return;
+  }
+
+  for (const r of rows) {
+    const sp = `sp_unify_out_${String(r.formula_id).replace(/[^a-zA-Z0-9]/g, "")}`;
+    await tx.query(`SAVEPOINT ${sp}`);
+    try {
+      const fCodeU = String(r.formula_code).trim().toUpperCase();
+      const outItemId = r.output_item_id as string;
+
+      // Skip only if an ingredient of this formula itself has code === formula_code
+      const selfIngredient = (
+        await tx.query(
+          `SELECT 1 FROM prep.formula_line fl
+             JOIN master.item ing ON ing.id = fl.item_id
+            WHERE fl.formula_id = $1 AND upper(ing.code) = $2 LIMIT 1`,
+          [r.formula_id, fCodeU]
+        )
+      ).rowCount;
+      if (selfIngredient) {
+        await tx.query(`RELEASE SAVEPOINT ${sp}`);
+        continue;
+      }
+
+      const baseItem = (
+        await tx.query("SELECT id, code, name, base_uom FROM master.item WHERE upper(code) = $1 AND id <> $2 LIMIT 1", [
+          fCodeU,
+          outItemId,
+        ])
+      ).rows[0];
+
+      if (!baseItem) {
+        // Simple rename in place: <CODE>-OUT -> <CODE>
+        await tx.query(
+          `UPDATE master.item
+              SET code = $2,
+                  name = COALESCE(NULLIF($3, ''), name),
+                  updated_at = now()
+            WHERE id = $1`,
+          [outItemId, fCodeU, r.formula_name]
+        );
+      } else {
+        // Both <CODE> (baseItem) and <CODE>-OUT (outItemId) exist: merge <CODE>-OUT into <CODE> and update <CODE>'s name to match the formula
+        const targetId = baseItem.id as string;
+        await tx.query(
+          `UPDATE master.item
+              SET name = COALESCE(NULLIF($2, ''), name),
+                  item_type = CASE WHEN item_type = 'RAW_MATERIAL' THEN 'SEMI_FINISHED' ELSE item_type END,
+                  is_manufacturable = true,
+                  status = 'ACTIVE',
+                  updated_at = now()
+            WHERE id = $1`,
+          [targetId, r.formula_name]
+        );
+
+        await tx.query("UPDATE prep.formula SET output_item_id = $2 WHERE output_item_id = $1", [outItemId, targetId]);
+        await tx.query("UPDATE oligo.reagent_rule SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
+        await tx.query("UPDATE oligo.synth_port SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
+        await tx.query("UPDATE oligo.batch_port_use SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
+        await tx.query("UPDATE oligo.synthesis_reagent_use SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
+        await tx.query("UPDATE oligo.modification SET amidite_item_id = $2 WHERE amidite_item_id = $1", [outItemId, targetId]);
+        await tx.query("UPDATE asset.reagent_slot SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
+        await tx.query("UPDATE asset.reagent_usage SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
+
+        // Migrate lots (if a lot code collides on targetId, suffix it cleanly)
+        const outLots = (await tx.query("SELECT id, code FROM inv.lot WHERE item_id = $1", [outItemId])).rows;
+        for (const lt of outLots) {
+          const clash = (
+            await tx.query("SELECT id FROM inv.lot WHERE item_id = $1 AND code = $2 LIMIT 1", [targetId, lt.code])
+          ).rows[0];
+          if (clash) {
+            await tx.query("UPDATE inv.lot SET item_id = $2, code = $3 WHERE id = $1", [lt.id, targetId, `${lt.code}-P`]);
+          } else {
+            await tx.query("UPDATE inv.lot SET item_id = $2 WHERE id = $1", [lt.id, targetId]);
+          }
+        }
+
+        // Migrate stock balances, reservations, documents, and ledger
+        await tx.query("UPDATE inv.stock_balance SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
+        await tx.query("UPDATE inv.reservation SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
+        await tx.query("UPDATE inv.stock_document_line SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
+        await tx.query("UPDATE inv.stock_ledger SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
+
+        // Also update any JSONB REAGENT fields in oligo.ps_method pointing to outItemId
+        await tx.query(
+          `UPDATE oligo.ps_method
+              SET fields = (
+                SELECT coalesce(
+                  jsonb_agg(
+                    CASE
+                      WHEN elem->>'item_id' = $1 THEN jsonb_set(elem, '{item_id}', to_jsonb($2::text))
+                      ELSE elem
+                    END
+                  ),
+                  '[]'::jsonb
+                )
+                FROM jsonb_array_elements(fields) AS elem
+              )
+            WHERE fields::text LIKE '%' || $1 || '%'`,
+          [outItemId, targetId]
+        );
+
+        // Delete or retire the duplicate -OUT item
+        const deleted = await tx
+          .query("DELETE FROM master.item WHERE id = $1", [outItemId])
+          .then(() => true)
+          .catch(() => false);
+        if (!deleted) {
+          await tx.query("UPDATE master.item SET status = 'INACTIVE', code = $2 WHERE id = $1", [
+            outItemId,
+            `OLD-${fCodeU}-OUT`,
+          ]);
+        }
+      }
+      await tx.query(`RELEASE SAVEPOINT ${sp}`);
+    } catch {
+      await tx.query(`ROLLBACK TO SAVEPOINT ${sp}`).catch(() => {});
+    }
+  }
+
+  unifiedOutItemsNormalized = true;
+}
+
 export async function listFormulas(tx: Tx, actor: AuthzActor, deptScopeRaw?: string | null) {
   const scope = normalizePrepDeptScope(deptScopeRaw);
   if (!scope || scope === "OLIGO") {
     await ensureLegacyOligoDataSeeded(tx);
   }
+  await normalizeFormulaOutputItems(tx);
   // anyone who prepares or writes formulas, in any department
   await authorizeAnywhere(tx, actor, "prep.execute").catch((err) => {
     if (err?.code === "FORBIDDEN") return authorizeAnywhere(tx, actor, "prep.formula.manage");
@@ -373,6 +553,7 @@ export async function cancelPreparation(tx: Tx, actor: AuthzActor, id: string, r
 }
 
 export async function autoReleaseNonQcPreparations(tx: Tx, actor: AuthzActor, deptScopeRaw?: string | null) {
+  await normalizeFormulaOutputItems(tx);
   const scope = normalizePrepDeptScope(deptScopeRaw);
   const today = vnToday();
   const stuck = (

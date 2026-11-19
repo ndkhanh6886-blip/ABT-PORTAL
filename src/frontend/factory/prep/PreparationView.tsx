@@ -139,7 +139,7 @@ function FormulaEditor({ base, isClone, deptScope, onClose }: { base?: Formula; 
     code: isClone && base ? `${base.code}-COPY` : (base?.code ?? ""),
     name: isClone && base ? `${base.name} (Bản sao)` : (base?.name ?? ""),
     category: base?.category ?? "",
-    output_item_id: base?.output_item_id ?? "",
+    output_item_id: isClone ? "" : (base?.output_item_id ?? ""),
     basis_qty: String(base?.basis_qty ?? ""),
     basis_uom: base?.basis_uom ?? "mL",
     shelf_life_days: base?.shelf_life_days ? String(base.shelf_life_days) : "",
@@ -184,10 +184,11 @@ function FormulaEditor({ base, isClone, deptScope, onClose }: { base?: Formula; 
       </div>
       <datalist id={datalistId}>{meta.categories.map((c) => <option key={c} value={c} />)}</datalist>
       <div className="flex flex-wrap gap-3 items-center text-xs">
-        <span>Thành phẩm pha:</span>
-        <ItemPicker value={f.output_item_id} current={base ? `${base.output_code} · ${base.output_name}` : undefined} onChange={(id) => setF({ ...f, output_item_id: id })} />
         <label className="flex items-center gap-1"><input type="checkbox" checked={f.requires_qc} onChange={(e) => setF({ ...f, requires_qc: e.target.checked })} />Cần QC trước khi dùng</label>
         <label className="flex items-center gap-1">Thời gian ủ tối thiểu<input className={`${inputClass} w-16`} type="number" min="0" max="365" value={f.incubation_days} onChange={(e) => setF({ ...f, incubation_days: e.target.value })} />ngày</label>
+        <span className="text-slate-500">
+          (Sản phẩm kho sau pha tự động gắn theo mã công thức <b className="font-mono text-sky-700 dark:text-sky-400">{f.code || "..."}</b>)
+        </span>
       </div>
       <div className="text-xs font-bold">Nguyên liệu (cho một mẻ chuẩn)</div>
       {lines.map((l, i) => (
@@ -229,7 +230,7 @@ function PrepareForm({ formula, deptScope, onDone }: { formula: Formula; deptSco
   if (opts.data && !opts.data.length) return <Empty>Bạn chưa có quyền pha chế ở kho nào.</Empty>;
   return (
     <form className="flex flex-col gap-3 p-3 rounded-xl border border-sky-200 dark:border-sky-900 bg-sky-50/60 dark:bg-sky-950/30" onSubmit={(e) => { e.preventDefault(); run.mutate(); }}>
-      <div className="text-xs font-bold">Lệnh pha: {formula.code} — {formula.name} → {formula.output_code} {formula.output_name}</div>
+      <div className="text-xs font-bold">Lệnh pha: <span className="font-mono text-sky-700 dark:text-sky-400">{formula.code}</span> — {formula.name}</div>
       <div className="flex gap-3 text-xs">
         <label className="flex items-center gap-1"><input type="radio" checked={f.mode === "now"} onChange={() => setF({ ...f, mode: "now" })} />Pha ngay</label>
         <label className="flex items-center gap-1"><input type="radio" checked={f.mode === "order"} onChange={() => setF({ ...f, mode: "order" })} />Lập lệnh chờ (giữ chỗ nguyên liệu)</label>
@@ -589,7 +590,7 @@ export function PreparationView({
           <Empty>Không tìm thấy công thức pha chế nào khớp từ khóa hoặc bộ lọc đang chọn.</Empty>
         )}
         {filteredFormulas.length > 0 && (
-          <Table head={["Mã", "Tên / nhóm", "Thành phẩm", "Mẻ chuẩn", "Nguyên liệu", "Hạn / QC", ""]}>
+          <Table head={["Mã sản phẩm / Công thức", "Tên hóa chất / Nhóm pha chế", "Mẻ chuẩn", "Nguyên liệu thành phần", "Hạn dùng / QC", ""]}>
             {filteredFormulas.map((f) => {
               const isRowEditing = editing?.item?.id === f.id;
               const isRowPreparing = preparing?.id === f.id;
@@ -600,9 +601,8 @@ export function PreparationView({
                       isRowEditing || isRowPreparing ? "bg-sky-50/80 dark:bg-sky-950/30 font-semibold" : ""
                     }`}
                   >
-                    <td className="py-1.5 pr-3 font-mono text-xs">{f.code}</td>
+                    <td className="py-1.5 pr-3 font-mono font-bold text-xs text-sky-700 dark:text-sky-400">{f.code}</td>
                     <td className="py-1.5 pr-3">{f.name}{f.category && <div className="text-[11px] text-slate-500">{f.category}</div>}</td>
-                    <td className="py-1.5 pr-3 text-xs">{f.output_code} · {f.output_name}</td>
                     <td className="py-1.5 pr-3 text-xs whitespace-nowrap">{fmtQty(f.basis_qty)} {f.basis_uom}</td>
                     <td className="py-1.5 pr-3 text-xs">{f.lines.map((l) => `${l.item_code} ${fmtQty(l.qty)} ${l.uom}`).join(" · ")}</td>
                     <td className="py-1.5 pr-3 text-xs">{f.shelf_life_days ? `${f.shelf_life_days} ngày` : "—"}{f.requires_qc && " · cần QC"}{f.incubation_days > 0 && ` · ủ ${f.incubation_days} ngày`}</td>
@@ -659,7 +659,7 @@ export function PreparationView({
                   </tr>
                   {isRowEditing && (
                     <tr>
-                      <td colSpan={7} className="py-2 pr-3">
+                      <td colSpan={6} className="py-2 pr-3">
                         <FormulaEditor
                           key={`${deptScope}-${f.id}-${editing?.isClone ? "clone" : "edit"}`}
                           base={f}
@@ -672,7 +672,7 @@ export function PreparationView({
                   )}
                   {isRowPreparing && (
                     <tr>
-                      <td colSpan={7} className="py-2 pr-3">
+                      <td colSpan={6} className="py-2 pr-3">
                         <PrepareForm
                           key={f.id}
                           formula={f}

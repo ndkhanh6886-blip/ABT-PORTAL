@@ -1374,9 +1374,9 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
             .map((l) => normCode(l.ingredient_code || l.material_code || l["Mã nguyên liệu"]).toUpperCase())
             .filter(Boolean)
         );
-        let outputCode = normCode(first.output_item_code || first["Mã hóa chất đích"], `${formulaCode}-OUT`);
+        let outputCode = normCode(first.output_item_code || first["Mã hóa chất đích"], formulaCode);
         if (ingCodes.has(outputCode.toUpperCase())) {
-          outputCode = normCode(`PREP-${formulaCode}-OUT`, `${formulaCode}-TP`);
+          outputCode = normCode(`PREP-${formulaCode}`, `${formulaCode}-TP`);
         }
         const outputName = normStr(first.output_item_name || first["Tên hóa chất đích"], formulaName);
         const basisQty = Math.max(0.001, normNum(first.basis_qty ?? first["Mẻ chuẩn"], 1000));

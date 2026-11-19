@@ -33,7 +33,7 @@ export function scoreItemForReagentRole(
       if (/\b(amidite\s*da|da\s*0\.1\s*m|da[-\s]*amidite|da[-\s]*phosphoramidite|da[-\s]*ce)\b/i.test(nameL) && !/\b(powder|bột|lna|ome)\b/i.test(nameL)) {
         return isPreparedOut ? 95 : 85;
       }
-      if (codeU === "STO007-OUT" || fCodeU === "STO007" || fCodeU === "AMIDITE_DIL") return 95;
+      if (codeU === "STO007" || fCodeU === "STO007" || fCodeU === "AMIDITE_DIL") return 95;
       if (codeU === "AM1" && /da\b/i.test(nameL)) return 60;
       return 0;
     case "dC":
