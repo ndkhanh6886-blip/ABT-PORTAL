@@ -22,7 +22,7 @@ import {
 import { useAuth } from "@/frontend/contexts/AuthContext";
 import { MainTab } from "@/frontend/components/Navbar";
 import { uploadSingleFileSmart } from "@/frontend/components/AttachmentPicker";
-import { dedupePersonnel } from "@/frontend/components/EnterpriseChatModule";
+import { dedupePersonnel, renderChatTextWithLinks } from "@/frontend/components/EnterpriseChatModule";
 import {
   formatVietnamTime,
   formatVietnamDate,
@@ -677,13 +677,13 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
                         </div>
                         {cleanedContent && (
                           <div
-                            className={`p-2.5 rounded-2xl max-w-[85%] text-xs leading-relaxed whitespace-pre-line shadow-2xs ${
+                            className={`p-2.5 rounded-2xl max-w-[85%] text-xs leading-relaxed whitespace-pre-line break-words shadow-2xs ${
                               isMe
                                 ? "bg-indigo-600 text-white rounded-br-xs"
                                 : "bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-bl-xs border border-slate-200/80 dark:border-slate-700"
                             }`}
                           >
-                            {cleanedContent}
+                            {renderChatTextWithLinks(cleanedContent, isMe)}
                           </div>
                         )}
                         {Array.isArray(m.attachments) && m.attachments.length > 0 && (

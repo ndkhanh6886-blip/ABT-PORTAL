@@ -251,6 +251,56 @@ const STANDARD_DEPT_CHANNEL_ORDER = [
   "legal",
 ];
 
+export const renderChatTextWithLinks = (
+  rawText: any,
+  isInverseBubble = false
+): React.ReactNode => {
+  if (rawText === null || rawText === undefined) return null;
+  const str = String(rawText);
+  if (!str) return null;
+  const urlRegex = /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+)/gi;
+  const parts = str.split(urlRegex);
+  if (parts.length <= 1) return str;
+
+  const linkCls = isInverseBubble
+    ? "text-amber-200 hover:text-white underline font-bold break-all cursor-pointer"
+    : "text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 underline font-bold break-all cursor-pointer";
+
+  return parts.map((part, idx) => {
+    if (/^(https?:\/\/|www\.)/i.test(part)) {
+      let cleanUrl = part;
+      let trailing = "";
+      const trailingMatch = cleanUrl.match(/([.,;:!?)\]]+)$/);
+      if (trailingMatch) {
+        const candidate = trailingMatch[1];
+        if (candidate === ")" && (cleanUrl.match(/\(/g) || []).length >= (cleanUrl.match(/\)/g) || []).length) {
+          // keep
+        } else {
+          cleanUrl = cleanUrl.slice(0, -candidate.length);
+          trailing = candidate;
+        }
+      }
+      const href = /^https?:\/\//i.test(cleanUrl) ? cleanUrl : `https://${cleanUrl}`;
+      return (
+        <React.Fragment key={idx}>
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className={linkCls}
+            title={`Nhấn để mở liên kết: ${href}`}
+          >
+            {cleanUrl}
+          </a>
+          {trailing}
+        </React.Fragment>
+      );
+    }
+    return <React.Fragment key={idx}>{part}</React.Fragment>;
+  });
+};
+
 export const EnterpriseChatModule: React.FC = () => {
   const { user } = useAuth();
   const { showToast } = useNotification();
@@ -2646,7 +2696,10 @@ export const EnterpriseChatModule: React.FC = () => {
 
                           {/* Primary Bubble */}
                           <div className="bg-gradient-to-r from-indigo-600 to-indigo-700 text-white rounded-2xl rounded-tr-xs px-4 py-2.5 shadow-xs text-xs leading-relaxed whitespace-pre-line break-words max-w-full">
-                            {String(msg.content || "").replace(/Đang tải hình ảnh \/ tệp lên\.\.\. Vui lòng đợi/gi, "").trim()}
+                            {renderChatTextWithLinks(
+                              String(msg.content || "").replace(/Đang tải hình ảnh \/ tệp lên\.\.\. Vui lòng đợi/gi, "").trim(),
+                              true
+                            )}
                           </div>
 
                           {/* Related Work Badge */}
@@ -2807,7 +2860,10 @@ export const EnterpriseChatModule: React.FC = () => {
                           ? "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-200/70 dark:border-slate-700/60"
                           : `bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-200/70 dark:border-slate-700/60 border-l-4 ${senderPalette.bubbleBorder}`
                       }`}>
-                        {String(msg.content || "").replace(/Đang tải hình ảnh \/ tệp lên\.\.\. Vui lòng đợi/gi, "").trim()}
+                        {renderChatTextWithLinks(
+                          String(msg.content || "").replace(/Đang tải hình ảnh \/ tệp lên\.\.\. Vui lòng đợi/gi, "").trim(),
+                          false
+                        )}
                       </div>
 
                       {/* Related Work Badge */}
@@ -3396,7 +3452,7 @@ export const EnterpriseChatModule: React.FC = () => {
                       )}
 
                       <div
-                        className={`p-2.5 rounded-2xl max-w-[85%] text-xs leading-relaxed whitespace-pre-line shadow-2xs ${
+                        className={`p-2.5 rounded-2xl max-w-[85%] text-xs leading-relaxed whitespace-pre-line break-words shadow-2xs ${
                           isMe
                             ? "bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-tr-xs"
                             : isDirect
@@ -3404,7 +3460,7 @@ export const EnterpriseChatModule: React.FC = () => {
                             : `bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-tl-xs border border-slate-200 dark:border-slate-700 border-l-3 ${palette.bubbleBorder}`
                         }`}
                       >
-                        {msg.content}
+                        {renderChatTextWithLinks(msg.content, isMe)}
                       </div>
 
                       {/* Split view attachments */}

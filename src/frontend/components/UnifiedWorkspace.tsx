@@ -1754,6 +1754,53 @@ const DepartmentDropdownSelect: React.FC<DepartmentDropdownSelectProps> = ({ val
   );
 };
 
+export const renderTextWithLinks = (
+  rawText: any,
+  linkClassName = "text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 underline font-semibold break-all cursor-pointer"
+): React.ReactNode => {
+  if (rawText === null || rawText === undefined) return null;
+  const str = String(rawText);
+  if (!str) return null;
+  const urlRegex = /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+)/gi;
+  const parts = str.split(urlRegex);
+  if (parts.length <= 1) return str;
+
+  return parts.map((part, idx) => {
+    if (/^(https?:\/\/|www\.)/i.test(part)) {
+      let cleanUrl = part;
+      let trailing = "";
+      const trailingMatch = cleanUrl.match(/([.,;:!?)\]]+)$/);
+      if (trailingMatch) {
+        const candidate = trailingMatch[1];
+        // Keep ')' if the URL itself has an unclosed '('
+        if (candidate === ")" && (cleanUrl.match(/\(/g) || []).length >= (cleanUrl.match(/\)/g) || []).length) {
+          // keep
+        } else {
+          cleanUrl = cleanUrl.slice(0, -candidate.length);
+          trailing = candidate;
+        }
+      }
+      const href = /^https?:\/\//i.test(cleanUrl) ? cleanUrl : `https://${cleanUrl}`;
+      return (
+        <React.Fragment key={idx}>
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className={linkClassName}
+            title={`Nhấn để mở liên kết: ${href}`}
+          >
+            {cleanUrl}
+          </a>
+          {trailing}
+        </React.Fragment>
+      );
+    }
+    return <React.Fragment key={idx}>{part}</React.Fragment>;
+  });
+};
+
 export const renderWorkflowResultSummary = (summary: any) => {
   if (!summary) return null;
 
@@ -1870,7 +1917,7 @@ export const renderWorkflowResultSummary = (summary: any) => {
 
         {textNote && (
           <p className="text-slate-700 dark:text-slate-300 text-xs italic mt-1 bg-white/50 dark:bg-slate-900/50 p-1.5 rounded-lg border border-slate-100 dark:border-slate-800">
-            {textNote}
+            {renderTextWithLinks(textNote)}
           </p>
         )}
       </div>
@@ -1880,7 +1927,7 @@ export const renderWorkflowResultSummary = (summary: any) => {
   // Plain text representation
   return (
     <p className="mt-1 text-slate-800 dark:text-slate-200 leading-relaxed whitespace-pre-line">
-      {textNote || String(summary)}
+      {renderTextWithLinks(textNote || String(summary))}
     </p>
   );
 };
@@ -13905,11 +13952,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             </h3>
                             {ann.summary && (
                               <p className="text-xs font-semibold text-slate-600 dark:text-slate-300 mt-1">
-                                {ann.summary}
+                                {renderTextWithLinks(ann.summary)}
                               </p>
                             )}
                             <p className="text-xs text-slate-600 dark:text-slate-400 mt-1.5 line-clamp-3 whitespace-pre-line leading-relaxed">
-                              {ann.content}
+                              {renderTextWithLinks(ann.content)}
                             </p>
                           </div>
 
@@ -14608,7 +14655,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             <span className="text-slate-400 font-mono">{c.time}</span>
                           </div>
                           <p className="text-xs text-slate-800 dark:text-slate-100 whitespace-pre-wrap leading-relaxed">
-                            {c.text}
+                            {renderTextWithLinks(c.text)}
                           </p>
                         </div>
                       );
@@ -16269,7 +16316,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             <div>
               <label className="block font-bold text-slate-500 uppercase tracking-wider mb-1">Nội dung yêu cầu</label>
               <div className="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 whitespace-pre-line">
-                {selectedWorkflowDetail.description || "Không có mô tả chi tiết"}
+                {renderTextWithLinks(selectedWorkflowDetail.description || "Không có mô tả chi tiết")}
               </div>
             </div>
 
@@ -16411,7 +16458,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         </strong>
                         <span className="text-slate-400 font-mono text-[10px]">{c.time}</span>
                       </div>
-                      <p className="text-slate-800 dark:text-slate-200 text-xs whitespace-pre-wrap">{c.text}</p>
+                      <p className="text-slate-800 dark:text-slate-200 text-xs whitespace-pre-wrap">{renderTextWithLinks(c.text)}</p>
                       {c.attachments && c.attachments.length > 0 && (
                         <div className="flex flex-wrap gap-1.5 pt-1">
                           {c.attachments.map((cAtt: any, cAttIdx: number) => (
@@ -19638,13 +19685,13 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   </h2>
                   {ann.summary && (
                     <p className="text-xs font-bold text-indigo-700 dark:text-indigo-300">
-                      Trích yếu: {ann.summary}
+                      Trích yếu: {renderTextWithLinks(ann.summary)}
                     </p>
                   )}
                 </div>
 
                 <div className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-xs text-slate-800 dark:text-slate-200 whitespace-pre-line leading-relaxed">
-                  {ann.content}
+                  {renderTextWithLinks(ann.content)}
                 </div>
 
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 text-[11px] text-slate-600 dark:text-slate-400">
@@ -19807,7 +19854,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           </strong>
                           <span className="text-slate-400 font-mono">{c.time}</span>
                         </div>
-                        <p className="text-xs text-slate-800 dark:text-slate-200 mt-0.5">{c.text}</p>
+                        <p className="text-xs text-slate-800 dark:text-slate-200 mt-0.5">{renderTextWithLinks(c.text)}</p>
                       </div>
                     ))}
                   </div>
