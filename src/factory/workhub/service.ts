@@ -741,7 +741,7 @@ export async function getFactoryWorkhubData(tx: Tx, currentUserId?: number): Pro
       involvedDepts: dedupeStrings([om.dept, st === "PENDING_QC" || st === "PENDING_RELEASE" || ko.qa_assignee_name ? "QA/QC" : null]),
       targetTab: "factory-kit",
       kanbanStatus,
-      isOpenForSchedule: !isDone,
+      isOpenForSchedule: false,
       statusLabel:
         st === "DRAFT"
           ? "Nháp lệnh SX"
@@ -762,7 +762,7 @@ export async function getFactoryWorkhubData(tx: Tx, currentUserId?: number): Pro
       assignees: refs.assignees,
       assigneeUserIds: refs.assigneeUserIds,
       metaSummary: `${ko.item_code || ""} · Mode ${ko.order_mode || "STANDARD"}`,
-      includeInTaskBoard: true,
+      includeInTaskBoard: false,
       updatedAt: ko.updated_at ? String(ko.updated_at) : null,
     });
   }
@@ -798,7 +798,7 @@ export async function getFactoryWorkhubData(tx: Tx, currentUserId?: number): Pro
       involvedDepts: dedupeStrings([om.dept, ks.qa_assignee_name ? "QA/QC" : null]),
       targetTab: "factory-kit",
       kanbanStatus: st === "IN_PROGRESS" || st === "AWAITING_CHECK" ? "IN_PROGRESS" : "TODO",
-      isOpenForSchedule: true,
+      isOpenForSchedule: false,
       statusLabel: st === "AWAITING_CHECK" ? "Chờ kiểm tra chéo" : st === "IN_PROGRESS" ? "Đang chạy công đoạn" : "Chờ thực hiện",
       priority: normalizePriority(ks.priority),
       dueDate: toIsoDateStr(ks.planned_date),
@@ -806,7 +806,7 @@ export async function getFactoryWorkhubData(tx: Tx, currentUserId?: number): Pro
       assignees: refs.assignees,
       assigneeUserIds: refs.assigneeUserIds,
       metaSummary: `${ks.product_name || ks.order_code} · ${ks.step_code}`,
-      includeInTaskBoard: true,
+      includeInTaskBoard: false,
       updatedAt: ks.updated_at ? String(ks.updated_at) : null,
     });
   }
@@ -840,7 +840,7 @@ export async function getFactoryWorkhubData(tx: Tx, currentUserId?: number): Pro
       involvedDepts: [om.dept, "QA/QC"],
       targetTab: "factory-kit",
       kanbanStatus: isDone ? "DONE" : st === "IN_PROGRESS" ? "IN_PROGRESS" : "TODO",
-      isOpenForSchedule: !isDone,
+      isOpenForSchedule: false,
       statusLabel: isDone ? "Đã xử lý lại" : st === "IN_PROGRESS" ? "Đang làm lại" : st === "APPROVED" ? "Đã duyệt Rework" : "Nháp Rework",
       priority: "HIGH",
       dueDate: null,
@@ -848,7 +848,7 @@ export async function getFactoryWorkhubData(tx: Tx, currentUserId?: number): Pro
       assignees: refs.assignees,
       assigneeUserIds: refs.assigneeUserIds,
       metaSummary: `Lệnh gốc ${kr.order_code} · ${Number(kr.qty_to_rework)} ${kr.uom}`,
-      includeInTaskBoard: true,
+      includeInTaskBoard: false,
       updatedAt: kr.updated_at ? String(kr.updated_at) : null,
     });
   }
@@ -882,7 +882,7 @@ export async function getFactoryWorkhubData(tx: Tx, currentUserId?: number): Pro
       involvedDepts: [om.dept],
       targetTab: "factory-oligo",
       kanbanStatus: isDone ? "DONE" : st === "IN_PROGRESS" ? "IN_PROGRESS" : "TODO",
-      isOpenForSchedule: !isDone,
+      isOpenForSchedule: false,
       statusLabel: isDone ? "Hoàn tất / Đã giao" : st === "IN_PROGRESS" ? "Đang tổng hợp" : "Chờ xử lý",
       priority: "HIGH",
       dueDate: toIsoDateStr(oo.due_date),
@@ -890,7 +890,7 @@ export async function getFactoryWorkhubData(tx: Tx, currentUserId?: number): Pro
       assignees: refs.assignees,
       assigneeUserIds: refs.assigneeUserIds,
       metaSummary: `${Number(oo.seq_count || 0)} trình tự${oo.notes ? ` · ${String(oo.notes).slice(0, 60)}` : ""}`,
-      includeInTaskBoard: true,
+      includeInTaskBoard: false,
       updatedAt: oo.updated_at ? String(oo.updated_at) : null,
     });
   }
@@ -924,7 +924,7 @@ export async function getFactoryWorkhubData(tx: Tx, currentUserId?: number): Pro
       involvedDepts: [om.dept],
       targetTab: "factory-oligo",
       kanbanStatus: isDone ? "DONE" : st === "RUNNING" ? "IN_PROGRESS" : "TODO",
-      isOpenForSchedule: !isDone,
+      isOpenForSchedule: false,
       statusLabel: isDone ? "Đã chạy xong" : st === "RUNNING" ? "Máy đang chạy" : "Đã xếp mẻ",
       priority: st === "RUNNING" ? "HIGH" : "MEDIUM",
       dueDate: toIsoDateStr(ob.planned_start),
@@ -932,7 +932,7 @@ export async function getFactoryWorkhubData(tx: Tx, currentUserId?: number): Pro
       assignees: refs.assignees,
       assigneeUserIds: refs.assigneeUserIds,
       metaSummary: ob.program_name || "Chạy máy tổng hợp Oligo",
-      includeInTaskBoard: true,
+      includeInTaskBoard: false,
       updatedAt: ob.updated_at ? String(ob.updated_at) : null,
     });
   }
@@ -968,7 +968,7 @@ export async function getFactoryWorkhubData(tx: Tx, currentUserId?: number): Pro
       involvedDepts: [om.dept],
       targetTab: "factory-oligo",
       kanbanStatus: "IN_PROGRESS",
-      isOpenForSchedule: true,
+      isOpenForSchedule: false,
       statusLabel: "Đang cắt/tinh sạch/đo OD",
       priority: "MEDIUM",
       dueDate: toIsoDateStr(op.due_date),
@@ -976,7 +976,7 @@ export async function getFactoryWorkhubData(tx: Tx, currentUserId?: number): Pro
       assignees: refs.assignees,
       assigneeUserIds: refs.assigneeUserIds,
       metaSummary: `${Number(op.open_seq_count || 0)} trình tự đang hậu tổng hợp`,
-      includeInTaskBoard: true,
+      includeInTaskBoard: false,
       updatedAt: op.latest_updated_at ? String(op.latest_updated_at) : null,
     });
   }
@@ -1000,6 +1000,7 @@ export async function getFactoryWorkhubData(tx: Tx, currentUserId?: number): Pro
     const st = String(pr.status || "PLANNED").toUpperCase();
     const isDone = st === "DONE";
     const refs = resolveUserRefs([pr.created_by], [], userMap);
+    const isRoutineProdPrep = om.dept === "Sản Xuất Kit" || om.dept === "Tổng Hợp Oligo";
 
     workItems.push({
       uid: `prep_order:${pr.id}`,
@@ -1012,7 +1013,7 @@ export async function getFactoryWorkhubData(tx: Tx, currentUserId?: number): Pro
       involvedDepts: [om.dept],
       targetTab: om.targetTab,
       kanbanStatus: isDone ? "DONE" : "TODO",
-      isOpenForSchedule: !isDone,
+      isOpenForSchedule: !isRoutineProdPrep && !isDone,
       statusLabel: isDone ? "Đã pha xong" : "Chờ pha chế",
       priority: "MEDIUM",
       dueDate: toIsoDateStr(pr.planned_date),
@@ -1020,7 +1021,7 @@ export async function getFactoryWorkhubData(tx: Tx, currentUserId?: number): Pro
       assignees: refs.assignees,
       assigneeUserIds: refs.assigneeUserIds,
       metaSummary: `Công thức ${pr.formula_code}${pr.notes ? ` · ${String(pr.notes).slice(0, 60)}` : ""}`,
-      includeInTaskBoard: true,
+      includeInTaskBoard: !isRoutineProdPrep,
       updatedAt: pr.updated_at ? String(pr.updated_at) : null,
     });
   }

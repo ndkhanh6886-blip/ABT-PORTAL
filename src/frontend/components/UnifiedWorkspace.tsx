@@ -3247,13 +3247,33 @@ export const UnifiedWorkspace: React.FC = () => {
     return false;
   }, [userDept, wfInvolvesMe, filterDept, departmentStaffList, taskHasAssignee]);
 
+  // Không hiển thị các công việc sản xuất thường quy của Phòng Sản Xuất Kit và Tổng Hợp Oligo trên Bảng công việc điều hành chung
+  const ROUTINE_PROD_HUB_SOURCES = useMemo(
+    () =>
+      new Set([
+        "KIT_ORDER",
+        "KIT_STEP",
+        "KIT_REWORK",
+        "OLIGO_ORDER",
+        "OLIGO_BATCH",
+        "OLIGO_POST",
+      ]),
+    []
+  );
+
   // Hợp nhất Công việc điều hành chung (company_tasks) + Công việc thực tế từ toàn Khối Kỹ Thuật – Nhà Máy & Application / Pháp Chế
   const mergedWorkspaceTasks = useMemo(() => {
     const existingCodes = new Set(
       (tasks || []).map((t: any) => String(t?.task_code || "").trim().toUpperCase()).filter(Boolean)
     );
     const hubRows = (hubWorkItems || [])
-      .filter((h) => h.includeInTaskBoard !== false && !existingCodes.has(String(h.code || "").trim().toUpperCase()))
+      .filter((h) => {
+        if (h.includeInTaskBoard === false) return false;
+        const src = String(h.sourceType || "").toUpperCase();
+        if (ROUTINE_PROD_HUB_SOURCES.has(src)) return false;
+        if (src === "PREP_ORDER" && (h.dept === "Sản Xuất Kit" || h.dept === "Tổng Hợp Oligo")) return false;
+        return !existingCodes.has(String(h.code || "").trim().toUpperCase());
+      })
       .map((h) => ({
         id: h.uid,
         task_code: h.code,
@@ -3278,7 +3298,7 @@ export const UnifiedWorkspace: React.FC = () => {
         updated_at: h.updatedAt || null,
       }));
     return [...(tasks || []), ...hubRows];
-  }, [tasks, hubWorkItems]);
+  }, [tasks, hubWorkItems, ROUTINE_PROD_HUB_SOURCES]);
 
   // Hợp nhất Dự án liên phòng ban (Portal) + Dự án Stage-Gate R&D / KTCN (Factory)
   const allCompanyProjects = useMemo(() => {
@@ -8851,9 +8871,9 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           {
             id: "kit_oligo",
             title: "SX Kit & Tổng Hợp Oligo",
-            sub: "Lệnh SX Kit, eBR, Đơn Oligo",
+            sub: "Việc giao & Phối hợp kỹ thuật",
             count: kitOligoOpen,
-            unit: "lệnh / đơn",
+            unit: "việc mở",
             active: taskSourceFilter === "KIT_OLIGO",
             cls: "border-teal-200 dark:border-teal-900/70 bg-teal-50/60 dark:bg-teal-950/20 text-teal-900 dark:text-teal-200",
             onClick: () => { setSelectedDept("all"); setTaskSourceFilter("KIT_OLIGO"); setActiveSubTab("tasks"); }
