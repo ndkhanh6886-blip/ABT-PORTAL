@@ -221,6 +221,25 @@ function orderLinePrice(it: any): number {
   return Number(it?.unitPrice ?? it?.unit_price ?? it?.price ?? 0);
 }
 
+/**
+ * Nội dung thương mại của đơn: mã hàng, số lượng, đơn giá, chiết khấu, hàng tặng (bỏ dòng đã hủy, không phụ thuộc thứ tự).
+ * Chỉ khi phần này đổi mới phải duyệt lại. Trước đây so sánh nguyên dòng hàng nên các thao tác chỉ ghi thêm thông tin phụ
+ * (gửi PR mua NCC ghi "SL cần mua", ghi chú dòng, phân bổ kho, cần xuất HĐ...) cũng đưa đơn 0đ / tặng đã duyệt về chờ duyệt.
+ */
+function orderCommercialSignature(items: any[]): string {
+  const lines = (Array.isArray(items) ? items : [])
+    .filter((it: any) => it && String(it.status || "").toUpperCase() !== "CANCELLED")
+    .map((it: any) => ({
+      code: String(it.productCode ?? it.product_code ?? it.code ?? "").trim().toUpperCase(),
+      qty: orderLineQty(it),
+      price: orderLinePrice(it),
+      discount: Number(it.discountRate ?? it.discount_rate ?? it.discountPercent ?? it.discount ?? 0) || 0,
+      discountAmount: Number(it.discountAmount ?? it.discount_amount ?? 0) || 0,
+      gift: Boolean(it.isGift || it.is_gift || it.isSample || it.is_sample),
+    }));
+  return lines.map((l) => stableStringify(l)).sort().join("|");
+}
+
 /** Lỗi dữ liệu dòng hàng (số âm / không phải số), null nếu hợp lệ */
 function validateOrderItems(items: any[]): string | null {
   for (const it of items) {
@@ -1787,7 +1806,7 @@ export async function POST(req: NextRequest) {
         // to 0đ items or a much larger amount without new approval)
         let priceApprovalStatus = existing.price_approval_status || "APPROVED";
         if (has("items")) {
-          const itemsChanged = stableStringify(parseJsonArray(existing.items)) !== stableStringify(itemsArr);
+          const itemsChanged = orderCommercialSignature(parseJsonArray(existing.items)) !== orderCommercialSignature(itemsArr);
           set("has_zero_price_items", hasZeroPrice);
           if (!isStockOrder && hasZeroPrice && itemsChanged) priceApprovalStatus = "PENDING_APPROVAL";
           if (!hasZeroPrice && priceApprovalStatus === "PENDING_APPROVAL") priceApprovalStatus = "APPROVED";
@@ -1823,7 +1842,7 @@ export async function POST(req: NextRequest) {
         // Đơn đã được duyệt mà bị sửa mặt hàng / tổng tiền / khách hàng:
         // - Nếu sau khi sửa vẫn có dòng 0đ hoặc bị khóa công nợ -> bắt buộc duyệt lại (approvalReset = true)
         // - Nếu sau khi sửa toàn bộ mặt hàng đã có giá > 0 và công nợ an toàn -> tự động hợp lệ (APPROVED)
-        const contentChanged = (has("items") && stableStringify(parseJsonArray(existing.items)) !== stableStringify(itemsArr))
+        const contentChanged = (has("items") && orderCommercialSignature(parseJsonArray(existing.items)) !== orderCommercialSignature(itemsArr))
           || customerChanged;
         const effectiveHasZero = has("items") ? hasZeroPrice : Boolean(existing.has_zero_price_items);
         const requiresManualApproval = !isStockOrder && (effectiveHasZero || isCreditBlocked);
@@ -2530,6 +2549,8 @@ export async function POST(req: NextRequest) {
          SET price_approval_status = $4::text,
              price_approval_notes = $1::text,
              approval_status = CASE WHEN $4::text = 'REJECTED' THEN 'REJECTED' WHEN NOT COALESCE(is_credit_blocked, FALSE) THEN 'APPROVED' ELSE approval_status END,
+             -- Đã duyệt lại thì bỏ dấu "Cần duyệt lại" của lần sửa trước (trước đây còn sót, đơn vẫn bị coi là chờ duyệt lại)
+             approval_note = CASE WHEN $4::text = 'APPROVED' AND NOT COALESCE(is_credit_blocked, FALSE) AND approval_note LIKE 'Cần duyệt lại%' THEN NULL ELSE approval_note END,
              approved_by = COALESCE($5::text, approved_by),
              approved_at = CURRENT_TIMESTAMP
          WHERE (CASE WHEN $3::text IS NOT NULL AND $3::text !~ '^[0-9]+$' THEN order_code = $3::text ELSE id = $2::int END)`,
