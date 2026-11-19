@@ -11,6 +11,7 @@ import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import { releaseDemandLotReservations, reserveLot } from "../inv/reservations";
 import { getItem, toBaseQty } from "../master/service";
 import { analyze } from "./analyzer";
+import { autoSyncOligoReagentMappings } from "./batchQueries";
 import { loadCatalog } from "./catalog";
 import { estimateConsumption, type ConsumptionLine, type ReagentRule } from "./consumption";
 
@@ -227,6 +228,7 @@ const DEFAULT_SYNTH_PORTS: { port_no: number; role: string; label: string }[] = 
 export async function listPorts(tx: Tx, actor: AuthzActor, synthId: string) {
   const synth = await synthesizer(tx, synthId);
   await authorize(tx, actor, "oligo.view", synth.owner_org_unit_id);
+  await autoSyncOligoReagentMappings(tx, actor, synth.owner_org_unit_id);
   const warehouses = await warehousesOf(tx, synth.owner_org_unit_id);
 
   // Tự động khởi tạo 10 cổng hóa chất chuẩn nếu máy chưa có cổng nào và chưa từng bị xóa cấu hình
@@ -252,6 +254,42 @@ export async function listPorts(tx: Tx, actor: AuthzActor, synthId: string) {
            ON CONFLICT (synthesizer_id, port_no) DO NOTHING`,
           [synthId, dp.port_no, dp.role, dp.label, itemId, firstLotId]
         );
+      }
+    }
+  } else {
+    // Nếu cổng là cổng mặc định tự sinh (chưa có lịch sử configure_ports hoặc REMOVE thủ công) mà chưa có chai, tự động gắn lô khả dụng đầu tiên
+    const manualActionCount = Number(
+      (
+        await tx.query(
+          `SELECT count(*)::int AS c
+             FROM core.audit_log
+            WHERE entity_type = 'synthesizer' AND entity_id = $1 AND action = 'configure_ports'`,
+          [synthId]
+        )
+      ).rows[0]?.c || 0
+    );
+    if (manualActionCount === 0) {
+      const emptyPorts = (
+        await tx.query("SELECT port_no, role, item_id FROM oligo.synth_port WHERE synthesizer_id = $1 AND current_lot_id IS NULL", [synthId])
+      ).rows;
+      for (const ep of emptyPorts) {
+        const removedManually = (
+          await tx.query(
+            "SELECT 1 FROM oligo.bottle_event WHERE synthesizer_id = $1 AND port_no = $2 AND event = 'REMOVE' LIMIT 1",
+            [synthId, ep.port_no]
+          )
+        ).rowCount;
+        if (removedManually) continue;
+        const itemId = await itemForRole(tx, ep.role, ep.item_id);
+        if (!itemId) continue;
+        const cands = await findCandidates(tx, itemId, warehouses);
+        const firstLotId = cands.find((c) => c.lot_id && Number(c.available) > 0)?.lot_id ?? null;
+        if (firstLotId) {
+          await tx.query(
+            "UPDATE oligo.synth_port SET item_id = $3, current_lot_id = $4, installed_at = now() WHERE synthesizer_id = $1 AND port_no = $2",
+            [synthId, ep.port_no, itemId, firstLotId]
+          );
+        }
       }
     }
   }
@@ -300,6 +338,14 @@ export async function listPorts(tx: Tx, actor: AuthzActor, synthId: string) {
 export async function reservePortLines(tx: Tx, actor: AuthzActor, batch: { id: string; synthesizer_id: string; org_unit_id: string }, lines: ConsumptionLine[]) {
   const ports: Port[] = (await tx.query("SELECT * FROM oligo.synth_port WHERE synthesizer_id = $1 ORDER BY port_no FOR UPDATE", [batch.synthesizer_id])).rows;
   const warehouses = await warehousesOf(tx, batch.org_unit_id);
+  const explicitlyConfigured = Boolean(
+    (
+      await tx.query(
+        "SELECT 1 FROM core.audit_log WHERE entity_type = 'synthesizer' AND entity_id = $1 AND action = 'configure_ports' LIMIT 1",
+        [batch.synthesizer_id]
+      )
+    ).rowCount
+  );
   const rest: ConsumptionLine[] = [];
   const perItem = new Map<string, number>();
   for (const l of lines) {
@@ -308,13 +354,42 @@ export async function reservePortLines(tx: Tx, actor: AuthzActor, batch: { id: s
       rest.push(l);
       continue;
     }
-    if (!port.current_lot_id) throw invalid(`Cổng ${port.port_no} (${l.label}) chưa lắp chai. Lắp chai ở tab Thiết bị & định mức trước khi lập mẻ.`, undefined, "PORT_EMPTY");
+    let lotId = port.current_lot_id;
+    if (!lotId && !explicitlyConfigured) {
+      const removedManually = Boolean(
+        (
+          await tx.query(
+            "SELECT 1 FROM oligo.bottle_event WHERE synthesizer_id = $1 AND port_no = $2 AND event = 'REMOVE' LIMIT 1",
+            [batch.synthesizer_id, port.port_no]
+          )
+        ).rowCount
+      );
+      if (!removedManually) {
+        const targetItemId = await itemForRole(tx, port.role, port.item_id);
+        if (targetItemId) {
+          const cands = await findCandidates(tx, targetItemId, warehouses);
+          const firstLotId = cands.find((c) => c.lot_id && Number(c.available) > 0)?.lot_id ?? null;
+          if (firstLotId) {
+            await tx.query(
+              "UPDATE oligo.synth_port SET item_id = $3, current_lot_id = $4, installed_at = now() WHERE synthesizer_id = $1 AND port_no = $2",
+              [batch.synthesizer_id, port.port_no, targetItemId, firstLotId]
+            );
+            lotId = firstLotId;
+          }
+        }
+        if (!lotId) {
+          rest.push(l);
+          continue;
+        }
+      }
+    }
+    if (!lotId) throw invalid(`Cổng ${port.port_no} (${l.label}) chưa lắp chai. Lắp chai ở tab Thiết bị & định mức trước khi lập mẻ.`, undefined, "PORT_EMPTY");
     assertPortOpenStability(port);
-    const itemId = (await tx.query("SELECT item_id FROM inv.lot WHERE id = $1", [port.current_lot_id])).rows[0].item_id;
+    const itemId = (await tx.query("SELECT item_id FROM inv.lot WHERE id = $1", [lotId])).rows[0].item_id;
     const qty = Math.round((await toBaseQty(tx, await getItem(tx, itemId), l.qty, l.uom)) * 1e6) / 1e6;
-    if (qty > 0) await reserveLot(tx, actor, { lot_id: port.current_lot_id, qty_base: qty, warehouse_ids: warehouses, demand_entity_type: DEMAND, demand_entity_id: batch.id });
+    if (qty > 0) await reserveLot(tx, actor, { lot_id: lotId, qty_base: qty, warehouse_ids: warehouses, demand_entity_type: DEMAND, demand_entity_id: batch.id });
     await tx.query("INSERT INTO oligo.batch_port_use (batch_id, port_no, role, item_id, lot_id, qty_base) VALUES ($1, $2, $3, $4, $5, $6)", [
-      batch.id, port.port_no, l.role, itemId, port.current_lot_id, qty,
+      batch.id, port.port_no, l.role, itemId, lotId, qty,
     ]);
     perItem.set(itemId, (perItem.get(itemId) ?? 0) + qty);
   }

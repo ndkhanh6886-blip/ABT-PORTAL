@@ -5,11 +5,263 @@ import { authorize, authorizeAnywhere, type AuthzActor } from "../core/authz";
 import { invalid, notFound } from "../core/errors";
 import { parseInput } from "../core/records";
 import { listAllowedActions } from "../core/stateMachine";
+import { findCandidates } from "../inv/allocation";
+import { autoReleaseNonQcPreparations } from "../prep/service";
 import { batchMachine } from "./batches";
 import { visibleOligoUnits } from "./orders";
 
+/**
+ * Matches an Oligo synthesis reagent role (`dA`, `dC`, `dG`, `dT`, `rA`, `rC`, `rG`, `rU`,
+ * `DEBLOCK`, `CAP_A`, `CAP_B`, `OXIDATION`, `ACTIVATOR`, `ACN`, `ALKYL`) against a candidate
+ * warehouse item or prepared reagent formula output (`code` / `name` / `formula_code` / `formula_name`).
+ * Returns a relevance score (`> 0` if matched, `0` if unrelated).
+ */
+export function scoreItemForReagentRole(
+  role: string,
+  cand: { code: string; name: string; formula_code?: string | null; formula_name?: string | null }
+): number {
+  const r = role.trim();
+  const codeU = (cand.code || "").trim().toUpperCase();
+  const nameL = `${cand.name || ""} ${cand.formula_name || ""}`.toLowerCase();
+  const fCodeU = (cand.formula_code || "").trim().toUpperCase();
+  const isPreparedOut = Boolean(fCodeU) || codeU.endsWith("-OUT") || codeU.startsWith("STO");
+
+  if (codeU === r.toUpperCase()) return 100;
+
+  switch (r) {
+    case "dA":
+      if (/\b(amidite\s*da|da\s*0\.1\s*m|da[-\s]*amidite|da[-\s]*phosphoramidite|da[-\s]*ce)\b/i.test(nameL) && !/\b(powder|bột|lna|ome)\b/i.test(nameL)) {
+        return isPreparedOut ? 95 : 85;
+      }
+      if (codeU === "STO007-OUT" || fCodeU === "STO007" || fCodeU === "AMIDITE_DIL") return 95;
+      if (codeU === "AM1" && /da\b/i.test(nameL)) return 60;
+      return 0;
+    case "dC":
+      if (/\b(amidite\s*dc|dc\s*0\.1\s*m|dc[-\s]*amidite|dc[-\s]*phosphoramidite|dc[-\s]*ce)\b/i.test(nameL) && !/\b(powder|bột|lna|ome|5-me|5mc)\b/i.test(nameL)) {
+        return isPreparedOut ? 95 : 85;
+      }
+      if (codeU === "AM2" && /dc\b/i.test(nameL)) return 60;
+      return 0;
+    case "dG":
+      if (/\b(amidite\s*dg|dg\s*0\.1\s*m|dg[-\s]*amidite|dg[-\s]*phosphoramidite|dg[-\s]*ce)\b/i.test(nameL) && !/\b(powder|bột|lna|ome)\b/i.test(nameL)) {
+        return isPreparedOut ? 95 : 85;
+      }
+      if (codeU === "AM3" && /dg\b/i.test(nameL)) return 60;
+      return 0;
+    case "dT":
+      if (/\b(amidite\s*dt|dt\s*0\.1\s*m|dt[-\s]*amidite|dt[-\s]*phosphoramidite|dt[-\s]*ce)\b/i.test(nameL) && !/\b(powder|bột|lna|ome|inverted)\b/i.test(nameL)) {
+        return isPreparedOut ? 95 : 85;
+      }
+      if (codeU === "AM4" && /dt\b/i.test(nameL)) return 60;
+      return 0;
+    case "rA":
+      if (/\b(amidite\s*ra|ra\s*0\.1\s*m|ra[-\s]*amidite|ra[-\s]*phosphoramidite)\b/i.test(nameL) && !/\b(powder|bột)\b/i.test(nameL)) {
+        return isPreparedOut ? 95 : 85;
+      }
+      return 0;
+    case "rC":
+      if (/\b(amidite\s*rc|rc\s*0\.1\s*m|rc[-\s]*amidite|rc[-\s]*phosphoramidite)\b/i.test(nameL) && !/\b(powder|bột)\b/i.test(nameL)) {
+        return isPreparedOut ? 95 : 85;
+      }
+      return 0;
+    case "rG":
+      if (/\b(amidite\s*rg|rg\s*0\.1\s*m|rg[-\s]*amidite|rg[-\s]*phosphoramidite)\b/i.test(nameL) && !/\b(powder|bột)\b/i.test(nameL)) {
+        return isPreparedOut ? 95 : 85;
+      }
+      return 0;
+    case "rU":
+      if (/\b(amidite\s*ru|ru\s*0\.1\s*m|ru[-\s]*amidite|ru[-\s]*phosphoramidite)\b/i.test(nameL) && !/\b(powder|bột)\b/i.test(nameL)) {
+        return isPreparedOut ? 95 : 85;
+      }
+      return 0;
+    case "DEBLOCK":
+      if (/\b(deblock|deblocking|3%\s*tca|tca\s*3%|tca\s*in\s*dcm|tca\/dcm)\b/i.test(nameL)) {
+        return isPreparedOut ? 95 : 85;
+      }
+      return 0;
+    case "CAP_A":
+      if (/\b(cap\s*[-_]?a\b|capping\s*a\b)/i.test(nameL)) {
+        return isPreparedOut ? 95 : 85;
+      }
+      return 0;
+    case "CAP_B":
+      if (/\b(cap\s*[-_]?b\b|capping\s*b\b|10%\s*nmi|nmi\s*in\s*thf)/i.test(nameL)) {
+        return isPreparedOut ? 95 : 85;
+      }
+      return 0;
+    case "OXIDATION":
+      if (/\b(oxid|iodine\s*0\.0[1-5]\s*m|0\.0[1-5]\s*m\s*iodine|dung\s*dịch\s*i2|dung\s*dich\s*i2|oxi\s*hóa)/i.test(nameL)) {
+        return isPreparedOut ? 95 : 85;
+      }
+      return 0;
+    case "ACTIVATOR":
+      if (/\b(activator|ett\s*0\.25\s*m|0\.25\s*m\s*ett|dung\s*dịch\s*ett|hoạt\s*hóa\s*amidite)\b/i.test(nameL)) {
+        return isPreparedOut ? 95 : 85;
+      }
+      return 0;
+    case "ACN":
+      if (/\b(acetonitrile|acn\b)/i.test(nameL) && !/\b(amidite|ett|0\.1\s*m|0\.25\s*m|buffer|teaa)\b/i.test(nameL)) {
+        return codeU === "LC9" ? 95 : 85;
+      }
+      return 0;
+    case "ALKYL":
+      if (/\b(alkyl\s*amidite|alkyl\s*phosphoramidite|alkyne\s*amidite)\b/i.test(nameL)) {
+        return isPreparedOut ? 95 : 85;
+      }
+      return 0;
+    default:
+      return 0;
+  }
+}
+
+/**
+ * Automatically synchronizes Oligo synthesis reagent rules (`oligo.reagent_rule`) and unconfigured synthesizer ports (`oligo.synth_port`):
+ * 1. Releases any in-house prepared reagent lots in `KHO-OLIGO` whose formula has `requires_qc = false` that were left in `QUARANTINE`.
+ * 2. When a reagent rule is still pointing to an empty placeholder item (0 available stock in Oligo warehouses), checks if `KHO-OLIGO`
+ *    has a stocked item or prepared formula output item matching that role (e.g. `STO007-OUT · Amidite dA 0.1M` for `dA`, `LC9 · Acetonitrile` for `ACN`,
+ *    `STO004-OUT · ETT 0.25M` for `ACTIVATOR`) and updates the rule to point to the real stocked item.
+ */
+export async function autoSyncOligoReagentMappings(tx: Tx, actor: AuthzActor, orgUnitId?: string | null) {
+  await autoReleaseNonQcPreparations(tx, actor, "OLIGO");
+
+  const warehouses: string[] = orgUnitId
+    ? (
+        await tx.query(
+          "SELECT id FROM master.warehouse WHERE (owner_org_unit_id = $1 OR owner_org_unit_id IS NULL OR code = 'KHO-OLIGO') AND status = 'ACTIVE'",
+          [orgUnitId]
+        )
+      ).rows.map((r) => r.id as string)
+    : (
+        await tx.query(
+          `SELECT w.id
+             FROM master.warehouse w
+             LEFT JOIN core.org_unit ou ON ou.id = w.owner_org_unit_id
+            WHERE w.status = 'ACTIVE'
+              AND (w.code = 'KHO-OLIGO' OR w.purpose = 'OLIGO' OR ou.code = 'P-OLIGO' OR ou.module_key = 'OLIGO')`
+        )
+      ).rows.map((r) => r.id as string);
+
+  if (warehouses.length === 0) return;
+
+  const rules = (
+    await tx.query(
+      `SELECT r.role, r.name, r.uom, r.item_id, i.code AS item_code
+         FROM oligo.reagent_rule r
+         LEFT JOIN master.item i ON i.id = r.item_id
+        WHERE r.status = 'ACTIVE'`
+    )
+  ).rows as { role: string; name: string; uom: string; item_id: string | null; item_code: string | null }[];
+
+  // Candidate items with positive released stock in Oligo warehouses or defined as OLIGO prep formula outputs
+  const candidateItems = (
+    await tx.query(
+      `WITH stock AS (
+         SELECT b.item_id, coalesce(sum(b.qty_on_hand - b.qty_reserved), 0)::float AS avail
+           FROM inv.stock_balance b
+           JOIN inv.lot l ON l.id = b.lot_id
+           JOIN master.location loc ON loc.id = b.location_id
+          WHERE loc.warehouse_id = ANY($1::uuid[])
+            AND NOT loc.is_quarantine
+            AND l.status = 'RELEASED'
+            AND (l.expiry_date IS NULL OR l.expiry_date >= current_date)
+          GROUP BY b.item_id
+       ),
+       f_out AS (
+         SELECT DISTINCT ON (f.output_item_id) f.output_item_id AS item_id, f.code AS formula_code, f.name AS formula_name
+           FROM prep.formula f
+          WHERE f.dept_scope = 'OLIGO' AND f.status = 'ACTIVE'
+          ORDER BY f.output_item_id, f.code
+       )
+       SELECT i.id, i.code, i.name, i.base_uom, coalesce(s.avail, 0)::float AS avail, fo.formula_code, fo.formula_name
+         FROM master.item i
+         LEFT JOIN stock s ON s.item_id = i.id
+         LEFT JOIN f_out fo ON fo.item_id = i.id
+        WHERE i.status = 'ACTIVE'
+          AND (coalesce(s.avail, 0) > 0 OR fo.item_id IS NOT NULL)`,
+      [warehouses]
+    )
+  ).rows as {
+    id: string;
+    code: string;
+    name: string;
+    base_uom: string;
+    avail: number;
+    formula_code: string | null;
+    formula_name: string | null;
+  }[];
+
+  if (candidateItems.length === 0) return;
+
+  const availById = new Map<string, number>();
+  for (const c of candidateItems) availById.set(c.id, Number(c.avail));
+
+  const DEFAULT_PLACEHOLDER_CODES = new Set([
+    "DA",
+    "DC",
+    "DG",
+    "DT",
+    "RA",
+    "RC",
+    "RG",
+    "RU",
+    "DEBLOCK",
+    "CAP_A",
+    "CAP_B",
+    "OXIDATION",
+    "ACTIVATOR",
+    "ACN",
+    "ALKYL",
+    "ALKYL-AMIDITE",
+  ]);
+
+  for (const r of rules) {
+    if (!r.item_id) continue; // Keep explicitly unmapped (null) rules unmapped unless mapped by user
+    const codeU = (r.item_code || "").trim().toUpperCase();
+    const isDefaultPlaceholder = DEFAULT_PLACEHOLDER_CODES.has(codeU) || codeU === r.role.trim().toUpperCase();
+    if (!isDefaultPlaceholder) continue;
+
+    const curAvail = availById.get(r.item_id);
+    if (curAvail !== undefined && curAvail > 0) continue;
+    const cands = await findCandidates(tx, r.item_id, warehouses);
+    const totalAvail = cands.reduce((s, c) => s + Number(c.available), 0);
+    if (totalAvail > 0) continue;
+
+    let best: { id: string; score: number; avail: number } | null = null;
+    for (const c of candidateItems) {
+      if (c.id === r.item_id) continue;
+      if (c.avail <= 0) continue;
+      const score = scoreItemForReagentRole(r.role, c);
+      if (score <= 0) continue;
+      const rank = score * 1000 + Math.min(999, c.avail);
+      const bestRank = best ? best.score * 1000 + Math.min(999, best.avail) : -1;
+      if (rank > bestRank) {
+        best = { id: c.id, score, avail: c.avail };
+      }
+    }
+
+    if (best) {
+      await tx.query(
+        "UPDATE oligo.reagent_rule SET item_id = $2, updated_at = now() WHERE role = $1",
+        [r.role, best.id]
+      );
+      // Also update any synthesizer port for this role that has no installed bottle or whose bottle has 0 stock
+      const bestCands = await findCandidates(tx, best.id, warehouses);
+      const firstLotId = bestCands.find((c) => c.lot_id && Number(c.available) > 0)?.lot_id ?? null;
+      await tx.query(
+        `UPDATE oligo.synth_port
+            SET item_id = $2,
+                current_lot_id = COALESCE(current_lot_id, $3),
+                installed_at = CASE WHEN current_lot_id IS NULL AND $3::uuid IS NOT NULL THEN now() ELSE installed_at END
+          WHERE role = $1 AND (current_lot_id IS NULL OR item_id = $4)`,
+        [r.role, best.id, firstLotId, r.item_id]
+      );
+    }
+  }
+}
+
 export async function listReagentRules(tx: Tx, actor: AuthzActor) {
   await authorizeAnywhere(tx, actor, "oligo.view");
+  await autoSyncOligoReagentMappings(tx, actor);
   return (
     await tx.query(
       `SELECT r.role, r.name, r.display_name, r.is_visible, r.basis, r.qty::float AS qty, r.uom, r.item_id, r.status, r.version, i.code AS item_code, i.name AS item_name, i.base_uom
@@ -152,6 +404,7 @@ export async function getBatch(tx: Tx, actor: AuthzActor, id: string) {
  */
 export async function batchCandidates(tx: Tx, actor: AuthzActor, orgUnitId: string) {
   await authorize(tx, actor, "oligo.batch.manage", orgUnitId);
+  await autoSyncOligoReagentMappings(tx, actor, orgUnitId);
   const sequences = (
     await tx.query(
       `SELECT s.id, s.code, s.name, s.normalized_sequence, s.base_count, s.scale_code, s.purification, s.relation,

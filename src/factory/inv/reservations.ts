@@ -55,11 +55,30 @@ export async function reserve(tx: Tx, actor: AuthzActor, req: ReserveRequest): P
     }
   }
   if (shortfall > 1e-9) {
-    const item = (await tx.query("SELECT code, base_uom FROM master.item WHERE id = $1", [req.item_id])).rows[0];
+    const item = (await tx.query("SELECT code, name, base_uom FROM master.item WHERE id = $1", [req.item_id])).rows[0];
+    const quarantinedRow = (
+      await tx.query(
+        `SELECT coalesce(sum(b.qty_on_hand - b.qty_reserved), 0)::float AS q_qty, count(DISTINCT b.lot_id)::int AS q_lots
+           FROM inv.stock_balance b
+           JOIN inv.lot l ON l.id = b.lot_id
+           JOIN master.location loc ON loc.id = b.location_id
+          WHERE b.item_id = $1
+            AND loc.warehouse_id = ANY($2::uuid[])
+            AND b.qty_on_hand - b.qty_reserved > 0
+            AND (loc.is_quarantine OR l.status IN ('QUARANTINE', 'PENDING_QC', 'ON_HOLD'))`,
+        [req.item_id, req.warehouse_ids]
+      )
+    ).rows[0];
+    const qQty = Number(quarantinedRow?.q_qty ?? 0);
+    const qLots = Number(quarantinedRow?.q_lots ?? 0);
+    const qHint =
+      qQty > 0
+        ? ` (Phát hiện đang có ${Number(qQty.toFixed(4))} ${item?.base_uom} thuộc ${qLots} lô đang ở khu Biệt trữ / Chờ QC — vui lòng vào tab Pha chế hoặc Kho Nhà máy để bấm "✅ Duyệt Đạt QC" giải phóng lô).`
+        : "";
     throw new FactoryError(
       422,
       "INSUFFICIENT_STOCK",
-      `Không đủ tồn khả dụng cho ${item?.code}: còn thiếu ${Number(shortfall.toFixed(6))} ${item?.base_uom}. Chỉ tính lô đã giải phóng, còn hạn, ngoài khu biệt trữ.`,
+      `Không đủ tồn khả dụng cho ${item?.code}${item?.name ? ` (${item.name})` : ""}: còn thiếu ${Number(shortfall.toFixed(6))} ${item?.base_uom}. Chỉ tính lô đã giải phóng, còn hạn, ngoài khu biệt trữ.${qHint}`,
       { item_id: req.item_id, shortfall }
     );
   }

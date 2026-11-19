@@ -372,7 +372,114 @@ export async function cancelPreparation(tx: Tx, actor: AuthzActor, id: string, r
   await writeAudit(tx, actor, { entityType: "preparation", entityId: id, action: "cancel", changes: { status: ["DONE", "CANCELLED"] }, reason });
 }
 
+export async function autoReleaseNonQcPreparations(tx: Tx, actor: AuthzActor, deptScopeRaw?: string | null) {
+  const scope = normalizePrepDeptScope(deptScopeRaw);
+  const today = vnToday();
+  const stuck = (
+    await tx.query(
+      `SELECT p.id, p.code, p.warehouse_id, p.lot_id, p.to_location_id, f.output_item_id, l.code AS lot_code, l.status AS lot_status
+         FROM prep.preparation p
+         JOIN prep.formula f ON f.id = p.formula_id
+         JOIN inv.lot l ON l.id = p.lot_id
+        WHERE p.status = 'DONE'
+          AND NOT coalesce(f.requires_qc, false)
+          AND (p.incubation_until IS NULL OR p.incubated_at IS NOT NULL OR p.incubation_until <= $2)
+          AND l.status IN ('QUARANTINE', 'PENDING_QC')
+          AND ($1::text IS NULL OR f.dept_scope = $1)
+        ORDER BY p.prepared_at ASC
+        LIMIT 50`,
+      [scope, today]
+    )
+  ).rows;
+
+  for (const s of stuck) {
+    const sp = `sp_auto_rel_${String(s.id).replace(/[^a-zA-Z0-9]/g, "")}`;
+    await tx.query(`SAVEPOINT ${sp}`);
+    try {
+      let targetLocId = s.to_location_id ?? null;
+      if (targetLocId) {
+        const checkLoc = (
+          await tx.query(
+            "SELECT id FROM master.location WHERE id = $1 AND warehouse_id = $2 AND status = 'ACTIVE' AND NOT is_quarantine",
+            [targetLocId, s.warehouse_id]
+          )
+        ).rows[0];
+        if (!checkLoc) targetLocId = null;
+      }
+      if (!targetLocId) {
+        targetLocId =
+          (
+            await tx.query(
+              "SELECT id FROM master.location WHERE warehouse_id = $1 AND status = 'ACTIVE' AND NOT is_quarantine ORDER BY CASE WHEN code = 'A1' THEN 0 ELSE 1 END, code LIMIT 1",
+              [s.warehouse_id]
+            )
+          ).rows[0]?.id ?? null;
+      }
+      if (!targetLocId) {
+        await tx.query(`RELEASE SAVEPOINT ${sp}`);
+        continue;
+      }
+
+      const outItem = await getItem(tx, s.output_item_id);
+      await tx.query(
+        "UPDATE inv.lot SET status = 'RELEASED', version = version + 1, updated_at = now(), updated_by = $2 WHERE id = $1",
+        [s.lot_id, actor.userId]
+      );
+
+      const qBalances = (
+        await tx.query(
+          `SELECT b.location_id, b.qty_on_hand::float AS q
+             FROM inv.stock_balance b
+             JOIN master.location loc ON loc.id = b.location_id
+            WHERE b.lot_id = $1 AND b.qty_on_hand > 0 AND loc.is_quarantine = true`,
+          [s.lot_id]
+        )
+      ).rows;
+
+      if (qBalances.length > 0) {
+        const doc = await createStockDocument(
+          tx,
+          actor,
+          {
+            doc_type: "TRANSFER",
+            reason_code: "PUTAWAY",
+            warehouse_id: s.warehouse_id,
+            source_entity_type: "PREPARATION",
+            source_entity_id: s.id,
+            notes: `Tự động giải phóng & cất kệ lô pha chế nội bộ ${s.lot_code} (${s.code} — công thức không yêu cầu chờ QC)`,
+            lines: qBalances.map((b) => ({
+              item_id: outItem.id,
+              lot_id: s.lot_id,
+              from_location_id: b.location_id,
+              to_location_id: targetLocId,
+              qty: b.q,
+              uom: outItem.base_uom,
+            })),
+          },
+          { trusted: true }
+        );
+        await runTransition(
+          tx,
+          stockDocumentMachine,
+          actor,
+          { id: doc.id, action: "post", expectedVersion: doc.version },
+          { trusted: true }
+        );
+      }
+
+      await tx.query(
+        "UPDATE prep.preparation SET to_location_id = COALESCE(to_location_id, $2), incubated_at = COALESCE(incubated_at, CASE WHEN incubation_until IS NOT NULL THEN now() ELSE NULL END) WHERE id = $1",
+        [s.id, targetLocId]
+      );
+      await tx.query(`RELEASE SAVEPOINT ${sp}`);
+    } catch {
+      await tx.query(`ROLLBACK TO SAVEPOINT ${sp}`).catch(() => {});
+    }
+  }
+}
+
 export async function listPreparations(tx: Tx, actor: AuthzActor, deptScopeRaw?: string | null) {
+  await autoReleaseNonQcPreparations(tx, actor, deptScopeRaw);
   const scope = normalizePrepDeptScope(deptScopeRaw);
   const rows = (
     await tx.query(

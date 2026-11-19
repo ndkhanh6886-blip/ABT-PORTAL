@@ -13,6 +13,7 @@ import { releaseDemandReservations, reserve, reserveLot } from "../inv/reservati
 import { getItem, toBaseQty } from "../master/service";
 import { raiseDeviation } from "../qms/incidents";
 import { analyze } from "./analyzer";
+import { autoSyncOligoReagentMappings, scoreItemForReagentRole } from "./batchQueries";
 import { loadCatalog } from "./catalog";
 import { estimateConsumption, type ReagentRule } from "./consumption";
 import { recomputeOrdersOf } from "./orders";
@@ -340,6 +341,7 @@ export function checkColumnContamination(
 export async function planBatch(tx: Tx, actor: AuthzActor, input: unknown) {
   const data = parseInput(planSchema, input);
   await authorize(tx, actor, "oligo.batch.manage", data.org_unit_id);
+  await autoSyncOligoReagentMappings(tx, actor, data.org_unit_id);
   const synth = (await tx.query("SELECT s.*, a.owner_org_unit_id, a.code FROM oligo.synthesizer s JOIN asset.asset a ON a.id = s.asset_id WHERE s.asset_id = $1", [data.synthesizer_id])).rows[0];
   if (!synth || synth.owner_org_unit_id !== data.org_unit_id) throw invalid("Máy tổng hợp không thuộc phòng này.");
   await assertUsable(tx, data.synthesizer_id);
@@ -408,12 +410,59 @@ export async function planBatch(tx: Tx, actor: AuthzActor, input: unknown) {
   // roles fed by a port on the machine are held from the bottle installed there; the rest FEFO
   const ported = await reservePortLines(tx, actor, batch, lines);
   const perItem = new Map<string, number>();
+  const rolesByItem = new Map<string, string[]>();
   for (const l of ported.rest) {
-    const itemId = l.catalog_item_id ?? l.item_id ?? null;
+    let itemId = l.catalog_item_id ?? l.item_id ?? null;
     if (!itemId) throw invalid(`Định mức "${l.label}" chưa gắn vật tư. Vào Tổng hợp Oligo → Định mức hóa chất để gắn mã vật tư.`, undefined, "REAGENT_UNMAPPED");
-    const item = await getItem(tx, itemId);
-    const qty = Math.round((await toBaseQty(tx, item, l.qty, l.uom)) * 1e6) / 1e6;
+    let item = await getItem(tx, itemId);
+    let qty = Math.round((await toBaseQty(tx, item, l.qty, l.uom)) * 1e6) / 1e6;
+
+    // Fallback check: if the mapped item has insufficient stock, check if another stocked item in Oligo warehouse matches this role
+    const curCands = await findCandidates(tx, itemId, warehouses);
+    const curAvail = curCands.reduce((s, c) => s + Number(c.available), 0);
+    if (curAvail + 1e-9 < (perItem.get(itemId) ?? 0) + qty) {
+      const altRows = (
+        await tx.query(
+          `WITH stock AS (
+             SELECT b.item_id, coalesce(sum(b.qty_on_hand - b.qty_reserved), 0)::float AS avail
+               FROM inv.stock_balance b
+               JOIN inv.lot lt ON lt.id = b.lot_id
+               JOIN master.location loc ON loc.id = b.location_id
+              WHERE loc.warehouse_id = ANY($1::uuid[])
+                AND NOT loc.is_quarantine
+                AND lt.status = 'RELEASED'
+                AND (lt.expiry_date IS NULL OR lt.expiry_date >= current_date)
+              GROUP BY b.item_id
+           )
+           SELECT i.id, i.code, i.name, s.avail
+             FROM stock s
+             JOIN master.item i ON i.id = s.item_id
+            WHERE s.avail >= $2 AND i.id <> $3`,
+          [warehouses, qty, itemId]
+        )
+      ).rows as { id: string; code: string; name: string; avail: number }[];
+      let bestAlt: { id: string; score: number; avail: number } | null = null;
+      for (const alt of altRows) {
+        const sc = scoreItemForReagentRole(l.role, alt);
+        if (sc <= 0) continue;
+        if (!bestAlt || sc > bestAlt.score || (sc === bestAlt.score && alt.avail > bestAlt.avail)) {
+          bestAlt = { id: alt.id, score: sc, avail: alt.avail };
+        }
+      }
+      if (bestAlt) {
+        const altItem = await getItem(tx, bestAlt.id);
+        const altQty = await toBaseQty(tx, altItem, l.qty, l.uom).catch(() => null);
+        if (altQty !== null && bestAlt.avail + 1e-9 >= (perItem.get(bestAlt.id) ?? 0) + altQty) {
+          itemId = bestAlt.id;
+          item = altItem;
+          qty = Math.round(altQty * 1e6) / 1e6;
+          await tx.query("UPDATE oligo.reagent_rule SET item_id = $2, updated_at = now() WHERE role = $1", [l.role, itemId]);
+        }
+      }
+    }
+
     perItem.set(itemId, (perItem.get(itemId) ?? 0) + qty);
+    rolesByItem.set(itemId, [...(rolesByItem.get(itemId) ?? []), l.role]);
   }
   for (const [itemId, qty] of [...perItem.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) {
     if (qty <= 0) continue;
@@ -424,8 +473,8 @@ export async function planBatch(tx: Tx, actor: AuthzActor, input: unknown) {
   for (const [itemId, qty] of [...total.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) {
     if (qty <= 0) continue;
     const roles = (await tx.query("SELECT role FROM oligo.batch_port_use WHERE batch_id = $1 AND item_id = $2", [batch.id, itemId])).rows.map((r) => r.role);
-    roles.push(...ported.rest.filter((l) => (l.catalog_item_id ?? l.item_id) === itemId).map((l) => l.role));
-    await tx.query("INSERT INTO oligo.synthesis_reagent_use (batch_id, role, item_id, est_qty_base) VALUES ($1, $2, $3, $4)", [batch.id, roles.join(", "), itemId, Math.round(qty * 1e6) / 1e6]);
+    roles.push(...(rolesByItem.get(itemId) ?? []));
+    await tx.query("INSERT INTO oligo.synthesis_reagent_use (batch_id, role, item_id, est_qty_base) VALUES ($1, $2, $3, $4)", [batch.id, [...new Set(roles)].join(", "), itemId, Math.round(qty * 1e6) / 1e6]);
   }
   await moveSequences(tx, actor, batch.id, "queue");
   await writeAudit(tx, actor, {
