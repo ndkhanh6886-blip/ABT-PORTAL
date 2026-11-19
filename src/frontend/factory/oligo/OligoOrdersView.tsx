@@ -7,9 +7,6 @@ import { printOrderCoa } from "../coa";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import {
   OligoOrderPanel,
-  OligoSequenceRowsEditor,
-  serializeOligoSequenceRows,
-  type OligoSequenceRowDraft,
 } from "./OligoOrderPanel";
 import { ORDER_STATUS } from "./shared";
 
@@ -20,7 +17,7 @@ interface Option {
   internal_orders: { id: string; code: string; kd_po_code: string; committed_date: string | null }[];
 }
 
-function NewOrder({ onCreated }: { onCreated: (id: string) => void }) {
+function NewOrder({ onCreated, onCancel }: { onCreated: (id: string) => void; onCancel: () => void }) {
   const qc = useQueryClient();
   const options = useQuery({
     queryKey: ["factory", "oligo-intake-options"],
@@ -33,12 +30,6 @@ function NewOrder({ onCreated }: { onCreated: (id: string) => void }) {
     due_date: "",
     notes: "",
   });
-  const [seqRows, setSeqRows] = useState<OligoSequenceRowDraft[]>(() => [
-    { name: "Primer-F", sequence: "", scale_code: "200NMOL", purification: "OPC", format: "LYOPHILIZED" },
-    { name: "Primer-R", sequence: "", scale_code: "200NMOL", purification: "OPC", format: "LYOPHILIZED" },
-    { name: "Probe", sequence: "", scale_code: "200NMOL", purification: "HPLC", format: "LYOPHILIZED" },
-  ]);
-  const builtSeqText = React.useMemo(() => serializeOligoSequenceRows(seqRows), [seqRows]);
   const unit =
     options.data?.find((o) => o.id === f.org_unit_id) ??
     (options.data?.length === 1 ? options.data[0] : undefined);
@@ -48,7 +39,7 @@ function NewOrder({ onCreated }: { onCreated: (id: string) => void }) {
 
   const create = useMutation({
     mutationFn: async () => {
-      const o = await api<{ id: string }>("/api/factory/oligo/orders", {
+      return api<{ id: string }>("/api/factory/oligo/orders", {
         method: "POST",
         idempotent: true,
         json: {
@@ -59,17 +50,6 @@ function NewOrder({ onCreated }: { onCreated: (id: string) => void }) {
           notes: f.notes || null,
         },
       });
-      if (builtSeqText.trim()) {
-        await api(`/api/factory/oligo/orders/${o.id}/sequences`, {
-          method: "POST",
-          idempotent: true,
-          json: {
-            text: builtSeqText.trim(),
-            defaults: { scale_code: "200NMOL", purification: "OPC", format: "LYOPHILIZED" },
-          },
-        });
-      }
-      return o;
     },
     onSuccess: (o) => {
       qc.invalidateQueries({ queryKey: ["factory", "oligo-orders"] });
@@ -86,7 +66,7 @@ function NewOrder({ onCreated }: { onCreated: (id: string) => void }) {
     );
   return (
     <form
-      className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6 items-end mb-4 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800"
+      className="flex flex-col gap-3 mb-4 p-4 rounded-xl bg-sky-50/60 dark:bg-slate-950/60 border-2 border-sky-300 dark:border-sky-800 shadow-xs"
       onSubmit={(e) => {
         e.preventDefault();
         if (isDateDelayedFromIo) {
@@ -102,84 +82,100 @@ function NewOrder({ onCreated }: { onCreated: (id: string) => void }) {
         create.mutate();
       }}
     >
-      {(options.data?.length ?? 0) > 1 && (
-        <Field label="Phòng Oligo">
+      <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-sky-200 dark:border-slate-800">
+        <div>
+          <div className="text-xs font-extrabold text-sky-900 dark:text-sky-200 uppercase">
+            ➕ Tạo Đơn Oligo Mới
+          </div>
+          <div className="text-[11px] text-slate-600 dark:text-slate-400">
+            Sau khi bấm <b>&ldquo;Tạo đơn &amp; Mở khung nhập trình tự&rdquo;</b>, hệ thống sẽ mở ngay màn hình chi tiết đơn để bạn nhập/lưu danh sách trình tự.
+          </div>
+        </div>
+        <Button type="button" variant="ghost" onClick={onCancel}>
+          Đóng
+        </Button>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 items-end">
+        {(options.data?.length ?? 0) > 1 && (
+          <Field label="Phòng Oligo">
+            <select
+              className={inputClass}
+              value={f.org_unit_id}
+              onChange={(e) => setF({ ...f, org_unit_id: e.target.value, internal_order_id: "" })}
+              required
+            >
+              <option value="">Chọn</option>
+              {options.data?.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+        <Field label="Liên kết Đơn nội bộ (Tự động tạo nếu để trống)">
           <select
             className={inputClass}
-            value={f.org_unit_id}
-            onChange={(e) => setF({ ...f, org_unit_id: e.target.value, internal_order_id: "" })}
-            required
+            value={f.internal_order_id}
+            onChange={(e) => {
+              const ioId = e.target.value;
+              const ioObj = unit?.internal_orders.find((x) => x.id === ioId);
+              setF({
+                ...f,
+                internal_order_id: ioId,
+                due_date: f.due_date || (ioObj?.committed_date ? ioObj.committed_date.slice(0, 10) : ""),
+              });
+            }}
           >
-            <option value="">Chọn</option>
-            {options.data?.map((o) => (
+            <option value="">⚡ Tự động sinh &amp; gắn Đơn nội bộ mới</option>
+            {unit?.internal_orders.map((o) => (
               <option key={o.id} value={o.id}>
-                {o.name}
+                {o.code} · PO {o.kd_po_code} (Giao: {fmtDate(o.committed_date)})
               </option>
             ))}
           </select>
         </Field>
-      )}
-      <Field label="Liên kết Đơn nội bộ (Tự động tạo nếu để trống)">
-        <select
-          className={inputClass}
-          value={f.internal_order_id}
-          onChange={(e) => {
-            const ioId = e.target.value;
-            const ioObj = unit?.internal_orders.find((x) => x.id === ioId);
-            setF({
-              ...f,
-              internal_order_id: ioId,
-              due_date: f.due_date || (ioObj?.committed_date ? ioObj.committed_date.slice(0, 10) : ""),
-            });
-          }}
-        >
-          <option value="">⚡ Tự động sinh &amp; gắn Đơn nội bộ mới</option>
-          {unit?.internal_orders.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.code} · PO {o.kd_po_code} (Giao: {fmtDate(o.committed_date)})
-            </option>
-          ))}
-        </select>
-      </Field>
-      <Field label="Khách hàng / Yêu cầu">
-        <input
-          className={inputClass}
-          placeholder="Tên khách hàng / Bộ Kit..."
-          value={f.customer_label}
-          onChange={(e) => setF({ ...f, customer_label: e.target.value })}
-        />
-      </Field>
-      <Field label="Hạn giao" hint="Để trống: lấy ngày cam kết của đơn nội bộ">
-        <input
-          className={inputClass}
-          type="date"
-          value={f.due_date}
-          onChange={(e) => setF({ ...f, due_date: e.target.value })}
-        />
-      </Field>
-      <Field label="Ghi chú đơn hàng">
-        <input
-          className={inputClass}
-          placeholder="Ghi chú tinh sạch, đóng gói, COA..."
-          value={f.notes}
-          onChange={(e) => setF({ ...f, notes: e.target.value })}
-        />
-      </Field>
-      <Button type="submit" disabled={create.isPending}>
-        {create.isPending ? "Đang tạo đơn…" : "+ Tạo đơn Oligo"}
-      </Button>
-
-      <div className="sm:col-span-2 lg:col-span-6 p-3 rounded-xl bg-purple-50/60 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800/70">
-        <OligoSequenceRowsEditor rows={seqRows} onChange={setSeqRows} />
+        <Field label="Khách hàng / Yêu cầu">
+          <input
+            className={inputClass}
+            placeholder="Tên khách hàng / Bộ Kit..."
+            value={f.customer_label}
+            onChange={(e) => setF({ ...f, customer_label: e.target.value })}
+          />
+        </Field>
+        <Field label="Hạn giao" hint="Để trống: lấy ngày cam kết của đơn nội bộ">
+          <input
+            className={inputClass}
+            type="date"
+            value={f.due_date}
+            onChange={(e) => setF({ ...f, due_date: e.target.value })}
+          />
+        </Field>
+        <Field label="Ghi chú đơn hàng">
+          <input
+            className={inputClass}
+            placeholder="Ghi chú tinh sạch, đóng gói, COA..."
+            value={f.notes}
+            onChange={(e) => setF({ ...f, notes: e.target.value })}
+          />
+        </Field>
       </div>
 
       {isDateDelayedFromIo && (
-        <div className="sm:col-span-2 lg:col-span-6 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 text-xs font-semibold text-amber-800 dark:text-amber-300">
+        <div className="px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 text-xs font-semibold text-amber-800 dark:text-amber-300">
           ⚠️ Cảnh báo: Hạn giao đang chọn ({fmtDate(f.due_date)}) trễ hơn ngày cam kết trên Đơn nội bộ {selectedIo?.code} ({fmtDate(ioCommittedDate)}).
         </div>
       )}
-      <div className="sm:col-span-2 lg:col-span-6">
-        <ErrorNote error={create.error ?? options.error} />
+      <ErrorNote error={create.error ?? options.error} />
+
+      <div className="flex items-center justify-end gap-2 pt-1">
+        <Button type="button" variant="ghost" onClick={onCancel}>
+          Hủy
+        </Button>
+        <Button type="submit" disabled={create.isPending}>
+          {create.isPending ? "Đang tạo đơn…" : "✅ Tạo đơn & Mở khung nhập trình tự →"}
+        </Button>
       </div>
     </form>
   );
@@ -341,23 +337,43 @@ export function OligoOrdersView({
     );
   };
 
+  const openOrderDetail = (orderId: string) => {
+    setShowNewOrder(false);
+    setSelected(orderId);
+    if (typeof window !== "undefined") {
+      window.setTimeout(() => {
+        document.getElementById("oligo-order-detail-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 40);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-3">
-      {selected && (
-        <OligoOrderPanel
-          key={selected}
-          id={selected}
-          canDeliver={canDeliver}
-          onClose={() => setSelected(null)}
-        />
-      )}
+      <div id="oligo-order-detail-anchor">
+        {selected && (
+          <OligoOrderPanel
+            key={selected}
+            id={selected}
+            canDeliver={canDeliver}
+            onClose={() => setSelected(null)}
+          />
+        )}
+      </div>
       <Card
         title="Đơn Oligo (Liên kết 2 chiều Đơn Nội Bộ · Xuất COA Đơn hàng & COA Amplicon)"
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {canManage && (
-              <Button onClick={() => setShowNewOrder((v) => !v)}>
-                {showNewOrder ? "Đóng form tạo đơn" : "+ Tạo đơn Oligo"}
+              <Button
+                onClick={() =>
+                  setShowNewOrder((v) => {
+                    const next = !v;
+                    if (next) setSelected(null);
+                    return next;
+                  })
+                }
+              >
+                {showNewOrder ? "Đóng form tạo đơn" : "+ Tạo đơn Oligo mới"}
               </Button>
             )}
             <button
@@ -376,9 +392,9 @@ export function OligoOrdersView({
       >
         {canManage && showNewOrder && (
           <NewOrder
+            onCancel={() => setShowNewOrder(false)}
             onCreated={(id) => {
-              setShowNewOrder(false);
-              setSelected(id);
+              openOrderDetail(id);
             }}
           />
         )}
@@ -523,7 +539,7 @@ export function OligoOrdersView({
               "Số trình tự (PP / Amplicon)",
               "Hạn giao & Cảnh báo",
               "Trạng thái",
-              "Xuất COA Đơn Hàng",
+              "Thao tác & Xuất COA",
             ]}
           >
             {rows.map((o) => {
@@ -534,15 +550,25 @@ export function OligoOrdersView({
                 o.due_date &&
                 o.requested_date &&
                 o.due_date.slice(0, 10) > o.requested_date.slice(0, 10);
+              const isSelectedRow = selected === o.id;
 
               return (
                 <tr
                   key={o.id}
-                  className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                  onClick={() => setSelected(o.id)}
+                  className={`cursor-pointer transition-colors ${
+                    isSelectedRow
+                      ? "bg-purple-50/90 dark:bg-purple-950/35 ring-1 ring-inset ring-purple-300 dark:ring-purple-700"
+                      : "hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                  }`}
+                  onClick={() => openOrderDetail(o.id)}
                 >
                   <td className="py-2 pr-3 font-mono font-bold text-sky-700 dark:text-sky-400 whitespace-nowrap">
-                    {o.code}
+                    <div>{o.code}</div>
+                    {isSelectedRow && (
+                      <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-purple-600 text-white font-sans text-[10px] font-bold">
+                        Đang mở ở trên ▲
+                      </span>
+                    )}
                   </td>
                   <td
                     className="py-2 pr-3 whitespace-nowrap"
@@ -629,19 +655,29 @@ export function OligoOrdersView({
                     className="py-2 pr-3 whitespace-nowrap"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <div className="inline-flex items-center gap-1">
+                    <div className="inline-flex flex-wrap items-center gap-1">
                       <button
                         type="button"
-                        onClick={() =>
-                          printOrderCoa(o.id, "PRIMER_PROBE_ONLY").catch((err) =>
-                            window.alert(err.message)
-                          )
-                        }
-                        title="Xuất COA Đơn hàng (chỉ gồm các trình tự Primer & Probe)"
-                        className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] cursor-pointer"
+                        onClick={() => openOrderDetail(o.id)}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] cursor-pointer shadow-2xs"
+                        title="Mở chi tiết đơn hàng này để nhập hoặc sửa danh sách trình tự"
                       >
-                        📜 COA Đơn hàng
+                        {o.sequence_count === 0 ? "🧬 Nhập trình tự" : "✏️ Xem / Sửa trình tự"}
                       </button>
+                      {o.sequence_count > 0 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            printOrderCoa(o.id, "PRIMER_PROBE_ONLY").catch((err) =>
+                              window.alert(err.message)
+                            )
+                          }
+                          title="Xuất COA Đơn hàng (chỉ gồm các trình tự Primer & Probe)"
+                          className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] cursor-pointer"
+                        >
+                          📜 COA Đơn hàng
+                        </button>
+                      )}
                       {ampCount > 0 && (
                         <button
                           type="button"

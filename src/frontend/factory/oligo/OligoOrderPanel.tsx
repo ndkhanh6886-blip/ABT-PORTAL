@@ -958,12 +958,25 @@ export function OligoSequenceRowsEditor({
   );
 }
 
-function AddSequences({ orderId, onDone }: { orderId: string; onDone: () => void }) {
+function AddSequences({
+  orderId,
+  orderCode,
+  existingCount,
+  onDone,
+  onCancel,
+}: {
+  orderId: string;
+  orderCode?: string;
+  existingCount?: number;
+  onDone: (savedCount: number) => void;
+  onCancel?: () => void;
+}) {
   const [rows, setRows] = useState<OligoSequenceRowDraft[]>(() => [
     { name: "Primer-F", sequence: "", scale_code: "200NMOL", purification: "OPC", format: "LYOPHILIZED" },
     { name: "Primer-R", sequence: "", scale_code: "200NMOL", purification: "OPC", format: "LYOPHILIZED" },
     { name: "Probe", sequence: "", scale_code: "200NMOL", purification: "HPLC", format: "LYOPHILIZED" },
   ]);
+  const [emptyHint, setEmptyHint] = useState<string | null>(null);
 
   const builtText = React.useMemo(() => serializeOligoSequenceRows(rows), [rows]);
   const validCount = rows.filter((r) => r.sequence.trim().length > 0).length;
@@ -979,23 +992,111 @@ function AddSequences({ orderId, onDone }: { orderId: string; onDone: () => void
         },
       }),
     onSuccess: () => {
+      const count = validCount;
+      setEmptyHint(null);
       setRows([createEmptyOligoSequenceRow(1)]);
-      onDone();
+      onDone(count);
     },
   });
+
+  const handleSaveClick = () => {
+    if (add.isPending) return;
+    if (validCount === 0) {
+      setEmptyHint(
+        "⚠️ Bạn chưa nhập chuỗi Nucleotide (A, T, G, C...) vào cột \"Trình tự Nucleotide (5' → 3')\". Vui lòng gõ hoặc dán chuỗi trình tự vào bảng rồi bấm Lưu."
+      );
+      return;
+    }
+    setEmptyHint(null);
+    add.mutate();
+  };
+
   const lineErrors =
     add.error instanceof ApiError && Array.isArray(add.error.details)
       ? (add.error.details as { line: number; message: string }[])
       : [];
 
   return (
-    <div className="flex flex-col gap-3 p-3.5 rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50/40 dark:bg-purple-950/20">
-      <OligoSequenceRowsEditor rows={rows} onChange={setRows} lineErrors={lineErrors} />
+    <div className="flex flex-col gap-3 p-3.5 rounded-xl border-2 border-purple-300 dark:border-purple-700 bg-purple-50/50 dark:bg-purple-950/25 shadow-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-purple-200 dark:border-purple-800">
+        <div>
+          <div className="text-sm font-extrabold text-purple-950 dark:text-purple-100">
+            🧬 {existingCount && existingCount > 0 ? `Bổ sung thêm trình tự vào Đơn ${orderCode || ""}` : `Bước 1: Nhập trình tự vào Đơn hàng ${orderCode || ""}`}
+          </div>
+          <div className="text-[11px] text-slate-600 dark:text-slate-300">
+            Nhập <b>Tên trình tự</b> và <b>Chuỗi Nucleotide (5&apos; → 3&apos;)</b> vào từng dòng bên dưới (hoặc bấm <b>Nhập từ Excel</b>), sau đó bấm nút màu xanh <b>&ldquo;💾 Lưu trình tự vào đơn&rdquo;</b>.
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {onCancel && (
+            <Button variant="ghost" onClick={onCancel}>
+              Đóng khung nhập
+            </Button>
+          )}
+          <button
+            type="button"
+            onClick={handleSaveClick}
+            disabled={add.isPending}
+            className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-extrabold text-xs shadow-sm cursor-pointer inline-flex items-center gap-1.5"
+          >
+            <span>
+              {add.isPending
+                ? "⏳ Đang lưu vào đơn…"
+                : validCount > 0
+                  ? `💾 Lưu ${validCount} trình tự vào đơn ${orderCode || ""}`
+                  : `💾 Lưu trình tự vào đơn ${orderCode || ""}`}
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <OligoSequenceRowsEditor
+        rows={rows}
+        onChange={(updater) => {
+          setEmptyHint(null);
+          setRows(updater);
+        }}
+        lineErrors={lineErrors}
+      />
+
+      {emptyHint && (
+        <div className="px-3 py-2 rounded-xl bg-amber-100 dark:bg-amber-950/70 border border-amber-400 dark:border-amber-700 text-amber-950 dark:text-amber-200 text-xs font-bold">
+          {emptyHint}
+        </div>
+      )}
       {lineErrors.length === 0 && <ErrorNote error={add.error} />}
-      <div className="flex items-center justify-end gap-2 border-t border-purple-200/70 dark:border-purple-800/50 pt-2.5">
-        <Button onClick={() => add.mutate()} disabled={add.isPending || validCount === 0}>
-          {add.isPending ? "Đang lưu…" : `💾 Lưu & Thêm ${validCount} trình tự vào đơn`}
-        </Button>
+
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-purple-200/80 dark:border-purple-800/60 pt-2.5">
+        <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+          {validCount > 0 ? (
+            <span className="text-emerald-700 dark:text-emerald-300 font-bold">
+              ✅ Đã nhập {validCount} trình tự hợp lệ — Bấm nút &ldquo;Lưu trình tự vào đơn&rdquo; bên phải để hoàn tất.
+            </span>
+          ) : (
+            <span>💡 Chưa có dòng nào có chuỗi Nucleotide 5&apos;→3&apos;. Hãy gõ chuỗi vào cột thứ 3 ở bảng trên.</span>
+          )}
+        </span>
+        <div className="flex items-center gap-2">
+          {onCancel && (
+            <Button variant="ghost" onClick={onCancel}>
+              Hủy
+            </Button>
+          )}
+          <button
+            type="button"
+            onClick={handleSaveClick}
+            disabled={add.isPending}
+            className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-extrabold text-xs shadow-sm cursor-pointer inline-flex items-center gap-1.5"
+          >
+            <span>
+              {add.isPending
+                ? "⏳ Đang lưu vào đơn…"
+                : validCount > 0
+                  ? `💾 Lưu ${validCount} trình tự vào đơn ${orderCode || ""}`
+                  : `💾 Lưu trình tự vào đơn ${orderCode || ""}`}
+            </span>
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1020,6 +1121,23 @@ export function OligoOrderPanel({
   const scales = useScales();
   const [showAddSeq, setShowAddSeq] = useState(false);
   const [labelsFor, setLabelsFor] = useState<string[] | null>(null);
+  const [savedNotice, setSavedNotice] = useState<string | null>(null);
+  const [editingSeqId, setEditingSeqId] = useState<string | null>(null);
+  const [seqDraft, setSeqDraft] = useState<{
+    name: string;
+    raw_sequence: string;
+    scale_code: string;
+    purification: string;
+    format: string;
+    version: number;
+  }>({
+    name: "",
+    raw_sequence: "",
+    scale_code: "200NMOL",
+    purification: "OPC",
+    format: "LYOPHILIZED",
+    version: 0,
+  });
 
   // State cho Sửa Ghi Chú, Đổi Ngày Giao (Có Cảnh Báo) và Liên Kết Đơn Nội Bộ
   const [editingNotes, setEditingNotes] = useState(false);
@@ -1055,6 +1173,26 @@ export function OligoOrderPanel({
   };
   const act = useMutation({ mutationFn: (f: () => Promise<unknown>) => f(), onSuccess: refresh });
   const post = (url: string, json?: unknown) => act.mutate(() => api(url, { method: "POST", json }));
+
+  const editSeqMut = useMutation({
+    mutationFn: () =>
+      api(`/api/factory/oligo/sequences/${editingSeqId}`, {
+        method: "PATCH",
+        json: {
+          version: seqDraft.version,
+          name: seqDraft.name.trim(),
+          raw_sequence: seqDraft.raw_sequence.trim(),
+          scale_code: seqDraft.scale_code,
+          purification: seqDraft.purification,
+          format: seqDraft.format,
+        },
+      }),
+    onSuccess: () => {
+      setEditingSeqId(null);
+      setSavedNotice("✅ Đã cập nhật thông tin trình tự.");
+      refresh();
+    },
+  });
 
   const patchMeta = useMutation({
     mutationFn: (payload: Record<string, unknown>) =>
@@ -1379,124 +1517,270 @@ export function OligoOrderPanel({
             </div>
           )}
 
-          {/* 4. Trung tâm Xuất COA cho Đơn Hàng */}
-          <div className="p-3 rounded-xl bg-gradient-to-r from-indigo-50/80 via-sky-50/60 to-purple-50/80 dark:from-slate-900 dark:via-slate-900 dark:to-purple-950/30 border border-indigo-200 dark:border-slate-800 flex flex-col gap-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <div className="font-extrabold text-indigo-950 dark:text-indigo-200">
-                  📜 Xuất Chứng Chỉ Phân Tích Chất Lượng (COA) Cho Đơn Hàng {o.code}
+          {/* 4. Trung tâm Xuất COA cho Đơn Hàng (Chỉ hiển thị khi đơn đã có trình tự) */}
+          {o.sequences.length > 0 && (
+            <div className="p-3 rounded-xl bg-gradient-to-r from-indigo-50/80 via-sky-50/60 to-purple-50/80 dark:from-slate-900 dark:via-slate-900 dark:to-purple-950/30 border border-indigo-200 dark:border-slate-800 flex flex-col gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="font-extrabold text-indigo-950 dark:text-indigo-200">
+                    📜 Xuất Chứng Chỉ Phân Tích Chất Lượng (COA) Cho Đơn Hàng {o.code}
+                  </div>
+                  <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                    Gồm: <b>COA Đơn hàng cho Primer &amp; Probe ({primerProbeSeqs.length} trình tự)</b> và{" "}
+                    <b>COA Amplicon ({ampliconSeqs.length} trình tự)</b>.
+                  </div>
                 </div>
-                <div className="text-[11px] text-slate-600 dark:text-slate-400">
-                  Gồm: <b>COA Đơn hàng cho Primer &amp; Probe ({primerProbeSeqs.length} trình tự)</b> và{" "}
-                  <b>COA Amplicon ({ampliconSeqs.length} trình tự)</b>.
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {primerProbeSeqs.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        printOrderCoa(o.id, "PRIMER_PROBE_ONLY").catch((e) => window.alert(e.message))
+                      }
+                      className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs shadow-2xs cursor-pointer"
+                    >
+                      📜 COA Đơn hàng ({primerProbeSeqs.length} Primer/Probe)
+                    </button>
+                  )}
+                  {ampliconSeqs.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        printOrderCoa(o.id, "AMPLICONS_ONLY").catch((e) => window.alert(e.message))
+                      }
+                      className="px-3 py-1.5 rounded-xl border border-purple-300 dark:border-purple-700 bg-white dark:bg-slate-900 hover:bg-purple-50 text-purple-800 dark:text-purple-300 font-bold text-xs cursor-pointer"
+                    >
+                      🧬 COA Amplicon ({ampliconSeqs.length})
+                    </button>
+                  )}
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {primerProbeSeqs.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      printOrderCoa(o.id, "PRIMER_PROBE_ONLY").catch((e) => window.alert(e.message))
-                    }
-                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs shadow-2xs cursor-pointer"
-                  >
-                    📜 COA Đơn hàng ({primerProbeSeqs.length} Primer/Probe)
-                  </button>
-                )}
-                {ampliconSeqs.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      printOrderCoa(o.id, "AMPLICONS_ONLY").catch((e) => window.alert(e.message))
-                    }
-                    className="px-3 py-1.5 rounded-xl border border-purple-300 dark:border-purple-700 bg-white dark:bg-slate-900 hover:bg-purple-50 text-purple-800 dark:text-purple-300 font-bold text-xs cursor-pointer"
-                  >
-                    🧬 COA Amplicon ({ampliconSeqs.length})
-                  </button>
-                )}
-              </div>
-            </div>
 
-            {ampliconSeqs.length > 0 && (
-              <div className="pt-2 border-t border-indigo-200/60 dark:border-slate-800 flex flex-wrap items-center gap-1.5">
-                <span className="text-[11px] font-bold text-purple-800 dark:text-purple-300">
-                  Xuất COA từng Amplicon:
-                </span>
-                {ampliconSeqs.map((amp) => (
-                  <button
-                    key={amp.id}
-                    type="button"
-                    onClick={() =>
-                      printOrderCoa(o.id, "AMPLICONS_ONLY", amp.id).catch((e) =>
-                        window.alert(e.message)
-                      )
-                    }
-                    className="px-2.5 py-1 rounded-lg bg-purple-100 dark:bg-purple-950/70 hover:bg-purple-200 text-purple-900 dark:text-purple-200 border border-purple-300 dark:border-purple-800 font-mono text-[11px] font-bold cursor-pointer"
-                  >
-                    🧬 COA Amplicon: {amp.code} — {amp.name} ({amp.base_count} bp)
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+              {ampliconSeqs.length > 0 && (
+                <div className="pt-2 border-t border-indigo-200/60 dark:border-slate-800 flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-bold text-purple-800 dark:text-purple-300">
+                    Xuất COA từng Amplicon:
+                  </span>
+                  {ampliconSeqs.map((amp) => (
+                    <button
+                      key={amp.id}
+                      type="button"
+                      onClick={() =>
+                        printOrderCoa(o.id, "AMPLICONS_ONLY", amp.id).catch((e) =>
+                          window.alert(e.message)
+                        )
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-purple-100 dark:bg-purple-950/70 hover:bg-purple-200 text-purple-900 dark:text-purple-200 border border-purple-300 dark:border-purple-800 font-mono text-[11px] font-bold cursor-pointer"
+                    >
+                      🧬 COA Amplicon: {amp.code} — {amp.name} ({amp.base_count} bp)
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {savedNotice && (
+            <div className="px-3.5 py-2.5 rounded-xl bg-emerald-100 dark:bg-emerald-950/70 border border-emerald-400 dark:border-emerald-700 text-emerald-900 dark:text-emerald-200 text-xs font-extrabold flex items-center justify-between gap-2">
+              <span>{savedNotice}</span>
+              <button
+                type="button"
+                onClick={() => setSavedNotice(null)}
+                className="text-emerald-700 dark:text-emerald-300 hover:underline text-[11px] cursor-pointer"
+              >
+                Đóng
+              </button>
+            </div>
+          )}
 
           {!["COMPLETED", "DELIVERED", "CANCELLED"].includes(o.status) && (o.sequences.length === 0 || showAddSeq) && (
             <AddSequences
               orderId={o.id}
-              onDone={() => {
+              orderCode={o.code}
+              existingCount={o.sequences.length}
+              onCancel={o.sequences.length > 0 ? () => setShowAddSeq(false) : undefined}
+              onDone={(savedCount) => {
                 setShowAddSeq(false);
+                setSavedNotice(`✅ Đã lưu thành công ${savedCount} trình tự vào Đơn hàng ${o.code}!`);
                 refresh();
               }}
             />
           )}
-          <Table head={["Mã", "Tên", "Trình tự", "Dài", "Loại", "Thang / tinh sạch", "MW (Da)", "Tm (°C)", "GC %", "nmol/OD", "Trạng thái", ""]}>
-            {o.sequences.map((s) => (
-              <tr key={s.id} className={s.status === "CANCELLED" ? "opacity-50" : ""}>
-                <td className="py-2 pr-3 font-mono">{s.code}</td>
-                <td className="py-2 pr-3">{s.name}{s.relation === "SPLIT" && <span className="text-slate-400"> (ống tách)</span>}</td>
-                <td className="py-2 pr-3 font-mono break-all max-w-80">
-                  {s.normalized_sequence}
-                  {s.raw_sequence !== s.normalized_sequence && <div className="font-sans text-[11px] text-slate-400">nhập: {s.raw_sequence}</div>}
-                  {s.modifications.length > 0 && <div className="font-sans text-[11px] text-sky-700 dark:text-sky-400">Modification: {s.modifications.join(", ")}</div>}
-                  {s.warnings.map((w, i) => <div key={i} className="font-sans text-[11px] text-amber-700 dark:text-amber-400">⚠ {w}</div>)}
-                </td>
-                <td className="py-2 pr-3 text-right">{s.base_count}</td>
-                <td className="py-2 pr-3 whitespace-nowrap">{s.molecule_type === "RNA" ? "RNA " : ""}{PRODUCT[s.product_type as keyof typeof PRODUCT]}</td>
-                <td className="py-2 pr-3 whitespace-nowrap">{scales.data?.find((x) => x.code === s.scale_code)?.label ?? s.scale_code} · {PURIFICATION[s.purification as keyof typeof PURIFICATION]} · {FORMAT[s.format as keyof typeof FORMAT]}</td>
-                <td className="py-2 pr-3 text-right whitespace-nowrap">{s.mw.toLocaleString("vi-VN")}</td>
-                <td className="py-2 pr-3 text-right">{s.tm.toLocaleString("vi-VN")}</td>
-                <td className="py-2 pr-3 text-right">{s.gc_percent.toLocaleString("vi-VN")}</td>
-                <td className="py-2 pr-3 text-right">{s.nmol_per_od.toLocaleString("vi-VN")}</td>
-                <td className="py-2 pr-3 whitespace-nowrap">
-                  <StatusBadge status={SEQ_STATUS[s.status][0]} label={SEQ_STATUS[s.status][1]} />
-                </td>
-                <td className="py-2 pr-3 whitespace-nowrap">
-                  <div className="flex flex-wrap items-center gap-1">
-                    {s.status !== "CANCELLED" && s.status !== "SPLIT" && <Button variant="ghost" onClick={() => setLabelsFor([s.id])}>Nhãn</Button>}
-                    {s.status !== "CANCELLED" && s.status !== "SPLIT" && isAmpliconSeq(s) && (
-                      <button
-                        type="button"
-                        onClick={() => printOrderCoa(o.id, "AMPLICONS_ONLY", s.id).catch((e) => window.alert(e.message))}
-                        title="Xuất bản COA cho trình tự Amplicon này"
-                        className="px-2 py-1 rounded-lg bg-purple-100 dark:bg-purple-950/70 hover:bg-purple-200 text-purple-800 dark:text-purple-200 border border-purple-300 dark:border-purple-800 text-[11px] font-bold cursor-pointer"
-                      >
-                        🧬 COA Amplicon
-                      </button>
-                    )}
-                    {s.status === "PENDING" && !s.relation && (
-                      <Button variant="ghost" onClick={() => { const n = Number(window.prompt("Tách thành mấy ống?", "2")); const sc = n >= 2 && window.prompt(`Thang cho mỗi ống (${scales.data?.map((x) => x.code).join(", ")}):`, s.scale_code); if (n >= 2 && sc) post(`/api/factory/oligo/sequences/${s.id}/split`, { parts: Array.from({ length: n }, () => ({ scale_code: sc })) }); }}>
-                        Tách
-                      </Button>
-                    )}
-                    {s.status === "SPLIT" && <Button variant="ghost" onClick={() => post(`/api/factory/oligo/sequences/${s.id}/unsplit`)}>Hủy tách</Button>}
-                    {s.status === "PENDING" && (
-                      <Button variant="ghost" onClick={() => { const r = window.prompt("Lý do hủy trình tự:"); if (r) post(`/api/factory/oligo/sequences/${s.id}/cancel`, { reason: r }); }}>Hủy</Button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </Table>
+
+          {editSeqMut.error && <ErrorNote error={editSeqMut.error} />}
+
+          {o.sequences.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+              <div className="text-xs font-extrabold text-slate-800 dark:text-slate-100">
+                📋 Danh sách trình tự đã lưu trong Đơn {o.code} ({activeSeqs.length} trình tự)
+              </div>
+              {!["COMPLETED", "DELIVERED", "CANCELLED"].includes(o.status) && !showAddSeq && (
+                <button
+                  type="button"
+                  onClick={() => setShowAddSeq(true)}
+                  className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-extrabold text-xs shadow-2xs cursor-pointer"
+                >
+                  🧬 + Bổ sung thêm trình tự vào đơn {o.code}
+                </button>
+              )}
+            </div>
+          )}
+
+          {o.sequences.length > 0 && (
+            <Table head={["Mã", "Tên", "Trình tự", "Dài", "Loại", "Thang / tinh sạch", "MW (Da)", "Tm (°C)", "GC %", "nmol/OD", "Trạng thái", "Thao tác"]}>
+              {o.sequences.map((s) => {
+                const isEditingThis = editingSeqId === s.id;
+                return (
+                  <tr key={s.id} className={s.status === "CANCELLED" ? "opacity-50" : ""}>
+                    <td className="py-2 pr-3 font-mono font-bold">{s.code}</td>
+                    <td className="py-2 pr-3">
+                      {isEditingThis ? (
+                        <input
+                          type="text"
+                          className={`${inputClass} w-36 font-semibold`}
+                          value={seqDraft.name}
+                          onChange={(e) => setSeqDraft((d) => ({ ...d, name: e.target.value }))}
+                        />
+                      ) : (
+                        <>
+                          {s.name}
+                          {s.relation === "SPLIT" && <span className="text-slate-400"> (ống tách)</span>}
+                        </>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 font-mono break-all max-w-80">
+                      {isEditingThis ? (
+                        <input
+                          type="text"
+                          className={`${inputClass} w-72 font-mono`}
+                          value={seqDraft.raw_sequence}
+                          onChange={(e) => setSeqDraft((d) => ({ ...d, raw_sequence: e.target.value }))}
+                          spellCheck={false}
+                        />
+                      ) : (
+                        <>
+                          {s.normalized_sequence}
+                          {s.raw_sequence !== s.normalized_sequence && <div className="font-sans text-[11px] text-slate-400">nhập: {s.raw_sequence}</div>}
+                          {s.modifications.length > 0 && <div className="font-sans text-[11px] text-sky-700 dark:text-sky-400">Modification: {s.modifications.join(", ")}</div>}
+                          {s.warnings.map((w, i) => <div key={i} className="font-sans text-[11px] text-amber-700 dark:text-amber-400">⚠ {w}</div>)}
+                        </>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 text-right">{s.base_count}</td>
+                    <td className="py-2 pr-3 whitespace-nowrap">{s.molecule_type === "RNA" ? "RNA " : ""}{PRODUCT[s.product_type as keyof typeof PRODUCT]}</td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      {isEditingThis ? (
+                        <div className="flex flex-wrap items-center gap-1">
+                          <select
+                            className={inputClass}
+                            value={seqDraft.scale_code}
+                            onChange={(e) => setSeqDraft((d) => ({ ...d, scale_code: e.target.value }))}
+                          >
+                            {(scales.data ?? []).map((x) => (
+                              <option key={x.code} value={x.code}>
+                                {x.label}
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            className={inputClass}
+                            value={seqDraft.purification}
+                            onChange={(e) => setSeqDraft((d) => ({ ...d, purification: e.target.value }))}
+                          >
+                            {Object.entries(PURIFICATION).map(([k, v]) => (
+                              <option key={k} value={k}>
+                                {v}
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            className={inputClass}
+                            value={seqDraft.format}
+                            onChange={(e) => setSeqDraft((d) => ({ ...d, format: e.target.value }))}
+                          >
+                            {Object.entries(FORMAT).map(([k, v]) => (
+                              <option key={k} value={k}>
+                                {v}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : (
+                        <>
+                          {scales.data?.find((x) => x.code === s.scale_code)?.label ?? s.scale_code} · {PURIFICATION[s.purification as keyof typeof PURIFICATION]} · {FORMAT[s.format as keyof typeof FORMAT]}
+                        </>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 text-right whitespace-nowrap">{s.mw.toLocaleString("vi-VN")}</td>
+                    <td className="py-2 pr-3 text-right">{s.tm.toLocaleString("vi-VN")}</td>
+                    <td className="py-2 pr-3 text-right">{s.gc_percent.toLocaleString("vi-VN")}</td>
+                    <td className="py-2 pr-3 text-right">{s.nmol_per_od.toLocaleString("vi-VN")}</td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      <StatusBadge status={SEQ_STATUS[s.status][0]} label={SEQ_STATUS[s.status][1]} />
+                    </td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      <div className="flex flex-wrap items-center gap-1">
+                        {isEditingThis ? (
+                          <>
+                            <Button
+                              disabled={editSeqMut.isPending || !seqDraft.name.trim() || !seqDraft.raw_sequence.trim()}
+                              onClick={() => editSeqMut.mutate()}
+                            >
+                              {editSeqMut.isPending ? "Đang lưu…" : "💾 Lưu"}
+                            </Button>
+                            <Button variant="ghost" onClick={() => setEditingSeqId(null)}>
+                              Hủy
+                            </Button>
+                          </>
+                        ) : (
+                          <>
+                            {s.status === "PENDING" && s.relation !== "POOL_MASTER" && (
+                              <Button
+                                variant="ghost"
+                                onClick={() => {
+                                  setEditingSeqId(s.id);
+                                  setSeqDraft({
+                                    name: s.name,
+                                    raw_sequence: s.raw_sequence || s.normalized_sequence,
+                                    scale_code: s.scale_code,
+                                    purification: s.purification,
+                                    format: s.format,
+                                    version: s.version,
+                                  });
+                                }}
+                              >
+                                ✏️ Sửa
+                              </Button>
+                            )}
+                            {s.status !== "CANCELLED" && s.status !== "SPLIT" && <Button variant="ghost" onClick={() => setLabelsFor([s.id])}>Nhãn</Button>}
+                            {s.status !== "CANCELLED" && s.status !== "SPLIT" && isAmpliconSeq(s) && (
+                              <button
+                                type="button"
+                                onClick={() => printOrderCoa(o.id, "AMPLICONS_ONLY", s.id).catch((e) => window.alert(e.message))}
+                                title="Xuất bản COA cho trình tự Amplicon này"
+                                className="px-2 py-1 rounded-lg bg-purple-100 dark:bg-purple-950/70 hover:bg-purple-200 text-purple-800 dark:text-purple-200 border border-purple-300 dark:border-purple-800 text-[11px] font-bold cursor-pointer"
+                              >
+                                🧬 COA Amplicon
+                              </button>
+                            )}
+                            {s.status === "PENDING" && !s.relation && (
+                              <Button variant="ghost" onClick={() => { const n = Number(window.prompt("Tách thành mấy ống?", "2")); const sc = n >= 2 && window.prompt(`Thang cho mỗi ống (${scales.data?.map((x) => x.code).join(", ")}):`, s.scale_code); if (n >= 2 && sc) post(`/api/factory/oligo/sequences/${s.id}/split`, { parts: Array.from({ length: n }, () => ({ scale_code: sc })) }); }}>
+                                Tách
+                              </Button>
+                            )}
+                            {s.status === "SPLIT" && <Button variant="ghost" onClick={() => post(`/api/factory/oligo/sequences/${s.id}/unsplit`)}>Hủy tách</Button>}
+                            {s.status === "PENDING" && (
+                              <Button variant="ghost" onClick={() => { const r = window.prompt("Lý do hủy trình tự:"); if (r) post(`/api/factory/oligo/sequences/${s.id}/cancel`, { reason: r }); }}>Hủy</Button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </Table>
+          )}
 
           {/* Integrated Labels & Delivery Section inside Order Detail */}
           {labelsFor && <LabelPreview key={labelsFor.join(",")} sequenceIds={labelsFor} canPrint={canDeliver} onClose={() => setLabelsFor(null)} />}
