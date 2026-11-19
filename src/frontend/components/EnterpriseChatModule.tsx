@@ -131,6 +131,12 @@ interface ChatMessage {
   created_at: string;
 }
 
+interface ChatReadReceipt {
+  user_name: string;
+  last_read_message_id: number;
+  last_read_at?: string;
+}
+
 const COMMON_EMOJIS = ["👍", "❤️", "🚀", "👀", "✅", "🎉", "🔥", "💡"];
 
 export const dedupePersonnel = (list: any[]): any[] => {
@@ -343,6 +349,13 @@ export const EnterpriseChatModule: React.FC = () => {
     return null;
   });
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [channelReads, setChannelReads] = useState<ChatReadReceipt[]>([]);
+  const [splitChannelReads, setSplitChannelReads] = useState<ChatReadReceipt[]>([]);
+  const [inspectReadsMsg, setInspectReadsMsg] = useState<{
+    msg: ChatMessage;
+    channel: ChatChannel | null;
+    reads: ChatReadReceipt[];
+  } | null>(null);
 
   // Refs to prevent race conditions and cross-channel message bleed
   const activeChannelIdRef = useRef<number | null>(null);
@@ -848,11 +861,15 @@ export const EnterpriseChatModule: React.FC = () => {
       }
       if (data.messages && Array.isArray(data.messages)) {
         setMessages(data.messages);
+        if (Array.isArray(data.reads)) {
+          setChannelReads(data.reads);
+        }
         const lastMsg = data.messages[data.messages.length - 1];
         markChannelAsRead(requestedId, Number(lastMsg?.id) || 0);
         setTimeout(scrollToBottom, 80);
       } else {
         setMessages([]);
+        setChannelReads([]);
       }
     } catch (err: any) {
       if (err?.name !== "AbortError") {
@@ -913,11 +930,15 @@ export const EnterpriseChatModule: React.FC = () => {
       }
       if (data.messages && Array.isArray(data.messages)) {
         setSplitMessages(data.messages);
+        if (Array.isArray(data.reads)) {
+          setSplitChannelReads(data.reads);
+        }
         const lastMsg = data.messages[data.messages.length - 1];
         markChannelAsRead(requestedId, Number(lastMsg?.id) || 0);
         setTimeout(scrollSplitToBottom, 80);
       } else {
         setSplitMessages([]);
+        setSplitChannelReads([]);
       }
     } catch (err: any) {
       if (err?.name !== "AbortError") {
@@ -1012,6 +1033,13 @@ export const EnterpriseChatModule: React.FC = () => {
               mData.messages &&
               Array.isArray(mData.messages)
             ) {
+              if (Array.isArray(mData.reads)) {
+                setChannelReads(prev => {
+                  const prevSig = prev.map(r => `${r.user_name}:${r.last_read_message_id}`).join("|");
+                  const nextSig = mData.reads.map((r: ChatReadReceipt) => `${r.user_name}:${r.last_read_message_id}`).join("|");
+                  return prevSig === nextSig ? prev : mData.reads;
+                });
+              }
               setMessages(prev => {
                 if (activeChannelIdRef.current !== polledId) return prev;
                 const prevSig = buildMessagesSignature(prev);
@@ -1052,6 +1080,13 @@ export const EnterpriseChatModule: React.FC = () => {
               smData.messages &&
               Array.isArray(smData.messages)
             ) {
+              if (Array.isArray(smData.reads)) {
+                setSplitChannelReads(prev => {
+                  const prevSig = prev.map(r => `${r.user_name}:${r.last_read_message_id}`).join("|");
+                  const nextSig = smData.reads.map((r: ChatReadReceipt) => `${r.user_name}:${r.last_read_message_id}`).join("|");
+                  return prevSig === nextSig ? prev : smData.reads;
+                });
+              }
               setSplitMessages(prev => {
                 if (splitChannelIdRef.current !== polledSplitId) return prev;
                 const prevSig = buildMessagesSignature(prev);
@@ -1414,6 +1449,106 @@ export const EnterpriseChatModule: React.FC = () => {
     },
     []
   );
+
+  const getMessageReaders = useCallback(
+    (msg: ChatMessage, readsList: ChatReadReceipt[]): ChatReadReceipt[] => {
+      if (!msg?.id || !Array.isArray(readsList) || readsList.length === 0) return [];
+      const senderNorm = normalizeUserName(msg.sender_name);
+      const map = new Map<string, ChatReadReceipt>();
+      for (const r of readsList) {
+        const readerNorm = normalizeUserName(r?.user_name);
+        if (!readerNorm || readerNorm === "Hệ Thống" || readerNorm === senderNorm) continue;
+        const readId = Number(r?.last_read_message_id) || 0;
+        if (readId < Number(msg.id)) continue;
+        const prev = map.get(readerNorm);
+        if (!prev || readId > Number(prev.last_read_message_id)) {
+          map.set(readerNorm, {
+            user_name: readerNorm,
+            last_read_message_id: readId,
+            last_read_at: r.last_read_at
+          });
+        }
+      }
+      return Array.from(map.values());
+    },
+    []
+  );
+
+  const renderReadReceiptRow = (
+    msg: ChatMessage,
+    isMe: boolean,
+    channel: ChatChannel | null,
+    readsList: ChatReadReceipt[]
+  ) => {
+    if (!msg?.id || normalizeUserName(msg.sender_name) === "Hệ Thống") return null;
+    const readers = getMessageReaders(msg, readsList);
+    if (!isMe && readers.length === 0) return null;
+
+    const maxAvatars = 7;
+    const visibleReaders = readers.slice(0, maxAvatars);
+    const extraCount = Math.max(0, readers.length - maxAvatars);
+    const tooltipText =
+      readers.length > 0
+        ? `Đã xem (${readers.length}): ${readers.map(r => r.user_name).join(", ")} — Bấm để xem chi tiết`
+        : "Đã gửi — Chưa có thành viên nào xem (Bấm để xem danh sách)";
+
+    return (
+      <button
+        type="button"
+        onClick={() => setInspectReadsMsg({ msg, channel, reads: readsList })}
+        title={tooltipText}
+        className={`mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] border transition-colors cursor-pointer ${
+          readers.length > 0
+            ? "bg-white/90 dark:bg-slate-800/90 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-indigo-400 hover:bg-indigo-50/50 dark:hover:bg-indigo-950/40 shadow-2xs"
+            : "bg-slate-50/80 dark:bg-slate-900/60 border-slate-200/70 dark:border-slate-800 text-slate-400 hover:text-slate-600"
+        }`}
+      >
+        {readers.length > 0 ? (
+          <>
+            <CheckCheck className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span className="font-bold text-slate-700 dark:text-slate-200">
+              Đã xem ({readers.length})
+            </span>
+            <div className="flex items-center -space-x-1 ml-0.5">
+              {visibleReaders.map((r, rIdx) => {
+                const pal = getSenderPalette(r.user_name);
+                const shortInitial = String(r.user_name || "N")
+                  .trim()
+                  .split(/\s+/)
+                  .slice(-1)[0]
+                  ?.slice(0, 1)
+                  .toUpperCase() || "N";
+                return (
+                  <span
+                    key={`${r.user_name}-${rIdx}`}
+                    title={`${r.user_name}${r.last_read_at ? ` • Xem lúc ${formatVietnamDateTime(r.last_read_at)}` : ""}`}
+                    className={`w-4 h-4 rounded-full ${pal.avatar} text-[8.5px] font-extrabold flex items-center justify-center ring-1 ring-white dark:ring-slate-900 shrink-0`}
+                  >
+                    {shortInitial}
+                  </span>
+                );
+              })}
+              {extraCount > 0 && (
+                <span className="w-4 h-4 rounded-full bg-slate-700 text-white text-[8px] font-bold flex items-center justify-center ring-1 ring-white dark:ring-slate-900 shrink-0">
+                  +{extraCount}
+                </span>
+              )}
+            </div>
+            {readers.length <= 2 && (
+              <span className="text-[9.5px] text-slate-500 dark:text-slate-400 truncate max-w-[180px]">
+                • {readers.map(r => r.user_name.split(/\s+/).slice(-2).join(" ")).join(", ")}
+              </span>
+            )}
+          </>
+        ) : (
+          <>
+            <Check className="w-3 h-3 text-slate-400 shrink-0" />
+            <span>Đã gửi</span>
+          </>
+        )}
+      </button>
+    );
+  };
 
   // 8. Open Direct Message with a colleague
   const handleOpenDirectMessage = async (personName: string) => {
@@ -2811,6 +2946,9 @@ export const EnterpriseChatModule: React.FC = () => {
                               ))}
                             </div>
                           )}
+
+                          {/* Read Receipts & Seen Avatars (Ai đã đọc tin nhắn) */}
+                          {renderReadReceiptRow(msg, true, activeChannel, channelReads)}
                           {/* End of Bubble Container */}
                         </div>
                       </div>
@@ -2999,6 +3137,9 @@ export const EnterpriseChatModule: React.FC = () => {
                           ))}
                         </div>
                       )}
+
+                      {/* Read Receipts & Seen Avatars on Colleague's Message */}
+                      {renderReadReceiptRow(msg, false, activeChannel, channelReads)}
                     </div>
 
                     {/* Hover action toolbar (right of colleague's bubble) */}
@@ -3548,6 +3689,7 @@ export const EnterpriseChatModule: React.FC = () => {
                           })}
                         </div>
                       )}
+                      {renderReadReceiptRow(msg, isMe, splitChannel, splitChannelReads)}
                     </div>
                   </React.Fragment>
                 );
@@ -4492,6 +4634,138 @@ export const EnterpriseChatModule: React.FC = () => {
             </button>
           </div>
         </div>
+      </Modal>
+
+      {/* ==================== MODAL 7: DANH SÁCH NGƯỜI ĐÃ XEM TIN NHẮN (READ RECEIPTS) ==================== */}
+      <Modal
+        isOpen={Boolean(inspectReadsMsg)}
+        onClose={() => setInspectReadsMsg(null)}
+        title="👁️ CHI TIẾT NGƯỜI ĐÃ XEM TIN NHẮN"
+        size="md"
+      >
+        {inspectReadsMsg && (() => {
+          const { msg, channel, reads } = inspectReadsMsg;
+          const readers = getMessageReaders(msg, reads);
+          const readerNamesNorm = new Set(readers.map(r => normalizeUserName(r.user_name)));
+          const senderNorm = normalizeUserName(msg.sender_name);
+          const channelMembers = Array.isArray(channel?.members) ? channel!.members! : [];
+          const unreadMembers = channelMembers
+            .map(m => normalizeUserName(m))
+            .filter(m => m && m !== "Hệ Thống" && m !== senderNorm && !readerNamesNorm.has(m));
+          const uniqueUnreadMembers = Array.from(new Set(unreadMembers));
+
+          return (
+            <div className="space-y-3 p-1 text-xs">
+              {/* Tin nhắn đang kiểm tra */}
+              <div className="p-3 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 space-y-1">
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="font-bold text-indigo-800 dark:text-indigo-200">
+                    Người gửi: {msg.sender_name}
+                  </span>
+                  <span className="text-slate-500">
+                    {formatVietnamDateTime(msg.created_at)}
+                  </span>
+                </div>
+                <p className="text-slate-700 dark:text-slate-200 line-clamp-3 whitespace-pre-line">
+                  {msg.content || "[Tệp đính kèm / Hình ảnh]"}
+                </p>
+              </div>
+
+              {/* Danh sách đã xem */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-extrabold text-emerald-700 dark:text-emerald-400 uppercase text-[11px] flex items-center gap-1">
+                    <CheckCheck className="w-3.5 h-3.5" />
+                    <span>Đã xem ({readers.length} người)</span>
+                  </span>
+                </div>
+
+                {readers.length === 0 ? (
+                  <div className="p-3 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-center text-slate-400">
+                    Chưa có thành viên nào xem tin nhắn này.
+                  </div>
+                ) : (
+                  <div className="max-h-56 overflow-y-auto space-y-1.5 border border-slate-200 dark:border-slate-800 rounded-xl p-2 bg-slate-50 dark:bg-slate-950">
+                    {readers.map((r, idx) => {
+                      const pal = getSenderPalette(r.user_name);
+                      const p = personnelList.find(item => normalizeUserName(item.full_name) === normalizeUserName(r.user_name));
+                      const pres = getUserPresence(r.user_name);
+                      const initial = String(r.user_name || "N")
+                        .trim()
+                        .split(/\s+/)
+                        .slice(-1)[0]
+                        ?.slice(0, 1)
+                        .toUpperCase() || "N";
+                      return (
+                        <div
+                          key={`${r.user_name}-${idx}`}
+                          className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="relative shrink-0">
+                              <div className={`w-7 h-7 rounded-full ${pal.avatar} font-bold text-xs flex items-center justify-center`}>
+                                {initial}
+                              </div>
+                              <span className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full ring-1 ring-white dark:ring-slate-900 ${pres.dotClass}`} />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="font-bold text-slate-900 dark:text-white truncate">
+                                {r.user_name}
+                              </div>
+                              <div className="text-[10px] text-slate-500 truncate">
+                                {p?.department || "ABT"}{p?.position ? ` • ${p.position}` : ""}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0 ml-2">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 font-bold text-[10px] border border-emerald-200 dark:border-emerald-800">
+                              <CheckCheck className="w-3 h-3" />
+                              Đã xem
+                            </span>
+                            {r.last_read_at && (
+                              <div className="text-[9.5px] text-slate-400 mt-0.5">
+                                {formatVietnamDateTime(r.last_read_at)}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Danh sách thành viên trong nhóm chưa xem */}
+              {uniqueUnreadMembers.length > 0 && (
+                <div className="space-y-1.5 pt-2 border-t border-slate-200 dark:border-slate-800">
+                  <span className="font-bold text-slate-500 uppercase text-[10.5px]">
+                    ⏳ Chưa xem ({uniqueUnreadMembers.length} thành viên trong kênh)
+                  </span>
+                  <div className="max-h-40 overflow-y-auto flex flex-wrap gap-1.5 p-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                    {uniqueUnreadMembers.map((mName, idx) => (
+                      <span
+                        key={`${mName}-${idx}`}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-300"
+                      >
+                        <span>{mName}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => setInspectReadsMsg(null)}
+                  className="px-4 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 font-bold text-slate-700 dark:text-slate-200 cursor-pointer"
+                >
+                  Đóng
+                </button>
+              </div>
+            </div>
+          );
+        })()}
       </Modal>
 
       {/* ==================== IMAGE PREVIEW MODAL ==================== */}

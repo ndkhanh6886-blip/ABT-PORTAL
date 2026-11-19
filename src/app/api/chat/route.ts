@@ -932,11 +932,21 @@ export async function GET(req: NextRequest) {
         ).catch(() => {});
       }
 
+      const readsRes = await query(
+        `SELECT user_name, last_read_message_id::int AS last_read_message_id, last_read_at
+           FROM chat_channel_reads
+          WHERE channel_id = $1
+            AND last_read_message_id > 0
+          ORDER BY last_read_at DESC NULLS LAST`,
+        [resolvedChannelId]
+      ).catch(() => ({ rows: [] as any[] }));
+
       return NextResponse.json({
         channel_id: resolvedChannelId,
         channel_code: resolvedCode,
         channel_type: resolvedType,
-        messages: res.rows
+        messages: res.rows,
+        reads: readsRes.rows
       });
     }
 
