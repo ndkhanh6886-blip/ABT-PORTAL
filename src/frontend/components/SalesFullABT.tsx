@@ -4642,6 +4642,259 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             orientation: slipPrintLandscape ? "landscape" : "portrait"
         });
     };
+
+    const handleExportDeliverySlipWord = (slipArg?: any) => {
+        const slip = slipArg || selectedViewDeliverySlip;
+        if (!slip) return;
+        const escHtml = (v: any) =>
+            String(v ?? "")
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;");
+
+        const rawItems = slip.items || [];
+        const groupedBySku: any[] = [];
+        const skuMap = new Map<string, any>();
+        const lastGroupKeyByCode: Record<string, string> = {};
+        rawItems.forEach((it: any, rawIdx: number) => {
+            const baseCode = String(it.productCode || it.productName || "").trim().toUpperCase();
+            const seqStr = String(itemSequence(it) || "").trim();
+            const soNoteStr = String(it.soNote || "").trim();
+            const noteStr = String(it.notes || "").trim();
+            const uPrice = slipLinePrice(it);
+            let codeKey: string;
+            if (it.lineGroupKey) {
+                codeKey = String(it.lineGroupKey);
+            } else if (it.isExtraLot && lastGroupKeyByCode[baseCode]) {
+                codeKey = lastGroupKeyByCode[baseCode];
+            } else {
+                const distinctTrait = (seqStr || soNoteStr || noteStr).toLowerCase();
+                codeKey = distinctTrait
+                    ? `${baseCode}__${String(it.specification || "").trim().toLowerCase()}__${uPrice}__${distinctTrait}`
+                    : `${baseCode}__${String(it.specification || "").trim().toLowerCase()}__${uPrice}__${it.isExtraLot ? "extra" : rawIdx}`;
+            }
+            lastGroupKeyByCode[baseCode] = codeKey;
+            const qty = Number(it.quantity) || 0;
+            const lotStr = String(it.lotNo || "").trim();
+            const expStr = String(it.expDate || "").trim();
+            const effectiveNote = noteStr || soNoteStr;
+            if (!skuMap.has(codeKey)) {
+                const entry = {
+                    ...it,
+                    quantity: qty,
+                    lotsDetail: [{ lotNo: lotStr || "-", expDate: expStr || "-", qty }],
+                    notesList: effectiveNote ? [effectiveNote] : []
+                };
+                skuMap.set(codeKey, entry);
+                groupedBySku.push(entry);
+            } else {
+                const existing = skuMap.get(codeKey);
+                existing.quantity += qty;
+                existing.lotsDetail.push({ lotNo: lotStr || "-", expDate: expStr || "-", qty });
+                if (effectiveNote && !existing.notesList.includes(effectiveNote)) {
+                    existing.notesList.push(effectiveNote);
+                }
+            }
+        });
+
+        const rowsHtml = groupedBySku.map((it: any, i: number) => {
+            const hasMultiLots = (it.lotsDetail?.length || 0) > 1;
+            const kitComps = getKitComponentsForCode(it.productCode);
+            const mainStorage = it.storageCondition || getStorageConditionForProduct(it.productCode);
+            const unitPriceVal = slipLinePrice(it);
+            const lineTotalVal = Math.round(unitPriceVal * (Number(it.quantity) || 0));
+            const lotsHtml = hasMultiLots
+                ? it.lotsDetail.map((ld: any) => `<div>• <b>${escHtml(ld.lotNo)}</b> <span style="color:#475569;font-weight:normal">(SL: ${escHtml(ld.qty)})</span></div>`).join("")
+                : escHtml(it.lotsDetail?.[0]?.lotNo || it.lotNo || "-");
+            const expHtml = hasMultiLots
+                ? it.lotsDetail.map((ld: any) => `<div>${escHtml(formatVNDate(ld.expDate, ld.expDate || "-"))}</div>`).join("")
+                : escHtml(formatVNDate(it.lotsDetail?.[0]?.expDate || it.expDate, it.lotsDetail?.[0]?.expDate || it.expDate || "-"));
+            const kitHtml = kitComps.length > 0
+                ? `<tr style="background:#f8fafc;font-size:10pt;color:#334155"><td style="border:1px solid #475569;padding:5px"></td><td colspan="${slipPrintWithPrice ? 9 : 7}" style="border:1px solid #475569;padding:5px">
+                    <div style="font-weight:bold;margin-bottom:2px">Bộ gồm ${kitComps.length} thành phần:</div>
+                    ${kitComps.map((c: any) => {
+                        const per = Number(c.quantity_per_kit) || 1;
+                        const differs = c.storage_condition && storageKey(c.storage_condition) !== storageKey(mainStorage);
+                        return `<div>• <b>${escHtml(c.component_code)}</b> ${escHtml(c.component_name)} – SL: ${per * (Number(it.quantity) || 0)} ${escHtml(c.unit || "")}${c.storage_condition ? ` – Bảo quản: ${escHtml(c.storage_condition)}${differs ? " <b>(khác bộ)</b>" : ""}` : ""}</div>`;
+                    }).join("")}
+                   </td></tr>`
+                : "";
+            return `<tr>
+                <td style="border:1px solid #475569;padding:6px;text-align:center">${i + 1}</td>
+                <td style="border:1px solid #475569;padding:6px;font-weight:bold;color:#1e1b4b">${escHtml(it.productCode)}</td>
+                <td style="border:1px solid #475569;padding:6px">
+                    <div style="font-weight:bold;color:#0f172a">${escHtml(it.productName)}</div>
+                    ${it.specification ? `<div style="font-size:9.5pt;color:#334155">${escHtml(it.specification)}</div>` : ""}
+                    ${itemSequence(it) ? `<div style="font-size:9.5pt;color:#1e1b4b;word-break:break-all">Trình tự: ${escHtml(itemSequence(it))}</div>` : ""}
+                    ${mainStorage ? `<div style="font-size:9.5pt;color:#334155">Bảo quản: ${escHtml(mainStorage)}</div>` : ""}
+                </td>
+                <td style="border:1px solid #475569;padding:6px;text-align:center">${escHtml(it.unit || "Bộ")}</td>
+                <td style="border:1px solid #475569;padding:6px;text-align:center;font-weight:bold;color:#78350f;background:#fffbeb">${lotsHtml}</td>
+                <td style="border:1px solid #475569;padding:6px;text-align:center">${expHtml}</td>
+                <td style="border:1px solid #475569;padding:6px;text-align:center;font-weight:bold;font-size:11.5pt">${escHtml(it.quantity)}</td>
+                ${slipPrintWithPrice ? `<td style="border:1px solid #475569;padding:6px;text-align:right">${unitPriceVal > 0 ? unitPriceVal.toLocaleString("vi-VN", { maximumFractionDigits: 3 }) : "-"}</td>` : ""}
+                ${slipPrintWithPrice ? `<td style="border:1px solid #475569;padding:6px;text-align:right;font-weight:bold">${unitPriceVal > 0 ? lineTotalVal.toLocaleString("vi-VN", { maximumFractionDigits: 0 }) : "-"}</td>` : ""}
+                <td style="border:1px solid #475569;padding:6px;text-align:center;font-size:9.5pt">${escHtml(it.notesList?.length > 0 ? it.notesList.join("; ") : (it.notes || "-"))}</td>
+            </tr>${kitHtml}`;
+        }).join("");
+
+        const totalMoney = (slip.items || []).reduce((s: number, it: any) => s + Math.round(slipLinePrice(it) * (Number(it.quantity) || 0)), 0);
+        const receiverLine = `${escHtml(slip.receiverName || slip.customerContact || slip.customerPhone || "Theo hợp đồng")}${(slip.receiverPhone || (slip.receiverName && slip.customerPhone)) ? ` • SĐT: ${escHtml(slip.receiverPhone || slip.customerPhone)}` : ""}`;
+        const customerSign = escHtml(slip.receiverName || slip.customerContact || slip.customerName || "");
+        const salesRepInfo = getSlipSalesRep(slip);
+        const repLine = salesRepInfo.name
+            ? `<b>NVKD phụ trách:</b> ${escHtml(salesRepInfo.name)}${salesRepInfo.phone ? ` • SĐT: ${escHtml(salesRepInfo.phone)}` : ""}`
+            : `<b>Hotline hỗ trợ:</b> ${escHtml(companyPhone || "028 2216 0885")}`;
+
+        const pageSizeCss = slipPrintLandscape
+            ? "size:29.7cm 21.0cm;mso-page-orientation:landscape;"
+            : "size:21.0cm 29.7cm;mso-page-orientation:portrait;";
+
+        const wordHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="utf-8" />
+<title>Phiếu giao hàng ${escHtml(slip.id)}</title>
+<!--[if gte mso 9]>
+<xml>
+  <w:WordDocument>
+    <w:View>Print</w:View>
+    <w:Zoom>100</w:Zoom>
+    <w:DoNotOptimizeForBrowser/>
+  </w:WordDocument>
+</xml>
+<![endif]-->
+<style>
+  @page WordSection1 {
+    ${pageSizeCss}
+    margin: 1.2cm 1.4cm 1.2cm 1.4cm;
+  }
+  div.WordSection1 { page: WordSection1; }
+  body {
+    font-family: "Times New Roman", Arial, sans-serif;
+    font-size: 11pt;
+    color: #0f172a;
+    line-height: 1.35;
+  }
+  table { border-collapse: collapse; }
+</style>
+</head>
+<body>
+<div class="WordSection1">
+  <!-- Header Table -->
+  <table width="100%" style="border-bottom:2px solid #0f172a;margin-bottom:10pt;padding-bottom:6pt">
+    <tr>
+      <td width="68%" valign="top" style="padding-bottom:6pt">
+        <div style="font-size:12pt;font-weight:bold;text-transform:uppercase;color:#0f172a">${escHtml(companyName || "ĐƠN VỊ XUẤT HÀNG")}</div>
+        ${companyAddress ? `<div style="font-size:10pt;color:#334155"><b>Địa chỉ:</b> ${escHtml(companyAddress)}</div>` : ""}
+        ${(companyPhone || companyEmail) ? `<div style="font-size:10pt;color:#334155">${companyPhone ? `<b>Điện thoại:</b> ${escHtml(companyPhone)}` : ""}${companyPhone && companyEmail ? " • " : ""}${companyEmail ? `<b>Email:</b> ${escHtml(companyEmail)}` : ""}</div>` : ""}
+        ${companyTaxCode ? `<div style="font-size:10pt;color:#334155"><b>MST:</b> ${escHtml(companyTaxCode)}</div>` : ""}
+      </td>
+      <td width="32%" valign="top" align="right" style="text-align:right;padding-bottom:6pt">
+        <div style="font-size:13pt;font-weight:bold;color:#1e1b4b">${escHtml(slip.id)}</div>
+        <div style="font-size:10pt;color:#334155">Mã đơn: <b>${escHtml(slip.orderCode)}</b></div>
+        <div style="font-size:10pt;color:#334155">Ngày giao: <b>${escHtml(formatVNDate(slip.deliveryDate, slip.deliveryDate))}</b></div>
+      </td>
+    </tr>
+  </table>
+
+  <!-- Title -->
+  <div style="text-align:center;margin:8pt 0 12pt 0">
+    <div style="font-size:15pt;font-weight:bold;text-transform:uppercase;color:#0f172a">PHIẾU GIAO HÀNG KIÊM BIÊN BẢN BÀN GIAO</div>
+    <div style="font-size:10pt;font-style:italic;color:#475569">(Liên 1: Lưu nội bộ • Liên 2: Giao khách hàng)</div>
+  </div>
+
+  <!-- Recipient & Dispatcher Info Table -->
+  <table width="100%" style="border:1px solid #cbd5e1;background:#f8fafc;margin-bottom:12pt;font-size:10.5pt">
+    <tr>
+      <td width="50%" valign="top" style="border:1px solid #cbd5e1;padding:8pt">
+        <div style="font-weight:bold;text-transform:uppercase;color:#1e1b4b;border-bottom:1px solid #cbd5e1;padding-bottom:3pt;margin-bottom:5pt">ĐƠN VỊ NHẬN HÀNG (KHÁCH HÀNG)</div>
+        <div style="margin:2pt 0"><b>Tên khách hàng:</b> ${escHtml(slip.customerName)}</div>
+        <div style="margin:2pt 0"><b>Địa chỉ nhận:</b> ${escHtml(slip.customerAddress || "Tại cơ sở khách hàng")}</div>
+        <div style="margin:2pt 0"><b>Người nhận hàng:</b> ${receiverLine}</div>
+      </td>
+      <td width="50%" valign="top" style="border:1px solid #cbd5e1;padding:8pt">
+        <div style="font-weight:bold;text-transform:uppercase;color:#1e1b4b;border-bottom:1px solid #cbd5e1;padding-bottom:3pt;margin-bottom:5pt">ĐƠN VỊ XUẤT GIAO HÀNG</div>
+        <div style="margin:2pt 0"><b>Địa điểm xuất:</b> ${escHtml(slip.dispatchLocation || slip.dispatcherLocation || "Kho Trung Tâm")}</div>
+        <div style="margin:2pt 0"><b>Người giao hàng:</b> ........................................</div>
+        <div style="margin:2pt 0">${repLine}</div>
+      </td>
+    </tr>
+  </table>
+
+  <!-- Items Table -->
+  <table width="100%" style="border:1px solid #475569;margin-bottom:10pt;font-size:10.5pt">
+    <thead>
+      <tr style="background:#f1f5f9;font-weight:bold;text-transform:uppercase;font-size:9.5pt">
+        <th style="border:1px solid #475569;padding:6px;text-align:center;width:36px">STT</th>
+        <th style="border:1px solid #475569;padding:6px;width:95px">Mã SKU</th>
+        <th style="border:1px solid #475569;padding:6px">Tên Hàng Hóa &amp; Quy Cách</th>
+        <th style="border:1px solid #475569;padding:6px;text-align:center;width:54px">ĐVT</th>
+        <th style="border:1px solid #475569;padding:6px;text-align:center;width:120px">Số Lô (Lot No)</th>
+        <th style="border:1px solid #475569;padding:6px;text-align:center;width:85px">Hạn dùng</th>
+        <th style="border:1px solid #475569;padding:6px;text-align:center;width:62px">Số lượng</th>
+        ${slipPrintWithPrice ? `<th style="border:1px solid #475569;padding:6px;text-align:right;width:88px">Đơn giá</th>` : ""}
+        ${slipPrintWithPrice ? `<th style="border:1px solid #475569;padding:6px;text-align:right;width:105px">Thành tiền</th>` : ""}
+        <th style="border:1px solid #475569;padding:6px;text-align:center;width:95px">Ghi chú</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rowsHtml}
+    </tbody>
+    ${slipPrintWithPrice ? `<tfoot>
+      <tr style="background:#f1f5f9;font-weight:bold">
+        <td colspan="8" style="border:1px solid #475569;padding:6px;text-align:right">TỔNG TIỀN HÀNG (ĐÃ BAO GỒM VAT):</td>
+        <td style="border:1px solid #475569;padding:6px;text-align:right">${totalMoney.toLocaleString("vi-VN", { maximumFractionDigits: 0 })}</td>
+        <td style="border:1px solid #475569;padding:6px"></td>
+      </tr>
+    </tfoot>` : ""}
+  </table>
+
+  ${slip.notes ? `<div style="border:1px solid #cbd5e1;background:#f8fafc;padding:7pt 9pt;margin-bottom:14pt;font-size:10.5pt"><b>Ghi chú giao hàng:</b> ${escHtml(slip.notes)}</div>` : ""}
+
+  <!-- Signatures Table -->
+  <table width="100%" style="margin-top:16pt;text-align:center;font-size:10.5pt">
+    <tr>
+      <td width="33%" valign="top" align="center">
+        <div style="font-weight:bold;text-transform:uppercase">NGƯỜI LẬP PHIẾU</div>
+        <div style="font-size:9.5pt;font-style:italic;color:#475569">(Ký, ghi rõ họ tên)</div>
+        <div style="height:65pt">&nbsp;</div>
+        <div style="font-weight:bold">&nbsp;</div>
+      </td>
+      <td width="33%" valign="top" align="center">
+        <div style="font-weight:bold;text-transform:uppercase">NGƯỜI GIAO HÀNG</div>
+        <div style="font-size:9.5pt;font-style:italic;color:#475569">(Ký, ghi rõ họ tên)</div>
+        <div style="height:65pt">&nbsp;</div>
+        <div style="font-weight:bold">&nbsp;</div>
+      </td>
+      <td width="34%" valign="top" align="center">
+        <div style="font-weight:bold;text-transform:uppercase">ĐẠI DIỆN KHÁCH HÀNG NHẬN</div>
+        <div style="font-size:9.5pt;font-style:italic;color:#475569">(Ký xác nhận đủ hàng, nguyên tem)</div>
+        <div style="height:65pt">&nbsp;</div>
+        <div style="font-weight:bold">${customerSign}</div>
+      </td>
+    </tr>
+  </table>
+</div>
+</body>
+</html>`;
+
+        const blob = new Blob(["\ufeff", wordHtml], { type: "application/msword;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        const rawSlipCode = String(slip.id || "").includes("cấp khi lưu")
+            ? `Dot_${slip.batchNumber || 1}`
+            : String(slip.id || "PGH").replace(/[^a-zA-Z0-9_-]/g, "_");
+        const safeOrderCode = String(slip.orderCode || "").replace(/[^a-zA-Z0-9_-]/g, "_");
+        const fileName = `Phieu_Giao_Hang_${rawSlipCode}${safeOrderCode ? `_${safeOrderCode}` : ""}.doc`;
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        showToast(`📝 Đã tải xuống file Word Phiếu giao hàng: ${fileName}`, "success");
+    };
     const [isViewDeliverySlipModalOpen, setIsViewDeliverySlipModalOpen] = useState(false);
     // Luồng giao hàng mới: Lập phiếu giao (toàn bộ / từng đợt) -> NVKD xác nhận đã giao theo từng phiếu
     const [deliverySlipMode, setDeliverySlipMode] = useState<"FULL" | "PARTIAL">("FULL");
@@ -17193,6 +17446,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             );
                                         })()}
                                         <button type="button" onClick={() => { setSelectedViewDeliverySlip(s); setIsViewDeliverySlipModalOpen(true); }} className="text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 px-1.5 py-0.5 rounded cursor-pointer">👁 Xem</button>
+                                        <button type="button" onClick={() => handleExportDeliverySlipWord(s)} className="text-[10px] font-bold bg-blue-700 hover:bg-blue-600 text-white px-1.5 py-0.5 rounded cursor-pointer" title="Tải file Word (.doc) Phiếu giao hàng này">📝 Word</button>
                                         {step === "PENDING_DELIVERY" && (
                                             <button
                                                 type="button"
@@ -18064,8 +18318,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         handleOpenConfirmDeliveryModal(targetOrd, slip);
     };
 
-    const handlePreviewDeliverySlipBeforeCreate = () => {
-        if (!deliveryTargetOrder) return;
+    const buildDraftDeliverySlipFromModal = () => {
+        if (!deliveryTargetOrder) return null;
         const now = new Date();
         const slipId = editingDeliverySlip?.id || "PX (cấp khi lưu)";
         const previewItems = deliveryItems
@@ -18080,7 +18334,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             })
             .filter(it => it.quantity > 0);
 
-        const previewSlip = {
+        return {
             id: slipId,
             orderId: String(deliveryTargetOrder.order_id),
             orderCode: deliveryTargetOrder.order_code,
@@ -18102,9 +18356,19 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             deliveryMode: deliverySlipMode,
             isDraftPreview: true
         };
+    };
 
+    const handlePreviewDeliverySlipBeforeCreate = () => {
+        const previewSlip = buildDraftDeliverySlipFromModal();
+        if (!previewSlip) return;
         setSelectedViewDeliverySlip(previewSlip);
         setIsViewDeliverySlipModalOpen(true);
+    };
+
+    const handleExportDeliverySlipWordBeforeCreate = () => {
+        const previewSlip = buildDraftDeliverySlipFromModal();
+        if (!previewSlip) return;
+        handleExportDeliverySlipWord(previewSlip);
     };
 
     const handleSaveCompanyConfig = async (e: React.FormEvent) => {
@@ -26719,6 +26983,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     resolveOrder={(s: any) => resolveFactoryOrder({ order_id: s?.orderId, raw_code: s?.orderCode })}
                     getOrderQtyProgress={getOrderQtyProgress}
                     onView={(s: any) => { setSelectedViewDeliverySlip(s); setIsViewDeliverySlipModalOpen(true); }}
+                    onExportWord={(s: any) => handleExportDeliverySlipWord(s)}
                     onCreateSlip={(ord: any) => handleOpenDeliveryModal(ord)}
                     onConfirmSlip={(s: any) => handleConfirmSlipDelivered(s)}
                     onEditSlip={(s: any) => handleEditDeliverySlip(s)}
@@ -35804,6 +36069,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </button>
                             <button
                                 type="button"
+                                onClick={handleExportDeliverySlipWordBeforeCreate}
+                                className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow-md shadow-blue-950/50 cursor-pointer transition-colors"
+                                title="Tải xuống file Word (.doc) Phiếu giao hàng để chỉnh sửa hoặc lưu trữ"
+                            >
+                                <Download className="w-4 h-4" />
+                                Xuất Word (.doc)
+                            </button>
+                            <button
+                                type="button"
                                 onClick={handlePreviewDeliverySlipBeforeCreate}
                                 className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow-md shadow-indigo-950/50 cursor-pointer transition-colors"
                             >
@@ -35903,15 +36177,26 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <option value="landscape">📄 Khổ ngang (A4)</option>
                                 </select>
                             </div>
-                            <button
-                                type="button"
-                                onClick={() => handlePrintDeliverySlip(selectedViewDeliverySlip)}
-                                className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer transition-colors"
-                                title="Mở bản in chuẩn A4 nền trắng (cỡ chữ chuẩn, không bị đen nền)"
-                            >
-                                <Printer className="w-4 h-4" />
-                                In / Lưu PDF (Chuẩn A4)
-                            </button>
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <button
+                                    type="button"
+                                    onClick={() => handleExportDeliverySlipWord(selectedViewDeliverySlip)}
+                                    className="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer transition-colors"
+                                    title="Tải xuống file Word (.doc) Phiếu giao hàng chuẩn A4"
+                                >
+                                    <Download className="w-4 h-4" />
+                                    Xuất Word (.doc)
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handlePrintDeliverySlip(selectedViewDeliverySlip)}
+                                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer transition-colors"
+                                    title="Mở bản in chuẩn A4 nền trắng (cỡ chữ chuẩn, không bị đen nền)"
+                                >
+                                    <Printer className="w-4 h-4" />
+                                    In / Lưu PDF (Chuẩn A4)
+                                </button>
+                            </div>
                         </div>
 
                         {selectedViewDeliverySlip.isDraftPreview && (
@@ -36245,6 +36530,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <option value="portrait">Khổ dọc</option>
                                     <option value="landscape">Khổ ngang</option>
                                 </select>
+                                <button
+                                    type="button"
+                                    onClick={() => handleExportDeliverySlipWord(selectedViewDeliverySlip)}
+                                    className="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer transition-colors"
+                                    title="Tải xuống file Word (.doc) Phiếu giao hàng chuẩn A4"
+                                >
+                                    <Download className="w-4 h-4" />
+                                    Xuất Word (.doc)
+                                </button>
                                 <button
                                     type="button"
                                     onClick={() => handlePrintDeliverySlip(selectedViewDeliverySlip)}

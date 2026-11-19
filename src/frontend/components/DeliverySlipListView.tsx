@@ -98,6 +98,7 @@ export function DeliverySlipListView({
   resolveOrder,
   getOrderQtyProgress,
   onView,
+  onExportWord,
   onCreateSlip,
   onConfirmSlip,
   onEditSlip,
@@ -116,6 +117,7 @@ export function DeliverySlipListView({
   resolveOrder?: (slip: any) => any;
   getOrderQtyProgress?: (ord: any, excludeSlipId?: string) => Record<string, { ordered: number; allocated: number; delivered: number; remaining: number }>;
   onView: (slip: any) => void;
+  onExportWord?: (slip: any) => void;
   onCreateSlip?: (ord: any) => void;
   onConfirmSlip?: (slip: any) => void;
   onEditSlip?: (slip: any) => void;
@@ -1024,6 +1026,16 @@ export function DeliverySlipListView({
                                 >
                                   <Eye className="w-3 h-3" /> Xem
                                 </button>
+                                {onExportWord && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onExportWord(slip)}
+                                    className="text-[10px] font-bold bg-blue-700 hover:bg-blue-600 text-white px-1.5 py-0.5 rounded cursor-pointer"
+                                    title="Tải xuống file Word (.doc) Phiếu giao hàng"
+                                  >
+                                    📝 Word
+                                  </button>
+                                )}
                                 {st === "PENDING" && canConfirm && onConfirmSlip && (
                                   <button
                                     type="button"
@@ -1277,6 +1289,16 @@ export function DeliverySlipListView({
                           >
                             <Eye className="w-3 h-3" /> Xem
                           </button>
+                          {onExportWord && (
+                            <button
+                              type="button"
+                              onClick={() => onExportWord(slip)}
+                              className="text-[10px] font-bold bg-blue-700 hover:bg-blue-600 text-white px-2 py-1 rounded cursor-pointer flex items-center gap-1"
+                              title="Tải xuống file Word (.doc) Phiếu giao hàng"
+                            >
+                              📝 Word
+                            </button>
+                          )}
                           {st !== "CANCELLED" && onCollectPayment && (() => {
                             const f = getFinance ? getFinance(slip) : null;
                             const paidFull = f ? (f.amount > 0 && f.paid >= f.amount - 0.5) || ((f.orderTotal || 0) > 0 && (f.orderPaid || 0) >= (f.orderTotal || 0) - 0.5) : false;
