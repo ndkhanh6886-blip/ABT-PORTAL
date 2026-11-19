@@ -285,6 +285,15 @@ function PrepareForm({ formula, deptScope, onDone }: { formula: Formula; deptSco
 }
 
 /** "Pha chế hóa chất" (as OligoFlow): formulas, the preparation order and the preparation log. */
+function foldSearchText(raw: string | null | undefined): string {
+  return String(raw ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase();
+}
+
 export function PreparationView({
   canManage,
   canExecute,
@@ -310,6 +319,17 @@ export function PreparationView({
   });
   const [editing, setEditing] = useState<{ item?: Formula; isClone?: boolean } | null>(null);
   const [preparing, setPreparing] = useState<Formula | null>(null);
+
+  // Quick search & filter states for Formulas
+  const [formulaQ, setFormulaQ] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [qcFilter, setQcFilter] = useState<"" | "QC_REQUIRED" | "INCUBATION" | "DIRECT">("");
+  const [statusFilter, setStatusFilter] = useState<"" | "ACTIVE" | "INACTIVE">("");
+
+  // Quick search & filter states for Preparation Log
+  const [prepLogQ, setPrepLogQ] = useState("");
+  const [prepLotStatusFilter, setPrepLotStatusFilter] = useState("");
+
   const removeFormula = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) =>
       api(`/api/factory/prep/formulas/${id}`, { method: "DELETE", json: { reason } }),
@@ -339,6 +359,53 @@ export function PreparationView({
     onSuccess: refresh,
   });
   const today = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
+
+  const allFormulas = formulas.data ?? [];
+  const categoryStats = React.useMemo(() => {
+    const map = new Map<string, number>();
+    for (const f of allFormulas) {
+      const cat = (f.category || "Chưa phân nhóm").trim();
+      map.set(cat, (map.get(cat) ?? 0) + 1);
+    }
+    return Array.from(map.entries());
+  }, [allFormulas]);
+
+  const filteredFormulas = React.useMemo(() => {
+    const needle = foldSearchText(formulaQ.trim());
+    return allFormulas.filter((f) => {
+      if (categoryFilter) {
+        const cat = (f.category || "Chưa phân nhóm").trim();
+        if (cat !== categoryFilter) return false;
+      }
+      if (statusFilter && f.status !== statusFilter) return false;
+      if (qcFilter === "QC_REQUIRED" && !f.requires_qc) return false;
+      if (qcFilter === "INCUBATION" && !(f.incubation_days > 0)) return false;
+      if (qcFilter === "DIRECT" && (f.requires_qc || f.incubation_days > 0)) return false;
+      if (!needle) return true;
+      const ingredientsStr = f.lines.map((l) => `${l.item_code ?? ""} ${l.item_name ?? ""}`).join(" ");
+      const hay = foldSearchText(
+        `${f.code} ${f.name} ${f.category ?? ""} ${f.output_code} ${f.output_name} ${ingredientsStr} ${f.instructions ?? ""}`
+      );
+      return needle.split(/\s+/).every((tok) => hay.includes(tok));
+    });
+  }, [allFormulas, formulaQ, categoryFilter, statusFilter, qcFilter]);
+
+  const hasFormulaFilter = Boolean(formulaQ.trim() || categoryFilter || qcFilter || statusFilter);
+
+  const allPreps = preps.data ?? [];
+  const filteredPreps = React.useMemo(() => {
+    const needle = foldSearchText(prepLogQ.trim());
+    return allPreps.filter((p) => {
+      if (prepLotStatusFilter && p.lot_status !== prepLotStatusFilter) return false;
+      if (!needle) return true;
+      const linesStr = p.lines.map((l) => `${l.item_code} ${l.lot_code ?? ""}`).join(" ");
+      const hay = foldSearchText(
+        `${p.code} ${p.formula_code} ${p.formula_name} ${p.lot_code} ${p.prepared_by_name ?? ""} ${p.notes ?? ""} ${linesStr}`
+      );
+      return needle.split(/\s+/).every((tok) => hay.includes(tok));
+    });
+  }, [allPreps, prepLogQ, prepLotStatusFilter]);
+
   return (
     <div className="flex flex-col gap-3">
       <Card
@@ -346,7 +413,7 @@ export function PreparationView({
         actions={
           <div className="flex flex-wrap gap-1.5">
             {formulas.data && formulas.data.length > 0 && (
-              <Button type="button" variant="ghost" onClick={() => exportFormulasExcel(formulas.data!, meta.exportFileName)}>
+              <Button type="button" variant="ghost" onClick={() => exportFormulasExcel(filteredFormulas, meta.exportFileName)}>
                 📤 Xuất Excel (.xlsx)
               </Button>
             )}
@@ -384,11 +451,115 @@ export function PreparationView({
           />
         )}
         {preparing && <PrepareForm key={preparing.id} formula={preparing} deptScope={deptScope} onDone={refresh} />}
+
+        {/* Thanh Tìm kiếm nhanh & Bộ lọc Công thức pha chế */}
+        {allFormulas.length > 0 && (
+          <div className="flex flex-col gap-2.5 mb-3 p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mr-1">Nhóm công thức:</span>
+              <button
+                type="button"
+                onClick={() => setCategoryFilter("")}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                  categoryFilter === ""
+                    ? "bg-sky-700 text-white border-sky-700"
+                    : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
+                }`}
+              >
+                Tất cả ({allFormulas.length})
+              </button>
+              {categoryStats.map(([cat, cnt]) => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setCategoryFilter(categoryFilter === cat ? "" : cat)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                    categoryFilter === cat
+                      ? "bg-sky-700 text-white border-sky-700"
+                      : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  {cat} ({cnt})
+                </button>
+              ))}
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-12 items-center">
+              <div className="sm:col-span-2 lg:col-span-6 relative">
+                <input
+                  className={`${inputClass} pr-8`}
+                  placeholder="🔍 Tìm nhanh mã công thức (STO001...), tên dung dịch, thành phẩm, hoặc mã nguyên liệu (SC1, LC1...)..."
+                  value={formulaQ}
+                  onChange={(e) => setFormulaQ(e.target.value)}
+                />
+                {formulaQ && (
+                  <button
+                    type="button"
+                    onClick={() => setFormulaQ("")}
+                    title="Xóa từ khóa tìm kiếm"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 text-xs font-bold cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              <div className="lg:col-span-3">
+                <select
+                  className={inputClass}
+                  value={qcFilter}
+                  onChange={(e) => setQcFilter(e.target.value as typeof qcFilter)}
+                  aria-label="Lọc theo yêu cầu QC và thời gian ủ"
+                >
+                  <option value="">Mọi điều kiện QC / Thời gian ủ</option>
+                  <option value="QC_REQUIRED">🛡️ Bắt buộc QC trước khi dùng</option>
+                  <option value="INCUBATION">⏳ Có yêu cầu thời gian ủ</option>
+                  <option value="DIRECT">⚡ Dùng ngay (Không chờ QC/ủ)</option>
+                </select>
+              </div>
+              <div className="lg:col-span-2">
+                <select
+                  className={inputClass}
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+                  aria-label="Lọc trạng thái công thức"
+                >
+                  <option value="">Mọi trạng thái</option>
+                  <option value="ACTIVE">Đang dùng</option>
+                  <option value="INACTIVE">Ngừng dùng</option>
+                </select>
+              </div>
+              <div className="lg:col-span-1 flex items-center justify-end">
+                {hasFormulaFilter ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFormulaQ("");
+                      setCategoryFilter("");
+                      setQcFilter("");
+                      setStatusFilter("");
+                    }}
+                    className="text-xs font-bold text-rose-600 hover:underline cursor-pointer whitespace-nowrap"
+                  >
+                    Đặt lại
+                  </button>
+                ) : (
+                  <span className="text-[11px] text-slate-400 whitespace-nowrap">
+                    {filteredFormulas.length}/{allFormulas.length} mã
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         <ErrorNote error={formulas.error ?? removeFormula.error} />
-        {formulas.data?.length === 0 && !editing && <Empty>{meta.emptyText}</Empty>}
-        {formulas.data && formulas.data.length > 0 && (
+        {allFormulas.length === 0 && !editing && <Empty>{meta.emptyText}</Empty>}
+        {allFormulas.length > 0 && filteredFormulas.length === 0 && (
+          <Empty>Không tìm thấy công thức pha chế nào khớp từ khóa hoặc bộ lọc đang chọn.</Empty>
+        )}
+        {filteredFormulas.length > 0 && (
           <Table head={["Mã", "Tên / nhóm", "Thành phẩm", "Mẻ chuẩn", "Nguyên liệu", "Hạn / QC", ""]}>
-            {formulas.data.map((f) => (
+            {filteredFormulas.map((f) => (
               <tr key={f.id} className={f.status === "ACTIVE" ? "" : "opacity-50"}>
                 <td className="py-1.5 pr-3 font-mono text-xs">{f.code}</td>
                 <td className="py-1.5 pr-3">{f.name}{f.category && <div className="text-[11px] text-slate-500">{f.category}</div>}</td>
@@ -449,12 +620,40 @@ export function PreparationView({
           </Table>
         )}
       </Card>
-      <Card title="Nhật ký pha chế">
+      <Card
+        title="Nhật ký pha chế"
+        actions={
+          allPreps.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                className={`${inputClass} w-64`}
+                placeholder="🔍 Tìm mã lệnh, công thức, số lô pha..."
+                value={prepLogQ}
+                onChange={(e) => setPrepLogQ(e.target.value)}
+              />
+              <select
+                className={`${inputClass} w-44`}
+                value={prepLotStatusFilter}
+                onChange={(e) => setPrepLotStatusFilter(e.target.value)}
+                aria-label="Lọc trạng thái lô pha"
+              >
+                <option value="">Mọi trạng thái lô</option>
+                {Object.entries(LOT_STATUS).map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : undefined
+        }
+      >
         <ErrorNote error={preps.error ?? cancel.error ?? incubated.error} />
-        {preps.data?.length === 0 && <Empty>Chưa có lệnh pha.</Empty>}
-        {preps.data && preps.data.length > 0 && (
+        {allPreps.length === 0 && <Empty>Chưa có lệnh pha.</Empty>}
+        {allPreps.length > 0 && filteredPreps.length === 0 && <Empty>Không có nhật ký pha chế nào khớp bộ lọc.</Empty>}
+        {filteredPreps.length > 0 && (
           <Table head={["Lệnh", "Công thức", "Lô pha", "Lượng", "Nguyên liệu đã dùng (lô)", "Hạn dùng", "Người / lúc", ""]}>
-            {preps.data.map((p) => (
+            {filteredPreps.map((p) => (
               <tr key={p.id} className={p.status === "CANCELLED" ? "opacity-50" : ""}>
                 <td className="py-1.5 pr-3 font-mono text-xs">{p.code}{p.status === "CANCELLED" && <div className="font-sans text-rose-600">Đã hủy: {p.cancel_reason}</div>}</td>
                 <td className="py-1.5 pr-3 text-xs">{p.formula_code} · {p.formula_name}</td>

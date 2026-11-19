@@ -491,7 +491,19 @@ export async function listOligoOrders(tx: Tx, actor: AuthzActor, status?: string
               (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT') AND s.product_type IN ('PRIMER', 'PROBE')) AS primer_probe_count,
               (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT') AND s.product_type IN ('AMPLICON_LINEAR', 'AMPLICON_PLASMID')) AS amplicon_count,
               (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status = 'COMPLETED') AS ready_count,
-              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status = 'DELIVERED') AS delivered_count
+              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status = 'DELIVERED') AS delivered_count,
+              (SELECT string_agg(
+                 coalesce(s.code, '') || ' ' || coalesce(s.name, '') || ' ' || coalesce(s.raw_sequence, '') || ' ' || coalesce(s.scale_code, '') || ' ' || coalesce(s.purification, ''),
+                 ' · '
+               )
+                 FROM oligo.oligo_sequence s
+                WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT')) AS sequence_search_text,
+              (SELECT coalesce(array_agg(DISTINCT s.purification), '{}'::text[])
+                 FROM oligo.oligo_sequence s
+                WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT')) AS purifications,
+              (SELECT coalesce(array_agg(DISTINCT s.scale_code), '{}'::text[])
+                 FROM oligo.oligo_sequence s
+                WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT')) AS scales
          FROM oligo.oligo_order o LEFT JOIN intake.internal_order io ON io.id = o.internal_order_id
         WHERE ($1::uuid[] IS NULL OR o.org_unit_id = ANY($1::uuid[])) AND ($2::text IS NULL OR o.status = $2)
         ORDER BY o.created_at DESC LIMIT 300`,

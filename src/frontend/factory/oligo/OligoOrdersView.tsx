@@ -231,6 +231,15 @@ function NewOrder({ onCreated }: { onCreated: (id: string) => void }) {
   );
 }
 
+function foldOrderSearch(raw: string | null | undefined): string {
+  return String(raw ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase();
+}
+
 export function OligoOrdersView({
   canManage,
   canDeliver = false,
@@ -251,6 +260,11 @@ export function OligoOrdersView({
   const [showNewOrder, setShowNewOrder] = useState(false);
   const [status, setStatus] = useState("");
   const [onlyReady, setOnlyReady] = useState(false);
+  const [searchQ, setSearchQ] = useState("");
+  const [seqTypeFilter, setSeqTypeFilter] = useState<"" | "PRIMER_PROBE" | "AMPLICON">("");
+  const [purificationFilter, setPurificationFilter] = useState("");
+  const [pricingFilter, setPricingFilter] = useState("");
+  const [dueFilter, setDueFilter] = useState<"" | "OVERDUE_TODAY" | "NEXT_7_DAYS" | "DELAYED_SLA" | "RESCHEDULED">("");
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -264,7 +278,7 @@ export function OligoOrdersView({
   }, []);
 
   const list = useQuery({
-    queryKey: ["factory", "oligo-orders", status],
+    queryKey: ["factory", "oligo-orders"],
     queryFn: () =>
       api<
         {
@@ -290,11 +304,78 @@ export function OligoOrdersView({
           price_percentage?: number;
           vat_rate?: number;
           total_price?: number;
+          sequence_search_text?: string | null;
+          purifications?: string[];
+          scales?: string[];
         }[]
-      >(`/api/factory/oligo/orders${status ? `?status=${status}` : ""}`),
+      >("/api/factory/oligo/orders"),
   });
-  const rows = (list.data ?? []).filter((o) => !onlyReady || (o.ready_count ?? 0) > 0);
-  const readyOrderCount = (list.data ?? []).filter((o) => (o.ready_count ?? 0) > 0).length;
+
+  const allOrders = list.data ?? [];
+  const todayYmd = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
+  const next7Ymd = new Date(Date.now() + (7 + 7 * 24) * 3600_000).toISOString().slice(0, 10);
+
+  const statusCounts = React.useMemo(() => {
+    const counts: Record<string, number> = {
+      ALL: allOrders.length,
+      PENDING: 0,
+      IN_PROGRESS: 0,
+      COMPLETED: 0,
+      DELIVERED: 0,
+      FAILED: 0,
+      CANCELLED: 0,
+      READY: 0,
+      LATE: 0,
+    };
+    for (const o of allOrders) {
+      counts[o.status] = (counts[o.status] ?? 0) + 1;
+      if ((o.ready_count ?? 0) > 0) counts.READY += 1;
+      const isLate =
+        (o.due_date && o.requested_date && o.due_date.slice(0, 10) > o.requested_date.slice(0, 10)) ||
+        (o.due_date && o.due_date.slice(0, 10) < todayYmd && !["DELIVERED", "CANCELLED"].includes(o.status));
+      if (isLate) counts.LATE += 1;
+    }
+    return counts;
+  }, [allOrders, todayYmd]);
+
+  const readyOrderCount = statusCounts.READY;
+
+  const rows = React.useMemo(() => {
+    const needle = foldOrderSearch(searchQ.trim());
+    return allOrders.filter((o) => {
+      if (status && o.status !== status) return false;
+      if (onlyReady && (o.ready_count ?? 0) <= 0) return false;
+      if (seqTypeFilter === "PRIMER_PROBE" && (o.primer_probe_count ?? o.sequence_count) <= 0) return false;
+      if (seqTypeFilter === "AMPLICON" && (o.amplicon_count ?? 0) <= 0) return false;
+      if (purificationFilter && !(o.purifications ?? []).includes(purificationFilter)) return false;
+      if (pricingFilter) {
+        const pt = o.pricing_type || "auto";
+        if (pt !== pricingFilter) return false;
+      }
+      if (dueFilter) {
+        const dueYmd = o.due_date ? o.due_date.slice(0, 10) : "";
+        const reqYmd = o.requested_date ? o.requested_date.slice(0, 10) : "";
+        if (dueFilter === "OVERDUE_TODAY") {
+          if (!dueYmd || dueYmd > todayYmd || ["DELIVERED", "CANCELLED"].includes(o.status)) return false;
+        } else if (dueFilter === "NEXT_7_DAYS") {
+          if (!dueYmd || dueYmd < todayYmd || dueYmd > next7Ymd) return false;
+        } else if (dueFilter === "DELAYED_SLA") {
+          if (!(dueYmd && reqYmd && dueYmd > reqYmd)) return false;
+        } else if (dueFilter === "RESCHEDULED") {
+          if (!(o.due_date_change_count > 0)) return false;
+        }
+      }
+      if (!needle) return true;
+      const hay = foldOrderSearch(
+        `${o.code} ${o.internal_order_code ?? ""} ${o.kd_po_code ?? ""} ${o.customer_label ?? ""} ${o.notes ?? ""} ${o.internal_order_notes ?? ""} ${o.sequence_search_text ?? ""}`
+      );
+      return needle.split(/\s+/).every((tok) => hay.includes(tok));
+    });
+  }, [allOrders, status, onlyReady, seqTypeFilter, purificationFilter, pricingFilter, dueFilter, searchQ, todayYmd, next7Ymd]);
+
+  const hasActiveFilters = Boolean(
+    status || onlyReady || searchQ.trim() || seqTypeFilter || purificationFilter || pricingFilter || dueFilter
+  );
 
   const jumpToInternalOrder = (internalOrderId?: string | null) => {
     if (!internalOrderId || typeof window === "undefined") return;
@@ -336,19 +417,6 @@ export function OligoOrdersView({
             >
               Chờ in nhãn &amp; giao hàng ({readyOrderCount})
             </button>
-            <select
-              className={`${inputClass} w-44`}
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
-              aria-label="Trạng thái"
-            >
-              <option value="">Mọi trạng thái</option>
-              {Object.entries(ORDER_STATUS).map(([k, [, v]]) => (
-                <option key={k} value={k}>
-                  {v}
-                </option>
-              ))}
-            </select>
           </div>
         }
       >
@@ -360,12 +428,150 @@ export function OligoOrdersView({
             }}
           />
         )}
+
+        {/* Thanh Bộ lọc trạng thái & Tìm kiếm nhanh Đơn Oligo */}
+        <div className="flex flex-col gap-2.5 mb-3 p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mr-1">Trạng thái đơn:</span>
+            <button
+              type="button"
+              onClick={() => {
+                setStatus("");
+                setOnlyReady(false);
+              }}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                status === "" && !onlyReady
+                  ? "bg-slate-800 text-white border-slate-800 dark:bg-slate-100 dark:text-slate-900"
+                  : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
+              }`}
+            >
+              Tất cả ({statusCounts.ALL})
+            </button>
+            {Object.entries(ORDER_STATUS).map(([k, [, label]]) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => {
+                  setStatus(status === k ? "" : k);
+                  setOnlyReady(false);
+                }}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                  status === k
+                    ? "bg-sky-700 text-white border-sky-700"
+                    : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
+                }`}
+              >
+                {label} ({statusCounts[k] ?? 0})
+              </button>
+            ))}
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-12 items-center">
+            <div className="sm:col-span-2 lg:col-span-4 relative">
+              <input
+                className={`${inputClass} pr-8`}
+                placeholder="🔍 Tìm mã đơn, khách hàng, Đơn nội bộ/PO, tên mồi/probe, chuỗi 5'-3', ghi chú..."
+                value={searchQ}
+                onChange={(e) => setSearchQ(e.target.value)}
+              />
+              {searchQ && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQ("")}
+                  title="Xóa từ khóa tìm kiếm"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 text-xs font-bold cursor-pointer"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            <div className="lg:col-span-2">
+              <select
+                className={inputClass}
+                value={seqTypeFilter}
+                onChange={(e) => setSeqTypeFilter(e.target.value as typeof seqTypeFilter)}
+                aria-label="Lọc loại trình tự"
+              >
+                <option value="">Mọi loại chuỗi (PP / Amplicon)</option>
+                <option value="PRIMER_PROBE">🧪 Có Primer / Probe</option>
+                <option value="AMPLICON">🧬 Có Amplicon</option>
+              </select>
+            </div>
+
+            <div className="lg:col-span-2">
+              <select
+                className={inputClass}
+                value={purificationFilter}
+                onChange={(e) => setPurificationFilter(e.target.value)}
+                aria-label="Lọc phương pháp tinh sạch"
+              >
+                <option value="">Mọi tinh sạch (OPC/HPLC...)</option>
+                <option value="OPC">Tinh sạch OPC</option>
+                <option value="HPLC">Tinh sạch HPLC</option>
+                <option value="PAGE">Tinh sạch PAGE</option>
+                <option value="DESALT">Khử muối (DESALT)</option>
+              </select>
+            </div>
+
+            <div className="lg:col-span-2">
+              <select
+                className={inputClass}
+                value={dueFilter}
+                onChange={(e) => setDueFilter(e.target.value as typeof dueFilter)}
+                aria-label="Lọc hạn giao hàng"
+              >
+                <option value="">Mọi hạn giao hàng</option>
+                <option value="OVERDUE_TODAY">🚨 Quá hạn / Giao hôm nay</option>
+                <option value="NEXT_7_DAYS">📅 Giao trong 7 ngày tới</option>
+                <option value="DELAYED_SLA">⚠️ Trễ hơn ngày KD yêu cầu</option>
+                <option value="RESCHEDULED">🔄 Đã từng dời lịch giao</option>
+              </select>
+            </div>
+
+            <div className="lg:col-span-2 flex items-center gap-1.5">
+              <select
+                className={inputClass}
+                value={pricingFilter}
+                onChange={(e) => setPricingFilter(e.target.value)}
+                aria-label="Lọc chính sách giá"
+              >
+                <option value="">Mọi chính sách giá</option>
+                <option value="auto">Giá End 100%</option>
+                <option value="percentage">Giá Dealer (%)</option>
+                <option value="custom">Giá tự do</option>
+                <option value="demo">Đơn Demo 0đ</option>
+              </select>
+              {hasActiveFilters && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStatus("");
+                    setOnlyReady(false);
+                    setSearchQ("");
+                    setSeqTypeFilter("");
+                    setPurificationFilter("");
+                    setPricingFilter("");
+                    setDueFilter("");
+                  }}
+                  className="text-xs font-bold text-rose-600 hover:underline cursor-pointer whitespace-nowrap px-1"
+                  title="Xóa toàn bộ bộ lọc"
+                >
+                  Đặt lại
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
         <ErrorNote error={list.error} />
         {rows.length === 0 && (
           <Empty>
             {onlyReady
               ? "Không có đơn nào đang có trình tự đạt QC chờ in nhãn / giao hàng."
-              : "Chưa có đơn Oligo."}
+              : hasActiveFilters
+                ? "Không có đơn Oligo nào khớp từ khóa hoặc bộ lọc đang chọn."
+                : "Chưa có đơn Oligo."}
           </Empty>
         )}
         {rows.length > 0 && (
