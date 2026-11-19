@@ -51,6 +51,9 @@ services:
       INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
       ZALO_OA_SECRET_KEY: ${ZALO_OA_SECRET_KEY:-}
       DOCUMENT_LINK_TTL_DAYS: ${DOCUMENT_LINK_TTL_DAYS:-30}
+      # Trust CF-Connecting-IP / X-Real-IP from the local tunnel + nginx in front of the app (port bound to 127.0.0.1):
+      # real client IPs in the audit log and the login rate limit. Set TRUST_PROXY=true in the server's .env.
+      TRUST_PROXY: ${TRUST_PROXY:-false}
     volumes:
       - uploads_data:/app/uploads
     depends_on:
