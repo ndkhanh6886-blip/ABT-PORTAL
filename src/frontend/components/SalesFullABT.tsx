@@ -18515,6 +18515,97 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         showToast(`Đã gỡ hóa đơn/phiếu giao hàng khỏi giao dịch ${logId}!`, "info");
     };
 
+    /**
+     * Số đơn đang chờ giao / chờ xuất HĐ của từng khách, tính MỘT lần khi đơn / lịch sử SO / phiếu giao thay đổi
+     * (cùng quy tắc so khớp như trước: tên chứa nhau hoặc đúng mã khách). Trước đây các bộ đếm, bộ lọc và từng thẻ
+     * khách tính lại ở mỗi lần gõ ô tìm kiếm: 975 khách × (500+ đơn + lịch sử SO + phiếu giao), mỗi cặp còn tính lại
+     * trạng thái hóa đơn -> gõ phím rất chậm.
+     */
+    const customerOrderStats = useMemo(() => {
+        const lc = (v: any) => String(v || "").toLowerCase();
+        const activeReqs: { nm: string; a: any; b: any }[] = [];
+        const pendInvReqs: { nm: string; a: any; b: any }[] = [];
+        (factoryOrders || []).forEach((req: any) => {
+            const nm = req.customerName ? lc(req.customerName) : "";
+            if (req.status !== "Delivered" && req.status !== "Rejected" && req.status !== "CANCELLED") {
+                activeReqs.push({ nm, a: req.customerId, b: req.customer_id });
+            }
+            if ((req.status === "Delivered" || req.status === "COMPLETED") && resolveEffectiveInvoiceStatus(req) === "PENDING_INVOICE") {
+                pendInvReqs.push({ nm, a: req.customerId, b: req.customer_id });
+            }
+        });
+        const activeSo: string[] = [];
+        const pendInvSo: string[] = [];
+        (customerHistory || []).forEach((so: any) => {
+            const nm = so.customerName ? lc(so.customerName) : "";
+            if (!nm) return;
+            if (so.status !== "COMPLETED" && so.status !== "CANCELLED") activeSo.push(nm);
+            if ((so.status === "COMPLETED" || so.raw_status === "Delivered") && resolveEffectiveInvoiceStatus(so) === "PENDING_INVOICE") pendInvSo.push(nm);
+        });
+        const pendInvSlips: { nm: string; a: any }[] = [];
+        (deliverySlips || []).forEach((slip: any) => {
+            if (slip.isDelivered && resolveEffectiveInvoiceStatus(slip, [slip]) === "PENDING_INVOICE") {
+                pendInvSlips.push({ nm: slip.customerName ? lc(slip.customerName) : "", a: slip.customerId });
+            }
+        });
+        const nameHit = (x: string, cn: string) => Boolean(x && cn && (x.includes(cn) || cn.includes(x)));
+        const byCustomer = new Map<any, { activeOrders: number; activeSo: number; pendInvOrders: number; pendInvSo: number; pendInvSlip: boolean }>();
+        let pendingCount = 0;
+        let deliveredPendingInvoiceCount = 0;
+        (customers || []).forEach((c: any) => {
+            const cn = c?.name ? lc(c.name) : "";
+            const st = {
+                activeOrders: activeReqs.filter(r => nameHit(r.nm, cn) || r.a === c.id || r.b === c.id).length,
+                activeSo: cn ? activeSo.filter(nm => nameHit(nm, cn)).length : 0,
+                pendInvOrders: pendInvReqs.filter(r => nameHit(r.nm, cn) || r.a === c.id || r.b === c.id).length,
+                pendInvSo: cn ? pendInvSo.filter(nm => nameHit(nm, cn)).length : 0,
+                pendInvSlip: pendInvSlips.some(r => nameHit(r.nm, cn) || r.a === c.id),
+            };
+            byCustomer.set(c, st);
+            if (st.activeOrders > 0 || st.activeSo > 0) pendingCount++;
+            if (st.pendInvOrders > 0 || st.pendInvSo > 0 || st.pendInvSlip) deliveredPendingInvoiceCount++;
+        });
+        return { byCustomer, pendingCount, deliveredPendingInvoiceCount };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [customers, factoryOrders, customerHistory, deliverySlips]);
+    const emptyCustStats = { activeOrders: 0, activeSo: 0, pendInvOrders: 0, pendInvSo: 0, pendInvSlip: false };
+    const statsOfCustomer = (c: any) => customerOrderStats.byCustomer.get(c) || emptyCustStats;
+
+    // Đơn theo khách (đúng mã khách / mã KH / tên) để kiểm tra "NVKD từng lên SO cho khách" không phải quét toàn bộ đơn
+    const ordersByCustomerKey = useMemo(() => {
+        const m = new Map<string, any[]>();
+        const add = (k: string, fo: any) => { const arr = m.get(k); if (arr) arr.push(fo); else m.set(k, [fo]); };
+        (factoryOrders || []).forEach((fo: any) => {
+            if (fo.customerId) add(`id:${String(fo.customerId)}`, fo);
+            if (fo.customerCode) add(`code:${String(fo.customerCode).trim().toLowerCase()}`, fo);
+            if (fo.customerName) add(`name:${String(fo.customerName).trim().toLowerCase()}`, fo);
+        });
+        return m;
+    }, [factoryOrders]);
+
+    // Ô tìm kiếm phản hồi ngay; danh sách lọc theo ngay sau đó
+    const deferredCustomerQuery = useDeferredValue(searchCustomerQuery);
+
+    // Tìm không phân biệt dấu / kiểu bỏ dấu (thủy = thuỷ = thuy, Đ = D) và dạng mã hóa Unicode (NFC / NFD).
+    // Chuỗi tìm kiếm của từng khách dựng sẵn một lần (tên, mã, SĐT, email, liên hệ, khu vực, tỉnh, nhóm ngành, NVKD).
+    const foldSearch = (v: any) => String(v ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase();
+    const customerSearchIndex = useMemo(() => {
+        const repNameById = new Map<string, string>();
+        (salesPersonnel || []).forEach((p: any) => { if (p?.employee_id) repNameById.set(String(p.employee_id), String(p.full_name || "")); });
+        const m = new Map<any, string>();
+        (customers || []).forEach((c: any) => {
+            const repId = getCustomerAssignedRep(c);
+            const parts = [
+                c.name, c.customer_code, c.phone, c.email, c.contact_person, c.region, c.province, c.industry, c.classification,
+                repNameById.get(String(repId)) || c.sales_rep_name || "",
+                ...(Array.isArray(c.contacts) ? c.contacts.flatMap((ct: any) => [ct?.name, ct?.phone, ct?.email, ct?.position, ct?.department]) : []),
+            ];
+            m.set(c, foldSearch(parts.filter(Boolean).join(" \u0001 ")));
+        });
+        return m;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [customers, salesPersonnel]);
+
     const filteredCustomers = useMemo(() => {
         const userRepId = loggedInStaff?.employee_id;
         return customers.filter(c => {
@@ -18530,11 +18621,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             // Kiểm tra xem NVKD có từng lên đơn hàng SO cho khách hàng này hay không
             const hasOrderByRep = (targetRepId?: string, targetRepName?: string) => {
                 if (!targetRepId && !targetRepName) return false;
-                return factoryOrders.some(fo => {
-                    const custMatch = (fo.customerId && String(fo.customerId) === String(c.id)) ||
-                        (fo.customerCode && c.customer_code && String(fo.customerCode).trim().toLowerCase() === String(c.customer_code).trim().toLowerCase()) ||
-                        (fo.customerName && c.name && String(fo.customerName).trim().toLowerCase() === String(c.name).trim().toLowerCase());
-                    if (!custMatch) return false;
+                const candidates = [
+                    ...(ordersByCustomerKey.get(`id:${String(c.id)}`) || []),
+                    ...(c.customer_code ? (ordersByCustomerKey.get(`code:${String(c.customer_code).trim().toLowerCase()}`) || []) : []),
+                    ...(c.name ? (ordersByCustomerKey.get(`name:${String(c.name).trim().toLowerCase()}`) || []) : []),
+                ];
+                return candidates.some(fo => {
                     const matchId = targetRepId && (fo.salesRepId === targetRepId || fo.sales_rep_id === targetRepId);
                     const matchName = targetRepName && fo.salesRepName && String(fo.salesRepName).toLowerCase().includes(targetRepName.toLowerCase());
                     return Boolean(matchId || matchName);
@@ -18605,88 +18697,22 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
             // Order Status filter
             if (customerOrderStatusFilter !== "all") {
-                const activeReqs = factoryOrders.filter(req => {
-                    const nameMatch = req.customerName && c.name && (
-                        req.customerName.toLowerCase().includes(c.name.toLowerCase()) || 
-                        c.name.toLowerCase().includes(req.customerName.toLowerCase())
-                    );
-                    const idMatch = req.customerId === c.id || req.customer_id === c.id;
-                    return (nameMatch || idMatch) && req.status !== "Delivered" && req.status !== "Rejected" && req.status !== "CANCELLED";
-                });
-                const activeSoList = customerHistory.filter(so => {
-                    const nameMatch = so.customerName && c.name && (
-                        so.customerName.toLowerCase().includes(c.name.toLowerCase()) || 
-                        c.name.toLowerCase().includes(so.customerName.toLowerCase())
-                    );
-                    return nameMatch && so.status !== "COMPLETED" && so.status !== "CANCELLED";
-                });
-                const totalActive = Math.max(activeReqs.length, activeSoList.length);
+                const st = statsOfCustomer(c);
+                const totalActive = Math.max(st.activeOrders, st.activeSo);
                 if (customerOrderStatusFilter === "pending_orders" && totalActive === 0) return false;
                 if (customerOrderStatusFilter === "no_orders" && totalActive > 0) return false;
-
-                if (customerOrderStatusFilter === "pending_invoices") {
-                    const hasDeliveredPendingReq = factoryOrders.some(req => {
-                        const nameMatch = req.customerName && c.name && (
-                            req.customerName.toLowerCase().includes(c.name.toLowerCase()) || 
-                            c.name.toLowerCase().includes(req.customerName.toLowerCase())
-                        );
-                        const idMatch = req.customerId === c.id || req.customer_id === c.id;
-                        const isDelivered = req.status === "Delivered" || req.status === "COMPLETED";
-                        const effInv = resolveEffectiveInvoiceStatus(req);
-                        const isPendingInv = effInv === "PENDING_INVOICE";
-                        return (nameMatch || idMatch) && isDelivered && isPendingInv;
-                    });
-                    const hasDeliveredPendingSo = customerHistory.some(so => {
-                        const nameMatch = so.customerName && c.name && (
-                            so.customerName.toLowerCase().includes(c.name.toLowerCase()) || 
-                            c.name.toLowerCase().includes(so.customerName.toLowerCase())
-                        );
-                        const isDelivered = so.status === "COMPLETED" || so.raw_status === "Delivered";
-                        const effInv = resolveEffectiveInvoiceStatus(so);
-                        const isPendingInv = effInv === "PENDING_INVOICE";
-                        return nameMatch && isDelivered && isPendingInv;
-                    });
-                    const hasDeliveredSlip = deliverySlips.some(slip => {
-                        const nameMatch = slip.customerName && c.name && (
-                            slip.customerName.toLowerCase().includes(c.name.toLowerCase()) || 
-                            c.name.toLowerCase().includes(slip.customerName.toLowerCase())
-                        );
-                        const idMatch = slip.customerId === c.id;
-                        const isDelivered = slip.isDelivered;
-                        const effInv = resolveEffectiveInvoiceStatus(slip, [slip]);
-                        const isPendingInv = effInv === "PENDING_INVOICE";
-                        return (nameMatch || idMatch) && isDelivered && isPendingInv;
-                    });
-                    if (!hasDeliveredPendingReq && !hasDeliveredPendingSo && !hasDeliveredSlip) return false;
-                }
+                if (customerOrderStatusFilter === "pending_invoices" && !(st.pendInvOrders > 0 || st.pendInvSo > 0 || st.pendInvSlip)) return false;
             }
 
-            // Search query filter
-            if (searchCustomerQuery.trim()) {
-                const query = searchCustomerQuery.toLowerCase().trim();
-                const nameMatch = c.name?.toLowerCase().includes(query);
-                const codeMatch = c.customer_code?.toLowerCase().includes(query);
-                const phoneMatch = c.phone?.includes(query);
-                const emailMatch = c.email?.toLowerCase().includes(query);
-                const contactMatch = c.contact_person?.toLowerCase().includes(query);
-                const regionMatch = c.region?.toLowerCase().includes(query);
-                const provinceMatch = c.province?.toLowerCase().includes(query);
-                const industryMatch = (c.industry && c.industry.toLowerCase().includes(query)) || (c.classification && c.classification.toLowerCase().includes(query));
-                const repName = (salesPersonnel.find(p => p.employee_id === repId)?.full_name || c.sales_rep_name || "").toLowerCase();
-                const repMatch = repName.includes(query);
-                const contactsSubMatch = Array.isArray(c.contacts) && c.contacts.some((ct: any) => 
-                    (ct.name && ct.name.toLowerCase().includes(query)) ||
-                    (ct.phone && ct.phone.includes(query)) ||
-                    (ct.email && ct.email.toLowerCase().includes(query)) ||
-                    (ct.position && ct.position.toLowerCase().includes(query)) ||
-                    (ct.department && ct.department.toLowerCase().includes(query))
-                );
-                return nameMatch || codeMatch || phoneMatch || emailMatch || contactMatch || repMatch || regionMatch || provinceMatch || industryMatch || contactsSubMatch;
+            // Search query filter (không phân biệt dấu)
+            if (deferredCustomerQuery.trim()) {
+                const query = foldSearch(deferredCustomerQuery.trim());
+                return (customerSearchIndex.get(c) || "").includes(query);
             }
 
             return true;
         });
-    }, [customers, searchCustomerQuery, canManageAllOrders, isWarehouseStaff, isCrossDepartmentViewer, loggedInStaff?.employee_id, selectedWholesaleRepFilter, selectedCustomerTypeFilter, salesPersonnel, customerOrderStatusFilter, factoryOrders, deliverySlips, customerHistory, selectedCustomerRegionFilter, selectedCustomerProvinceFilter, selectedCustomerIndustryFilter, industryGroups]);
+    }, [customers, deferredCustomerQuery, canManageAllOrders, isWarehouseStaff, isCrossDepartmentViewer, loggedInStaff?.employee_id, selectedWholesaleRepFilter, selectedCustomerTypeFilter, salesPersonnel, customerOrderStatusFilter, factoryOrders, deliverySlips, customerHistory, selectedCustomerRegionFilter, selectedCustomerProvinceFilter, selectedCustomerIndustryFilter, industryGroups, customerOrderStats, ordersByCustomerKey, customerSearchIndex]);
 
     // Customer Pagination
     useEffect(() => {
@@ -20576,57 +20602,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div className="flex items-center gap-1.5 mb-2.5 overflow-x-auto pb-1">
                             {(() => {
                                 const allCount = customers.length;
-                                const pendingCount = customers.filter(c => {
-                                    const hasActiveReq = factoryOrders.some(req => {
-                                        const nameMatch = req.customerName && c.name && (
-                                            req.customerName.toLowerCase().includes(c.name.toLowerCase()) || 
-                                            c.name.toLowerCase().includes(req.customerName.toLowerCase())
-                                        );
-                                        const idMatch = req.customerId === c.id || req.customer_id === c.id;
-                                        return (nameMatch || idMatch) && req.status !== "Delivered" && req.status !== "Rejected" && req.status !== "CANCELLED";
-                                    });
-                                    const hasActiveSo = customerHistory.some(so => {
-                                        const nameMatch = so.customerName && c.name && (
-                                            so.customerName.toLowerCase().includes(c.name.toLowerCase()) || 
-                                            c.name.toLowerCase().includes(so.customerName.toLowerCase())
-                                        );
-                                        return nameMatch && so.status !== "COMPLETED" && so.status !== "CANCELLED";
-                                    });
-                                    return hasActiveReq || hasActiveSo;
-                                }).length;
-
-                                const deliveredPendingInvoiceCount = customers.filter(c => {
-                                    const hasDeliveredPendingReq = factoryOrders.some(req => {
-                                        const nameMatch = req.customerName && c.name && (
-                                            req.customerName.toLowerCase().includes(c.name.toLowerCase()) || 
-                                            c.name.toLowerCase().includes(req.customerName.toLowerCase())
-                                        );
-                                        const idMatch = req.customerId === c.id || req.customer_id === c.id;
-                                        const isDelivered = req.status === "Delivered" || req.status === "COMPLETED";
-                                        const isPendingInv = resolveEffectiveInvoiceStatus(req) === "PENDING_INVOICE";
-                                        return (nameMatch || idMatch) && isDelivered && isPendingInv;
-                                    });
-                                    const hasDeliveredPendingSo = customerHistory.some(so => {
-                                        const nameMatch = so.customerName && c.name && (
-                                            so.customerName.toLowerCase().includes(c.name.toLowerCase()) || 
-                                            c.name.toLowerCase().includes(so.customerName.toLowerCase())
-                                        );
-                                        const isDelivered = so.status === "COMPLETED" || so.raw_status === "Delivered";
-                                        const isPendingInv = resolveEffectiveInvoiceStatus(so) === "PENDING_INVOICE";
-                                        return nameMatch && isDelivered && isPendingInv;
-                                    });
-                                    const hasDeliveredSlip = deliverySlips.some(slip => {
-                                        const nameMatch = slip.customerName && c.name && (
-                                            slip.customerName.toLowerCase().includes(c.name.toLowerCase()) || 
-                                            c.name.toLowerCase().includes(slip.customerName.toLowerCase())
-                                        );
-                                        const idMatch = slip.customerId === c.id;
-                                        const isDelivered = slip.isDelivered;
-                                        const isPendingInv = resolveEffectiveInvoiceStatus(slip, [slip]) === "PENDING_INVOICE";
-                                        return (nameMatch || idMatch) && isDelivered && isPendingInv;
-                                    });
-                                    return hasDeliveredPendingReq || hasDeliveredPendingSo || hasDeliveredSlip;
-                                }).length;
+                                const pendingCount = customerOrderStats.pendingCount;
+                                const deliveredPendingInvoiceCount = customerOrderStats.deliveredPendingInvoiceCount;
 
                                 return (
                                     <>
@@ -20703,44 +20680,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     const rep = salesPersonnel.find(p => p.employee_id === repId);
                                     const repName = rep ? rep.full_name : (cust.sales_rep_name || repId);
                                     
-                                    // Check active / pending orders for this customer
-                                    const custActiveOrders = factoryOrders.filter(req => {
-                                        const nameMatch = req.customerName && cust.name && (
-                                            req.customerName.toLowerCase().includes(cust.name.toLowerCase()) || 
-                                            cust.name.toLowerCase().includes(req.customerName.toLowerCase())
-                                        );
-                                        const idMatch = req.customerId === cust.id || req.customer_id === cust.id;
-                                        return (nameMatch || idMatch) && req.status !== "Delivered" && req.status !== "Rejected" && req.status !== "CANCELLED";
-                                    });
-                                    const custActiveSo = customerHistory.filter(so => {
-                                        const nameMatch = so.customerName && cust.name && (
-                                            so.customerName.toLowerCase().includes(cust.name.toLowerCase()) || 
-                                            cust.name.toLowerCase().includes(so.customerName.toLowerCase())
-                                        );
-                                        return nameMatch && so.status !== "COMPLETED" && so.status !== "CANCELLED";
-                                    });
-                                    const totalPendingCust = Math.max(custActiveOrders.length, custActiveSo.length);
-
-                                    const custPendingInvOrders = factoryOrders.filter(req => {
-                                        const nameMatch = req.customerName && cust.name && (
-                                            req.customerName.toLowerCase().includes(cust.name.toLowerCase()) || 
-                                            cust.name.toLowerCase().includes(req.customerName.toLowerCase())
-                                        );
-                                        const idMatch = req.customerId === cust.id || req.customer_id === cust.id;
-                                        const isDelivered = req.status === "Delivered" || req.status === "COMPLETED";
-                                        const isPendingInv = resolveEffectiveInvoiceStatus(req) === "PENDING_INVOICE";
-                                        return (nameMatch || idMatch) && isDelivered && isPendingInv;
-                                    });
-                                    const custPendingInvSo = customerHistory.filter(so => {
-                                        const nameMatch = so.customerName && cust.name && (
-                                            so.customerName.toLowerCase().includes(cust.name.toLowerCase()) || 
-                                            cust.name.toLowerCase().includes(so.customerName.toLowerCase())
-                                        );
-                                        const isDelivered = so.status === "COMPLETED" || so.raw_status === "Delivered";
-                                        const isPendingInv = resolveEffectiveInvoiceStatus(so) === "PENDING_INVOICE";
-                                        return nameMatch && isDelivered && isPendingInv;
-                                    });
-                                    const totalPendingInvoicesCust = Math.max(custPendingInvOrders.length, custPendingInvSo.length);
+                                    // Số đơn đang chờ / chờ xuất HĐ của khách (tính sẵn một lần, xem customerOrderStats)
+                                    const custStats = statsOfCustomer(cust);
+                                    const totalPendingCust = Math.max(custStats.activeOrders, custStats.activeSo);
+                                    const totalPendingInvoicesCust = Math.max(custStats.pendInvOrders, custStats.pendInvSo);
 
                                     return (
                                         <div
