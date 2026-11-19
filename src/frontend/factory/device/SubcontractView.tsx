@@ -57,6 +57,9 @@ interface SubcontractData {
     line_count: number;
     status: string;
     version: number;
+    pr_id?: string | null;
+    pr_code?: string | null;
+    pr_status?: string | null;
   }[];
   evaluations: {
     id: string;
@@ -82,6 +85,9 @@ interface SubOrderDetail {
   warehouse_code: string;
   status: string;
   version: number;
+  pr_id?: string | null;
+  pr_code?: string | null;
+  pr_status?: string | null;
   actions: AllowedAction[];
   lines: {
     id: string;
@@ -99,6 +105,7 @@ interface SubOrderDetail {
     measured_value?: string | null;
     sample_qty?: number | null;
     lot_code: string | null;
+    document_code?: string | null;
     ncr_code: string | null;
   }[];
 }
@@ -156,6 +163,7 @@ export function SubcontractView() {
     measured_value: "120.01 mm",
     sample_qty: "5",
     iqc_dimension_note: "Đo kiểm panme/thước cặp đạt dung sai bản vẽ",
+    auto_release_to_stock: true,
   });
 
   const [evalForm, setEvalForm] = useState({
@@ -349,7 +357,7 @@ export function SubcontractView() {
             )}
 
             {sub.data && sub.data.orders.length > 0 ? (
-              <Table head={["Số đơn", "Nhà cung cấp", "Hẹn giao", "Trạng thái"]}>
+              <Table head={["Số đơn gia công", "PR Cung ứng", "Nhà cung cấp & Kho nhận", "Hẹn giao", "Trạng thái"]}>
                 {sub.data.orders.map((r) => {
                   const st = SUBCONTRACT_STATUS[r.status] ?? ["PENDING_QC", r.status];
                   return (
@@ -360,11 +368,21 @@ export function SubcontractView() {
                         selectedOrderId === r.id ? "bg-sky-50/70 dark:bg-sky-950/30 font-semibold" : ""
                       }`}
                     >
-                      <td className="py-2 pr-3 font-mono font-bold">{r.code}</td>
+                      <td className="py-2 pr-3 font-mono font-bold text-sky-700 dark:text-sky-400">{r.code}</td>
                       <td className="py-2 pr-3">
-                        {r.vendor_code} — {r.vendor_name}
+                        {r.pr_code ? (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-amber-100 dark:bg-amber-950/70 px-1.5 py-0.5 font-mono text-[11px] font-bold text-amber-900 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+                            🛒 {r.pr_code}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-slate-400">—</span>
+                        )}
                       </td>
-                      <td className="py-2 pr-3">{fmtDate(r.due_date)}</td>
+                      <td className="py-2 pr-3 text-xs">
+                        <div className="font-semibold">{r.vendor_code} — {r.vendor_name}</div>
+                        <div className="text-[11px] text-slate-500">Kho nhận: <span className="font-mono font-bold">{r.warehouse_code}</span></div>
+                      </td>
+                      <td className="py-2 pr-3 text-xs">{fmtDate(r.due_date)}</td>
                       <td className="py-2 pr-3">
                         <StatusBadge status={st[0]} label={st[1]} />
                       </td>
@@ -381,7 +399,7 @@ export function SubcontractView() {
         {d && (
           <div className="lg:col-span-7 flex flex-col gap-3">
             <Card
-              title={`Nghiệm thu IQC đơn gia công ${d.code} — ${d.vendor_name}`}
+              title={`Nghiệm thu IQC đơn gia công ${d.code} — ${d.vendor_name}${d.pr_code ? ` (PR Cung ứng: ${d.pr_code})` : ""}`}
               actions={
                 <div className="flex flex-wrap items-center gap-2">
                   <ActionBar
@@ -398,7 +416,7 @@ export function SubcontractView() {
               }
             >
               <div className="flex flex-col gap-3">
-                <Table head={["Chi tiết", "Dung sai / Thiết bị đo", "SL đặt", "Đạt / Làm lại / Hỏng", "Đơn giá", "Lô kho / NCR"]}>
+                <Table head={["Chi tiết", "Dung sai / Thiết bị đo", "SL đặt", "Đạt / Làm lại / Hỏng", "Đơn giá", "Lô kho / Phiếu NK / NCR"]}>
                   {d.lines.map((l) => (
                     <tr
                       key={l.id}
@@ -422,7 +440,9 @@ export function SubcontractView() {
                       </td>
                       <td className="py-2 pr-3">{fmtVnd(l.unit_price)}</td>
                       <td className="py-2 pr-3 font-mono text-[11px]">
-                        {l.lot_code ?? "—"} {l.ncr_code ? `· NCR: ${l.ncr_code}` : ""}
+                        <div>{l.lot_code ? `Lô: ${l.lot_code}` : "—"}</div>
+                        {l.document_code && <div className="text-sky-700 dark:text-sky-400 font-bold">Phiếu NK: {l.document_code}</div>}
+                        {l.ncr_code && <div className="text-rose-600 font-bold">NCR: {l.ncr_code}</div>}
                       </td>
                     </tr>
                   ))}
@@ -522,6 +542,16 @@ export function SubcontractView() {
                         onChange={(e) => setIqcForm({ ...iqcForm, iqc_dimension_note: e.target.value })}
                       />
                     </Field>
+                    <label className="flex items-center gap-2 p-2.5 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 text-xs font-semibold text-emerald-900 dark:text-emerald-200 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={iqcForm.auto_release_to_stock}
+                        onChange={(e) => setIqcForm({ ...iqcForm, auto_release_to_stock: e.target.checked })}
+                      />
+                      <span>
+                        ✅ Đã đạt IQC bản vẽ tại chỗ — Giải phóng lô (RELEASED) &amp; Nhập thẳng vào kệ chính của kho <b>{d.warehouse_code}</b> để sẵn sàng cấp phát / lắp ráp ngay (bỏ tích nếu muốn nhập vào Khu Biệt Trữ chờ QA duyệt riêng).
+                      </span>
+                    </label>
                     <LineDrawings key={iqcForm.line_id || d.lines[0].id} lineId={iqcForm.line_id || d.lines[0].id} />
                     <ErrorNote error={receiveMut.error} />
                     <div className="flex justify-end">
@@ -538,6 +568,7 @@ export function SubcontractView() {
                             measured_value: iqcForm.measured_value,
                             sample_qty: Number(iqcForm.sample_qty) || 1,
                             iqc_dimension_note: iqcForm.iqc_dimension_note,
+                            auto_release_to_stock: iqcForm.auto_release_to_stock,
                           })
                         }
                       >

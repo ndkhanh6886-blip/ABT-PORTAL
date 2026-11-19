@@ -49,6 +49,9 @@ export const subcontractOrderMachine = defineMachine<SubcontractOrderStatus, Sub
           },
         },
       ],
+      effects: async ({ tx, actor, updated }) => {
+        await syncSubcontractOrderToPr(tx, actor, updated.id);
+      },
     },
     {
       action: "mark_partial",
@@ -364,6 +367,107 @@ const createSubOrderSchema = z.object({
     .min(1, "nhập ít nhất 1 dòng chi tiết gia công"),
 });
 
+export async function syncSubcontractOrderToPr(tx: Tx, actor: AuthzActor, orderId: string) {
+  await tx.query("SAVEPOINT sp_sync_subcontract_pr");
+  try {
+    const existingPr = (
+      await tx.query(
+        "SELECT id, code, status FROM purchase.purchase_request WHERE purpose_entity_type = 'SUBCONTRACT_ORDER' AND purpose_entity_id = $1 LIMIT 1",
+        [orderId]
+      )
+    ).rows[0];
+    if (existingPr) {
+      await tx.query("RELEASE SAVEPOINT sp_sync_subcontract_pr");
+      return existingPr;
+    }
+
+    const so = (
+      await tx.query(
+        `SELECT so.*, p.code AS vendor_code, p.name AS vendor_name
+           FROM device.subcontract_order so
+           JOIN master.partner p ON p.id = so.vendor_id
+          WHERE so.id = $1`,
+        [orderId]
+      )
+    ).rows[0];
+    if (!so) {
+      await tx.query("RELEASE SAVEPOINT sp_sync_subcontract_pr");
+      return null;
+    }
+
+    const lines = (
+      await tx.query(
+        `SELECT sl.*, sp.code AS part_code, sp.name AS part_name, sp.process_type, sp.drawing_ref,
+                it.id AS item_id, it.code AS item_code, it.base_uom
+           FROM device.subcontract_line sl
+           JOIN device.subcontract_part sp ON sp.id = sl.part_id
+           JOIN master.item it ON it.id = sp.item_id
+          WHERE sl.order_id = $1
+          ORDER BY sl.line_no ASC`,
+        [orderId]
+      )
+    ).rows;
+    if (lines.length === 0) {
+      await tx.query("RELEASE SAVEPOINT sp_sync_subcontract_pr");
+      return null;
+    }
+
+    for (const l of lines) {
+      await tx.query("UPDATE master.item SET is_purchasable = true, status = 'ACTIVE' WHERE id = $1", [l.item_id]);
+    }
+
+    const prCode = await nextNumber(tx, "PURCHASE_REQUEST");
+    const estTotal = lines.reduce(
+      (sum: number, l: any) => sum + Number(l.qty_ordered || 0) * Number(l.unit_price || 0),
+      0
+    );
+    const partSummary = lines.map((l: any) => `${l.part_code} (${l.qty_ordered} ${l.base_uom})`).join(", ");
+    const reasonText = `[Gia công ngoài ${so.code}] Đặt gia công tại ${so.vendor_name} (${so.vendor_code}): ${partSummary}${so.notes ? ` — ${so.notes}` : ""}`.slice(0, 950);
+
+    const pr = (
+      await tx.query(
+        `INSERT INTO purchase.purchase_request
+           (code, org_unit_id, requester_id, target_warehouse_id, needed_by, reason, purpose_entity_type, purpose_entity_id, est_total, requires_bod, status, created_by, updated_by)
+         VALUES ($1, $2, $3, $4, $5, $6, 'SUBCONTRACT_ORDER', $7, $8, false, 'SUBMITTED', $3, $3)
+         RETURNING id, code, status`,
+        [
+          prCode,
+          so.org_unit_id,
+          actor.userId ?? SYSTEM_ACTOR.userId,
+          so.warehouse_id,
+          so.due_date ?? null,
+          reasonText,
+          so.id,
+          estTotal,
+        ]
+      )
+    ).rows[0];
+
+    for (const [idx, l] of lines.entries()) {
+      await tx.query(
+        `INSERT INTO purchase.purchase_request_line
+           (pr_id, line_no, item_id, qty, uom, qty_base, est_price, notes)
+         VALUES ($1, $2, $3, $4, $5, $4, $6, $7)`,
+        [
+          pr.id,
+          idx + 1,
+          l.item_id,
+          l.qty_ordered,
+          l.base_uom || "pcs",
+          l.unit_price ?? 0,
+          `Gia công ${l.process_type || "CNC"} (${l.part_code} - ${l.part_name}) tại ${so.vendor_name}`.slice(0, 480),
+        ]
+      );
+    }
+
+    await tx.query("RELEASE SAVEPOINT sp_sync_subcontract_pr");
+    return pr;
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_sync_subcontract_pr").catch(() => {});
+    return null;
+  }
+}
+
 export async function createSubcontractOrder(tx: Tx, actor: AuthzActor, input: unknown) {
   const d = parseInput(createSubOrderSchema, input);
   await authorize(tx, actor, "device.subcontract.manage", d.org_unit_id);
@@ -386,6 +490,9 @@ export async function createSubcontractOrder(tx: Tx, actor: AuthzActor, input: u
     );
   }
 
+  // Always mirror the Subcontract Order to Procurement (Cung ứng NVL) as a Purchase Request (PR)
+  await syncSubcontractOrderToPr(tx, actor, order.id);
+
   if (d.issue_now) {
     return runTransition(tx, subcontractOrderMachine, actor, { id: order.id, action: "issue", expectedVersion: order.version });
   }
@@ -403,6 +510,7 @@ const receiveLineSchema = z.object({
   sample_qty: z.coerce.number().int().min(1).optional().nullable(),
   iqc_dimension_note: z.string().trim().min(3, "nhập kết quả đo dung sai bản vẽ (IQC)").max(1000),
   to_location_id: z.string().uuid().optional().nullable(),
+  auto_release_to_stock: z.boolean().optional().default(false),
 });
 
 /**
@@ -451,42 +559,78 @@ export async function receiveSubcontractLine(tx: Tx, actor: AuthzActor, orderId:
   let lotId: string | null = line.lot_id;
   let stockDocId: string | null = line.stock_document_id;
 
-  // Strict rule: ONLY post into warehouse when qty_accepted > 0, and receive into QUARANTINE pending formal QC release
+  // Strict rule: ONLY post into warehouse when qty_accepted > 0
   if (d.qty_accepted > 0) {
     const item = await getItem(tx, line.item_id);
-    // Find or create an active quarantine location in the target warehouse so QUARANTINE lot receipt is valid
+    const releaseDirectly = Boolean(d.auto_release_to_stock);
     let locId: string | undefined;
-    if (d.to_location_id) {
-      const passedLoc = (
-        await tx.query("SELECT id, is_quarantine FROM master.location WHERE id = $1 AND warehouse_id = $2 AND status = 'ACTIVE'", [
-          d.to_location_id,
-          order.warehouse_id,
-        ])
-      ).rows[0];
-      if (passedLoc?.is_quarantine) {
-        locId = passedLoc.id;
+
+    if (releaseDirectly) {
+      // Find or create an active normal shelf location (is_quarantine = false) so the RELEASED lot is ready for immediate issue/distribution
+      if (d.to_location_id) {
+        const passedLoc = (
+          await tx.query(
+            "SELECT id, is_quarantine FROM master.location WHERE id = $1 AND warehouse_id = $2 AND status = 'ACTIVE'",
+            [d.to_location_id, order.warehouse_id]
+          )
+        ).rows[0];
+        if (passedLoc && !passedLoc.is_quarantine) {
+          locId = passedLoc.id;
+        }
+      }
+      if (!locId) {
+        locId = (
+          await tx.query(
+            "SELECT id FROM master.location WHERE warehouse_id = $1 AND is_quarantine = false AND status = 'ACTIVE' ORDER BY code LIMIT 1",
+            [order.warehouse_id]
+          )
+        ).rows[0]?.id;
+      }
+      if (!locId) {
+        locId = (
+          await tx.query(
+            `INSERT INTO master.location (warehouse_id, code, name, temperature_condition, is_quarantine, status)
+             VALUES ($1, 'KE-A1', 'Kệ Chính Linh Kiện Đạt IQC', 'RT', false, 'ACTIVE')
+             ON CONFLICT (warehouse_id, code) DO UPDATE SET is_quarantine = false, status = 'ACTIVE'
+             RETURNING id`,
+            [order.warehouse_id]
+          )
+        ).rows[0]?.id;
+      }
+    } else {
+      // Find or create an active quarantine location in the target warehouse so QUARANTINE lot receipt is valid
+      if (d.to_location_id) {
+        const passedLoc = (
+          await tx.query(
+            "SELECT id, is_quarantine FROM master.location WHERE id = $1 AND warehouse_id = $2 AND status = 'ACTIVE'",
+            [d.to_location_id, order.warehouse_id]
+          )
+        ).rows[0];
+        if (passedLoc?.is_quarantine) {
+          locId = passedLoc.id;
+        }
+      }
+      if (!locId) {
+        locId = (
+          await tx.query(
+            "SELECT id FROM master.location WHERE warehouse_id = $1 AND is_quarantine = true AND status = 'ACTIVE' ORDER BY code LIMIT 1",
+            [order.warehouse_id]
+          )
+        ).rows[0]?.id;
+      }
+      if (!locId) {
+        locId = (
+          await tx.query(
+            `INSERT INTO master.location (warehouse_id, code, name, temperature_condition, is_quarantine, status)
+             VALUES ($1, 'BIET-TRU-GC', 'Khu Biệt Trữ Chờ IQC Gia Công', 'RT', true, 'ACTIVE')
+             ON CONFLICT (warehouse_id, code) DO UPDATE SET is_quarantine = true, status = 'ACTIVE'
+             RETURNING id`,
+            [order.warehouse_id]
+          )
+        ).rows[0]?.id;
       }
     }
-    if (!locId) {
-      locId = (
-        await tx.query(
-          "SELECT id FROM master.location WHERE warehouse_id = $1 AND is_quarantine = true AND status = 'ACTIVE' ORDER BY code LIMIT 1",
-          [order.warehouse_id]
-        )
-      ).rows[0]?.id;
-    }
-    if (!locId) {
-      locId = (
-        await tx.query(
-          `INSERT INTO master.location (warehouse_id, code, name, temperature_condition, is_quarantine, status)
-           VALUES ($1, 'BIET-TRU-GC', 'Khu Biệt Trữ Chờ IQC Gia Công', 'RT', true, 'ACTIVE')
-           ON CONFLICT (warehouse_id, code) DO UPDATE SET is_quarantine = true, status = 'ACTIVE'
-           RETURNING id`,
-          [order.warehouse_id]
-        )
-      ).rows[0]?.id;
-    }
-    if (!locId) throw invalid("Kho nhận hàng gia công chưa có vị trí biệt trữ hoạt động.");
+    if (!locId) throw invalid("Kho nhận hàng gia công chưa có vị trí lưu kho hoạt động.");
 
     const lot = await createLot(tx, actor, {
       item_id: item.id,
@@ -496,7 +640,7 @@ export async function receiveSubcontractLine(tx: Tx, actor: AuthzActor, orderId:
       origin_entity_type: "SUBCONTRACT_ORDER",
       origin_entity_id: order.id,
     });
-    await tx.query("UPDATE inv.lot SET status = 'QUARANTINE' WHERE id = $1", [lot.id]);
+    await tx.query("UPDATE inv.lot SET status = $2 WHERE id = $1", [lot.id, releaseDirectly ? "RELEASED" : "QUARANTINE"]);
 
     const doc = await createStockDocument(
       tx,
@@ -507,7 +651,9 @@ export async function receiveSubcontractLine(tx: Tx, actor: AuthzActor, orderId:
         warehouse_id: order.warehouse_id,
         source_entity_type: "SUBCONTRACT_ORDER",
         source_entity_id: order.id,
-        notes: `Nhập biệt trữ chi tiết gia công chờ QC giải phóng (${order.code} - ${line.part_code})`,
+        notes: releaseDirectly
+          ? `Nhập kho & Giải phóng chi tiết gia công đạt IQC bản vẽ (${order.code} - ${line.part_code})`
+          : `Nhập biệt trữ chi tiết gia công chờ QC giải phóng (${order.code} - ${line.part_code})`,
         lines: [
           {
             item_id: item.id,
@@ -698,15 +844,42 @@ export async function createVendorEvaluation(tx: Tx, actor: AuthzActor, input: u
 
 export async function listSubcontractOrders(tx: Tx, actor: AuthzActor) {
   await authorizeAnywhere(tx, actor, "device.view");
+  // Ensure any existing subcontract order without a linked PR in Cung ứng NVL gets synchronized automatically
+  const unlinked = (
+    await tx.query(
+      `SELECT so.id
+         FROM device.subcontract_order so
+        WHERE so.status <> 'CANCELLED'
+          AND NOT EXISTS (
+            SELECT 1 FROM purchase.purchase_request pr
+             WHERE pr.purpose_entity_type = 'SUBCONTRACT_ORDER'
+               AND pr.purpose_entity_id = so.id
+          )
+        LIMIT 50`
+    )
+  ).rows;
+  for (const row of unlinked) {
+    await syncSubcontractOrderToPr(tx, actor, row.id);
+  }
+
   const rows = (
     await tx.query(
       `SELECT so.*, so.due_date::text AS due_date, u.name AS org_unit_name,
               p.code AS vendor_code, p.name AS vendor_name, w.code AS warehouse_code,
+              pr.id AS pr_id, pr.code AS pr_code, pr.status AS pr_status,
               (SELECT count(*)::int FROM device.subcontract_line sl WHERE sl.order_id = so.id) AS line_count
          FROM device.subcontract_order so
          JOIN core.org_unit u ON u.id = so.org_unit_id
          JOIN master.partner p ON p.id = so.vendor_id
          JOIN master.warehouse w ON w.id = so.warehouse_id
+         LEFT JOIN LATERAL (
+           SELECT id, code, status
+             FROM purchase.purchase_request
+            WHERE purpose_entity_type = 'SUBCONTRACT_ORDER'
+              AND purpose_entity_id = so.id
+            ORDER BY created_at DESC
+            LIMIT 1
+         ) pr ON true
         ORDER BY so.created_at DESC LIMIT 200`
     )
   ).rows;
@@ -721,11 +894,20 @@ export async function getSubcontractOrderDetail(tx: Tx, actor: AuthzActor, id: s
   const order = (
     await tx.query(
       `SELECT so.*, so.due_date::text AS due_date, u.name AS org_unit_name,
-              p.code AS vendor_code, p.name AS vendor_name, w.code AS warehouse_code
+              p.code AS vendor_code, p.name AS vendor_name, w.code AS warehouse_code,
+              pr.id AS pr_id, pr.code AS pr_code, pr.status AS pr_status
          FROM device.subcontract_order so
          JOIN core.org_unit u ON u.id = so.org_unit_id
          JOIN master.partner p ON p.id = so.vendor_id
          JOIN master.warehouse w ON w.id = so.warehouse_id
+         LEFT JOIN LATERAL (
+           SELECT id, code, status
+             FROM purchase.purchase_request
+            WHERE purpose_entity_type = 'SUBCONTRACT_ORDER'
+              AND purpose_entity_id = so.id
+            ORDER BY created_at DESC
+            LIMIT 1
+         ) pr ON true
         WHERE so.id = $1`,
       [id]
     )
