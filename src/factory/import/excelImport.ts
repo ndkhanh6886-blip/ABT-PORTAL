@@ -2119,8 +2119,36 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
               default_qty,
               uom: itemRes.base_uom.slice(0, 20),
             });
+          } else if (fType === "EQUIPMENT") {
+            let default_asset_id: string | null = null;
+            let equipment_category: string | null =
+              normStr(row.equipment_category || row["Nhóm thiết bị"]) || null;
+            if (rawItemCode) {
+              const matchedAsset = (
+                await tx.query(
+                  "SELECT id, equipment_category, name FROM asset.asset WHERE upper(code) = upper($1) LIMIT 1",
+                  [rawItemCode]
+                )
+              ).rows[0];
+              if (matchedAsset) {
+                default_asset_id = String(matchedAsset.id);
+                equipment_category =
+                  equipment_category ||
+                  (matchedAsset.equipment_category ? String(matchedAsset.equipment_category) : null);
+              }
+            }
+            const unit = normStr(row.unit || row.uom || row["Đơn vị"]) || (rawItemCode || null);
+            fields.push({
+              key,
+              label,
+              type: "EQUIPMENT",
+              unit: unit ? unit.slice(0, 20) : null,
+              required,
+              equipment_category,
+              default_asset_id,
+            });
           } else {
-            const unit = normStr(row.unit || row.uom || row["Đơn vị"]) || (fType === "EQUIPMENT" && rawItemCode ? rawItemCode : null);
+            const unit = normStr(row.unit || row.uom || row["Đơn vị"]) || null;
             fields.push({
               key,
               label,

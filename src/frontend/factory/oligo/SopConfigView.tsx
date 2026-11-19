@@ -20,7 +20,64 @@ export interface StepField {
   item_name?: string | null;
   default_qty?: number | null;
   uom?: string | null;
+  equipment_category?: string | null;
+  default_asset_id?: string | null;
+  asset_code?: string | null;
+  asset_name?: string | null;
 }
+
+export interface OligoAssetOption {
+  id: string;
+  code: string;
+  name: string;
+  asset_type: string;
+  equipment_category?: string | null;
+  status: string;
+  next_calibration_due?: string | null;
+}
+
+export function inferEquipmentGroup(a: {
+  name?: string | null;
+  asset_type?: string | null;
+  equipment_category?: string | null;
+}): string {
+  const explicit = String(a.equipment_category ?? "").trim();
+  if (explicit) return explicit;
+  const n = String(a.name ?? "").trim().toLowerCase();
+  const t = String(a.asset_type ?? "").trim().toUpperCase();
+  if (n.includes("ủ nhiệt") || n.includes("bể điều nhiệt") || n.includes("block nhiệt") || n.includes("thermomixer")) {
+    return "Máy ủ nhiệt";
+  }
+  if (n.includes("đông khô") || n.includes("cô đặc") || n.includes("cô quay") || n.includes("sấy")) {
+    return "Máy đông khô / Cô đặc";
+  }
+  if (t === "HPLC" || n.includes("hplc") || n.includes("sắc ký")) {
+    return "Hệ thống HPLC";
+  }
+  if (t === "CENTRIFUGE" || n.includes("ly tâm") || n.includes("spindown")) {
+    return "Máy ly tâm";
+  }
+  if (t === "SPECTROPHOTOMETER" || n.includes("nanodrop") || n.includes("quang phổ") || n.includes("đo od")) {
+    return "Máy đo OD / Quang phổ";
+  }
+  if (t === "SYNTHESIZER" || n.includes("tổng hợp")) {
+    return "Máy tổng hợp Oligo";
+  }
+  if (n.includes("vortex") || n.includes("máy lắc") || n.includes("khuấy")) {
+    return "Máy lắc / Khuấy / Vortex";
+  }
+  if (t === "BALANCE" || n.includes("cân") || n.includes("đo ph")) {
+    return "Cân / Máy đo pH";
+  }
+  if (t === "FREEZER" || n.includes("tủ đông") || n.includes("tủ mát") || n.includes("tủ lạnh") || n.includes("tủ âm")) {
+    return "Tủ lạnh / Tủ âm sâu";
+  }
+  if (n.includes("tủ hút") || n.includes("tủ an toàn")) {
+    return "Tủ hút / Tủ an toàn";
+  }
+  return "Thiết bị khác";
+}
+
 interface Method { id: string; category: string; name: string; kind: "STANDARD" | "QUANTIFICATION"; target_hours: number | null; fields: StepField[]; status: string; version: number }
 interface Workflow { id: string; name: string; description: string | null; purifications: string[]; steps: { method_id: string; name?: string | null }[]; revision: number; status: string; version: number }
 
@@ -50,6 +107,8 @@ function buildUniqueMethodFields(fields: StepField[]) {
       item_id: f.type === "REAGENT" ? f.item_id || null : null,
       default_qty: f.type === "REAGENT" ? f.default_qty ?? null : null,
       uom: f.type === "REAGENT" ? f.uom || null : null,
+      equipment_category: f.type === "EQUIPMENT" ? f.equipment_category || null : null,
+      default_asset_id: f.type === "EQUIPMENT" ? f.default_asset_id || null : null,
     };
   });
 }
@@ -114,6 +173,23 @@ function exportWorkflowsExcel(workflows: Workflow[], methods: Method[]) {
 function MethodEditor({ base, isClone, onClose }: { base?: Method; isClone?: boolean; onClose: () => void }) {
   const qc = useQueryClient();
   const isEdit = Boolean(base && !isClone);
+  const assetsQuery = useQuery({
+    queryKey: ["factory", "assets", "P-OLIGO"],
+    queryFn: () => api<OligoAssetOption[]>("/api/factory/assets?dept=P-OLIGO"),
+  });
+  const oligoAssets = assetsQuery.data ?? [];
+
+  const equipmentGroups = React.useMemo(() => {
+    const map = new Map<string, OligoAssetOption[]>();
+    for (const a of oligoAssets) {
+      const grp = inferEquipmentGroup(a);
+      const list = map.get(grp) ?? [];
+      list.push(a);
+      map.set(grp, list);
+    }
+    return Array.from(map.entries());
+  }, [oligoAssets]);
+
   const [m, setM] = useState({
     category: base?.category ?? "",
     name: isClone && base ? `${base.name} (Bản sao)` : (base?.name ?? ""),
@@ -173,28 +249,170 @@ function MethodEditor({ base, isClone, onClose }: { base?: Method; isClone?: boo
       </div>
       <datalist id="sop-categories">{["Cắt & khử bảo vệ", "Làm khô", "Tinh sạch", "Khử muối", "Đo OD", "QC", "Làm khô / đông khô", "Click chemistry", "Hoàn nguyên & chia ống"].map((c) => <option key={c} value={c} />)}</datalist>
       <div className="text-xs font-bold">Thông số ghi ở bước này</div>
-      {fields.map((f, i) => (
-        <div key={i} className="flex flex-wrap gap-2 items-center text-xs">
-          <input className={`${inputClass} w-48`} placeholder="Tên thông số" value={f.label} onChange={(e) => setF(i, { label: e.target.value })} required />
-          <select className={`${inputClass} w-40`} value={f.type} onChange={(e) => setF(i, { type: e.target.value as StepField["type"] })}>
-            {Object.entries(FIELD_TYPE).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-          {f.type === "NUMBER" && <input className={`${inputClass} w-20`} placeholder="Đơn vị" value={f.unit ?? ""} onChange={(e) => setF(i, { unit: e.target.value })} />}
-          {f.type === "REAGENT" && (
-            <>
-              <ItemPicker
-                value={f.item_id ?? ""}
-                current={f.item_code ? `${f.item_code} · ${f.item_name ?? ""}` : undefined}
-                onChange={(id) => setF(i, { item_id: id || null })}
+      {fields.map((f, i) => {
+        const selectedGroup = f.equipment_category ?? "";
+        const matchingGroupAssets = selectedGroup
+          ? oligoAssets.filter((a) => inferEquipmentGroup(a) === selectedGroup)
+          : oligoAssets;
+
+        return (
+          <div key={i} className="flex flex-wrap gap-2 items-center text-xs">
+            <input
+              className={`${inputClass} w-48`}
+              placeholder="Tên thông số"
+              value={f.label}
+              onChange={(e) => setF(i, { label: e.target.value })}
+              required
+            />
+            <select
+              className={`${inputClass} w-40`}
+              value={f.type}
+              onChange={(e) => {
+                const nextType = e.target.value as StepField["type"];
+                if (nextType === "EQUIPMENT") {
+                  // Tự động gợi ý nhóm thiết bị theo tên thông số (VD: "Máy ủ nhiệt")
+                  const matchedGrp = equipmentGroups.find(
+                    ([grp]) =>
+                      f.label.trim() &&
+                      (grp.toLowerCase().includes(f.label.trim().toLowerCase()) ||
+                        f.label.trim().toLowerCase().includes(grp.toLowerCase()))
+                  );
+                  const autoCat = matchedGrp ? matchedGrp[0] : (f.equipment_category ?? "");
+                  const autoList = matchedGrp ? matchedGrp[1] : [];
+                  const autoAssetId = autoList.length === 1 ? autoList[0].id : (f.default_asset_id ?? null);
+                  setF(i, {
+                    type: nextType,
+                    equipment_category: autoCat || null,
+                    default_asset_id: autoAssetId,
+                  });
+                } else {
+                  setF(i, { type: nextType });
+                }
+              }}
+            >
+              {Object.entries(FIELD_TYPE).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v}
+                </option>
+              ))}
+            </select>
+            {f.type === "NUMBER" && (
+              <input
+                className={`${inputClass} w-20`}
+                placeholder="Đơn vị"
+                value={f.unit ?? ""}
+                onChange={(e) => setF(i, { unit: e.target.value })}
               />
-              <input className={`${inputClass} w-24`} type="number" step="any" min="0" placeholder="Lượng mặc định" value={f.default_qty ?? ""} onChange={(e) => setF(i, { default_qty: e.target.value === "" ? null : Number(e.target.value) })} />
-              <input className={`${inputClass} w-16`} placeholder="ĐV" value={f.uom ?? ""} onChange={(e) => setF(i, { uom: e.target.value })} required />
-            </>
-          )}
-          {f.type !== "REAGENT" && <label className="flex items-center gap-1"><input type="checkbox" checked={f.required} onChange={(e) => setF(i, { required: e.target.checked })} />Bắt buộc</label>}
-          <button type="button" className="text-rose-600 cursor-pointer" onClick={() => setFields(fields.filter((_, j) => j !== i))}>Xóa</button>
-        </div>
-      ))}
+            )}
+            {f.type === "REAGENT" && (
+              <>
+                <ItemPicker
+                  value={f.item_id ?? ""}
+                  current={f.item_code ? `${f.item_code} · ${f.item_name ?? ""}` : undefined}
+                  onChange={(id) => setF(i, { item_id: id || null })}
+                />
+                <input
+                  className={`${inputClass} w-24`}
+                  type="number"
+                  step="any"
+                  min="0"
+                  placeholder="Lượng mặc định"
+                  value={f.default_qty ?? ""}
+                  onChange={(e) => setF(i, { default_qty: e.target.value === "" ? null : Number(e.target.value) })}
+                />
+                <input
+                  className={`${inputClass} w-16`}
+                  placeholder="ĐV"
+                  value={f.uom ?? ""}
+                  onChange={(e) => setF(i, { uom: e.target.value })}
+                  required
+                />
+              </>
+            )}
+            {f.type === "EQUIPMENT" && (
+              <>
+                <select
+                  className={`${inputClass} w-52`}
+                  value={selectedGroup}
+                  aria-label="Chọn nhóm thiết bị hiển thị"
+                  title="Chọn nhóm thiết bị để khi chạy bước chỉ hiển thị các máy thuộc nhóm này"
+                  onChange={(e) => {
+                    const nextCat = e.target.value;
+                    const groupList = nextCat
+                      ? oligoAssets.filter((a) => inferEquipmentGroup(a) === nextCat)
+                      : oligoAssets;
+                    // Nếu nhóm chỉ có đúng 1 thiết bị duy nhất -> tự động chọn luôn thiết bị mặc định
+                    const autoDefaultId =
+                      groupList.length === 1
+                        ? groupList[0].id
+                        : groupList.some((a) => a.id === f.default_asset_id)
+                          ? f.default_asset_id
+                          : null;
+                    setF(i, {
+                      equipment_category: nextCat || null,
+                      default_asset_id: autoDefaultId,
+                      ...(nextCat && !f.label.trim() ? { label: nextCat } : {}),
+                    });
+                  }}
+                >
+                  <option value="">🔧 Tất cả nhóm thiết bị ({oligoAssets.length} máy)</option>
+                  {equipmentGroups.map(([grp, list]) => (
+                    <option key={grp} value={grp}>
+                      🔧 Nhóm: {grp} ({list.length} máy)
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className={`${inputClass} w-64`}
+                  value={f.default_asset_id ?? ""}
+                  aria-label="Chọn thiết bị mặc định"
+                  title="Chọn thiết bị mặc định (hoặc để trống để KTV chọn trong nhóm khi chạy bước)"
+                  onChange={(e) => {
+                    const nextAssetId = e.target.value || null;
+                    const picked = oligoAssets.find((a) => a.id === nextAssetId);
+                    setF(i, {
+                      default_asset_id: nextAssetId,
+                      ...(picked && !f.equipment_category ? { equipment_category: inferEquipmentGroup(picked) } : {}),
+                      ...(picked && !f.label.trim() ? { label: picked.name } : {}),
+                    });
+                  }}
+                >
+                  <option value="">
+                    — Không cố định (Chọn trong {matchingGroupAssets.length} máy khi chạy) —
+                  </option>
+                  {matchingGroupAssets.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      ⭐ Mặc định: {a.code} · {a.name}
+                    </option>
+                  ))}
+                </select>
+                {matchingGroupAssets.length === 1 && (
+                  <span className="px-2 py-0.5 rounded-lg bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 text-[11px] font-bold">
+                    ✓ Nhóm chỉ có 1 máy duy nhất
+                  </span>
+                )}
+              </>
+            )}
+            {f.type !== "REAGENT" && (
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={f.required}
+                  onChange={(e) => setF(i, { required: e.target.checked })}
+                />
+                Bắt buộc
+              </label>
+            )}
+            <button
+              type="button"
+              className="text-rose-600 cursor-pointer"
+              onClick={() => setFields(fields.filter((_, j) => j !== i))}
+            >
+              Xóa
+            </button>
+          </div>
+        );
+      })}
       <div className="flex gap-2">
         <Button type="button" variant="ghost" onClick={() => setFields([...fields, blankField()])}>+ Thông số</Button>
         <Button type="button" variant="ghost" onClick={onClose}>Hủy</Button>
@@ -452,7 +670,9 @@ export function SopConfigView({ canManage }: { canManage: boolean }) {
                         .map((f) =>
                           f.type === "REAGENT"
                             ? `${f.label} (${f.item_code || FIELD_TYPE[f.type]}${f.default_qty != null ? `: ${f.default_qty} ${f.uom ?? ""}` : ""})`
-                            : `${f.label} (${FIELD_TYPE[f.type]}${f.unit ? ` ${f.unit}` : ""})`
+                            : f.type === "EQUIPMENT"
+                              ? `${f.label} (Thiết bị${f.equipment_category ? ` · Nhóm: ${f.equipment_category}` : ""}${f.asset_code ? ` · Mặc định: ${f.asset_code}` : f.unit ? ` · ${f.unit}` : ""})`
+                              : `${f.label} (${FIELD_TYPE[f.type]}${f.unit ? ` ${f.unit}` : ""})`
                         )
                         .join(" · ") || "—"}
                     </td>

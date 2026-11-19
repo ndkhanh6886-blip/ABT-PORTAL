@@ -72,6 +72,8 @@ const fieldSchema = z
     item_id: z.string().uuid().optional().nullable(),
     default_qty: z.coerce.number().min(0).optional().nullable(),
     uom: z.string().trim().max(20).optional().nullable(),
+    equipment_category: z.string().trim().max(150).optional().nullable(),
+    default_asset_id: z.string().uuid().optional().nullable(),
   })
   .refine((f) => f.type !== "REAGENT" || (f.item_id && f.uom), { message: "trường hóa chất cần mã hàng và đơn vị" });
 export type StepField = z.infer<typeof fieldSchema>;
@@ -289,17 +291,53 @@ export async function listSop(tx: Tx, actor: AuthzActor) {
       )
     )
   );
+  const assetIds = Array.from(
+    new Set(
+      methods.flatMap((m: any) =>
+        Array.isArray(m.fields)
+          ? m.fields
+              .filter((f: any) => f?.type === "EQUIPMENT" && typeof f?.default_asset_id === "string" && f.default_asset_id)
+              .map((f: any) => String(f.default_asset_id))
+          : []
+      )
+    )
+  );
+  const itemById = new Map<string, { code: string; name: string }>();
   if (itemIds.length > 0) {
     const items = (await tx.query("SELECT id, code, name FROM master.item WHERE id = ANY($1::uuid[])", [itemIds])).rows;
-    const byId = new Map<string, { code: string; name: string }>(
-      items.map((it: any) => [String(it.id), { code: String(it.code), name: String(it.name) }])
-    );
+    for (const it of items) {
+      itemById.set(String(it.id), { code: String(it.code), name: String(it.name) });
+    }
+  }
+  const assetById = new Map<string, { code: string; name: string; equipment_category: string | null }>();
+  if (assetIds.length > 0) {
+    const assets = (await tx.query("SELECT id, code, name, equipment_category FROM asset.asset WHERE id = ANY($1::uuid[])", [assetIds])).rows;
+    for (const a of assets) {
+      assetById.set(String(a.id), {
+        code: String(a.code),
+        name: String(a.name),
+        equipment_category: a.equipment_category ? String(a.equipment_category) : null,
+      });
+    }
+  }
+  if (itemById.size > 0 || assetById.size > 0) {
     for (const m of methods as any[]) {
       if (!Array.isArray(m.fields)) continue;
       m.fields = m.fields.map((f: any) => {
         if (f?.type === "REAGENT" && f?.item_id) {
-          const it = byId.get(String(f.item_id));
+          const it = itemById.get(String(f.item_id));
           if (it) return { ...f, item_code: it.code, item_name: it.name };
+        }
+        if (f?.type === "EQUIPMENT" && f?.default_asset_id) {
+          const a = assetById.get(String(f.default_asset_id));
+          if (a) {
+            return {
+              ...f,
+              asset_code: a.code,
+              asset_name: a.name,
+              equipment_category: f.equipment_category || a.equipment_category || null,
+            };
+          }
         }
         return f;
       });

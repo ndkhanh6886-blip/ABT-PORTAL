@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, fmtDate } from "../api";
 import { Button, ErrorNote, Field, inputClass, Table } from "../ui";
-import type { StepField } from "./SopConfigView";
+import { inferEquipmentGroup, type StepField } from "./SopConfigView";
 
 export interface FrozenStep { step_no: number; method_id: string; name: string; category: string; kind: "STANDARD" | "QUANTIFICATION"; target_hours: number | null; fields: StepField[] }
 export interface StepLog { step_no: number; step_name: string; values: Record<string, string | number | null>; performed_at: string; performed_by_name: string | null; stock_document_code: string | null }
@@ -12,7 +12,15 @@ export interface StepLog { step_no: number; step_name: string; values: Record<st
 interface ColumnOpt { id: string; code: string; name: string; status: string; runs_used: number; design_runs: number }
 const useColumns = () => useQuery({ queryKey: ["factory", "lc-columns"], queryFn: () => api<ColumnOpt[]>("/api/factory/assets/columns") });
 
-interface AssetOpt { id: string; code: string; name: string; asset_type: string; status: string; next_calibration_due: string | null }
+interface AssetOpt {
+  id: string;
+  code: string;
+  name: string;
+  asset_type: string;
+  equipment_category?: string | null;
+  status: string;
+  next_calibration_due: string | null;
+}
 
 /** The SOP of a record: steps done (who, when, values) and the next one to do. */
 /** Corrects the readings (numbers, text) of a logged step, with a reason; stock-moving fields are not editable. */
@@ -79,9 +87,79 @@ export function StepTable({ steps, logs, seqId, canCorrect, onCorrected }: { ste
 export function StepLogForm({ step, sequenceIds, odReady, onDone }: { step: FrozenStep; sequenceIds: string[]; odReady: boolean; onDone: () => void }) {
   const assets = useQuery({ queryKey: ["factory", "assets", "P-OLIGO"], queryFn: () => api<AssetOpt[]>("/api/factory/assets?dept=P-OLIGO") });
   const columns = useColumns();
-  const [values, setValues] = useState<Record<string, string>>(() =>
-    Object.fromEntries(step.fields.map((f) => [f.key, f.type === "REAGENT" && f.default_qty != null ? String(f.default_qty) : ""]))
+  const allAssets = assets.data ?? [];
+
+  const equipmentGroups = React.useMemo(() => {
+    const map = new Map<string, AssetOpt[]>();
+    for (const a of allAssets) {
+      const grp = inferEquipmentGroup(a);
+      const list = map.get(grp) ?? [];
+      list.push(a);
+      map.set(grp, list);
+    }
+    return Array.from(map.entries());
+  }, [allAssets]);
+
+  const [groupFilterByField, setGroupFilterByField] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      step.fields
+        .filter((f) => f.type === "EQUIPMENT")
+        .map((f) => [f.key, f.equipment_category ?? ""])
+    )
   );
+
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      step.fields.map((f) => [
+        f.key,
+        f.type === "REAGENT" && f.default_qty != null
+          ? String(f.default_qty)
+          : f.type === "EQUIPMENT" && f.default_asset_id
+            ? String(f.default_asset_id)
+            : "",
+      ])
+    )
+  );
+
+  // Tự động chọn thiết bị mặc định (hoặc thiết bị duy nhất của nhóm) khi danh sách thiết bị tải xong
+  useEffect(() => {
+    if (!allAssets.length) return;
+    setValues((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const f of step.fields) {
+        if (f.type !== "EQUIPMENT" || next[f.key]) continue;
+        // 1. Có default_asset_id từ cấu hình SOP
+        if (f.default_asset_id && allAssets.some((a) => a.id === f.default_asset_id)) {
+          next[f.key] = f.default_asset_id;
+          changed = true;
+          continue;
+        }
+        // 2. Có mã thiết bị lưu trong f.unit từ file Excel import (VD: PO-HIM.01)
+        if (f.unit) {
+          const byCode = allAssets.find((a) => a.code.toUpperCase() === f.unit!.trim().toUpperCase());
+          if (byCode) {
+            next[f.key] = byCode.id;
+            changed = true;
+            continue;
+          }
+        }
+        // 3. Nhóm thiết bị chỉ có 1 thiết bị duy nhất đang sẵn sàng (IN_SERVICE)
+        const targetGrp = f.equipment_category || "";
+        if (targetGrp) {
+          const inGroup = allAssets.filter(
+            (a) => inferEquipmentGroup(a) === targetGrp && a.status === "IN_SERVICE"
+          );
+          if (inGroup.length === 1) {
+            next[f.key] = inGroup[0].id;
+            changed = true;
+          }
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [allAssets, step.fields]);
+
   const log = useMutation({
     mutationFn: () =>
       api("/api/factory/oligo/post/steps", {
@@ -98,36 +176,84 @@ export function StepLogForm({ step, sequenceIds, odReady, onDone }: { step: Froz
         {sequenceIds.length > 1 && <span className="font-normal"> — cho {sequenceIds.length} trình tự</span>}
       </div>
       {step.kind === "QUANTIFICATION" && !odReady && <p className="text-[11px] text-amber-700 dark:text-amber-400">Nhập và lưu kết quả đo OD trước khi xác nhận bước này.</p>}
-      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4 items-end">
-        {step.fields.map((f) => (
-          <Field key={f.key} label={`${f.label}${f.required && f.type !== "REAGENT" ? " *" : ""}`} hint={f.type === "REAGENT" ? `${f.uom} / trình tự, trừ kho khi xác nhận` : f.unit ?? undefined}>
-            {f.type === "COLUMN" ? (
-              <select className={inputClass} value={values[f.key] ?? ""} onChange={(e) => setValues({ ...values, [f.key]: e.target.value })} required={f.required}>
-                <option value="">Chọn cột</option>
-                {columns.data?.filter((c) => c.status === "ACTIVE").map((c) => (
-                  <option key={c.id} value={c.id}>{c.code} · {c.name} ({c.runs_used}/{c.design_runs} lượt)</option>
-                ))}
-              </select>
-            ) : f.type === "EQUIPMENT" ? (
-              <select className={inputClass} value={values[f.key] ?? ""} onChange={(e) => setValues({ ...values, [f.key]: e.target.value })} required={f.required}>
-                <option value="">Chọn thiết bị</option>
-                {assets.data?.map((a) => (
-                  <option key={a.id} value={a.id} disabled={a.status !== "IN_SERVICE"}>
-                    {a.code} · {a.name}{a.next_calibration_due ? ` (HC ${fmtDate(a.next_calibration_due)})` : ""}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input
-                className={inputClass}
-                inputMode={f.type === "TEXT" ? "text" : "decimal"}
-                value={values[f.key] ?? ""}
-                onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
-                required={f.required && f.type !== "REAGENT"}
-              />
-            )}
-          </Field>
-        ))}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 items-end">
+        {step.fields.map((f) => {
+          const activeGrp = groupFilterByField[f.key] ?? f.equipment_category ?? "";
+          const filteredAssets = activeGrp
+            ? allAssets.filter((a) => inferEquipmentGroup(a) === activeGrp)
+            : allAssets;
+
+          return (
+            <Field
+              key={f.key}
+              label={`${f.label}${f.required && f.type !== "REAGENT" ? " *" : ""}`}
+              hint={
+                f.type === "REAGENT"
+                  ? `${f.uom} / trình tự, trừ kho khi xác nhận`
+                  : f.type === "EQUIPMENT" && activeGrp
+                    ? `Nhóm: ${activeGrp} (${filteredAssets.length} máy)`
+                    : f.unit ?? undefined
+              }
+            >
+              {f.type === "COLUMN" ? (
+                <select className={inputClass} value={values[f.key] ?? ""} onChange={(e) => setValues({ ...values, [f.key]: e.target.value })} required={f.required}>
+                  <option value="">Chọn cột</option>
+                  {columns.data?.filter((c) => c.status === "ACTIVE").map((c) => (
+                    <option key={c.id} value={c.id}>{c.code} · {c.name} ({c.runs_used}/{c.design_runs} lượt)</option>
+                  ))}
+                </select>
+              ) : f.type === "EQUIPMENT" ? (
+                <div className="flex flex-col gap-1">
+                  {equipmentGroups.length > 1 && (
+                    <select
+                      className={`${inputClass} text-xs py-1`}
+                      value={activeGrp}
+                      aria-label={`Lọc nhóm thiết bị cho ${f.label}`}
+                      onChange={(e) => {
+                        const nextGrp = e.target.value;
+                        setGroupFilterByField((prev) => ({ ...prev, [f.key]: nextGrp }));
+                        const grpAssets = nextGrp
+                          ? allAssets.filter((a) => inferEquipmentGroup(a) === nextGrp && a.status === "IN_SERVICE")
+                          : allAssets.filter((a) => a.status === "IN_SERVICE");
+                        if (grpAssets.length === 1) {
+                          setValues((prev) => ({ ...prev, [f.key]: grpAssets[0].id }));
+                        }
+                      }}
+                    >
+                      <option value="">🔧 Tất cả nhóm thiết bị ({allAssets.length} máy)</option>
+                      {equipmentGroups.map(([grp, list]) => (
+                        <option key={grp} value={grp}>
+                          🔧 Nhóm: {grp} ({list.length} máy)
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <select
+                    className={inputClass}
+                    value={values[f.key] ?? ""}
+                    onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
+                    required={f.required}
+                  >
+                    <option value="">Chọn thiết bị ({filteredAssets.length} máy)</option>
+                    {filteredAssets.map((a) => (
+                      <option key={a.id} value={a.id} disabled={a.status !== "IN_SERVICE"}>
+                        {a.code} · {a.name}{a.next_calibration_due ? ` (HC ${fmtDate(a.next_calibration_due)})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <input
+                  className={inputClass}
+                  inputMode={f.type === "TEXT" ? "text" : "decimal"}
+                  value={values[f.key] ?? ""}
+                  onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
+                  required={f.required && f.type !== "REAGENT"}
+                />
+              )}
+            </Field>
+          );
+        })}
       </div>
       <div><Button type="submit" disabled={log.isPending || (step.kind === "QUANTIFICATION" && !odReady)}>Xác nhận hoàn tất bước</Button></div>
       <ErrorNote error={log.error} />
