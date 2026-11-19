@@ -758,10 +758,19 @@ export function VisualLabelCanvas({
           setDraggingField(fieldId);
         };
 
-        // 1. Logo ABT (official company logo PNG)
+        // 1. Logo ABT (official company logo PNG with vector fallback)
         if (fieldId === "logo") {
           const wMm = pos.width_mm ?? (config.width_mm >= 65 ? 17.5 : 11);
           const hMm = pos.height_mm ?? (config.width_mm >= 65 ? 9.2 : 5.8);
+          const fallbackLogoSvg =
+            "data:image/svg+xml;utf8," +
+            encodeURIComponent(
+              `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 190">
+                <text x="8" y="132" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="144" fill="#0066ff" letter-spacing="2">ABT</text>
+                <text x="6" y="168" font-family="Georgia, 'Times New Roman', serif" font-style="italic" font-weight="700" font-size="19.5" fill="#0066ff">The Next Generation of Biotech Solution</text>
+                <rect x="6" y="177" width="348" height="5.5" fill="#0066ff" rx="1"/>
+              </svg>`
+            );
           return (
             <div
               key={fieldId}
@@ -784,6 +793,12 @@ export function VisualLabelCanvas({
                 src="/logo-abt.png"
                 alt="ABT"
                 draggable={false}
+                onError={(e) => {
+                  const img = e.currentTarget;
+                  if (img.src !== fallbackLogoSvg) {
+                    img.src = fallbackLogoSvg;
+                  }
+                }}
                 style={{
                   width: "100%",
                   height: "100%",
