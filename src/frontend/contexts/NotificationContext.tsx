@@ -534,13 +534,25 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
     const [selectedEmployeeFilter, setSelectedEmployeeFilter] = useState<string>("MINE");
 
     // All activity notifications
+    const sanitizeBroadNotificationTargets = (list: Notification[]): Notification[] =>
+        list.map((n) => {
+            if (Array.isArray(n?.targetEmployeeNames) && n.targetEmployeeNames.length > 12) {
+                const titleColon = String(n.title || "").split(":").slice(1).join(":").trim();
+                return {
+                    ...n,
+                    targetEmployeeNames: titleColon ? [titleColon] : []
+                };
+            }
+            return n;
+        });
+
     const [allNotifications, setAllNotifications] = useState<Notification[]>(() => {
         if (typeof window !== "undefined") {
             const stored = localStorage.getItem("tbr_activity_notifications");
             if (stored) {
                 try {
                     const parsed = JSON.parse(stored);
-                    if (Array.isArray(parsed)) return parsed;
+                    if (Array.isArray(parsed)) return sanitizeBroadNotificationTargets(parsed);
                 } catch (err) {}
             }
         }

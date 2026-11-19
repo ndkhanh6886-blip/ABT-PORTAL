@@ -2036,9 +2036,15 @@ export function ProposalsApprovalView({
           const lvTo = formatDayVN(proposal.formValues?.toDate || proposal.neededByDate);
           const lvDays = proposal.formValues?.totalDays || "1";
           const lvHandover = proposal.formValues?.handoverStaff || "Đồng nghiệp cùng phòng";
+          const matchedHandoverStaff = allStaffNames.filter((n) => isSamePerson(n, lvHandover));
           notifyTitle = `🏖️ THÔNG BÁO NGHỈ PHÉP [${proposal.proposalCode}]: ${proposal.requesterName}`;
           notifyMsg = `${proposal.requesterName} (${proposal.requesterDept}) nghỉ ${lvDays} ngày (${lvFrom} → ${lvTo} • ${lvType}). Người nhận bàn giao công việc: ${lvHandover}. Đã được ${currentStaffName} phê duyệt.`;
-          notifyTargets = [...allStaffNames];
+          notifyTargets = [
+            proposal.requesterName,
+            ...matchedHandoverStaff,
+            ...(proposal.steps || []).map((s) => s.approverName).filter(Boolean),
+            ...(proposal.followers || [])
+          ];
         } else {
           notifyTitle = `🎉 ĐÃ PHÊ DUYỆT HOÀN TẤT [${proposal.proposalCode}]`;
           notifyMsg = `Đề xuất "${proposal.title}" của ${proposal.requesterName} đã được ${currentStaffName} phê duyệt hoàn tất${uploadedFilesNote}!${note ? ` Chỉ đạo: "${note}"` : ""}`;

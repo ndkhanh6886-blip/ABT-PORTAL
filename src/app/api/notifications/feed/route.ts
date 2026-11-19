@@ -200,6 +200,43 @@ export async function GET(req: NextRequest) {
 
     const storedRaw = storageMap.get("tbr_activity_notifications");
     const storedList: any[] = Array.isArray(storedRaw) ? storedRaw : [];
+    const proposalsRaw = storageMap.get("workspace_proposals");
+    const proposalsList: any[] = Array.isArray(proposalsRaw) ? proposalsRaw : [];
+    const proposalByCode = new Map<string, any>();
+    for (const p of proposalsList) {
+      if (p?.proposalCode) proposalByCode.set(String(p.proposalCode).toUpperCase(), p);
+    }
+
+    let storedListCleaned = false;
+    for (const n of storedList) {
+      if (Array.isArray(n?.targetEmployeeNames) && n.targetEmployeeNames.length > 12) {
+        const codes = extractCodes(`${n?.title || ""} ${n?.message || ""}`);
+        const matchedProp = codes.map((c) => proposalByCode.get(c)).find(Boolean);
+        if (matchedProp) {
+          const steps: any[] = Array.isArray(matchedProp.steps) ? matchedProp.steps : [];
+          const stepApprovers = steps.flatMap((s) => splitNames(s?.decidedBy || s?.approverName));
+          const cleanTargets = Array.from(
+            new Set([
+              ...splitNames(matchedProp.requesterName),
+              ...stepApprovers,
+              ...(Array.isArray(matchedProp.followers) ? matchedProp.followers : []),
+            ].filter(Boolean))
+          );
+          n.targetEmployeeNames = cleanTargets;
+          storedListCleaned = true;
+        } else {
+          const titleColon = String(n?.title || "").split(":").slice(1).join(":").trim();
+          n.targetEmployeeNames = titleColon ? [titleColon] : [];
+          storedListCleaned = true;
+        }
+      }
+    }
+    if (storedListCleaned) {
+      query(
+        `UPDATE app_storage SET data = $2::jsonb, updated_at = CURRENT_TIMESTAMP WHERE key = $1`,
+        ["tbr_activity_notifications", JSON.stringify(storedList)]
+      ).catch(() => {});
+    }
 
     const receiptsRaw = storageMap.get("notification_read_receipts");
     const receipts: Record<string, string[]> =
@@ -296,8 +333,6 @@ export async function GET(req: NextRequest) {
     }
 
     // 4. Live Proposals (workspace_proposals)
-    const proposalsRaw = storageMap.get("workspace_proposals");
-    const proposalsList: any[] = Array.isArray(proposalsRaw) ? proposalsRaw : [];
     const sortedProposals = [...proposalsList]
       .filter((p) => p && p.status && p.status !== "DRAFT" && p.status !== "WITHDRAWN")
       .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime())
