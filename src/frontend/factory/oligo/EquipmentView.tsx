@@ -565,7 +565,7 @@ export function EquipmentView({
                         <SynthPortsPanel
                           key={a.id}
                           synthId={a.id}
-                          canConfigure={canManageAssets}
+                          canConfigure={canManageAssets || canManageRules || canOperate}
                           canOperate={canOperate}
                           onClose={() => setPortsOf(null)}
                         />

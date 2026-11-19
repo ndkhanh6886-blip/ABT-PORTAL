@@ -1,9 +1,9 @@
 import { z } from "zod/v3";
 import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
-import { authorize, type AuthzActor } from "../core/authz";
+import { authorize, hasFactoryPermission, type AuthzActor } from "../core/authz";
 import { vnToday } from "../core/dates";
-import { conflict, invalid, notFound } from "../core/errors";
+import { conflict, forbidden, invalid, notFound } from "../core/errors";
 import { parseInput } from "../core/records";
 import { runTransition } from "../core/stateMachine";
 import { allocate, findCandidates } from "../inv/allocation";
@@ -120,7 +120,12 @@ const portsSchema = z.object({
 export async function configurePorts(tx: Tx, actor: AuthzActor, synthId: string, input: unknown) {
   const { ports } = parseInput(portsSchema, input);
   const synth = await synthesizer(tx, synthId);
-  await authorize(tx, actor, "asset.manage", synth.owner_org_unit_id);
+  const canConfig =
+    Boolean(actor.isRootAdmin || actor.isPortalAdmin) ||
+    (await hasFactoryPermission(tx, actor, "asset.manage", synth.owner_org_unit_id)) ||
+    (await hasFactoryPermission(tx, actor, "oligo.reagent.manage", synth.owner_org_unit_id)) ||
+    (await hasFactoryPermission(tx, actor, "oligo.batch.manage", synth.owner_org_unit_id));
+  if (!canConfig) throw forbidden("Bạn chưa có quyền cấu hình cổng hóa chất máy tổng hợp.");
   const running = await runningBatch(tx, synthId);
   if (running) throw conflict(`Máy đang chạy mẻ ${running}: cấu hình cổng sau khi mẻ kết thúc.`, "SYNTHESIZER_RUNNING");
   if (new Set(ports.map((p) => p.port_no)).size !== ports.length) throw invalid("Trùng số cổng.");
@@ -148,18 +153,30 @@ export async function configurePorts(tx: Tx, actor: AuthzActor, synthId: string,
   }
   for (const p of ports) {
     const resolvedItemId = p.item_id ?? (await itemForRole(tx, p.role));
+    const existingPort = cur.find((c) => c.port_no === p.port_no && c.role === p.role);
+    let keepCurrentLotId = existingPort?.current_lot_id ?? null;
+    if (keepCurrentLotId && resolvedItemId) {
+      const lotItem = (await tx.query("SELECT item_id FROM inv.lot WHERE id = $1", [keepCurrentLotId])).rows[0]?.item_id;
+      if (lotItem !== resolvedItemId) {
+        await event(tx, actor, synthId, p.port_no, p.role, "REMOVE", {
+          old_lot_id: keepCurrentLotId,
+          notes: "Đổi mã hóa chất kho liên kết trên cổng",
+        });
+        keepCurrentLotId = null;
+      }
+    }
     await tx.query(
-      `INSERT INTO oligo.synth_port (synthesizer_id, port_no, role, label, item_id, open_stability_hours) VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO oligo.synth_port (synthesizer_id, port_no, role, label, item_id, current_lot_id, open_stability_hours) VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (synthesizer_id, port_no) DO UPDATE
          SET label = EXCLUDED.label,
              item_id = EXCLUDED.item_id,
-             open_stability_hours = CASE WHEN $7 THEN EXCLUDED.open_stability_hours ELSE oligo.synth_port.open_stability_hours END,
+             current_lot_id = $6,
+             open_stability_hours = CASE WHEN $8 THEN EXCLUDED.open_stability_hours ELSE oligo.synth_port.open_stability_hours END,
              version = oligo.synth_port.version + 1`,
-      [synthId, p.port_no, p.role, p.label ?? null, resolvedItemId, p.open_stability_hours ?? null, p.open_stability_hours !== undefined]
+      [synthId, p.port_no, p.role, p.label ?? null, resolvedItemId, keepCurrentLotId, p.open_stability_hours ?? null, p.open_stability_hours !== undefined]
     );
     if (p.current_lot_id !== undefined) {
-      const existingPort = cur.find((c) => c.port_no === p.port_no && c.role === p.role);
-      if (p.current_lot_id !== (existingPort?.current_lot_id ?? null)) {
+      if (p.current_lot_id !== keepCurrentLotId) {
         if (p.current_lot_id) {
           await checkLotForRole(tx, synth, p.role, p.current_lot_id, resolvedItemId);
         }
@@ -169,7 +186,7 @@ export async function configurePorts(tx: Tx, actor: AuthzActor, synthId: string,
         );
         await event(tx, actor, synthId, p.port_no, p.role, p.current_lot_id ? "INSTALL" : "REMOVE", {
           lot_id: p.current_lot_id,
-          old_lot_id: existingPort?.current_lot_id ?? null,
+          old_lot_id: keepCurrentLotId,
         });
       }
     }

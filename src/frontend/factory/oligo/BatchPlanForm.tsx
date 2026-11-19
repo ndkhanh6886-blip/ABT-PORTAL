@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, fmtDate, fmtQty } from "../api";
 import { Button, Empty, ErrorNote, Field, inputClass, Table } from "../ui";
+import { SynthPortsPanel } from "./SynthPortsPanel";
 import { PURIFICATION, useOligoUnits } from "./shared";
 
 interface Candidates {
@@ -48,6 +49,7 @@ export function BatchPlanForm({ onCreated }: { onCreated: (id: string) => void }
   const [picked, setPicked] = useState<string[]>([]);
   const [program, setProgram] = useState("");
   const [allowAdjacentContam, setAllowAdjacentContam] = useState(false);
+  const [showPortsConfig, setShowPortsConfig] = useState(false);
 
   // Bộ lọc trình tự theo Đơn hàng, Vai trò, Thang tổng hợp & Từ khóa
   const [orderFilter, setOrderFilter] = useState("ALL");
@@ -203,14 +205,26 @@ export function BatchPlanForm({ onCreated }: { onCreated: (id: string) => void }
           </Field>
         )}
         <Field label="1. Máy tổng hợp (dạng cột) *">
-          <select className={inputClass} value={synthId} onChange={(e) => { setSynthId(e.target.value); setPicked([]); }}>
-            <option value="">— Chọn máy tổng hợp —</option>
-            {cand.data?.synthesizers.map((s) => (
-              <option key={s.id} value={s.id} disabled={s.status !== "IN_SERVICE"}>
-                {s.code} · {s.name} ({s.column_positions} cột{s.next_calibration_due ? `, HC ${fmtDate(s.next_calibration_due)}` : ""})
-              </option>
-            ))}
-          </select>
+          <div className="flex items-center gap-1.5">
+            <select className={`${inputClass} flex-1 min-w-0`} value={synthId} onChange={(e) => { setSynthId(e.target.value); setPicked([]); }}>
+              <option value="">— Chọn máy tổng hợp —</option>
+              {cand.data?.synthesizers.map((s) => (
+                <option key={s.id} value={s.id} disabled={s.status !== "IN_SERVICE"}>
+                  {s.code} · {s.name} ({s.column_positions} cột{s.next_calibration_due ? `, HC ${fmtDate(s.next_calibration_due)}` : ""})
+                </option>
+              ))}
+            </select>
+            {synthId && (
+              <Button
+                type="button"
+                variant={showPortsConfig ? "primary" : "ghost"}
+                onClick={() => setShowPortsConfig((v) => !v)}
+                title="Xem và cài đặt khớp các cổng hóa chất trên máy với mã hóa chất & lô chai trong kho"
+              >
+                {showPortsConfig ? "Đóng cổng HC" : "🧪 Cổng HC"}
+              </Button>
+            )}
+          </div>
         </Field>
         <Field label="2. Lô cột CPG *" hint="Mỗi vị trí giữ chỗ 1 cột">
           <select className={inputClass} value={lotId} onChange={(e) => setLotId(e.target.value)}>
@@ -220,6 +234,16 @@ export function BatchPlanForm({ onCreated }: { onCreated: (id: string) => void }
         </Field>
         <Field label="Chương trình chạy máy"><input className={inputClass} value={program} onChange={(e) => setProgram(e.target.value)} placeholder="VD: STD-200NM-COL" /></Field>
       </div>
+
+      {showPortsConfig && synthId && (
+        <SynthPortsPanel
+          key={synthId}
+          synthId={synthId}
+          canConfigure={true}
+          canOperate={true}
+          onClose={() => setShowPortsConfig(false)}
+        />
+      )}
 
       {/* Bộ lọc trình tự theo Đơn hàng, Vai trò, Thang & Tìm kiếm */}
       {allSequences.length > 0 && (

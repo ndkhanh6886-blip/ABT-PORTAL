@@ -153,6 +153,21 @@ export function SynthPortsPanel({ synthId, canConfigure, canOperate, onClose }: 
       refresh();
     },
   });
+  const inlineMapItem = useMutation({
+    mutationFn: ({ portNo, itemId }: { portNo: number; itemId: string }) => {
+      const ports = (data.data?.ports ?? []).map((p) => ({
+        port_no: p.port_no,
+        role: p.role,
+        item_id: p.port_no === portNo ? itemId || null : p.item?.id ?? p.item_id ?? null,
+        label: p.label ?? null,
+      }));
+      return api(`/api/factory/oligo/synthesizers/${synthId}/ports`, {
+        method: "PUT",
+        json: { ports },
+      });
+    },
+    onSuccess: refresh,
+  });
   const bottle = useMutation({
     mutationFn: ({ port, lot }: { port: number; lot: string | null }) => api(`/api/factory/oligo/synthesizers/${synthId}/ports/${port}/bottle`, { method: "PUT", json: { lot_id: lot } }),
     onSuccess: refresh,
@@ -171,7 +186,7 @@ export function SynthPortsPanel({ synthId, canConfigure, canOperate, onClose }: 
 
   return (
     <Card title={d ? `Cổng hóa chất — ${d.synthesizer.code} ${d.synthesizer.name}` : "Cổng hóa chất"} actions={<Button variant="ghost" onClick={onClose}>Đóng</Button>}>
-      <ErrorNote error={data.error ?? bottle.error} />
+      <ErrorNote error={data.error ?? bottle.error ?? inlineMapItem.error} />
       {d && !editing && (
         <div className="flex flex-col gap-3">
           {d.ports.length === 0 && <Empty>Chưa khai báo cổng. Máy chưa có cổng thì hóa chất được giữ chỗ theo hạn dùng (FEFO) từ kho.</Empty>}
@@ -182,7 +197,7 @@ export function SynthPortsPanel({ synthId, canConfigure, canOperate, onClose }: 
             />
           )}
           {d.ports.length > 0 && (
-            <Table head={["Cổng", "Vai trò & Hóa chất", "Mã hóa chất / Reagent kho", "Định mức", "Chai / Lô đang lắp", "Còn (sổ kho)", "Hạn dùng", "Lắp / thay chai", "Tháo chai (đo lượng còn)"]}>
+            <Table head={["Cổng", "Vai trò & Hóa chất", "Mã hóa chất / Reagent kho (chọn trực tiếp)", "Định mức", "Chai / Lô đang lắp", "Còn (sổ kho)", "Hạn dùng", "Lắp / thay chai", "Tháo chai (đo lượng còn)"]}>
               {d.ports.map((p) => (
                 <tr key={p.port_no}>
                   <td className="py-1.5 pr-3 font-bold">#{p.port_no}</td>
@@ -191,12 +206,18 @@ export function SynthPortsPanel({ synthId, canConfigure, canOperate, onClose }: 
                     <span className="text-slate-600 dark:text-slate-300">{p.label ?? p.display_name ?? p.rule_name ?? ""}</span>
                   </td>
                   <td className="py-1.5 pr-3 text-xs">
-                    {p.item ? (
+                    {canConfigure || canOperate ? (
+                      <ItemPicker
+                        value={p.item?.id ?? p.item_id ?? ""}
+                        current={p.item ? `${p.item.code} · ${p.item.name} (${p.item.base_uom})` : undefined}
+                        onChange={(itemId) => inlineMapItem.mutate({ portNo: p.port_no, itemId })}
+                      />
+                    ) : p.item ? (
                       <div>
                         <span className="font-mono font-bold">{p.item.code}</span> · {p.item.name}
                       </div>
                     ) : (
-                      <span className="text-amber-700 dark:text-amber-400 font-semibold">⚠️ Chưa gắn mã hóa chất kho (Bấm Cấu hình cổng để chọn)</span>
+                      <span className="text-amber-700 dark:text-amber-400 font-semibold">⚠️ Chưa gắn mã hóa chất kho</span>
                     )}
                   </td>
                   <td className="py-1.5 pr-3 text-xs whitespace-nowrap font-mono">

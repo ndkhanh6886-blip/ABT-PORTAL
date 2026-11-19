@@ -300,6 +300,22 @@ export async function updateReagentRule(tx: Tx, actor: AuthzActor, role: string,
   if (Number(cur.qty) !== next.qty) changes.qty = [Number(cur.qty), next.qty];
   for (const k of ["uom", "item_id", "status", "display_name", "is_visible"] as const) if (cur[k] !== next[k]) changes[k] = [cur[k], next[k]];
   await writeAudit(tx, actor, { entityType: "oligo_reagent_rule", entityId: role, action: "update", changes, reason: data.reason });
+
+  // Đồng bộ sang các cổng máy tổng hợp đang gắn vai trò này nếu mã hàng thay đổi
+  if (cur.item_id !== next.item_id) {
+    await tx.query(
+      `UPDATE oligo.synth_port p
+          SET item_id = $2,
+              current_lot_id = CASE
+                WHEN p.current_lot_id IS NOT NULL AND EXISTS (SELECT 1 FROM inv.lot l WHERE l.id = p.current_lot_id AND l.item_id = $2)
+                THEN p.current_lot_id
+                ELSE NULL
+              END,
+              version = p.version + 1
+        WHERE p.role = $1`,
+      [role, next.item_id]
+    );
+  }
 }
 
 const newRuleSchema = z.object({
