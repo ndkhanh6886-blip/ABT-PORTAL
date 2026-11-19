@@ -14966,6 +14966,242 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         deferredOrderFilterDateTo, deferredOrderApprovalStatus, deferredOrderSearchQuery
     ]);
 
+    // Xuất Excel danh sách Đơn hàng SO theo đúng bộ lọc hiện tại (gồm 2 sheet: Danh sách đơn hàng & Chi tiết mặt hàng)
+    const handleExportFilteredOrdersToExcel = (ordersToExport: any[]) => {
+        if (!ordersToExport || ordersToExport.length === 0) {
+            showToast("Không có đơn hàng nào trong danh sách lọc hiện tại để xuất Excel!", "warning");
+            return;
+        }
+
+        try {
+            const statusFilterLabels: Record<string, string> = {
+                all: "Tat-ca",
+                ready_to_deliver: "San-sang-giao",
+                overdue_delivery: "Tre-han-giao",
+                pending_any: "Cho-duyet",
+                pending_zero_price: "Cho-duyet-gia-0d",
+                pending_credit: "Cho-duyet-cong-no",
+                zero_price: "Co-hang-0d-tang",
+                approved: "Da-duyet",
+                rejected: "Da-tu-choi-huy"
+            };
+
+            const formatDateLabel = (raw: any): string => {
+                if (!raw) return "";
+                const s = String(raw).trim();
+                if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+                    const [y, m, d] = s.slice(0, 10).split("-");
+                    return `${d}-${m}-${y}`;
+                }
+                return s;
+            };
+
+            const toIsoOrderDateLocal = (raw: any): string => {
+                if (!raw) return "";
+                const s = String(raw).trim();
+                if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+                const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+                if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+                return "";
+            };
+
+            const summaryRows: any[] = [];
+            const detailRows: any[] = [];
+
+            ordersToExport.forEach((req, idx) => {
+                const isPureStock = checkIsPureStock(req) || Boolean(req.isStockOrder);
+                const hasZeroOrGift = !isPureStock && Boolean(req.hasZeroPriceItems || (req.items && req.items.some((it: any) => Number(it.unitPrice ?? it.price ?? 0) === 0)));
+                const isCancelledOrder = req.status === "Cancelled" || req.status === "CANCELLED" || req.delivery_status === "CANCELLED";
+                const isPendingBODApproval = !isCancelledOrder && hasZeroOrGift && req.priceApprovalStatus !== "APPROVED";
+                const isPendingCreditApproval = !isCancelledOrder && !isPureStock && Boolean(req.isCreditBlocked);
+                const stockAnalysis = computeOrderStockAnalysis(req);
+
+                const rawOrderDate = (req as any).order_date || req.date || (req as any).created_at || "";
+                const orderDateStr = formatDateLabel(rawOrderDate);
+                const reqDelivStr = formatDateLabel(req.requestedDeliveryDate);
+                const estIso = toIsoOrderDateLocal(req.estimatedDeliveryDate) || toIsoOrderDateLocal(req.requestedDeliveryDate);
+                const estDelivStr = formatDateLabel(estIso || req.estimatedDeliveryDate || req.requestedDeliveryDate);
+
+                const isOrderNotDelivered = !stockAnalysis.isFullyDelivered && !isCancelledOrder && req.status !== "Rejected" && !isPureStock;
+                const overdueDays = (isOrderNotDelivered && estIso && estIso < orderTabTodayIso)
+                    ? Math.max(1, Math.round((new Date(orderTabTodayIso).getTime() - new Date(estIso).getTime()) / 86400000))
+                    : 0;
+                const dueNote = overdueDays > 0
+                    ? `Trễ ${overdueDays} ngày`
+                    : (isOrderNotDelivered && estIso === orderTabTodayIso ? "Hạn hôm nay" : "Đúng hạn");
+
+                const cleanDisplayStatus = (s: string) => String(s || "").replace(/^[^\p{L}\p{N}✓]+/u, "").trim();
+                const statusText = isCancelledOrder
+                    ? "Đã hủy đơn"
+                    : req.status === "Rejected"
+                    ? "Từ chối"
+                    : isPendingCreditApproval
+                    ? "Khóa nợ: Chờ KT duyệt"
+                    : isPendingBODApproval
+                    ? "Chờ BGĐ duyệt giá 0đ"
+                    : cleanDisplayStatus(stockAnalysis.statusBadgeText || "Đã duyệt");
+
+                const totalVal = getOrderTotalValue(req);
+                const paidVal = getOrderPaidAmount(req);
+                const remVal = Math.max(0, totalVal - paidVal);
+
+                const activeSlips = getOrderSlips(req, false);
+                const slipCodes = activeSlips.map((s: any) => s.id).filter(Boolean).join(", ");
+                const itemsList: any[] = Array.isArray(req.items) ? req.items.filter((it: any) => it && it.status !== "CANCELLED") : [];
+                const itemsSummary = itemsList.map((it: any, iIdx: number) => {
+                    const code = it.productCode || it.product_code || it.code || "";
+                    const name = it.productName || it.product_name || it.name || code;
+                    const qty = Number(it.quantity) || 1;
+                    return `${iIdx + 1}. [${code}] ${name} (SL: ${qty})`;
+                }).join("\n");
+
+                const soKeys = Array.from(new Set([req.order_code, req.id, req.linkedSalesOrderId].filter(Boolean).map((x: any) => String(x).trim())));
+                const allOrderPOs = linkedPOsByOrderCache.get(req) || (procurementOrders || []).filter((po: any) => {
+                    if (String(po?.status || "").toUpperCase() === "CANCELLED") return false;
+                    if (req.procureOrderCode && po.po_code === req.procureOrderCode) return true;
+                    if (Array.isArray(po.items) && po.items.some((poi: any) => {
+                        const oc = String(poi?.order_code || poi?.so_code || poi?.linked_order_code || "").trim();
+                        if (oc) return soKeys.includes(oc);
+                        return Boolean(req.prCode && String(poi?.source_pr_code || "") === String(req.prCode));
+                    })) return true;
+                    return false;
+                });
+                const poCodes = allOrderPOs.map((po: any) => po.po_code).filter(Boolean).join(", ") || req.procureOrderCode || "";
+
+                summaryRows.push({
+                    "STT": idx + 1,
+                    "Mã Đơn Hàng (SO)": req.id || req.order_code || "",
+                    "Loại Đơn": isPureStock ? "SO Stock (Lưu kho)" : "Đơn bán khách hàng",
+                    "Khách Hàng / Đơn Vị": req.customerName || (isPureStock ? defaultStockCustomer : ""),
+                    "NVKD Phụ Trách": req.salesRepName || "",
+                    "Ngày Đặt Hàng": orderDateStr,
+                    "Ngày Giao Mong Muốn": reqDelivStr,
+                    "Ngày Giao Dự Kiến": estDelivStr,
+                    "Tình Trạng Hạn Giao": dueNote,
+                    "Trạng Thái Đơn": statusText,
+                    "Số Mã Hàng": itemsList.length,
+                    "Danh Sách Mặt Hàng": itemsSummary,
+                    "Tổng Trị Giá (VNĐ)": totalVal,
+                    "Đã Thu / Cọc (VNĐ)": paidVal,
+                    "Còn Phải Thu (VNĐ)": remVal,
+                    "Mã PR Cung Ứng": req.prCode || "",
+                    "Mã PO Đặt Hàng": poCodes,
+                    "Phiếu Giao Hàng (PGH)": slipCodes,
+                    "Mã Báo Giá": req.quoteId || "",
+                    "Mã Hợp Đồng": req.contractId || "",
+                    "Người Nhận & Địa Chỉ Giao": [req.contactPerson || req.receiverName, req.contactPhone || req.receiverPhone, req.deliveryAddress].filter(Boolean).join(" - "),
+                    "Ghi Chú Đơn Hàng": req.orderNotes || req.order_notes || req.notes || "",
+                    "Ghi Chú Hóa Đơn": req.invoiceNotes || req.invoice_notes || ""
+                });
+
+                const breakdownList: any[] = Array.isArray(stockAnalysis?.itemsBreakdown) ? stockAnalysis.itemsBreakdown : [];
+                itemsList.forEach((it: any, iIdx: number) => {
+                    const code = it.productCode || it.product_code || it.code || "";
+                    const name = it.productName || it.product_name || it.name || code;
+                    const qty = Number(it.quantity) || 1;
+                    const unitPrice = Number(it.unitPrice ?? it.unit_price ?? it.price ?? 0) || 0;
+                    const lineTotal = Math.round(qty * unitPrice);
+                    const ib = breakdownList[iIdx] || breakdownList.find((b: any) => String(b.code || "").toLowerCase() === String(code).toLowerCase());
+                    const deliveredQty = Number(ib?.deliveredQty ?? it.deliveredQuantity ?? 0) || 0;
+                    const remainingQty = ib?.remainingQty !== undefined ? Number(ib.remainingQty) : Math.max(0, qty - deliveredQty);
+                    const availStock = Number(ib?.availableStock ?? 0) || 0;
+                    const lineStatusLabel = ib?.lineStatus === "DELIVERED"
+                        ? "Đã giao đủ"
+                        : ib?.lineStatus === "IN_STOCK"
+                        ? "Kho đủ hàng (Sẵn sàng giao)"
+                        : ib?.lineStatus === "INCOMING"
+                        ? "Hàng đang về (PO)"
+                        : "Cần đặt mua (PR)";
+
+                    detailRows.push({
+                        "STT": detailRows.length + 1,
+                        "Mã Đơn Hàng (SO)": req.id || req.order_code || "",
+                        "Khách Hàng / Đơn Vị": req.customerName || (isPureStock ? defaultStockCustomer : ""),
+                        "NVKD Phụ Trách": req.salesRepName || "",
+                        "Ngày Đặt": orderDateStr,
+                        "Giao Dự Kiến": estDelivStr,
+                        "Trạng Thái Đơn": statusText,
+                        "Mã Hàng (SKU)": code,
+                        "Tên Mặt Hàng": name,
+                        "ĐVT": it.unit || "Hộp",
+                        "Quy Cách": it.specification || "",
+                        "SL Đặt": qty,
+                        "SL Đã Giao": deliveredQty,
+                        "SL Còn Phải Giao": remainingQty,
+                        "Tồn Khả Dụng Cho Đơn": availStock,
+                        "Tình Trạng Kho Dòng Hàng": lineStatusLabel,
+                        "Đơn Giá (VNĐ)": unitPrice,
+                        "Thành Tiền (VNĐ)": lineTotal,
+                        "Ghi Chú Dòng Hàng": it.notes || ""
+                    });
+                });
+            });
+
+            const wb = XLSX.utils.book_new();
+            const wsSummary = XLSX.utils.json_to_sheet(summaryRows);
+            wsSummary["!cols"] = [
+                { wch: 6 },  // STT
+                { wch: 16 }, // Mã SO
+                { wch: 18 }, // Loại Đơn
+                { wch: 34 }, // Khách Hàng
+                { wch: 22 }, // NVKD
+                { wch: 13 }, // Ngày Đặt
+                { wch: 15 }, // Giao Mong Muốn
+                { wch: 15 }, // Giao Dự Kiến
+                { wch: 16 }, // Tình Trạng Hạn Giao
+                { wch: 24 }, // Trạng Thái Đơn
+                { wch: 11 }, // Số Mã Hàng
+                { wch: 48 }, // Danh Sách Mặt Hàng
+                { wch: 16 }, // Tổng Trị Giá
+                { wch: 16 }, // Đã Thu / Cọc
+                { wch: 16 }, // Còn Phải Thu
+                { wch: 16 }, // Mã PR
+                { wch: 18 }, // Mã PO
+                { wch: 22 }, // PGH
+                { wch: 16 }, // Mã BG
+                { wch: 16 }, // Mã HĐ
+                { wch: 36 }, // Người Nhận & Địa Chỉ
+                { wch: 36 }, // Ghi Chú Đơn
+                { wch: 28 }  // Ghi Chú HĐ
+            ];
+            XLSX.utils.book_append_sheet(wb, wsSummary, "Danh sach don hang SO");
+
+            if (detailRows.length > 0) {
+                const wsDetail = XLSX.utils.json_to_sheet(detailRows);
+                wsDetail["!cols"] = [
+                    { wch: 6 },  // STT
+                    { wch: 16 }, // Mã SO
+                    { wch: 34 }, // Khách Hàng
+                    { wch: 22 }, // NVKD
+                    { wch: 13 }, // Ngày Đặt
+                    { wch: 13 }, // Giao Dự Kiến
+                    { wch: 22 }, // Trạng Thái Đơn
+                    { wch: 18 }, // Mã Hàng
+                    { wch: 38 }, // Tên Mặt Hàng
+                    { wch: 10 }, // ĐVT
+                    { wch: 20 }, // Quy Cách
+                    { wch: 10 }, // SL Đặt
+                    { wch: 12 }, // SL Đã Giao
+                    { wch: 15 }, // SL Còn Phải Giao
+                    { wch: 18 }, // Tồn Khả Dụng
+                    { wch: 24 }, // Tình Trạng Kho
+                    { wch: 15 }, // Đơn Giá
+                    { wch: 16 }, // Thành Tiền
+                    { wch: 30 }  // Ghi Chú
+                ];
+                XLSX.utils.book_append_sheet(wb, wsDetail, "Chi tiet mat hang SO");
+            }
+
+            const filterTag = statusFilterLabels[filterOrderApprovalStatus] || "Theo-bo-loc";
+            const fileName = `Danh_Sach_Don_Hang_SO_${filterTag}_${ordersToExport.length}_don_${orderTabTodayIso}.xlsx`;
+            XLSX.writeFile(wb, fileName);
+            showToast(`Đã xuất file Excel (${ordersToExport.length} đơn hàng / ${detailRows.length} dòng hàng) theo bộ lọc hiện tại!`, "success");
+        } catch (err: any) {
+            console.error("Failed to export filtered SO list to Excel:", err);
+            showToast("Lỗi khi xuất Excel danh sách đơn hàng: " + (err?.message || "Không xác định"), "error");
+        }
+    };
+
     const getProductLiveStockIntelligence = (productCode: string) => {
         const code = (productCode || "").trim();
         if (!code) return { onHand: 0, reserved: 0, atp: 0, incomingQty: 0 };
@@ -24154,24 +24390,36 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 )}
                             </div>
                             
-                            {/* Factory Orders Search Bar */}
-                            <div className="flex w-full sm:max-w-xs items-center gap-2 bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1 focus-within:border-indigo-500 transition-colors">
-                                <Search className="w-3.5 h-3.5 text-slate-500" />
-                                <FastInput
-                                    type="text"
-                                    placeholder="Tìm kiếm theo mã, khách hàng..."
-                                    value={searchFactoryOrderQuery}
-                                    onChange={(e) => setSearchFactoryOrderQuery(e.target.value)}
-                                    className="flex-1 bg-transparent text-xs text-white outline-none border-none placeholder-slate-500"
-                                />
-                                {searchFactoryOrderQuery && (
-                                    <button
-                                        onClick={() => setSearchFactoryOrderQuery("")}
-                                        className="text-slate-500 hover:text-slate-350 text-xs px-0.5"
-                                    >
-                                        ✕
-                                    </button>
-                                )}
+                            {/* Factory Orders Search Bar & Excel Export */}
+                            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                                <div className="flex flex-1 sm:w-64 items-center gap-2 bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1 focus-within:border-indigo-500 transition-colors">
+                                    <Search className="w-3.5 h-3.5 text-slate-500" />
+                                    <FastInput
+                                        type="text"
+                                        placeholder="Tìm kiếm theo mã, khách hàng..."
+                                        value={searchFactoryOrderQuery}
+                                        onChange={(e) => setSearchFactoryOrderQuery(e.target.value)}
+                                        className="flex-1 bg-transparent text-xs text-white outline-none border-none placeholder-slate-500"
+                                    />
+                                    {searchFactoryOrderQuery && (
+                                        <button
+                                            onClick={() => setSearchFactoryOrderQuery("")}
+                                            className="text-slate-500 hover:text-slate-350 text-xs px-0.5"
+                                        >
+                                            ✕
+                                        </button>
+                                    )}
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => handleExportFilteredOrdersToExcel(filteredOrders)}
+                                    disabled={filteredOrders.length === 0}
+                                    className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold px-3 py-1.5 rounded-xl transition-all shadow-sm cursor-pointer shrink-0"
+                                    title={`Xuất file Excel danh sách ${filteredOrders.length} đơn hàng SO theo bộ lọc hiện tại`}
+                                >
+                                    <Download className="w-3.5 h-3.5" />
+                                    <span>Xuất Excel ({filteredOrders.length})</span>
+                                </button>
                             </div>
                         </div>
 
@@ -24414,25 +24662,37 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         🚨 Trễ hạn giao ({orderApprovalStats.overdueDeliveryCount})
                                     </button>
                                 </div>
-                                {(filterOrderRep !== "all" || filterOrderCustomer !== "all" || filterOrderDateMode !== "all" || filterOrderApprovalStatus !== "all" || searchFactoryOrderQuery) && (
+                                <div className="flex items-center gap-2.5 flex-wrap">
+                                    {(filterOrderRep !== "all" || filterOrderCustomer !== "all" || filterOrderDateMode !== "all" || filterOrderApprovalStatus !== "all" || searchFactoryOrderQuery) && (
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setFilterOrderRep("all");
+                                                setFilterOrderCustomer("all");
+                                                setFilterOrderDateMode("all");
+                                                setFilterOrderSingleDate("");
+                                                setFilterOrderMonth("");
+                                                setFilterOrderDateFrom("");
+                                                setFilterOrderDateTo("");
+                                                setFilterOrderApprovalStatus("all");
+                                                setSearchFactoryOrderQuery("");
+                                            }}
+                                            className="text-[10px] text-amber-400 hover:text-amber-300 font-bold underline cursor-pointer"
+                                        >
+                                            ✕ Đặt lại bộ lọc đơn hàng
+                                        </button>
+                                    )}
                                     <button
                                         type="button"
-                                        onClick={() => {
-                                            setFilterOrderRep("all");
-                                            setFilterOrderCustomer("all");
-                                            setFilterOrderDateMode("all");
-                                            setFilterOrderSingleDate("");
-                                            setFilterOrderMonth("");
-                                            setFilterOrderDateFrom("");
-                                            setFilterOrderDateTo("");
-                                            setFilterOrderApprovalStatus("all");
-                                            setSearchFactoryOrderQuery("");
-                                        }}
-                                        className="text-[10px] text-amber-400 hover:text-amber-300 font-bold underline cursor-pointer"
+                                        onClick={() => handleExportFilteredOrdersToExcel(filteredOrders)}
+                                        disabled={filteredOrders.length === 0}
+                                        className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-[11px] font-bold px-3 py-1 rounded-lg transition-all shadow-sm cursor-pointer"
+                                        title={`Xuất file Excel danh sách ${filteredOrders.length} đơn hàng SO theo bộ lọc hiện tại (Gồm 2 sheet: Danh sách đơn & Chi tiết mặt hàng)`}
                                     >
-                                        ✕ Đặt lại bộ lọc đơn hàng
+                                        <Download className="w-3.5 h-3.5" />
+                                        <span>Xuất Excel ({filteredOrders.length} đơn)</span>
                                     </button>
-                                )}
+                                </div>
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                                 <div>
