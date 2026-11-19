@@ -1322,22 +1322,38 @@ function parsePrimaryContainerLineSpec(code: string, name: string): {
   if (/^T1\.5B$/i.test(c) || n.includes("biofil")) {
     return { isContainer: false, containerType: "TUBE_1_5ML", capacityMl: 1.5 };
   }
-  const isCryoOrBottle =
-    /^(CTN|CTT|CPP|CN\d|CT\d|CHAI|LO-|TUBE-)/i.test(c) ||
-    n.includes("cryotube") ||
+  const isBottleText =
+    /^(CNN|CNM|CNV|CPP|CHAI|LO-|CAN)/i.test(c) ||
     n.includes("chai nhựa") ||
     n.includes("chai thủy tinh") ||
     n.includes("lọ nhựa") ||
     n.includes("lọ thủy tinh") ||
+    n.includes("can nhựa");
+  const isCryoOrBottle =
+    isBottleText ||
+    /^(CTN|CTT|CN\d|CT\d|TUBE-)/i.test(c) ||
+    n.includes("cryotube") ||
     n.includes("microtube");
   if (!isCryoOrBottle) {
     return { isContainer: false, containerType: "TUBE_1_5ML", capacityMl: 1.5 };
   }
-  const volMatch = `${c} ${n}`.match(/(\d+(?:[.,]\d+)?)\s*ml/i);
-  const cap = volMatch ? Number(volMatch[1].replace(",", ".")) : c.startsWith("CPP") ? Number(c.replace(/\D+/g, "")) || 15 : 2.0;
-  if (cap <= 0.6) return { isContainer: true, containerType: "TUBE_0_5ML", capacityMl: cap || 0.5 };
-  if (cap <= 1.6) return { isContainer: true, containerType: "TUBE_1_5ML", capacityMl: cap || 1.5 };
-  if (cap <= 2.5) return { isContainer: true, containerType: "TUBE_2_0ML", capacityMl: cap || 2.0 };
+  const mlMatch = `${c} ${n}`.match(/(\d+(?:[.,]\d+)?)\s*ml\b/i);
+  const literMatch = `${c} ${n}`.match(/(\d+(?:[.,]\d+)?)\s*(?:l|lít|lit)\b/i);
+  const codeNumMatch = c.match(/^(?:CNN|CNM|CNV|CPP|CHAI|CAN)(\d+)$/i);
+  let cap = 2.0;
+  if (mlMatch) {
+    cap = Number(mlMatch[1].replace(",", "."));
+  } else if (literMatch) {
+    cap = Number(literMatch[1].replace(",", ".")) * 1000;
+  } else if (codeNumMatch) {
+    const rawNum = Number(codeNumMatch[1]);
+    cap = rawNum > 0 ? rawNum : 50;
+  } else if (isBottleText) {
+    cap = 50;
+  }
+  if (!isBottleText && cap <= 0.6) return { isContainer: true, containerType: "TUBE_0_5ML", capacityMl: cap || 0.5 };
+  if (!isBottleText && cap <= 1.6) return { isContainer: true, containerType: "TUBE_1_5ML", capacityMl: cap || 1.5 };
+  if (!isBottleText && cap <= 2.5) return { isContainer: true, containerType: "TUBE_2_0ML", capacityMl: cap || 2.0 };
   if (cap <= 25) return { isContainer: true, containerType: "BOTTLE_10ML", capacityMl: cap || 15 };
   return { isContainer: true, containerType: "BOTTLE_50ML", capacityMl: cap || 60 };
 }
@@ -1545,12 +1561,20 @@ export async function syncPackagingFromBomLines(tx: Tx, actor: AuthzActor, bomId
       unitsPerKit > 1 && totalQty > 0 ? Math.round((totalQty / unitsPerKit) * 1000) / 1000 : totalQty > 0 ? totalQty : 1;
 
     const compTitle = `${code} — ${name}`;
+    const prodInfoRes = (
+      await tx.query("SELECT name FROM master.item WHERE id = $1 LIMIT 1", [bom.product_item_id])
+    ).rows[0];
+    const prodTitle = String(prodInfoRes?.name || (bom as any).product_name || "").trim();
+    const catTitle = String((bom as any).bom_category || "").trim();
+    const isExtractionProd = /tách\s*chiết|extraction|silica|magnetic/i.test(`${prodTitle} ${catTitle}`);
     const boxName =
       boxNo === 1
         ? isPcrKit
-          ? "Hộp 1: Hóa chất Khuếch đại PCR"
-          : "Hộp 1: Hóa chất & Đệm Tách chiết"
-        : `Hộp ${boxNo}: Thành phần phụ trợ`;
+          ? "Hóa chất Khuếch đại PCR"
+          : isExtractionProd
+            ? "Hóa chất & Đệm Tách chiết"
+            : prodTitle || "Đóng gói Thành phẩm"
+        : `Thành phần Hộp ${boxNo}`;
     const storageTemp = String(l.storage_condition || defaultStorage).slice(0, 60);
     const labelSpec = matchedSlot
       ? `Đựng trong: ${matchedSlot.code} (${matchedSlot.name}) · ${unitsPerKit} nhãn giống nhau × ${fillQtyPerUnit} ${uom}`
@@ -4213,6 +4237,28 @@ export async function getBomDetail(
 
   const total_lines = Number(
     (await tx.query("SELECT count(*)::int AS c FROM kit.bom_line WHERE bom_id = $1", [id])).rows[0].c
+  );
+
+  const prodTitleForPkg = String(bom.product_name || "").trim();
+  const catTitleForPkg = String(bom.bom_category || "").trim();
+  const isExtractionBom = /tách\s*chiết|extraction|silica|magnetic/i.test(`${prodTitleForPkg} ${catTitleForPkg}`);
+  if (!isExtractionBom && prodTitleForPkg) {
+    await tx.query(
+      `UPDATE kit.kit_packaging
+          SET box_name = $2
+        WHERE bom_id = $1
+          AND box_name IN ('Hộp 1: Hóa chất & Đệm Tách chiết', 'Hóa chất & Đệm Tách chiết')`,
+      [id, prodTitleForPkg]
+    );
+  }
+  await tx.query(
+    `UPDATE kit.kit_packaging
+        SET container_type = CASE WHEN fill_qty >= 25 THEN 'BOTTLE_50ML' ELSE 'BOTTLE_10ML' END
+      WHERE bom_id = $1
+        AND container_type IN ('TUBE_2_0ML', 'TUBE_1_5ML', 'TUBE_0_5ML')
+        AND lower(fill_uom) = 'ml'
+        AND fill_qty >= 10`,
+    [id]
   );
 
   const packaging = (

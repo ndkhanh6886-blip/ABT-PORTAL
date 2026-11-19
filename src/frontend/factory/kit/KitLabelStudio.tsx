@@ -1337,83 +1337,93 @@ export function KitLabelStudio({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 pt-1">
-          <button
-            type="button"
-            className={`${btnBase} ${
-              activeTarget === "outer_box"
-                ? "border-sky-400 bg-sky-600 text-white shadow-md ring-2 ring-sky-400/40"
-                : "border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800"
-            }`}
-            onClick={() => {
-              setActiveTarget("outer_box");
-              setSelectedField("product_name");
-            }}
-          >
-            📦 1. {isSemiFinished ? "Nhãn Chai / Can BTP" : "Nhãn Hộp Ngoài"} ({bundle.outer_box.width_mm}×{bundle.outer_box.height_mm}mm)
-          </button>
+        {(() => {
+          const hasMultipleBoxes = new Set((packagingItems || []).map((p) => Number(p.box_no || 1))).size > 1;
+          const compBaseIndex = hasMultipleBoxes ? 3 : 2;
+          return (
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <button
+                type="button"
+                className={`${btnBase} ${
+                  activeTarget === "outer_box"
+                    ? "border-sky-400 bg-sky-600 text-white shadow-md ring-2 ring-sky-400/40"
+                    : "border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800"
+                }`}
+                onClick={() => {
+                  setActiveTarget("outer_box");
+                  setSelectedField("product_name");
+                }}
+              >
+                📦 1. {isSemiFinished ? "Nhãn Chai / Can BTP" : "Nhãn Hộp Ngoài"} ({bundle.outer_box.width_mm}×{bundle.outer_box.height_mm}mm)
+              </button>
 
-          <button
-            type="button"
-            className={`${btnBase} ${
-              activeTarget === "sub_box"
-                ? "border-sky-400 bg-sky-600 text-white shadow-md ring-2 ring-sky-400/40"
-                : "border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800"
-            }`}
-            onClick={() => {
-              setActiveTarget("sub_box");
-              setSelectedField("product_name");
-            }}
-          >
-            🗂️ 2. Nhãn Hộp Thành Phần ({bundle.sub_box.width_mm}×{bundle.sub_box.height_mm}mm)
-          </button>
-
-          <button
-            type="button"
-            className={`${btnBase} ${
-              activeTarget === "tube"
-                ? "border-sky-400 bg-sky-600 text-white shadow-md ring-2 ring-sky-400/40"
-                : "border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800"
-            }`}
-            onClick={() => {
-              setActiveTarget("tube");
-              setSelectedField("extra_text");
-            }}
-          >
-            🧪 3. {bundle.tube.extra_text ? `Ống 1: ${bundle.tube.extra_text}` : "Nhãn Ống 1"} ({bundle.tube.width_mm}×{bundle.tube.height_mm}mm)
-          </button>
-
-          {extraList.map((ext, idx) => {
-            const tabKey = `extra_${idx}`;
-            const isAct = activeTarget === tabKey;
-            return (
-              <div key={tabKey} className="inline-flex items-center gap-1">
+              {hasMultipleBoxes && (
                 <button
                   type="button"
                   className={`${btnBase} ${
-                    isAct
-                      ? "border-emerald-400 bg-emerald-600 text-white shadow-md ring-2 ring-emerald-400/40"
+                    activeTarget === "sub_box"
+                      ? "border-sky-400 bg-sky-600 text-white shadow-md ring-2 ring-sky-400/40"
                       : "border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800"
                   }`}
                   onClick={() => {
-                    setActiveTarget(tabKey);
+                    setActiveTarget("sub_box");
+                    setSelectedField("product_name");
+                  }}
+                >
+                  🗂️ 2. Nhãn Hộp Phụ ({bundle.sub_box.width_mm}×{bundle.sub_box.height_mm}mm)
+                </button>
+              )}
+
+              {!isSemiFinished && (
+                <button
+                  type="button"
+                  className={`${btnBase} ${
+                    activeTarget === "tube"
+                      ? "border-sky-400 bg-sky-600 text-white shadow-md ring-2 ring-sky-400/40"
+                      : "border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800"
+                  }`}
+                  onClick={() => {
+                    setActiveTarget("tube");
                     setSelectedField("extra_text");
                   }}
                 >
-                  🧪 {idx + 4}. {ext.extra_text || ext.name} ({ext.width_mm}×{ext.height_mm}mm)
+                  🧪 {compBaseIndex}. {bundle.tube.extra_text ? `Thành phần #1: ${bundle.tube.extra_text}` : "Nhãn Thành phần #1"} ({bundle.tube.width_mm}×{bundle.tube.height_mm}mm)
                 </button>
-                <button
-                  type="button"
-                  title="Xóa mẫu nhãn thành phần này"
-                  onClick={() => handleDeleteExtraTarget(idx)}
-                  className="px-2 py-1.5 rounded-lg bg-rose-950/80 hover:bg-rose-800 text-rose-300 border border-rose-700 text-xs font-bold cursor-pointer"
-                >
-                  ✕
-                </button>
-              </div>
-            );
-          })}
-        </div>
+              )}
+
+              {extraList.map((ext, idx) => {
+                const tabKey = `extra_${idx}`;
+                const isAct = activeTarget === tabKey;
+                return (
+                  <div key={tabKey} className="inline-flex items-center gap-1">
+                    <button
+                      type="button"
+                      className={`${btnBase} ${
+                        isAct
+                          ? "border-emerald-400 bg-emerald-600 text-white shadow-md ring-2 ring-emerald-400/40"
+                          : "border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800"
+                      }`}
+                      onClick={() => {
+                        setActiveTarget(tabKey);
+                        setSelectedField("extra_text");
+                      }}
+                    >
+                      🧪 {idx + compBaseIndex + 1}. Thành phần #{idx + 2}: {ext.extra_text || ext.name} ({ext.width_mm}×{ext.height_mm}mm)
+                    </button>
+                    <button
+                      type="button"
+                      title="Xóa mẫu nhãn thành phần này"
+                      onClick={() => handleDeleteExtraTarget(idx)}
+                      className="px-2 py-1.5 rounded-lg bg-rose-950/80 hover:bg-rose-800 text-rose-300 border border-rose-700 text-xs font-bold cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Quick Panel to Add New Component Label */}

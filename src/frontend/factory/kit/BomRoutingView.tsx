@@ -5082,11 +5082,16 @@ export function BomRoutingView({
                       )}
                     </div>
                   ) : (
-                    <Table head={["Hộp", "Tên ống / thành phần", "Loại bao bì", "Thể tích nạp / ống", "Số ống & Số nhãn / Kit", "Bảo quản", "Thao tác"]}>
-                      {bomDetail.packaging.map((pk: any) => (
+                    <Table head={["Hộp", "Tên ống / thành phần", "Loại bao bì", "Thể tích nạp", "Số lượng & Số nhãn / Bộ", "Bảo quản", "Thao tác"]}>
+                      {bomDetail.packaging.map((pk: any) => {
+                        const isBottlePkg = String(pk.container_type || "").startsWith("BOTTLE") || (String(pk.fill_uom || "").toLowerCase() === "ml" && Number(pk.fill_qty) >= 10);
+                        const unitNoun = isBottlePkg ? "chai" : "ống";
+                        const rawBoxName = String(pk.box_name || "").trim();
+                        const displayBox = /^hộp\s*\d+/i.test(rawBoxName) ? rawBoxName : `Hộp ${pk.box_no}: ${rawBoxName}`;
+                        return (
                         <tr key={pk.id} className={editingPackId === pk.id ? "bg-sky-50/70 dark:bg-sky-950/30" : ""}>
                           <td className="px-3 py-2 text-xs font-medium">
-                            Hộp {pk.box_no}: {pk.box_name}
+                            {displayBox}
                           </td>
                           <td className="px-3 py-2 text-xs">
                             <div className="font-semibold">{pk.component_name}</div>
@@ -5096,12 +5101,16 @@ export function BomRoutingView({
                               </div>
                             )}
                           </td>
-                          <td className="px-3 py-2 text-xs">{CONTAINER_LABELS[pk.container_type] ?? pk.container_type}</td>
+                          <td className="px-3 py-2 text-xs">
+                            {isBottlePkg && Number(pk.fill_qty) >= 100
+                              ? `Chai / Lọ (${fmtQty(pk.fill_qty)} ${pk.fill_uom})`
+                              : CONTAINER_LABELS[pk.container_type] ?? pk.container_type}
+                          </td>
                           <td className="px-3 py-2 text-xs font-semibold">
-                            {fmtQty(pk.fill_qty)} {pk.fill_uom} / ống
+                            {fmtQty(pk.fill_qty)} {pk.fill_uom} / {unitNoun}
                           </td>
                           <td className="px-3 py-2 text-xs">
-                            <div className="font-bold">{pk.units_per_kit} ống</div>
+                            <div className="font-bold">{pk.units_per_kit} {unitNoun}</div>
                             <div className="inline-flex items-center gap-1 mt-0.5 px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 text-[10px] font-semibold">
                               🏷️ {pk.units_per_kit} nhãn giống nhau
                             </div>
@@ -5128,7 +5137,8 @@ export function BomRoutingView({
                             )}
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </Table>
                   )}
                 </Card>
