@@ -112,14 +112,17 @@ const ROLE_LABELS: Record<string, { label: string; color: string; desc: string }
   procurement: { label: "Chuyên Viên Mua Hàng (Cung Ứng Kinh Doanh)", color: "bg-cyan-50 dark:bg-cyan-950/40 text-cyan-700 dark:text-cyan-400 border-cyan-200 dark:border-cyan-800", desc: "Lập đề xuất PR & dự thảo đơn PO hàng thương mại, theo dõi tiến độ hàng về & hồ sơ CO/CQ" },
   accountant_head: { label: "Kế Toán Trưởng (Chief Accountant)", color: "bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border-rose-300 dark:border-rose-700", desc: "Phê duyệt công nợ vượt hạn mức, duyệt ngân sách PO, chốt kỳ kế toán & báo cáo tài chính" },
   "Chief Accountant": { label: "Kế Toán Trưởng (Chief Accountant)", color: "bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border-rose-300 dark:border-rose-700", desc: "Phê duyệt công nợ vượt hạn mức, duyệt ngân sách PO, chốt kỳ kế toán & báo cáo tài chính" },
-  accountant: { label: "Chuyên Viên Kế Toán Kho & Công Nợ", color: "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-800", desc: "Đối soát tồn kho FIFO, phát hành hóa đơn VAT, theo dõi & nhắc thu hồi công nợ" },
-  "Receivable & Inventory Accountant": { label: "Chuyên Viên Kế Toán Kho & Công Nợ", color: "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-800", desc: "Đối soát tồn kho FIFO, phát hành hóa đơn VAT, theo dõi & nhắc thu hồi công nợ" },
+  accountant: { label: "Nhân Viên Kế Toán", color: "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-800", desc: "Đối soát tồn kho FIFO, phát hành hóa đơn VAT, theo dõi & nhắc thu hồi công nợ" },
+  "Receivable & Inventory Accountant": { label: "Nhân Viên Kế Toán", color: "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-800", desc: "Đối soát tồn kho FIFO, phát hành hóa đơn VAT, theo dõi & nhắc thu hồi công nợ" },
+  admin_head: { label: "Trưởng / Phó Phòng Hành Chính", color: "bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border-rose-300 dark:border-rose-700", desc: "Điều hành Phòng Hành chính (Hành chánh – Nhân sự – Kế toán – Pháp chế), phê duyệt đề xuất & quản lý quy trình" },
+  hr_admin: { label: "Nhân Viên Hành Chánh – Nhân Sự", color: "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-800", desc: "Quản lý hồ sơ nhân sự, chấm công – nghỉ phép, tuyển dụng, chế độ BHXH và công tác hành chánh nội bộ" },
+  admin_staff: { label: "Nhân Viên Hành Chánh", color: "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-800", desc: "Công tác hành chánh văn phòng, văn thư lưu trữ, quản lý VPP – tài sản văn phòng và điều phối hậu cần" },
   qa_qc_lead: { label: "Trưởng Bộ Phận QA/QC", color: "bg-teal-100 dark:bg-teal-950/60 text-teal-800 dark:text-teal-300 border-teal-300 dark:border-teal-700", desc: "Phê duyệt kết quả thẩm định lô, ký lệnh thu hồi Lô khẩn cấp & giải phóng hàng cách ly" },
   "QA/QC Manager": { label: "Trưởng Bộ Phận QA/QC", color: "bg-teal-100 dark:bg-teal-950/60 text-teal-800 dark:text-teal-300 border-teal-300 dark:border-teal-700", desc: "Phê duyệt kết quả thẩm định lô, ký lệnh thu hồi Lô khẩn cấp & giải phóng hàng cách ly" },
   qa_qc: { label: "Chuyên Viên QA/QC & ISO 13485", color: "bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-400 border-teal-200 dark:border-teal-800", desc: "Kiểm soát COA, lập biên bản kiểm định chất lượng lô, ghi nhận sự cố chất lượng" },
   "QA/QC Specialist": { label: "Chuyên Viên QA/QC & ISO 13485", color: "bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-400 border-teal-200 dark:border-teal-800", desc: "Kiểm soát COA, lập biên bản kiểm định chất lượng lô, ghi nhận sự cố chất lượng" },
   legal_head: { label: "Trưởng Bộ Phận Pháp Chế", color: "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700", desc: "Thẩm định & phê duyệt pháp lý hợp đồng, kiểm soát hồ sơ lưu hành IVD & đấu thầu" },
-  legal: { label: "Chuyên Viên Pháp Chế & Tuân Thủ", color: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800", desc: "Soạn thảo hợp đồng, chuẩn bị hồ sơ lưu hành IVD và kiểm soát tuân thủ y tế" },
+  legal: { label: "Nhân Viên / Chuyên Viên Pháp Chế", color: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800", desc: "Soạn thảo hợp đồng, chuẩn bị hồ sơ lưu hành IVD, hồ sơ thầu và kiểm soát tuân thủ y tế" },
   "Legal Specialist": { label: "Chuyên Viên Pháp Chế", color: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800", desc: "Soạn thảo hợp đồng, thẩm định pháp lý và kiểm soát rủi ro" },
   "Chuyên Viên Pháp Chế": { label: "Chuyên Viên Pháp Chế", color: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800", desc: "Soạn thảo hợp đồng, thẩm định pháp lý và kiểm soát rủi ro" },
   rd_head: { label: "Trưởng Phòng Nghiên Cứu R&D", color: "bg-sky-100 dark:bg-sky-950/60 text-sky-800 dark:text-sky-300 border-sky-300 dark:border-sky-700", desc: "Quản lý đề tài R&D, hồ sơ thiết kế DHF, phê duyệt công thức & chuyển giao công nghệ sản xuất" },
@@ -3631,11 +3634,14 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                       <option value="procurement_lead">Trưởng Bộ Phận Cung Ứng Kinh Doanh (procurement_lead)</option>
                       <option value="procurement_specialist">Chuyên Viên Mua Hàng Cung Ứng Kinh Doanh (procurement_specialist)</option>
                     </optgroup>
-                    <optgroup label="💰 Phòng Hành Chính – Kế Toán & Pháp Chế">
-                      <option value="accountant_head">Kế Toán Trưởng / Trưởng phòng HC (accountant_head)</option>
-                      <option value="accountant">Chuyên Viên Kế Toán Kho &amp; Công Nợ (accountant)</option>
+                    <optgroup label="🏛️ Phòng Hành Chính (Hành Chánh – Nhân Sự – Kế Toán – Pháp Chế)">
+                      <option value="admin_head">Trưởng / Phó Phòng Hành Chính (admin_head)</option>
+                      <option value="hr_admin">Nhân Viên Hành Chánh – Nhân Sự (hr_admin)</option>
+                      <option value="admin_staff">Nhân Viên Hành Chánh (admin_staff)</option>
+                      <option value="accountant_head">Kế Toán Trưởng (accountant_head)</option>
+                      <option value="accountant">Nhân Viên Kế Toán (accountant)</option>
                       <option value="legal_head">Trưởng Bộ Phận Pháp Chế (legal_head)</option>
-                      <option value="legal">Chuyên Viên Pháp Chế &amp; Tuân Thủ (legal)</option>
+                      <option value="legal">Nhân Viên / Chuyên Viên Pháp Chế (legal)</option>
                     </optgroup>
                     <optgroup label="👤 Quyền Cơ Bản / Nhân Viên Nhà Máy dùng Vai Trò P-KHO">
                       <option value="staff">Nhân Viên cơ bản / Kho &amp; Cung ứng Nhà máy P-KHO (staff)</option>
@@ -4013,11 +4019,14 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                       <option value="procurement_specialist">procurement_specialist (Chuyên viên Cung ứng KD)</option>
                       <option value="procurement">procurement (Mua hàng Cung ứng Kinh Doanh)</option>
                     </optgroup>
-                    <optgroup label="🏛️ Khối Văn Phòng (Hành Chính – Kế Toán – Pháp Chế)">
-                      <option value="accountant_head">accountant_head (Kế toán trưởng / Trưởng phòng HC)</option>
+                    <optgroup label="🏛️ Khối Văn Phòng (Hành Chánh – Nhân Sự – Kế Toán – Pháp Chế)">
+                      <option value="admin_head">admin_head (Trưởng / Phó phòng Hành chính)</option>
+                      <option value="hr_admin">hr_admin (Nhân viên Hành chánh - Nhân sự)</option>
+                      <option value="admin_staff">admin_staff (Nhân viên Hành chánh)</option>
+                      <option value="accountant_head">accountant_head (Kế toán trưởng)</option>
                       <option value="accountant">accountant (Nhân viên Kế toán)</option>
                       <option value="legal_head">legal_head (Trưởng bộ phận Pháp chế)</option>
-                      <option value="legal">legal (Chuyên viên Pháp chế)</option>
+                      <option value="legal">legal (Nhân viên / Chuyên viên Pháp chế)</option>
                     </optgroup>
                     <optgroup label="🏭 Khối Kỹ Thuật – Nhà Máy">
                       <option value="rd_head">rd_head (Trưởng phòng R&amp;D)</option>

@@ -1,6 +1,6 @@
 import { canonicalDepartment, COMPANY_BLOCKS, COMPANY_DEPARTMENTS } from "@/backend/services/permissions";
 
-export const ABT_ORG_SCHEMA_VERSION = 2;
+export const ABT_ORG_SCHEMA_VERSION = 3;
 
 export type PositionLevel = "Director" | "Manager" | "Specialist" | "Staff";
 
@@ -36,14 +36,19 @@ export const DEPARTMENT_POSITIONS: Record<string, DepartmentPositionGroup> = {
     ]
   },
   "Hành chính": {
-    name: "Phòng Hành Chính (Kế toán – Pháp chế – Nhân sự)",
+    name: "Phòng Hành Chính (Hành chánh – Nhân sự – Kế toán – Pháp chế)",
     code: "HC",
-    desc: "Kế toán, hóa đơn VAT, công nợ, pháp chế hợp đồng & hồ sơ lưu hành, hành chính nhân sự",
+    desc: "Hành chánh văn phòng, hành chánh – nhân sự, kế toán – hóa đơn VAT – công nợ, pháp chế hợp đồng & hồ sơ lưu hành",
     badgeColor: "bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-950/50 dark:text-rose-400 dark:border-rose-800",
     borderTheme: "border-rose-500",
     positions: [
-      { title: "Trưởng phòng Hành chính", defaultRole: "accountant_head", level: "Manager", desc: "Điều hành phòng, phê duyệt công nợ vượt hạn mức, chốt kỳ kế toán" },
-      { title: "Phó Trưởng phòng Hành chính", defaultRole: "accountant_head", level: "Manager", desc: "Phụ trách pháp chế, hợp đồng và hồ sơ pháp lý; thay Trưởng phòng khi vắng" },
+      { title: "Trưởng phòng Hành chính", defaultRole: "admin_head", level: "Manager", desc: "Điều hành Phòng Hành chính (Hành chánh – Nhân sự – Kế toán – Pháp chế), phê duyệt đề xuất và công nợ" },
+      { title: "Phó Trưởng phòng Hành chính", defaultRole: "admin_head", level: "Manager", desc: "Phụ trách chuyên môn Pháp chế / Hành chánh – Nhân sự; thay Trưởng phòng điều hành khi vắng" },
+      { title: "Kế toán trưởng", defaultRole: "accountant_head", level: "Manager", desc: "Điều hành công tác kế toán, phê duyệt công nợ vượt hạn mức, ngân sách PO và báo cáo tài chính" },
+      { title: "Trưởng bộ phận Pháp chế", defaultRole: "legal_head", level: "Manager", desc: "Phụ trách thẩm định pháp lý hợp đồng, hồ sơ công bố lưu hành IVD và hồ sơ thầu" },
+      { title: "Nhân viên Hành chánh", defaultRole: "admin_staff", level: "Staff", desc: "Công tác hành chánh văn phòng, văn thư lưu trữ, quản lý VPP – tài sản văn phòng và điều phối hậu cần" },
+      { title: "Nhân viên Hành chánh-Nhân sự", defaultRole: "hr_admin", level: "Staff", desc: "Quản lý hồ sơ nhân sự, chấm công – nghỉ phép, tuyển dụng, chế độ BHXH và công tác hành chánh nội bộ" },
+      { title: "Nhân viên Pháp chế", defaultRole: "legal", level: "Staff", desc: "Soạn thảo & rà soát hợp đồng, hồ sơ pháp lý, hồ sơ công bố lưu hành thiết bị y tế IVD và hồ sơ thầu" },
       { title: "Nhân viên Kế toán", defaultRole: "accountant", level: "Staff", desc: "Hạch toán, xuất hóa đơn VAT, đối soát kho và theo dõi công nợ" }
     ]
   },
@@ -267,10 +272,19 @@ export function mergeStoredDepartmentPositions(
         : null;
 
     if (isCurrentSchema && saved && typeof saved === "object") {
+      const basePositions = savedPositions ? savedPositions.map((p) => ({ ...p })) : def.positions.map((p) => ({ ...p }));
+      const existingNorms = new Set(basePositions.map((p) => p.title.toLowerCase().replace(/\s*-\s*/g, "-").trim()));
+      for (const defPos of def.positions) {
+        const defNorm = defPos.title.toLowerCase().replace(/\s*-\s*/g, "-").trim();
+        if (!existingNorms.has(defNorm)) {
+          basePositions.push({ ...defPos });
+          existingNorms.add(defNorm);
+        }
+      }
       result[key] = {
         ...def,
         ...saved,
-        positions: savedPositions ? savedPositions.map((p) => ({ ...p })) : def.positions.map((p) => ({ ...p })),
+        positions: basePositions,
       };
     } else {
       const mergedPositions = def.positions.map((p) => ({ ...p }));

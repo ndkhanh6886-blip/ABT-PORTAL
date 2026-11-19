@@ -699,6 +699,104 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "chat.view": true,
     "zalo.view": false
   },
+  admin_head: {
+    "sales.view": true,
+    "sales.create": false,
+    "sales.edit": false,
+    "sales.delete": false,
+    "sales.approve_discount": true,
+    "sales.approve_quotes": true,
+    "sales.approve_zero_price": true,
+    "sales.approve_orders": true,
+    "sales.export_excel": true,
+    "warehouse.view": true,
+    "warehouse.inbound": false,
+    "warehouse.edit_inbound": true,
+    "warehouse.outbound": false,
+    "warehouse.reserve": false,
+    "warehouse.view_cost_price": true,
+    "warehouse.print_barcode": false,
+    "application.view": false,
+    "application.create": false,
+    "application.assign": false,
+    "application.approve": false,
+    "procurement.view": true,
+    "procurement.create_pr": true,
+    "procurement.approve_po": true,
+    "legal.view": true,
+    "legal.create": true,
+    "legal.approve": true,
+    "settings.view": false,
+    "settings.manage_users": false,
+    "settings.view_audit": true,
+    "chat.view": true,
+    "zalo.view": true,
+    "workspace.manage_templates": true
+  },
+  hr_admin: {
+    "sales.view": false,
+    "sales.create": false,
+    "sales.edit": false,
+    "sales.delete": false,
+    "sales.approve_discount": false,
+    "sales.approve_quotes": false,
+    "sales.approve_zero_price": false,
+    "sales.approve_orders": false,
+    "sales.export_excel": false,
+    "warehouse.view": false,
+    "warehouse.inbound": false,
+    "warehouse.outbound": false,
+    "warehouse.reserve": false,
+    "warehouse.view_cost_price": false,
+    "warehouse.print_barcode": false,
+    "application.view": false,
+    "application.create": false,
+    "application.assign": false,
+    "application.approve": false,
+    "procurement.view": true,
+    "procurement.create_pr": true,
+    "procurement.approve_po": false,
+    "legal.view": true,
+    "legal.create": false,
+    "legal.approve": false,
+    "settings.view": false,
+    "settings.manage_users": false,
+    "settings.view_audit": false,
+    "chat.view": true,
+    "zalo.view": false
+  },
+  admin_staff: {
+    "sales.view": false,
+    "sales.create": false,
+    "sales.edit": false,
+    "sales.delete": false,
+    "sales.approve_discount": false,
+    "sales.approve_quotes": false,
+    "sales.approve_zero_price": false,
+    "sales.approve_orders": false,
+    "sales.export_excel": false,
+    "warehouse.view": false,
+    "warehouse.inbound": false,
+    "warehouse.outbound": false,
+    "warehouse.reserve": false,
+    "warehouse.view_cost_price": false,
+    "warehouse.print_barcode": false,
+    "application.view": false,
+    "application.create": false,
+    "application.assign": false,
+    "application.approve": false,
+    "procurement.view": true,
+    "procurement.create_pr": true,
+    "procurement.approve_po": false,
+    "legal.view": true,
+    "legal.create": false,
+    "legal.approve": false,
+    "settings.view": false,
+    "settings.manage_users": false,
+    "settings.view_audit": false,
+    "chat.view": true,
+    "zalo.view": false
+  },
   qa_qc_lead: {
     "warehouse.view": true,
     "warehouse.inbound": true,
@@ -939,6 +1037,9 @@ export function inferSystemRoleFromPosition(deptStr?: string, posStr?: string, e
     "procurement_specialist",
     "app_head",
     "app_rep",
+    "admin_head",
+    "hr_admin",
+    "admin_staff",
     "accountant_head",
     "accountant",
     "qa_qc_lead",
@@ -1027,6 +1128,9 @@ export function inferSystemRoleFromPosition(deptStr?: string, posStr?: string, e
     if (pos.includes("cung ứng") || pos.includes("mua hàng")) return isLeaderPos ? "procurement_lead" : "procurement_specialist";
     if (pos.includes("giao nhận") || pos.includes("thủ kho") || /(^|\s)kho(\s|$)/.test(pos)) return isLeaderPos ? "warehouse_lead" : "warehouse";
     if (pos.includes("pháp chế") || pos.includes("pháp lý")) return isLeaderPos ? "legal_head" : "legal";
+    if (pos.includes("kế toán") || pos.includes("tài chính")) return isLeaderPos ? "accountant_head" : "accountant";
+    if (pos.includes("nhân sự")) return isLeaderPos ? "admin_head" : "hr_admin";
+    if (pos.includes("hành chánh") || pos.includes("hành chính")) return isLeaderPos ? "admin_head" : "admin_staff";
     return isLeaderPos ? deptDef.headRole : deptDef.staffRole;
   }
 
@@ -1184,6 +1288,21 @@ export function resolveRolePreset(roleName?: string, deptName?: string): Record<
       return ROLE_PRESETS.accountant_head;
     }
     return ROLE_PRESETS.accountant;
+  }
+
+  // 7b. Hành chánh / Nhân sự
+  if (
+    role.includes("hr_admin") ||
+    role.includes("admin_staff") ||
+    role.includes("admin_head") ||
+    role.includes("nhân sự") ||
+    role.includes("hành chánh") ||
+    role.includes("hành chính")
+  ) {
+    if (role.includes("head") || role.includes("trưởng") || role.includes("phó")) {
+      return ROLE_PRESETS.admin_head;
+    }
+    return role.includes("nhân sự") || role === "hr_admin" ? ROLE_PRESETS.hr_admin : ROLE_PRESETS.admin_staff;
   }
 
   // 8. QA/QC
