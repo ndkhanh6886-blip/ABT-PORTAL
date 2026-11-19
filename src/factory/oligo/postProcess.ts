@@ -253,45 +253,41 @@ export async function listPostQueue(tx: Tx, actor: AuthzActor, status?: string) 
   if (units !== "ALL" && !units.length) return [];
   const statuses = status ? [status] : QUEUE_STATUSES;
 
-  // Auto-attach default SOP workflow to any newly opened post-process record that didn't get one yet
-  const unlinkedOpen = (
-    await tx.query(
-      `SELECT pp.id, pp.purification
-         FROM oligo.post_process pp
-         JOIN oligo.oligo_sequence s ON s.id = pp.sequence_id
-        WHERE pp.status = 'OPEN'
-          AND pp.workflow_id IS NULL
-          AND pp.workflow_steps IS NULL
-          AND NOT pp.cleavage_done
-          AND NOT pp.deprotection_done
-          AND NOT pp.purification_done
-          AND s.status = 'POST_PROCESSING'
-          AND ($1::uuid[] IS NULL OR s.org_unit_id = ANY($1::uuid[]))
-        LIMIT 200`,
-      [units === "ALL" ? null : units]
-    )
-  ).rows;
-  for (const row of unlinkedOpen) {
-    const wf = await workflowFor(tx, row.purification);
-    if (wf) {
-      await tx.query(
-        "UPDATE oligo.post_process SET workflow_id = $2, workflow_revision = $3, workflow_steps = $4 WHERE id = $1",
-        [row.id, wf.id, wf.revision, JSON.stringify(wf.steps)]
-      );
-    }
-  }
-
   return (
     await tx.query(
-      `SELECT s.id, s.code, s.name, s.status, s.version, s.scale_code, s.purification, s.format, s.base_count, s.mw::float AS mw, o.code AS order_code, o.due_date,
-              pp.od_total::float AS od_total, pp.nmol::float AS nmol, pp.status AS post_status,
-              pp.workflow_id, pw.name AS workflow_name,
+      `SELECT s.id, s.code, s.name, s.status, s.version, s.scale_code, s.purification, s.format, s.base_count, s.mw::float AS mw,
+              s.raw_sequence, s.normalized_sequence, s.relation,
+              s.nmol_per_od::float AS nmol_per_od, s.ug_per_od::float AS ug_per_od,
+              o.code AS order_code, o.due_date,
+              pp.id AS post_id, pp.version AS post_version, pp.status AS post_status,
+              pp.a260::float AS a260, pp.dilution_factor::float AS dilution_factor, pp.path_cm::float AS path_cm,
+              pp.stock_volume_ul::float AS stock_volume_ul, pp.target_conc_um::float AS target_conc_um, pp.tube_count,
+              pp.od_total::float AS od_total, pp.nmol::float AS nmol, pp.ug::float AS ug,
+              pp.resuspend_volume_ul::float AS resuspend_volume_ul, pp.od_per_tube::float AS od_per_tube,
+              pp.workflow_id, pw.name AS workflow_name, pp.workflow_steps,
               CASE WHEN jsonb_typeof(pp.workflow_steps) = 'array' THEN jsonb_array_length(pp.workflow_steps) ELSE 0 END AS workflow_total_steps,
               COALESCE((SELECT count(*)::int FROM oligo.ps_step_log l WHERE l.post_process_id = pp.id), 0) AS workflow_logged_steps,
+              last_log.step_no AS last_step_no,
+              last_log.step_name AS last_step_name,
+              last_log.values AS last_step_values,
+              last_log.performed_at AS last_step_at,
+              last_log.performed_by_name AS last_step_by,
+              last_log.stock_document_code AS last_step_doc,
               qt.code AS qc_code, qt.status AS qc_status, qt.overall_result AS qc_result
          FROM oligo.oligo_sequence s LEFT JOIN oligo.oligo_order o ON o.id = s.order_id
          LEFT JOIN oligo.post_process pp ON pp.sequence_id = s.id AND pp.status <> 'VOID'
          LEFT JOIN oligo.ps_workflow pw ON pw.id = pp.workflow_id
+         LEFT JOIN LATERAL (
+           SELECT l.step_no, l.step_name, l.values, l.performed_at,
+                  p.display_name AS performed_by_name,
+                  d.code AS stock_document_code
+             FROM oligo.ps_step_log l
+             LEFT JOIN core.user_profile p ON p.user_id = l.performed_by
+             LEFT JOIN inv.stock_document d ON d.id = l.stock_document_id
+            WHERE l.post_process_id = pp.id
+            ORDER BY l.step_no DESC
+            LIMIT 1
+         ) last_log ON true
          LEFT JOIN LATERAL (SELECT code, status, overall_result FROM qms.qc_test WHERE entity_type = 'OLIGO_SEQUENCE' AND entity_id = s.id ORDER BY created_at DESC LIMIT 1) qt ON true
         WHERE s.status = ANY($1::text[]) AND ($2::uuid[] IS NULL OR s.org_unit_id = ANY($2::uuid[]))
         ORDER BY o.due_date NULLS LAST, s.code LIMIT 500`,
@@ -376,9 +372,11 @@ registerQcSubject("OLIGO_SEQUENCE", {
 });
 
 const batchPostSchema = z.object({
-  action: z.enum(["batch_start", "batch_measure", "batch_submit_qc", "batch_assign_workflow"]),
+  action: z.enum(["batch_start", "batch_measure", "batch_submit_qc", "batch_assign_workflow", "batch_rerun"]),
   sequence_ids: z.array(z.string().uuid()).min(1, "chọn ít nhất 1 trình tự").max(200),
   workflow_id: z.string().trim().max(100).optional().nullable(),
+  rerun_mode: z.enum(["REWIND_STEP", "RESET_POST", "RESYNTHESIZE"]).optional().default("RESET_POST"),
+  reason: z.string().trim().max(500).optional().nullable(),
   a260: z.coerce.number().positive().max(1000).optional(),
   per_sequence_a260: z.record(z.string(), z.coerce.number().positive().max(1000)).optional(),
   dilution_factor: z.coerce.number().min(1).max(100000).optional().default(10),
@@ -553,6 +551,91 @@ export async function batchPostProcessAction(tx: Tx, actor: AuthzActor, input: u
       processed.push(s.code);
     }
     return { action: d.action, count: processed.length, codes: processed };
+  }
+
+  if (d.action === "batch_rerun") {
+    const mode = d.rerun_mode || "RESET_POST";
+    const reason = (d.reason || "Kỹ thuật viên yêu cầu chạy lại / làm lại từ màn hình Hậu tổng hợp").trim();
+    for (const seqId of ids) {
+      const s = await lockSequence(tx, seqId);
+      await authorize(tx, actor, "oligo.post.manage", s.org_unit_id);
+      const rec = await liveRecord(tx, seqId, true);
+
+      if (mode === "REWIND_STEP") {
+        if (!rec || rec.status !== "OPEN") continue;
+        const lastLog = (
+          await tx.query(
+            "SELECT id, step_no, step_name FROM oligo.ps_step_log WHERE post_process_id = $1 ORDER BY step_no DESC LIMIT 1",
+            [rec.id]
+          )
+        ).rows[0];
+        if (lastLog) {
+          await tx.query("DELETE FROM oligo.ps_step_log WHERE id = $1", [lastLog.id]);
+          await tx.query(
+            "UPDATE oligo.post_process SET cleavage_done = false, deprotection_done = false, purification_done = false, version = version + 1, updated_at = now(), updated_by = $2 WHERE id = $1",
+            [rec.id, actor.userId]
+          );
+          await writeAudit(tx, actor, {
+            entityType: "oligo_post_process",
+            entityId: rec.id,
+            action: "rewind_step",
+            changes: { [`step ${lastLog.step_no}`]: [lastLog.step_name, null] },
+            reason,
+          });
+          processed.push(s.code);
+        }
+      } else if (mode === "RESET_POST") {
+        if (!rec || rec.status !== "OPEN") continue;
+        await tx.query("DELETE FROM oligo.ps_step_log WHERE post_process_id = $1", [rec.id]);
+        await tx.query(
+          `UPDATE oligo.post_process
+              SET cleavage_done = false,
+                  deprotection_done = false,
+                  purification_done = false,
+                  a260 = NULL,
+                  od_total = NULL,
+                  nmol = NULL,
+                  ug = NULL,
+                  resuspend_volume_ul = NULL,
+                  od_per_tube = NULL,
+                  tubes_detail = '[]'::jsonb,
+                  version = version + 1,
+                  updated_at = now(),
+                  updated_by = $2
+            WHERE id = $1`,
+          [rec.id, actor.userId]
+        );
+        await writeAudit(tx, actor, {
+          entityType: "oligo_post_process",
+          entityId: rec.id,
+          action: "reset_post",
+          changes: { status: ["IN_PROGRESS", "STEP_1"] },
+          reason,
+        });
+        processed.push(s.code);
+      } else if (mode === "RESYNTHESIZE") {
+        if (rec) {
+          await tx.query(
+            "UPDATE oligo.post_process SET status = 'VOID', notes = COALESCE(notes || ' | ', '') || $2, version = version + 1, updated_at = now(), updated_by = $3 WHERE id = $1",
+            [rec.id, `Báo lỗi chạy lại: ${reason}`, actor.userId]
+          );
+        }
+        await tx.query(
+          "UPDATE oligo.oligo_sequence SET status = 'PENDING', notes = COALESCE(notes || ' | ', '') || $2, version = version + 1, updated_at = now() WHERE id = $1",
+          [s.id, `Chạy lại từ Hậu tổng hợp: ${reason}`]
+        );
+        await recomputeOrdersOf(tx, actor, [s.id]);
+        await writeAudit(tx, actor, {
+          entityType: "oligo_sequence",
+          entityId: s.id,
+          action: "rerun_from_post",
+          changes: { status: [s.status, "PENDING"] },
+          reason,
+        });
+        processed.push(s.code);
+      }
+    }
+    return { action: d.action, mode, count: processed.length, codes: processed };
   }
 
   throw invalid("Hành động xử lý hàng loạt không hợp lệ.");
