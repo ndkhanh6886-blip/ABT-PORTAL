@@ -5,6 +5,7 @@ import { hashPassword, verifyPassword, needsRehash } from "@/backend/services/pa
 import { createSessionToken, getSessionFromRequest, SESSION_COOKIE, sessionCookieOptions } from "@/backend/services/session";
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse, setAuditActor } from "@/backend/services/authz";
 import { clientIp, hitRateLimit, isRateLimited } from "@/backend/services/rateLimit";
+import { describeUserAgent } from "@/backend/services/userAgent";
 
 const USER_LOOKUP_WHERE = `
   LOWER(username) = LOWER($1)
@@ -102,6 +103,9 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const { action, username, password, currentPassword, newPassword, status } = body || {};
     const ip = clientIp(req);
+    // Thiết bị / trình duyệt của lần đăng nhập, đổi mật khẩu: phân biệt các máy, phát hiện công cụ tự động trong nhật ký
+    const userAgent = req.headers.get("user-agent") || "";
+    const device = describeUserAgent(userAgent);
     const ipKey = `login-fail:${ip}`;
 
     // Heartbeat / presence: only for the signed-in user, never for an arbitrary account named in the body
@@ -206,7 +210,7 @@ export async function POST(req: NextRequest) {
             )`,
         [newHash, user.id, String(user.username || ""), String(user.full_name || "")]
       ).catch(() => {});
-      await logAudit("CHANGE_PASSWORD", "AUTH", `Người dùng ${user.full_name} (${user.username}) đã đổi mật khẩu thành công`, user.username, user.full_name);
+      await logAudit("CHANGE_PASSWORD", "AUTH", `Người dùng ${user.full_name} (${user.username}) đã đổi mật khẩu thành công (IP ${ip} · ${device})`, user.username, user.full_name, ip, userAgent);
       const response = NextResponse.json({ success: true, message: "Đổi mật khẩu thành công" });
       await issueSession(req, upd.rows[0], response);
       return response;
@@ -262,7 +266,7 @@ export async function POST(req: NextRequest) {
           await logAudit("ACCOUNT_LOCKED", "AUTH", `Tạm khóa ${LOCK_MINUTES} phút tài khoản ${primaryCandidate.username} sau ${MAX_FAILED_LOGINS} lần sai mật khẩu (IP ${ip})`, primaryCandidate.username, primaryCandidate.full_name);
         }
       }
-      await logAudit("LOGIN_FAILED", "AUTH", `Đăng nhập thất bại cho tài khoản ${loginName} (IP ${ip})`, loginName, "Chưa xác thực", ip);
+      await logAudit("LOGIN_FAILED", "AUTH", `Đăng nhập thất bại cho tài khoản ${loginName} (IP ${ip} · ${device})`, loginName, "Chưa xác thực", ip, userAgent);
       return NextResponse.json({ error: "Tài khoản hoặc mật khẩu không chính xác" }, { status: 401 });
     }
 
@@ -298,7 +302,7 @@ export async function POST(req: NextRequest) {
     user.permissions = parsePermissions(user.permissions);
     user.last_seen_at = new Date().toISOString();
     user.must_change_password = mustChange;
-    await logAudit("LOGIN", "AUTH", `Người dùng ${user.full_name} (${user.username}) đăng nhập hệ thống thành công (IP ${ip})`, user.username, user.full_name, ip);
+    await logAudit("LOGIN", "AUTH", `Người dùng ${user.full_name} (${user.username}) đăng nhập hệ thống thành công (IP ${ip} · ${device})`, user.username, user.full_name, ip, userAgent);
 
     const sessionVersion = user.session_version;
     delete user.session_version;

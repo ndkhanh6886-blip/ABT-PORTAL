@@ -1398,6 +1398,7 @@ async function ensurePersonnelTableImpl() {
           ip_address VARCHAR(50),
           created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
+        ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_agent TEXT;
       `);
     } catch (e: any) {
       console.warn("Could not create audit_logs table:", e?.message);
@@ -1594,7 +1595,19 @@ export async function query(text: string, params?: any[]) {
   return res;
 }
 
-export async function logAudit(action: string, module: string, details: string, actorUsername = "system", actorName = "Hệ Thống", ip = "127.0.0.1") {
+// audit_logs.user_agent (browser / device of sign-ins): added on first use, so a login that arrives before the startup
+// migrations still records it.
+let auditUserAgentColumnReady = false;
+
+export async function logAudit(
+  action: string,
+  module: string,
+  details: string,
+  actorUsername = "system",
+  actorName = "Hệ Thống",
+  ip = "127.0.0.1",
+  userAgent: string | null = null
+) {
   // Calls that do not name the actor are attributed to the signed-in user of the current request
   if (actorUsername === "system") {
     const ctx = auditActorStore.getStore();
@@ -1604,6 +1617,17 @@ export async function logAudit(action: string, module: string, details: string, 
     }
   }
   try {
+    if (userAgent) {
+      if (!auditUserAgentColumnReady) {
+        await query("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_agent TEXT");
+        auditUserAgentColumnReady = true;
+      }
+      await query(
+        "INSERT INTO audit_logs (action, module, details, actor_username, actor_name, ip_address, user_agent) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        [action, module, details, actorUsername, actorName, ip, userAgent.slice(0, 500)]
+      );
+      return;
+    }
     await query(
       "INSERT INTO audit_logs (action, module, details, actor_username, actor_name, ip_address) VALUES ($1, $2, $3, $4, $5, $6)",
       [action, module, details, actorUsername, actorName, ip]
