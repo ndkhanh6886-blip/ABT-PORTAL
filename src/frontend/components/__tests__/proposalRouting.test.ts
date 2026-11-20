@@ -282,4 +282,44 @@ describe("Proposal approval routing & escalation rules", () => {
       )
     ).toBe("full");
   });
+
+  it("preserves Kế Toán / Kế toán trưởng step (even if roleType was left as DIRECTOR) and sanitizes legacy TBR name Võ Thị Ngọc Giàu", () => {
+    const dnttSteps: ProposalStepInstance[] = [
+      {
+        stepOrder: 1,
+        stepName: "Kế toán trưởng duyệt chi",
+        roleType: "DIRECTOR", // Bị sót roleType DIRECTOR khi sửa từ mẫu 3 bước xuống 1 bước
+        dept: "Kế Toán",
+        approverName: "Kế toán trưởng",
+        status: "PENDING_NOW",
+        slaHours: 9
+      }
+    ];
+
+    const resDntt = normalizeProposalStepsForRequester(dnttSteps, "Kinh Doanh", "Huỳnh Thị Ngọc Huyền", SAMPLE_PERSONNEL);
+    expect(resDntt.steps[0]).toMatchObject({
+      stepOrder: 1,
+      stepName: "Kế toán trưởng duyệt chi",
+      roleType: "REVIEWER",
+      dept: "Kế Toán",
+      approverName: "Kế toán trưởng"
+    });
+
+    const dnxhdSteps: ProposalStepInstance[] = [
+      {
+        stepOrder: 1,
+        stepName: "Kế toán kiểm tra & xuất hóa đơn",
+        roleType: "REVIEWER",
+        dept: "Kế Toán",
+        approverName: "Võ Thị Ngọc Giàu",
+        status: "PENDING_NOW",
+        slaHours: 8
+      }
+    ];
+
+    const resDnxhd = normalizeProposalStepsForRequester(dnxhdSteps, "Kinh Doanh", "Yin Minh Châu", SAMPLE_PERSONNEL);
+    expect(resDnxhd.steps[0].approverName).toBe("Kế toán trưởng");
+    expect(resDnxhd.steps[0].dept).toBe("Kế Toán");
+    expect(resDnxhd.steps[0].roleType).toBe("REVIEWER");
+  });
 });

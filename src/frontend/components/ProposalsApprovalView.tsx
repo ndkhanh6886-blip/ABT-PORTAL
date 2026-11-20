@@ -323,7 +323,7 @@ export const DEFAULT_PROPOSAL_TEMPLATES: ProposalTemplate[] = [
     ],
     defaultSteps: [
       { stepOrder: 1, stepName: "Trưởng bộ phận xác nhận", roleType: "DEPT_HEAD", defaultDept: "Theo phòng người tạo", defaultApprover: "Trưởng bộ phận", slaHours: 4 },
-      { stepOrder: 2, stepName: "Kế toán kiểm tra & xuất hóa đơn", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Võ Thị Ngọc Giàu", slaHours: 8, allowAttachment: true, attachmentLabel: "File Hóa đơn VAT đã xuất (PDF / XML / Ảnh)" }
+      { stepOrder: 2, stepName: "Kế toán kiểm tra & xuất hóa đơn", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Kế toán trưởng", slaHours: 8, allowAttachment: true, attachmentLabel: "File Hóa đơn VAT đã xuất (PDF / XML / Ảnh)" }
     ]
   },
 
@@ -866,6 +866,90 @@ export function isGenericRoleApproverLabel(label: any): boolean {
   );
 }
 
+/**
+ * Loại bỏ tên nhân sự cũ của TBR (VD: "Võ Thị Ngọc Giàu") nếu còn sót trong biểu mẫu / đề xuất cũ,
+ * chuyển về chức danh chuẩn "Kế toán trưởng" của ABT.
+ */
+export function sanitizeLegacyTbrApproverName(approverRaw: any): string {
+  const s = String(approverRaw || "").trim();
+  if (/võ\s+thị\s+ngọc\s+giàu|ngọc\s+giàu/i.test(s.normalize("NFC"))) {
+    return "Kế toán trưởng";
+  }
+  return s;
+}
+
+/**
+ * Tự động suy luận `roleType` đúng theo Phòng ban (`dept`), Người duyệt (`approver`) và Tên bước (`stepName`).
+ * Khắc phục lỗi khi người dùng sửa bước `DIRECTOR` (Ban Giám Đốc) hoặc bấm `+ Thêm cấp phê duyệt` trong Thiết kế Biểu mẫu
+ * thành `Phòng ban: Kế Toán` / `Người duyệt: Kế toán trưởng` nhưng `roleType` ẩn bên dưới vẫn giữ `"DIRECTOR"`,
+ * khiến khi tạo phiếu mới bị ghi đè ngược về `Ban Giám Đốc` (`Đỗ Ngọc Diễm Trúc`).
+ */
+export function inferProposalStepRoleType(
+  deptRaw: any,
+  approverRaw: any,
+  stepNameRaw: any,
+  fallbackRoleType: "DEPT_HEAD" | "REVIEWER" | "DIRECTOR" | "EXECUTOR" = "REVIEWER"
+): "DEPT_HEAD" | "REVIEWER" | "DIRECTOR" | "EXECUTOR" {
+  const dept = String(deptRaw || "").toLowerCase().normalize("NFC").trim();
+  const approver = sanitizeLegacyTbrApproverName(approverRaw).toLowerCase().normalize("NFC").trim();
+  const stepName = String(stepNameRaw || "").toLowerCase().normalize("NFC").trim();
+
+  // 1. Nếu chỉ định rõ phòng Kế toán / Kế toán trưởng / Hành chính / Pháp chế / QA-QC / Cung ứng / Kho -> REVIEWER hoặc EXECUTOR
+  if (
+    dept.includes("kế toán") ||
+    approver.includes("kế toán") ||
+    stepName.includes("kế toán")
+  ) {
+    return "REVIEWER";
+  }
+
+  // 2. Nếu là bước Trưởng bộ phận của chính phòng người tạo
+  if (
+    dept === "theo phòng người tạo" ||
+    approver === "trưởng bộ phận" ||
+    /^trưởng\s+bộ\s+phận\b/i.test(stepName)
+  ) {
+    return "DEPT_HEAD";
+  }
+
+  // 3. Nếu phòng ban hoặc người duyệt là Ban Giám Đốc / Giám đốc / PGĐ
+  if (
+    dept === "ban giám đốc" ||
+    dept === "bgđ" ||
+    approver === "ban giám đốc" ||
+    approver === "giám đốc" ||
+    approver.startsWith("pgđ") ||
+    approver.startsWith("phó giám đốc")
+  ) {
+    return "DIRECTOR";
+  }
+
+  // 4. Nếu phòng ban đã ghi cụ thể một phòng chuyên môn khác Ban Giám Đốc -> không giữ roleType DIRECTOR
+  if (dept && dept !== "ban giám đốc" && fallbackRoleType === "DIRECTOR") {
+    return "REVIEWER";
+  }
+
+  return fallbackRoleType;
+}
+
+/**
+ * Tìm nhân sự có chức danh "Kế toán trưởng" trong danh sách nhân sự ABT (`personnelList`).
+ * Nếu công ty chưa bổ nhiệm nhân sự nào mang chức danh "Kế toán trưởng", giữ nguyên nhãn "Kế toán trưởng"
+ * đúng như cấu hình trong mẫu quy trình (không tự ý đổi sang Ban Giám Đốc hay Trưởng phòng Hành chính).
+ */
+export function resolveChiefAccountantApprover(personnelList?: any[]): string {
+  const matched = (personnelList || []).find((p: any) => {
+    const pos = String(p?.position || "").toLowerCase().normalize("NFC").trim();
+    const name = String(p?.full_name || p?.name || "").normalize("NFC");
+    if (/võ\s+thị\s+ngọc\s+giàu|ngọc\s+giàu/i.test(name)) return false;
+    return pos.includes("kế toán trưởng") || pos === "chief accountant";
+  });
+  if (matched?.full_name || matched?.name) {
+    return cleanStaffDisplayName(matched.full_name || matched.name);
+  }
+  return "Kế toán trưởng";
+}
+
 export function formatEscalatedStepName(rawStepName: string, bodRoleTitle: string): string {
   const s = String(rawStepName || "").trim();
   if (!s) return `${bodRoleTitle} phê duyệt`;
@@ -888,6 +972,8 @@ export function formatEscalatedStepName(rawStepName: string, bodRoleTitle: strin
  * - Phó/Trưởng phòng đề xuất (hoặc phòng không có Trưởng/Phó phòng như KTCN) -> nâng cấp bước DEPT_HEAD lên
  *   PGĐ phụ trách khối (PGĐ Kỹ thuật Nguyễn Duy Khánh cho Khối Kỹ thuật, PGĐ Kinh doanh Đỗ Ngọc Diễm Trúc cho Khối Kinh doanh),
  *   riêng phòng Kỹ thuật Công nghệ (KTCN) do Giám đốc Nguyễn Văn Tùng duyệt.
+ * - Các bước thẩm định chuyên môn như `Kế Toán` / `Kế toán trưởng` giữ nguyên theo đúng cấu hình biểu mẫu,
+ *   KHÔNG bị ghi đè sang Ban Giám Đốc.
  */
 export function normalizeProposalStepsForRequester(
   steps: ProposalStepInstance[],
@@ -900,9 +986,46 @@ export function normalizeProposalStepsForRequester(
   const reqIsLeader = isPersonDeptHeadOrDeputy(requesterName, resolvedReqDept, personnelList);
   let changed = false;
 
-  const mapped = steps.map((st) => {
+  const mapped = steps.map((rawSt) => {
+    // Làm sạch tên Kế toán trưởng TBR cũ ("Võ Thị Ngọc Giàu") nếu có và đồng bộ lại roleType theo phòng ban/người duyệt
+    const cleanApprover = sanitizeLegacyTbrApproverName(rawSt.approverName);
+    const inferredRole = inferProposalStepRoleType(rawSt.dept, cleanApprover, rawSt.stepName, rawSt.roleType);
+    let st = rawSt;
+    if (cleanApprover !== rawSt.approverName || inferredRole !== rawSt.roleType) {
+      changed = true;
+      st = { ...rawSt, approverName: cleanApprover, roleType: inferredRole };
+    }
+
     // Không tự ý đổi các bước đã duyệt xong
     if (st.status === "APPROVED" || st.status === "REJECTED" || st.status === "SKIPPED") {
+      return st;
+    }
+
+    const approverLower = String(st.approverName || "").toLowerCase().normalize("NFC").trim();
+    const deptLower = String(st.dept || "").toLowerCase().normalize("NFC").trim();
+    const stepNameLower = String(st.stepName || "").toLowerCase().normalize("NFC").trim();
+
+    // Nếu bước duyệt được cấu hình cho Kế toán / Kế toán trưởng: giữ nguyên phòng Kế Toán & Kế toán trưởng
+    if (
+      approverLower === "kế toán trưởng" ||
+      approverLower === "kế toán" ||
+      deptLower === "kế toán" ||
+      stepNameLower.includes("kế toán trưởng")
+    ) {
+      const targetDept = st.dept && st.dept !== "Ban Giám Đốc" ? st.dept : "Kế Toán";
+      const targetApprover =
+        approverLower === "kế toán trưởng" || isGenericRoleApproverLabel(st.approverName)
+          ? resolveChiefAccountantApprover(personnelList)
+          : st.approverName;
+      if (st.dept !== targetDept || st.approverName !== targetApprover || st.roleType !== "REVIEWER") {
+        changed = true;
+        return {
+          ...st,
+          roleType: "REVIEWER" as const,
+          dept: targetDept,
+          approverName: targetApprover
+        };
+      }
       return st;
     }
 
@@ -982,7 +1105,7 @@ export function normalizeProposalStepsForRequester(
       return st;
     }
 
-    // Bước REVIEWER / EXECUTOR có nhãn chung (VD: "Trưởng phòng QA/QC", "Kế toán trưởng", "Hành Chính Nhân Sự")
+    // Bước REVIEWER / EXECUTOR có nhãn chung (VD: "Trưởng phòng QA/QC", "Hành Chính Nhân Sự")
     if (isGenericRoleApproverLabel(st.approverName)) {
       const deptLeader = resolveDeptLeaderInfo(stepTargetDept, personnelList);
       if (deptLeader) {
@@ -1188,17 +1311,36 @@ export function ProposalsApprovalView({
     setIsTemplateBuilderOpen(true);
   };
 
+  const sanitizeTemplateForAbt = (tmpl: ProposalTemplate): { template: ProposalTemplate; changed: boolean } => {
+    let changed = false;
+    const nextSteps = (tmpl.defaultSteps || []).map((st) => {
+      const cleanApprover = sanitizeLegacyTbrApproverName(st.defaultApprover);
+      const inferredRole = inferProposalStepRoleType(st.defaultDept, cleanApprover, st.stepName, st.roleType);
+      if (cleanApprover !== st.defaultApprover || inferredRole !== st.roleType) {
+        changed = true;
+        return { ...st, defaultApprover: cleanApprover, roleType: inferredRole };
+      }
+      return st;
+    });
+    return {
+      template: changed ? { ...tmpl, defaultSteps: nextSteps } : tmpl,
+      changed
+    };
+  };
+
   const openInspectOrEditTemplate = (tmpl: ProposalTemplate) => {
-    setEditingTemplate(JSON.parse(JSON.stringify(tmpl)));
+    const { template: cleanTmpl } = sanitizeTemplateForAbt(JSON.parse(JSON.stringify(tmpl)));
+    setEditingTemplate(cleanTmpl);
     setIsTemplateBuilderOpen(true);
   };
 
   // Load custom templates from storage & merge local unsynced custom templates to server
   useEffect(() => {
-    const mergeTemplateLists = (...lists: ProposalTemplate[][]): ProposalTemplate[] => {
+    const mergeTemplateLists = (...lists: ProposalTemplate[][]): { merged: ProposalTemplate[]; sanitizedAny: boolean } => {
       const seenIds = new Set<string>();
       const seenPrefixes = new Set<string>();
       const out: ProposalTemplate[] = [];
+      let sanitizedAny = false;
       for (const list of lists) {
         if (!Array.isArray(list)) continue;
         for (const item of list) {
@@ -1208,10 +1350,12 @@ export function ProposalsApprovalView({
           if (seenIds.has(idKey) || (prefKey && seenPrefixes.has(prefKey))) continue;
           seenIds.add(idKey);
           if (prefKey) seenPrefixes.add(prefKey);
-          out.push(item);
+          const { template: cleanItem, changed } = sanitizeTemplateForAbt(item);
+          if (changed) sanitizedAny = true;
+          out.push(cleanItem);
         }
       }
-      return out;
+      return { merged: out, sanitizedAny };
     };
 
     const loadTemplates = async () => {
@@ -1236,11 +1380,11 @@ export function ProposalsApprovalView({
         }
       } catch {}
 
-      const merged = mergeTemplateLists(serverList, localList, DEFAULT_PROPOSAL_TEMPLATES);
+      const { merged, sanitizedAny } = mergeTemplateLists(serverList, localList, DEFAULT_PROPOSAL_TEMPLATES);
       setTemplates(merged);
 
-      // Nếu máy người dùng có mẫu tự tạo trong localStorage mà chưa có trên server thì tự động đẩy đồng bộ lên server
-      if (merged.length > serverList.length) {
+      // Nếu có mẫu mới hoặc vừa làm sạch tên TBR cũ ("Võ Thị Ngọc Giàu") / sửa lại roleType -> tự động lưu đồng bộ lên server
+      if (merged.length > serverList.length || sanitizedAny) {
         try {
           if (typeof window !== "undefined") {
             localStorage.setItem("workspace_proposal_templates", JSON.stringify(merged));
@@ -1254,18 +1398,19 @@ export function ProposalsApprovalView({
       }
     };
     loadTemplates();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveTemplatesToStorage = async (nextTemplates: ProposalTemplate[]) => {
-    setTemplates(nextTemplates);
+    const cleaned = nextTemplates.map((t) => sanitizeTemplateForAbt(t).template);
+    setTemplates(cleaned);
     try {
       if (typeof window !== "undefined") {
-        localStorage.setItem("workspace_proposal_templates", JSON.stringify(nextTemplates));
+        localStorage.setItem("workspace_proposal_templates", JSON.stringify(cleaned));
       }
       const res = await fetch("/api/storage?key=workspace_proposal_templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(nextTemplates)
+        body: JSON.stringify(cleaned)
       });
       if (!res.ok) {
         showToast("Cảnh báo: Không thể đồng bộ biểu mẫu lên máy chủ, vui lòng kiểm tra quyền hoặc kết nối mạng!", "warning");
@@ -4596,12 +4741,26 @@ export function ProposalsApprovalView({
                     <select
                       value={st.dept}
                       onChange={(e) => {
+                        const nextDept = e.target.value;
                         const copy = [...formState.steps];
-                        copy[idx] = { ...copy[idx], dept: e.target.value };
+                        copy[idx] = {
+                          ...copy[idx],
+                          dept: nextDept,
+                          roleType: inferProposalStepRoleType(
+                            nextDept,
+                            copy[idx].approverName,
+                            copy[idx].stepName,
+                            copy[idx].roleType
+                          )
+                        };
                         setFormState((prev) => ({ ...prev, steps: copy }));
                       }}
                       className="w-full px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
                     >
+                      {st.dept &&
+                        !departments.some((d) => d.id !== "all" && d.id === st.dept) && (
+                          <option value={st.dept}>{st.dept}</option>
+                        )}
                       {departments
                         .filter((d) => d.id !== "all")
                         .map((d) => (
@@ -6074,8 +6233,18 @@ export function ProposalsApprovalView({
                         type="text"
                         value={st.stepName}
                         onChange={(e) => {
+                          const nextStepName = e.target.value;
                           const copy = [...editingTemplate.defaultSteps];
-                          copy[idx] = { ...copy[idx], stepName: e.target.value };
+                          copy[idx] = {
+                            ...copy[idx],
+                            stepName: nextStepName,
+                            roleType: inferProposalStepRoleType(
+                              copy[idx].defaultDept,
+                              copy[idx].defaultApprover,
+                              nextStepName,
+                              copy[idx].roleType
+                            )
+                          };
                           setEditingTemplate({ ...editingTemplate, defaultSteps: copy });
                         }}
                         className="w-full px-2 py-1 rounded border border-slate-200 dark:border-slate-700 font-bold"
@@ -6088,8 +6257,18 @@ export function ProposalsApprovalView({
                         type="text"
                         value={st.defaultDept}
                         onChange={(e) => {
+                          const nextDept = e.target.value;
                           const copy = [...editingTemplate.defaultSteps];
-                          copy[idx] = { ...copy[idx], defaultDept: e.target.value };
+                          copy[idx] = {
+                            ...copy[idx],
+                            defaultDept: nextDept,
+                            roleType: inferProposalStepRoleType(
+                              nextDept,
+                              copy[idx].defaultApprover,
+                              copy[idx].stepName,
+                              copy[idx].roleType
+                            )
+                          };
                           setEditingTemplate({ ...editingTemplate, defaultSteps: copy });
                         }}
                         className="w-full px-2 py-1 rounded border border-slate-200 dark:border-slate-700"
@@ -6103,8 +6282,18 @@ export function ProposalsApprovalView({
                         list="approval-staff-datalist"
                         value={st.defaultApprover}
                         onChange={(e) => {
+                          const nextApprover = sanitizeLegacyTbrApproverName(e.target.value);
                           const copy = [...editingTemplate.defaultSteps];
-                          copy[idx] = { ...copy[idx], defaultApprover: e.target.value };
+                          copy[idx] = {
+                            ...copy[idx],
+                            defaultApprover: nextApprover,
+                            roleType: inferProposalStepRoleType(
+                              copy[idx].defaultDept,
+                              nextApprover,
+                              copy[idx].stepName,
+                              copy[idx].roleType
+                            )
+                          };
                           setEditingTemplate({ ...editingTemplate, defaultSteps: copy });
                         }}
                         className="w-full px-2 py-1 rounded border border-slate-200 dark:border-slate-700 font-semibold"
