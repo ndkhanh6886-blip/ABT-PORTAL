@@ -497,6 +497,27 @@ export function renderWarehouseFlow(
       </div>
     );
   }
+  if (docType === "ADJUSTMENT" || docType === "COUNT_ADJUST") {
+    if (toLoc && !fromLoc) {
+      return (
+        <div className="text-xs">
+          <span className="text-slate-400">Tăng tồn ➔ </span>
+          <span className="font-mono font-bold text-emerald-700 dark:text-emerald-400">
+            {toWh ?? docWhCode} · {toLoc}
+          </span>
+        </div>
+      );
+    }
+    return (
+      <div className="text-xs">
+        <span className="font-mono font-semibold text-rose-700 dark:text-rose-400">
+          {fromWh ?? docWhCode}
+          {fromLoc ? ` · ${fromLoc}` : ""}
+        </span>
+        <span className="text-slate-400"> ➔ Giảm tồn</span>
+      </div>
+    );
+  }
   if (docType === "TRANSFER") {
     const isInterWh = fromWh && toWh && fromWh !== toWh;
     return (
@@ -531,10 +552,11 @@ export function renderWarehouseFlow(
 }
 
 const FLOW_TABS: { key: string; label: string }[] = [
-  { key: "", label: "📋 Tất cả giao dịch" },
-  { key: "PURCHASE_IN", label: "📥 Hàng mua về / Nhập kho mới" },
-  { key: "SUPPLY_TRANSFER", label: "🚚 Lịch sử Cấp phát (Kho Tổng ➔ Kho Nhánh)" },
-  { key: "PRODUCTION_OUT", label: "📤 Phiếu Xuất dùng / Sản xuất" },
+  { key: "", label: "📋 Tất cả" },
+  { key: "INBOUND", label: "📥 Phiếu Nhập" },
+  { key: "OUTBOUND", label: "📤 Phiếu Xuất" },
+  { key: "PURCHASE_IN", label: "🛒 Hàng mua về / Nhập mới" },
+  { key: "SUPPLY_TRANSFER", label: "🚚 Cấp phát (Kho Tổng ➔ Kho Nhánh)" },
   { key: "OPENING", label: "📦 Tồn đầu kỳ" },
 ];
 
@@ -554,10 +576,12 @@ export function DocumentsView({
   const [focusedItemId, setFocusedItemId] = useState("");
   const [focusedItemLabel, setFocusedItemLabel] = useState("");
   const [docQ, setDocQ] = useState("");
-  const debouncedDocQ = useDebouncedValue(docQ, 300);
+  const debouncedDocQ = useDebouncedValue(docQ, 200);
   const [page, setPage] = useState(1);
   const [creating, setCreating] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
+
+  const selectedWhCode = warehouses.find((w) => w.id === warehouseId)?.code ?? "";
 
   const params = new URLSearchParams({
     view: subMode === "LEDGER_TRACE" ? "ledger" : "documents",
@@ -595,9 +619,77 @@ export function DocumentsView({
     placeholderData: keepPreviousData,
   });
 
-  const rows = list.data?.rows ?? [];
+  // Lọc tức thì (0ms) trên tập dữ liệu đang có trong bộ nhớ khi chuyển tab để không bao giờ hiển thị dữ liệu cũ của tab trước
+  const rawRows = list.data?.rows ?? [];
+  const rows = React.useMemo(() => {
+    if (!list.isPlaceholderData) return rawRows;
+    return rawRows.filter((r: any) => {
+      // Nếu dòng này thuộc chế độ kia (DOCUMENTS vs LEDGER_TRACE) thì không giữ lại
+      if (subMode === "DOCUMENTS" && r.line_id && !r.lines_preview) return false;
+      if (subMode === "LEDGER_TRACE" && !r.line_id) return false;
+
+      const previewLines: DocLinePreview[] = Array.isArray(r.lines_preview) ? r.lines_preview : [];
+      const docWh: string = r.warehouse_code || r.doc_warehouse_code || "";
+
+      if (selectedWhCode) {
+        const matchesWh =
+          docWh === selectedWhCode ||
+          r.from_wh_code === selectedWhCode ||
+          r.to_wh_code === selectedWhCode ||
+          previewLines.some((ln) => ln.from_wh_code === selectedWhCode || ln.to_wh_code === selectedWhCode);
+        if (!matchesWh) return false;
+      }
+
+      if (docType && r.doc_type !== docType) return false;
+
+      if (flow === "INBOUND") {
+        const isReceipt = r.doc_type === "RECEIPT" || r.doc_type === "RETURN";
+        const isTransferIn =
+          r.doc_type === "TRANSFER" &&
+          (selectedWhCode
+            ? r.to_wh_code === selectedWhCode ||
+              previewLines.some((ln) => ln.to_wh_code === selectedWhCode && ln.from_wh_code !== selectedWhCode)
+            : true);
+        const isAdjIn =
+          (r.doc_type === "ADJUSTMENT" || r.doc_type === "COUNT_ADJUST") &&
+          (r.to_loc_code ? !r.from_loc_code : previewLines.some((ln) => Boolean(ln.to_loc_code && !ln.from_loc_code)));
+        if (!isReceipt && !isTransferIn && !isAdjIn) return false;
+      } else if (flow === "OUTBOUND") {
+        const isIssue = r.doc_type === "ISSUE";
+        const isTransferOut =
+          r.doc_type === "TRANSFER" &&
+          (selectedWhCode
+            ? (docWh === selectedWhCode || r.from_wh_code === selectedWhCode) &&
+              (r.to_wh_code
+                ? r.to_wh_code !== selectedWhCode
+                : previewLines.some((ln) => Boolean(ln.to_wh_code && ln.to_wh_code !== selectedWhCode)))
+            : true);
+        const isAdjOut =
+          (r.doc_type === "ADJUSTMENT" || r.doc_type === "COUNT_ADJUST") &&
+          (r.from_loc_code ? !r.to_loc_code : previewLines.some((ln) => Boolean(ln.from_loc_code && !ln.to_loc_code)));
+        if (!isIssue && !isTransferOut && !isAdjOut) return false;
+      } else if (flow === "PURCHASE_IN") {
+        if (!["RECEIPT", "RETURN"].includes(r.doc_type) || r.reason_code === "INITIAL_BALANCE") return false;
+      } else if (flow === "SUPPLY_TRANSFER") {
+        if (r.doc_type !== "TRANSFER") return false;
+      } else if (flow === "PRODUCTION_OUT") {
+        if (r.doc_type !== "ISSUE") return false;
+      } else if (flow === "OPENING") {
+        if (r.reason_code !== "INITIAL_BALANCE") return false;
+      }
+
+      if (focusedItemId) {
+        const hasItem =
+          r.item_id === focusedItemId || previewLines.some((ln) => ln.item_id === focusedItemId);
+        if (!hasItem) return false;
+      }
+      return true;
+    });
+  }, [rawRows, list.isPlaceholderData, subMode, selectedWhCode, docType, flow, focusedItemId]);
+
   const itemSummaries = list.data?.item_summaries ?? [];
-  const total = list.data?.total ?? rows.length;
+  const total = list.isPlaceholderData ? rows.length : list.data?.total ?? rows.length;
+  const isSwitchingTab = list.isFetching && list.isPlaceholderData;
 
   const openItemTrace = (itemId: string, label: string) => {
     setFocusedItemId(itemId);
@@ -736,8 +828,11 @@ export function DocumentsView({
               className={`${inputClass} w-44 text-xs`}
               value={docType}
               onChange={(e) => {
-                setDocType(e.target.value);
-                setFlow("");
+                const nextType = e.target.value;
+                setDocType(nextType);
+                if (nextType && flow !== "OPENING") {
+                  setFlow("");
+                }
                 setPage(1);
               }}
               aria-label="Loại phiếu"
@@ -764,9 +859,23 @@ export function DocumentsView({
 
       {/* ==================== MODE 1: DANH SÁCH PHIẾU NHẬP / XUẤT / ĐIỀU CHUYỂN ==================== */}
       {subMode === "DOCUMENTS" && (
-        <Card title="Danh sách Phiếu Nhập / Xuất / Điều chuyển Liên Kho (Kèm Chi tiết Vật tư & Lô)">
+        <Card
+          title="Danh sách Phiếu Nhập / Xuất / Điều chuyển Liên Kho (Kèm Chi tiết Vật tư & Lô)"
+          actions={
+            isSwitchingTab ? (
+              <span className="text-[11px] font-semibold text-sky-600 dark:text-sky-400 animate-pulse">
+                ⏳ Đang cập nhật tab…
+              </span>
+            ) : undefined
+          }
+        >
           <ErrorNote error={list.error} />
-          {list.data && rows.length === 0 && <Empty>Chưa có phiếu kho phù hợp với bộ lọc hiện tại.</Empty>}
+          {list.isFetching && rows.length === 0 && (
+            <Empty>⏳ Đang tải dữ liệu phiếu kho…</Empty>
+          )}
+          {!list.isFetching && list.data && rows.length === 0 && (
+            <Empty>Chưa có phiếu kho phù hợp với bộ lọc hiện tại.</Empty>
+          )}
           {rows.length > 0 && (
             <>
               <Table

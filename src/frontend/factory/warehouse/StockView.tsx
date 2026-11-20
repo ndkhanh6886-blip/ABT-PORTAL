@@ -205,6 +205,19 @@ export function StockView({
   };
 
   const counts = stock.data?.group_counts;
+  const selectedWhCode = warehouses.find((w) => w.id === warehouseId)?.code ?? "";
+  const visibleStockRows = React.useMemo(() => {
+    const raw = stock.data?.rows ?? [];
+    if (!stock.isPlaceholderData) return raw;
+    const typeSet = itemTypeFilter ? new Set(itemTypeFilter.split(",").map((s) => s.trim())) : null;
+    return raw.filter((r) => {
+      if (selectedWhCode && r.warehouse_code !== selectedWhCode) return false;
+      if (itemGroup && r.item_group !== itemGroup) return false;
+      if (typeSet && (!r.item_type || !typeSet.has(r.item_type))) return false;
+      if (status && r.lot_status !== status) return false;
+      return true;
+    });
+  }, [stock.data?.rows, stock.isPlaceholderData, selectedWhCode, itemGroup, itemTypeFilter, status]);
 
   const handleDropdownTypeChange = (val: string) => {
     reset(() => {
@@ -449,11 +462,12 @@ export function StockView({
         </select>
       </div>
       <ErrorNote error={stock.error} />
-      {stock.data && stock.data.rows.length === 0 && <Empty>Chưa có tồn kho phù hợp bộ lọc.</Empty>}
-      {stock.data && stock.data.rows.length > 0 && (
+      {stock.isFetching && visibleStockRows.length === 0 && <Empty>⏳ Đang tải tồn kho…</Empty>}
+      {!stock.isFetching && stock.data && visibleStockRows.length === 0 && <Empty>Chưa có tồn kho phù hợp bộ lọc.</Empty>}
+      {visibleStockRows.length > 0 && (
         <>
           <Table head={["Vật tư", "Phân loại", "Lô / Lô NSX", "Trạng thái", "Hạn dùng", "Kho · Vị trí", "Tồn", "Giữ chỗ", "Khả dụng", "Thao tác"]}>
-            {stock.data.rows.map((r) => {
+            {visibleStockRows.map((r) => {
               const isLotOpen = Boolean(r.lot_id && lotId === r.lot_id);
               return (
                 <React.Fragment key={r.id}>
@@ -544,7 +558,12 @@ export function StockView({
               );
             })}
           </Table>
-          <Pager page={stock.data.page} pageSize={stock.data.page_size} total={stock.data.total} onPage={setPage} />
+          <Pager
+            page={stock.data?.page ?? page}
+            pageSize={stock.data?.page_size ?? 50}
+            total={stock.isPlaceholderData ? visibleStockRows.length : stock.data?.total ?? visibleStockRows.length}
+            onPage={setPage}
+          />
         </>
       )}
     </Card>

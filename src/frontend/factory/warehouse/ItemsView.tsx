@@ -734,6 +734,22 @@ export function ItemsView({ canManage }: { canManage: boolean }) {
   });
 
   const missingCount = items.data?.missing_uom_count ?? 0;
+  const visibleItemRows = React.useMemo(() => {
+    const raw = items.data?.rows ?? [];
+    if (!items.isPlaceholderData) return raw;
+    const typeSet = itemTypeFilter ? new Set(itemTypeFilter.split(",").map((s) => s.trim())) : null;
+    return raw.filter((r) => {
+      const grp = ["FINISHED_KIT", "DEVICE", "OLIGO_SERVICE"].includes(r.item_type)
+        ? "FINISHED"
+        : r.item_type === "SEMI_FINISHED"
+          ? "SEMI_FINISHED"
+          : "RAW";
+      if (itemGroup && grp !== itemGroup) return false;
+      if (typeSet && !typeSet.has(r.item_type)) return false;
+      if (onlyMissingUom && !isPlaceholderUomClient(r.base_uom)) return false;
+      return true;
+    });
+  }, [items.data?.rows, items.isPlaceholderData, itemGroup, itemTypeFilter, onlyMissingUom]);
 
   return (
     <div className="flex flex-col gap-3">
@@ -898,11 +914,12 @@ export function ItemsView({ canManage }: { canManage: boolean }) {
         </div>
 
         <ErrorNote error={items.error} />
-        {items.data && items.data.rows.length === 0 && <Empty>Chưa có vật tư nào.</Empty>}
-        {items.data && items.data.rows.length > 0 && (
+        {items.isFetching && visibleItemRows.length === 0 && <Empty>⏳ Đang tải danh mục vật tư…</Empty>}
+        {!items.isFetching && items.data && visibleItemRows.length === 0 && <Empty>Chưa có vật tư nào.</Empty>}
+        {visibleItemRows.length > 0 && (
           <>
             <Table head={["Mã", "Tên", "Phân loại", "ĐVT gốc", "Quản lý", "Chế độ lưu kho", "Bảo quản", "Tồn tối thiểu", "QC nhận hàng", "Mã hàng KD", "Trạng thái", ""]}>
-              {items.data.rows.map((r) => {
+              {visibleItemRows.map((r) => {
                 const badUom = isPlaceholderUomClient(r.base_uom);
                 const isRowEditingUom = editingUomItem?.id === r.id;
                 const isRowConv = showConversions && convTargetItem?.id === r.id;
@@ -1007,7 +1024,12 @@ export function ItemsView({ canManage }: { canManage: boolean }) {
                 );
               })}
             </Table>
-            <Pager page={items.data.page} pageSize={items.data.page_size} total={items.data.total} onPage={setPage} />
+            <Pager
+              page={items.data?.page ?? page}
+              pageSize={items.data?.page_size ?? 50}
+              total={items.isPlaceholderData ? visibleItemRows.length : items.data?.total ?? visibleItemRows.length}
+              onPage={setPage}
+            />
           </>
         )}
       </Card>

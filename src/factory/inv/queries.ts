@@ -294,7 +294,6 @@ export async function listStock(tx: Tx, actor: AuthzActor, query: unknown) {
       JOIN master.warehouse w ON w.id = loc.warehouse_id
       LEFT JOIN inv.lot l ON l.id = b.lot_id
      WHERE ${where.join(" AND ")}`;
-  const total = Number((await tx.query(`SELECT count(*) ${from}`, params)).rows[0].count);
   params.push(q.page_size, (q.page - 1) * q.page_size);
   const rows = (
     await tx.query(
@@ -309,13 +308,15 @@ export async function listStock(tx: Tx, actor: AuthzActor, query: unknown) {
               l.expiry_date, w.code AS warehouse_code, loc.code AS location_code, loc.is_quarantine,
               (SELECT pr.incubation_until FROM prep.preparation pr WHERE pr.lot_id = l.id AND pr.status = 'DONE' AND pr.incubated_at IS NULL) AS incubation_until,
               b.qty_on_hand::text AS qty_on_hand, b.qty_reserved::text AS qty_reserved,
-              (b.qty_on_hand - b.qty_reserved)::text AS qty_available
+              (b.qty_on_hand - b.qty_reserved)::text AS qty_available,
+              COUNT(*) OVER()::int AS total_count
        ${from}
        ORDER BY i.code, l.expiry_date NULLS LAST, l.code, loc.code
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     )
   ).rows;
+  const total = rows.length > 0 ? Number(rows[0].total_count ?? rows.length) : 0;
   return { rows, total, page: q.page, page_size: q.page_size, group_counts: countsRow };
 }
 

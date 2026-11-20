@@ -46,6 +46,8 @@ const MAX_JSON_BODY_BYTES = 20 * 1024 * 1024;
 /** Attempts of one request's transaction when PostgreSQL aborts it for a deadlock or serialization failure. */
 const MAX_TX_ATTEMPTS = 3;
 
+const syncedUserProfiles = new Map<number, string>();
+
 export function factoryRoute(
   handler: (tx: Tx, ctx: RouteContext) => Promise<unknown>,
   opts: { before?: (ctx: RouteContext) => Promise<void> } = {}
@@ -69,15 +71,19 @@ export function factoryRoute(
         return NextResponse.json({ error: "Nội dung gửi lên quá lớn.", code: "PAYLOAD_TOO_LARGE" }, { status: 413 });
       }
       const params = (await segment?.params) ?? {};
-      const body = req.method === "GET" || req.method === "HEAD" ? {} : await req.json().catch(() => ({}));
+      const isReadOnly = req.method === "GET" || req.method === "HEAD";
+      const body = isReadOnly ? {} : await req.json().catch(() => ({}));
       // Own statement, outside the business transaction: never holds the profile row lock
-      // while a signature check on another connection needs it.
-      await getFactoryPool().query(
-        `INSERT INTO core.user_profile (user_id, display_name) VALUES ($1, $2)
-         ON CONFLICT (user_id) DO UPDATE SET display_name = EXCLUDED.display_name
-         WHERE core.user_profile.display_name IS DISTINCT FROM EXCLUDED.display_name`,
-        [actor.userId, actor.name]
-      );
+      // while a signature check on another connection needs it. Cached in memory per userId/name.
+      if (syncedUserProfiles.get(actor.userId) !== actor.name) {
+        await getFactoryPool().query(
+          `INSERT INTO core.user_profile (user_id, display_name) VALUES ($1, $2)
+           ON CONFLICT (user_id) DO UPDATE SET display_name = EXCLUDED.display_name
+           WHERE core.user_profile.display_name IS DISTINCT FROM EXCLUDED.display_name`,
+          [actor.userId, actor.name]
+        );
+        syncedUserProfiles.set(actor.userId, actor.name);
+      }
       const ctx: RouteContext = { req, url: new URL(req.url), actor, params, body };
       await opts.before?.(ctx);
       // Deadlock / serialization failure: PostgreSQL already rolled the whole transaction back, so running it again
@@ -93,7 +99,7 @@ export function factoryRoute(
           await new Promise((r) => setTimeout(r, 50 * attempt + Math.floor(Math.random() * 150)));
         }
       }
-      kickOutbox();
+      if (!isReadOnly) kickOutbox();
       return NextResponse.json(result ?? { ok: true });
     } catch (error: any) {
       if (error instanceof FactoryError) {

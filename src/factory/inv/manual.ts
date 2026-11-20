@@ -84,7 +84,10 @@ const docListQuerySchema = z.object({
   view: z.enum(["documents", "ledger"]).optional().default("documents"),
   warehouse_id: z.string().uuid().optional().or(z.literal("")),
   doc_type: z.enum(["RECEIPT", "RETURN", "ISSUE", "TRANSFER", "ADJUSTMENT", "COUNT_ADJUST"]).optional().or(z.literal("")),
-  flow: z.enum(["ALL", "PURCHASE_IN", "SUPPLY_TRANSFER", "PRODUCTION_OUT", "OPENING"]).optional().or(z.literal("")),
+  flow: z
+    .enum(["ALL", "INBOUND", "OUTBOUND", "PURCHASE_IN", "SUPPLY_TRANSFER", "PRODUCTION_OUT", "OPENING"])
+    .optional()
+    .or(z.literal("")),
   item_id: z.string().uuid().optional().or(z.literal("")),
   lot_id: z.string().uuid().optional().or(z.literal("")),
   q: z.string().trim().max(100).optional(),
@@ -92,7 +95,28 @@ const docListQuerySchema = z.object({
   page_size: z.coerce.number().int().min(1).max(200).default(50),
 });
 
+let invDocIndexesEnsured = false;
+async function ensureInvDocumentIndexes(tx: Tx): Promise<void> {
+  if (invDocIndexesEnsured) return;
+  await tx.query("SAVEPOINT sp_inv_doc_idx");
+  try {
+    await tx.query(`
+      CREATE INDEX IF NOT EXISTS idx_stock_doc_wh_created ON inv.stock_document (warehouse_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_stock_doc_type_reason ON inv.stock_document (doc_type, reason_code);
+      CREATE INDEX IF NOT EXISTS idx_stock_doc_line_doc_id ON inv.stock_document_line (document_id);
+      CREATE INDEX IF NOT EXISTS idx_stock_doc_line_to_loc ON inv.stock_document_line (to_location_id) WHERE to_location_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_stock_doc_line_from_loc ON inv.stock_document_line (from_location_id) WHERE from_location_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_stock_doc_line_item_id ON inv.stock_document_line (item_id);
+    `);
+    await tx.query("RELEASE SAVEPOINT sp_inv_doc_idx");
+    invDocIndexesEnsured = true;
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_inv_doc_idx").catch(() => {});
+  }
+}
+
 export async function listDocuments(tx: Tx, actor: AuthzActor, queryOrWarehouseId?: unknown) {
+  await ensureInvDocumentIndexes(tx);
   const q =
     typeof queryOrWarehouseId === "string" || queryOrWarehouseId === undefined
       ? {
@@ -119,16 +143,19 @@ export async function listDocuments(tx: Tx, actor: AuthzActor, queryOrWarehouseI
   }
 
   const params: unknown[] = [targetWhIds];
-  // Match documents owned by the warehouse OR documents that move stock from/to locations inside the warehouse
+  // Fast index-friendly warehouse scope: non-TRANSFER docs always belong to d.warehouse_id;
+  // only TRANSFER docs can move stock into a different destination warehouse.
   const where: string[] = [
     `(
       d.warehouse_id = ANY($1::uuid[])
-      OR EXISTS (
-        SELECT 1 FROM inv.stock_document_line l
-        LEFT JOIN master.location fl ON fl.id = l.from_location_id
-        LEFT JOIN master.location tl ON tl.id = l.to_location_id
-        WHERE l.document_id = d.id
-          AND (fl.warehouse_id = ANY($1::uuid[]) OR tl.warehouse_id = ANY($1::uuid[]))
+      OR (
+        d.doc_type = 'TRANSFER'
+        AND d.id IN (
+          SELECT l.document_id
+            FROM inv.stock_document_line l
+            JOIN master.location tl ON tl.id = l.to_location_id
+           WHERE tl.warehouse_id = ANY($1::uuid[])
+        )
       )
     )`,
   ];
@@ -137,7 +164,62 @@ export async function listDocuments(tx: Tx, actor: AuthzActor, queryOrWarehouseI
     params.push(q.doc_type);
     where.push(`d.doc_type = $${params.length}`);
   }
-  if (q.flow === "PURCHASE_IN") {
+  if (q.flow === "INBOUND") {
+    where.push(`(
+      (d.doc_type IN ('RECEIPT', 'RETURN') AND d.warehouse_id = ANY($1::uuid[]))
+      OR (
+        d.doc_type = 'TRANSFER'
+        AND EXISTS (
+          SELECT 1
+            FROM inv.stock_document_line l
+            JOIN master.location tl ON tl.id = l.to_location_id
+            LEFT JOIN master.location fl ON fl.id = l.from_location_id
+           WHERE l.document_id = d.id
+             AND tl.warehouse_id = ANY($1::uuid[])
+             AND COALESCE(fl.warehouse_id, d.warehouse_id) IS DISTINCT FROM tl.warehouse_id
+        )
+      )
+      OR (
+        d.doc_type IN ('ADJUSTMENT', 'COUNT_ADJUST')
+        AND d.warehouse_id = ANY($1::uuid[])
+        AND EXISTS (
+          SELECT 1
+            FROM inv.stock_document_line l
+           WHERE l.document_id = d.id
+             AND l.to_location_id IS NOT NULL
+             AND l.from_location_id IS NULL
+        )
+      )
+    )`);
+  } else if (q.flow === "OUTBOUND") {
+    where.push(`(
+      (d.doc_type = 'ISSUE' AND d.warehouse_id = ANY($1::uuid[]))
+      OR (
+        d.doc_type = 'TRANSFER'
+        AND d.warehouse_id = ANY($1::uuid[])
+        AND EXISTS (
+          SELECT 1
+            FROM inv.stock_document_line l
+            JOIN master.location tl ON tl.id = l.to_location_id
+            LEFT JOIN master.location fl ON fl.id = l.from_location_id
+           WHERE l.document_id = d.id
+             AND COALESCE(fl.warehouse_id, d.warehouse_id) = ANY($1::uuid[])
+             AND tl.warehouse_id IS DISTINCT FROM COALESCE(fl.warehouse_id, d.warehouse_id)
+        )
+      )
+      OR (
+        d.doc_type IN ('ADJUSTMENT', 'COUNT_ADJUST')
+        AND d.warehouse_id = ANY($1::uuid[])
+        AND EXISTS (
+          SELECT 1
+            FROM inv.stock_document_line l
+           WHERE l.document_id = d.id
+             AND l.from_location_id IS NOT NULL
+             AND l.to_location_id IS NULL
+        )
+      )
+    )`);
+  } else if (q.flow === "PURCHASE_IN") {
     where.push(`d.doc_type IN ('RECEIPT', 'RETURN') AND d.reason_code <> 'INITIAL_BALANCE'`);
   } else if (q.flow === "SUPPLY_TRANSFER") {
     where.push(`d.doc_type = 'TRANSFER'`);
@@ -149,11 +231,11 @@ export async function listDocuments(tx: Tx, actor: AuthzActor, queryOrWarehouseI
 
   if (q.item_id) {
     params.push(q.item_id);
-    where.push(`EXISTS (SELECT 1 FROM inv.stock_document_line l WHERE l.document_id = d.id AND l.item_id = $${params.length}::uuid)`);
+    where.push(`d.id IN (SELECT l.document_id FROM inv.stock_document_line l WHERE l.item_id = $${params.length}::uuid)`);
   }
   if (q.lot_id) {
     params.push(q.lot_id);
-    where.push(`EXISTS (SELECT 1 FROM inv.stock_document_line l WHERE l.document_id = d.id AND l.lot_id = $${params.length}::uuid)`);
+    where.push(`d.id IN (SELECT l.document_id FROM inv.stock_document_line l WHERE l.lot_id = $${params.length}::uuid)`);
   }
 
   if (q.q) {
@@ -163,40 +245,48 @@ export async function listDocuments(tx: Tx, actor: AuthzActor, queryOrWarehouseI
       d.code ILIKE ${pIdx}
       OR COALESCE(d.notes, '') ILIKE ${pIdx}
       OR d.reason_code ILIKE ${pIdx}
-      OR EXISTS (
-        SELECT 1 FROM inv.stock_document_line l
-        JOIN master.item i ON i.id = l.item_id
-        LEFT JOIN inv.lot lot ON lot.id = l.lot_id
-        LEFT JOIN master.location tl ON tl.id = l.to_location_id
-        LEFT JOIN master.warehouse tw ON tw.id = tl.warehouse_id
-        WHERE l.document_id = d.id
-          AND (
-            i.code ILIKE ${pIdx}
+      OR d.id IN (
+        SELECT l.document_id
+          FROM inv.stock_document_line l
+          JOIN master.item i ON i.id = l.item_id
+          LEFT JOIN inv.lot lot ON lot.id = l.lot_id
+          LEFT JOIN master.location tl ON tl.id = l.to_location_id
+          LEFT JOIN master.warehouse tw ON tw.id = tl.warehouse_id
+         WHERE i.code ILIKE ${pIdx}
             OR i.name ILIKE ${pIdx}
             OR COALESCE(lot.code, '') ILIKE ${pIdx}
             OR COALESCE(lot.mfr_lot_no, '') ILIKE ${pIdx}
             OR COALESCE(tw.code, '') ILIKE ${pIdx}
-          )
       )
     )`);
   }
 
   const whereSql = where.join(" AND ");
-  const total = Number(
-    (await tx.query(`SELECT count(*)::int AS c FROM inv.stock_document d WHERE ${whereSql}`, params)).rows[0]?.c ?? 0
-  );
-
   params.push(q.page_size, (q.page - 1) * q.page_size);
-  const rows = (
+
+  const rawRows = (
     await tx.query(
-      `SELECT d.id, d.code, d.doc_type, d.reason_code, d.status, d.posted_at, d.created_at, d.notes, d.reversal_of_id,
-              d.source_entity_type, d.source_entity_id,
+      `WITH paged AS (
+         SELECT d.id, d.code, d.doc_type, d.reason_code, d.status, d.posted_at, d.created_at, d.notes, d.reversal_of_id,
+                d.source_entity_type, d.source_entity_id, d.warehouse_id, d.created_by,
+                COUNT(*) OVER()::int AS total_count
+           FROM inv.stock_document d
+          WHERE ${whereSql}
+          ORDER BY COALESCE(d.posted_at, d.created_at) DESC, d.created_at DESC
+          LIMIT $${params.length - 1} OFFSET $${params.length}
+       )
+       SELECT p.id, p.code, p.doc_type, p.reason_code, p.status, p.posted_at, p.created_at, p.notes, p.reversal_of_id,
+              p.source_entity_type, p.source_entity_id, p.total_count,
               w.code AS warehouse_code, w.name AS warehouse_name,
               up.display_name AS created_by_name,
-              (SELECT count(*)::int FROM inv.stock_document_line l WHERE l.document_id = d.id) AS line_count,
-              COALESCE(
-                (
-                  SELECT jsonb_agg(
+              COALESCE(lp.line_count, 0) AS line_count,
+              COALESCE(lp.lines_preview, '[]'::jsonb) AS lines_preview
+         FROM paged p
+         JOIN master.warehouse w ON w.id = p.warehouse_id
+         LEFT JOIN core.user_profile up ON up.user_id = p.created_by
+         LEFT JOIN LATERAL (
+           SELECT count(*)::int AS line_count,
+                  jsonb_agg(
                     jsonb_build_object(
                       'line_no', l.line_no,
                       'item_id', i.id,
@@ -212,29 +302,23 @@ export async function listDocuments(tx: Tx, actor: AuthzActor, queryOrWarehouseI
                       'to_wh_code', tw.code,
                       'to_loc_code', tl.code
                     ) ORDER BY l.line_no
-                  )
-                  FROM inv.stock_document_line l
-                  JOIN master.item i ON i.id = l.item_id
-                  LEFT JOIN inv.lot lot ON lot.id = l.lot_id
-                  LEFT JOIN master.location fl ON fl.id = l.from_location_id
-                  LEFT JOIN master.warehouse fw ON fw.id = fl.warehouse_id
-                  LEFT JOIN master.location tl ON tl.id = l.to_location_id
-                  LEFT JOIN master.warehouse tw ON tw.id = tl.warehouse_id
-                  WHERE l.document_id = d.id
-                ),
-                '[]'::jsonb
-              ) AS lines_preview
-         FROM inv.stock_document d
-         JOIN master.warehouse w ON w.id = d.warehouse_id
-         LEFT JOIN core.user_profile up ON up.user_id = d.created_by
-        WHERE ${whereSql}
-        ORDER BY COALESCE(d.posted_at, d.created_at) DESC, d.created_at DESC
-        LIMIT $${params.length - 1} OFFSET $${params.length}`,
+                  ) AS lines_preview
+             FROM inv.stock_document_line l
+             JOIN master.item i ON i.id = l.item_id
+             LEFT JOIN inv.lot lot ON lot.id = l.lot_id
+             LEFT JOIN master.location fl ON fl.id = l.from_location_id
+             LEFT JOIN master.warehouse fw ON fw.id = fl.warehouse_id
+             LEFT JOIN master.location tl ON tl.id = l.to_location_id
+             LEFT JOIN master.warehouse tw ON tw.id = tl.warehouse_id
+            WHERE l.document_id = p.id
+         ) lp ON true
+        ORDER BY COALESCE(p.posted_at, p.created_at) DESC, p.created_at DESC`,
       params
     )
   ).rows;
 
-  return { rows, total, page: q.page, page_size: q.page_size };
+  const total = rawRows.length > 0 ? Number(rawRows[0].total_count ?? rawRows.length) : 0;
+  return { rows: rawRows, total, page: q.page, page_size: q.page_size };
 }
 
 /**
@@ -254,7 +338,23 @@ async function listStockLedgerAndTrace(
     `(d.warehouse_id = ANY($1::uuid[]) OR fw.id = ANY($1::uuid[]) OR tw.id = ANY($1::uuid[]))`,
   ];
 
-  if (q.flow === "PURCHASE_IN") {
+  if (q.doc_type) {
+    params.push(q.doc_type);
+    where.push(`d.doc_type = $${params.length}`);
+  }
+  if (q.flow === "INBOUND") {
+    where.push(`(
+      (d.doc_type IN ('RECEIPT', 'RETURN') AND COALESCE(tw.id, d.warehouse_id) = ANY($1::uuid[]))
+      OR (d.doc_type = 'TRANSFER' AND tw.id = ANY($1::uuid[]) AND COALESCE(fw.id, d.warehouse_id) IS DISTINCT FROM tw.id)
+      OR (d.doc_type IN ('ADJUSTMENT', 'COUNT_ADJUST') AND l.to_location_id IS NOT NULL AND l.from_location_id IS NULL)
+    )`);
+  } else if (q.flow === "OUTBOUND") {
+    where.push(`(
+      (d.doc_type = 'ISSUE' AND COALESCE(fw.id, d.warehouse_id) = ANY($1::uuid[]))
+      OR (d.doc_type = 'TRANSFER' AND COALESCE(fw.id, d.warehouse_id) = ANY($1::uuid[]) AND tw.id IS DISTINCT FROM COALESCE(fw.id, d.warehouse_id))
+      OR (d.doc_type IN ('ADJUSTMENT', 'COUNT_ADJUST') AND l.from_location_id IS NOT NULL AND l.to_location_id IS NULL)
+    )`);
+  } else if (q.flow === "PURCHASE_IN") {
     where.push(`d.doc_type IN ('RECEIPT', 'RETURN') AND d.reason_code <> 'INITIAL_BALANCE'`);
   } else if (q.flow === "SUPPLY_TRANSFER") {
     where.push(`d.doc_type = 'TRANSFER'`);
@@ -286,24 +386,6 @@ async function listStockLedgerAndTrace(
   }
 
   const whereSql = where.join(" AND ");
-  const total = Number(
-    (
-      await tx.query(
-        `SELECT count(*)::int AS c
-           FROM inv.stock_document_line l
-           JOIN inv.stock_document d ON d.id = l.document_id
-           JOIN master.item i ON i.id = l.item_id
-           LEFT JOIN inv.lot lot ON lot.id = l.lot_id
-           LEFT JOIN master.location fl ON fl.id = l.from_location_id
-           LEFT JOIN master.warehouse fw ON fw.id = fl.warehouse_id
-           LEFT JOIN master.location tl ON tl.id = l.to_location_id
-           LEFT JOIN master.warehouse tw ON tw.id = tl.warehouse_id
-          WHERE ${whereSql}`,
-        params
-      )
-    ).rows[0]?.c ?? 0
-  );
-
   const pageParams = [...params, q.page_size, (q.page - 1) * q.page_size];
   const movements = (
     await tx.query(
@@ -318,7 +400,8 @@ async function listStockLedgerAndTrace(
               sup.name AS supplier_name,
               fw.code AS from_wh_code, fl.code AS from_loc_code,
               tw.code AS to_wh_code, tl.code AS to_loc_code,
-              l.qty::float AS qty, l.uom, l.qty_base::float AS qty_base
+              l.qty::float AS qty, l.uom, l.qty_base::float AS qty_base,
+              COUNT(*) OVER()::int AS total_count
          FROM inv.stock_document_line l
          JOIN inv.stock_document d ON d.id = l.document_id
          JOIN master.warehouse w ON w.id = d.warehouse_id
@@ -336,6 +419,7 @@ async function listStockLedgerAndTrace(
       pageParams
     )
   ).rows;
+  const total = movements.length > 0 ? Number(movements[0].total_count ?? movements.length) : 0;
 
   // Aggregate item trace summary (Receipts into KHO-TONG / Total Receipts, Distributed to Branch Warehouses, Consumed, and Current Balances by Warehouse)
   const itemFilterParams: unknown[] = [];
