@@ -497,8 +497,10 @@ export async function explodeKitBom(
     const scrapFactor = 1 + Number(l.scrap_pct || 0) / 100;
     const rawQty = scale * unitNorm * lineDemoRatio * scrapFactor;
     const isStocked = l.is_stocked !== undefined && l.is_stocked !== null ? Boolean(l.is_stocked) : l.item_is_stocked !== false;
-    const isIntegerQty =
-      l.is_integer_qty !== undefined && l.is_integer_qty !== null
+    const isContinuousMixUom = !isDiscreteUomCode(compUom) && !isPcrTubeLine && l.component_role !== "PACKAGING";
+    const isIntegerQty = isContinuousMixUom
+      ? false
+      : l.is_integer_qty !== undefined && l.is_integer_qty !== null
         ? Boolean(l.is_integer_qty)
         : Boolean(l.item_is_integer_uom) || isDiscreteUomCode(compUom) || isPcrTubeLine;
     const requiredQty = isIntegerQty ? Math.ceil(rawQty - 1e-9) : Math.round(rawQty * 1e6) / 1e6;

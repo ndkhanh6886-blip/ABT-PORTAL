@@ -4,7 +4,7 @@ import { authorizeAnywhere, authorizeAnywhereOneOf, registerPermissions, type Au
 import { nextNumber } from "../core/numbering";
 import { runTransition } from "../core/stateMachine";
 import { createStockDocument, stockDocumentMachine } from "../inv/documents";
-import { isPlaceholderUom, normalizeUomAlias } from "../master/service";
+import { isDiscreteUomCode, isPlaceholderUom, normalizeUomAlias } from "../master/service";
 import { saveMethod, saveWorkflow, type StepField } from "../oligo/postSop";
 import { ensureKitBomRoutingAndIfuSchema } from "../kit/bomRouting";
 import { normalizePrepDeptScope } from "../prep/service";
@@ -292,6 +292,7 @@ async function ensureItemByCode(
   if (existing) {
     const shouldHealUom = isPlaceholderUom(existing.base_uom) && hasExplicitValidUom;
     const healedUom = shouldHealUom ? uom : (existing.base_uom as string);
+    const isIntegerUom = existing.tracking === "SERIAL" || isDiscreteUomCode(healedUom);
     const shouldUpgradeType =
       ["FINISHED_KIT", "SEMI_FINISHED", "DEVICE"].includes(itemType) ||
       (existing.item_type === "RAW_MATERIAL" && itemType !== "RAW_MATERIAL");
@@ -304,6 +305,7 @@ async function ensureItemByCode(
               min_stock = COALESCE($5, min_stock),
               notes = COALESCE(NULLIF($6, ''), notes),
               base_uom = CASE WHEN $8 THEN $9 ELSE base_uom END,
+              is_integer_uom = $11,
               item_type = $10,
               is_manufacturable = CASE WHEN $10 IN ('FINISHED_KIT', 'SEMI_FINISHED', 'DEVICE') THEN true ELSE is_manufacturable END,
               updated_at = now(),
@@ -320,6 +322,7 @@ async function ensureItemByCode(
         shouldHealUom,
         uom,
         nextItemType,
+        isIntegerUom,
       ]
     );
     if (shouldHealUom && existing.base_uom !== uom) {

@@ -1146,7 +1146,7 @@ export async function bulkAddBomLines(tx: Tx, actor: AuthzActor, input: unknown)
        SELECT $1, u.line_no, u.comp_id, u.qty, u.uom, u.scrap, u.box_no, u.role,
               u.is_crit, u.is_bund, u.allow_sub,
               coalesce(u.is_stk, it.is_stocked, true),
-              coalesce(u.is_int, it.is_integer_uom OR u.discrete_hint, false),
+              CASE WHEN NOT u.discrete_hint THEN false ELSE coalesce(u.is_int, u.discrete_hint, false) END,
               u.note, $2, $2
          FROM unnest(
            $3::int[], $4::uuid[], $5::numeric[], $6::text[], $7::numeric[],

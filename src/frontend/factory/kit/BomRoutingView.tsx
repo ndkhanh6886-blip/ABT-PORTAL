@@ -1664,7 +1664,9 @@ export function BomRoutingView({
       include_in_qc_retention: l.include_in_qc_retention !== false,
       is_stocked: l.is_stocked !== false,
       is_integer_qty: Boolean(
-        l.is_integer_qty ?? (l.item_is_integer_uom || l.component_role === "PACKAGING" || l.component_role === "PCR_TUBE_STRIP" || isDiscreteStockUomClient(l.uom))
+        l.component_role === "PACKAGING" || l.component_role === "PCR_TUBE_STRIP" || isDiscreteStockUomClient(l.uom)
+          ? (l.is_integer_qty ?? true)
+          : false
       ),
     });
     setShowAddLine(true);
@@ -4368,7 +4370,6 @@ export function BomRoutingView({
                                     include_in_qc_retention: !(isPack || isTubeStrip),
                                     is_stocked: it?.is_stocked !== false,
                                     is_integer_qty:
-                                      Boolean(it?.is_integer_uom) ||
                                       isPack ||
                                       isTubeStrip ||
                                       isDiscreteStockUomClient(nextUom),
@@ -4415,7 +4416,6 @@ export function BomRoutingView({
                                 include_in_qc_retention: !isPack,
                                 is_integer_qty:
                                   isPack ||
-                                  Boolean(selectedIt?.is_integer_uom) ||
                                   isDiscreteStockUomClient(lineForm.uom),
                               });
                             }}
@@ -4452,7 +4452,6 @@ export function BomRoutingView({
                                   uom: nextUom,
                                   is_integer_qty:
                                     isPack ||
-                                    Boolean(selectedIt?.is_integer_uom) ||
                                     isDiscreteStockUomClient(nextUom),
                                 });
                               }}

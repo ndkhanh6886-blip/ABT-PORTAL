@@ -313,6 +313,21 @@ export async function updateItem(tx: Tx, actor: AuthzActor, id: string, input: u
   if (effectiveTracking === "SERIAL" && effectiveBaseUom.toLowerCase() !== "pcs") {
     throw invalid("Vật tư quản lý theo serial phải có đơn vị gốc là 'pcs' (cái).");
   }
+  if ((patch.base_uom !== undefined || patch.tracking !== undefined) && patch.is_integer_uom === undefined) {
+    patch.is_integer_uom = effectiveTracking === "SERIAL" || isDiscreteUomCode(effectiveBaseUom);
+  }
+  const syncContinuousBomLines = async () => {
+    if (patch.is_integer_uom === false && !isDiscreteUomCode(effectiveBaseUom)) {
+      await tx.query(
+        `UPDATE kit.bom_line
+            SET is_integer_qty = false
+          WHERE component_item_id = $1
+            AND is_integer_qty = true
+            AND component_role NOT IN ('PACKAGING', 'PCR_TUBE_STRIP')`,
+        [id]
+      );
+    }
+  };
 
   const baseUomChanged = Boolean(patch.base_uom && patch.base_uom !== current.base_uom);
   const trackingChanged = Boolean(patch.tracking && patch.tracking !== current.tracking);
@@ -342,6 +357,7 @@ export async function updateItem(tx: Tx, actor: AuthzActor, id: string, input: u
             : "UPDATE inv.stock_document_line SET uom = $2 WHERE item_id = $1 AND uom = $3 AND qty = qty_base",
           [id, patch.base_uom, current.base_uom]
         );
+        await syncContinuousBomLines();
         return updated;
       }
 
@@ -355,12 +371,15 @@ export async function updateItem(tx: Tx, actor: AuthzActor, id: string, input: u
         const factor = await toBaseQty(tx, { id: current.id, code: current.code, base_uom: patch.base_uom }, 1, current.base_uom);
         const updated = await updateRecord<Item>(tx, actor, "master.item", "item", id, version, patch, reason.trim());
         await rescaleItemStockForNewBaseUom(tx, actor, current, patch.base_uom, factor, reason.trim());
+        await syncContinuousBomLines();
         return updated;
       }
     }
   }
 
-  return updateRecord<Item>(tx, actor, "master.item", "item", id, version, patch, reason);
+  const updated = await updateRecord<Item>(tx, actor, "master.item", "item", id, version, patch, reason);
+  await syncContinuousBomLines();
+  return updated;
 }
 
 const VI_FROM =
