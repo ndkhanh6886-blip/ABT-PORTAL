@@ -5,6 +5,65 @@ import { Paperclip, UploadCloud, X, FileText, Film } from "lucide-react";
 
 export type Attachment = { name: string; url: string; size?: number; type?: string; uploaded_at?: string; sha256?: string };
 
+export const MAX_CHAT_ATTACHMENTS_PER_MESSAGE = 5;
+export const MAX_SAME_EMOJI_REPEAT = 3;
+export const MAX_TOTAL_EMOJIS_PER_MESSAGE = 5;
+
+const EMOJI_GRAPHEME_REGEX =
+    /(?:\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*|[★☆♥♡⚡✨❗❓⚠️📌📎🔔👍❤️🚀👀✅🎉🔥💡])/gu;
+
+/**
+ * Kiểm tra và chặn việc gửi các icon / emoji với số lượng lặp lại lớn trong chat nội bộ
+ * (Tối đa 3 icon cùng loại và tối đa 5 icon trong 1 lần gửi).
+ */
+export function inspectChatEmojiSpam(rawText: string): {
+    blocked: boolean;
+    reason?: string;
+    totalEmojis: number;
+    maxSameEmoji: number;
+    isEmojiOnly: boolean;
+} {
+    const text = String(rawText || "").trim();
+    if (!text) {
+        return { blocked: false, totalEmojis: 0, maxSameEmoji: 0, isEmojiOnly: false };
+    }
+    const matches = text.match(EMOJI_GRAPHEME_REGEX) || [];
+    const totalEmojis = matches.length;
+    const counts = new Map<string, number>();
+    let maxSameEmoji = 0;
+    for (const em of matches) {
+        const key = em.replace(/\uFE0F/g, "");
+        const next = (counts.get(key) || 0) + 1;
+        counts.set(key, next);
+        if (next > maxSameEmoji) maxSameEmoji = next;
+    }
+
+    const strippedNonEmoji = text.replace(EMOJI_GRAPHEME_REGEX, "").replace(/\s+/g, "");
+    const isEmojiOnly = totalEmojis > 0 && strippedNonEmoji.length === 0;
+
+    if (maxSameEmoji > MAX_SAME_EMOJI_REPEAT) {
+        return {
+            blocked: true,
+            reason: `Không được gửi lặp lại cùng một icon/biểu tượng quá ${MAX_SAME_EMOJI_REPEAT} lần trong một tin nhắn (hiện có ${maxSameEmoji} icon trùng lặp)!`,
+            totalEmojis,
+            maxSameEmoji,
+            isEmojiOnly,
+        };
+    }
+
+    if (totalEmojis > MAX_TOTAL_EMOJIS_PER_MESSAGE) {
+        return {
+            blocked: true,
+            reason: `Mỗi tin nhắn chỉ được gửi tối đa ${MAX_TOTAL_EMOJIS_PER_MESSAGE} icon/biểu tượng cảm xúc (hiện có ${totalEmojis} icon)!`,
+            totalEmojis,
+            maxSameEmoji,
+            isEmojiOnly,
+        };
+    }
+
+    return { blocked: false, totalEmojis, maxSameEmoji, isEmojiOnly };
+}
+
 /**
  * Tính mã băm SHA-256 của tệp ngay trên trình duyệt để phát hiện ảnh/file trùng lặp trước khi tải lên máy chủ.
  */

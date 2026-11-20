@@ -50,7 +50,14 @@ import {
 import { useAuth, DEFAULT_MEMBERS } from "@/frontend/contexts/AuthContext";
 import { useNotification } from "@/frontend/contexts/NotificationContext";
 import { Modal } from "@/frontend/components/Modal";
-import { uploadSingleFileSmart, computeBrowserFileSha256, extractAttachmentContentKey } from "@/frontend/components/AttachmentPicker";
+import {
+  uploadSingleFileSmart,
+  computeBrowserFileSha256,
+  extractAttachmentContentKey,
+  inspectChatEmojiSpam,
+  MAX_SAME_EMOJI_REPEAT,
+  MAX_TOTAL_EMOJIS_PER_MESSAGE
+} from "@/frontend/components/AttachmentPicker";
 import {
   formatVietnamTime,
   formatVietnamDate,
@@ -1121,6 +1128,29 @@ export const EnterpriseChatModule: React.FC = () => {
     const cleanedText = rawInput.replace(/Đang tải hình ảnh \/ tệp lên\.\.\. Vui lòng đợi/gi, "").trim();
     if (!cleanedText && inputAttachments.length === 0) return;
 
+    if (cleanedText) {
+      const emojiCheck = inspectChatEmojiSpam(cleanedText);
+      if (emojiCheck.blocked) {
+        showToast(emojiCheck.reason || "Tin nhắn chứa quá nhiều icon lặp lại!", "warning");
+        return;
+      }
+      if (emojiCheck.isEmojiOnly && inputAttachments.length === 0) {
+        const nowMs = Date.now();
+        const recentSameEmojiMsg = messages
+          .slice(-6)
+          .some((m) => {
+            if (!m || normalizeUserName(m.sender_name) !== currentUserName) return false;
+            const mTime = m.created_at ? new Date(m.created_at).getTime() : 0;
+            if (mTime > 0 && nowMs - mTime > 60 * 1000) return false;
+            return String(m.content || "").trim() === cleanedText;
+          });
+        if (recentSameEmojiMsg) {
+          showToast("Bạn vừa mới gửi biểu tượng này, hệ thống đã chặn gửi lặp lại liên tiếp để tránh spam!", "warning");
+          return;
+        }
+      }
+    }
+
     const payload = {
       channel_id: activeChannel.id,
       channel_code: activeChannel.channel_code,
@@ -1171,7 +1201,31 @@ export const EnterpriseChatModule: React.FC = () => {
     if (e) e.preventDefault();
     if (!splitChannel) return;
     const rawSplitInput = splitInputElRef.current ? splitInputElRef.current.value : splitInputTextRef.current;
-    if (!rawSplitInput.trim() && splitInputAttachments.length === 0) return;
+    const cleanedSplitText = rawSplitInput.trim();
+    if (!cleanedSplitText && splitInputAttachments.length === 0) return;
+
+    if (cleanedSplitText) {
+      const emojiCheck = inspectChatEmojiSpam(cleanedSplitText);
+      if (emojiCheck.blocked) {
+        showToast(emojiCheck.reason || "Tin nhắn chứa quá nhiều icon lặp lại!", "warning");
+        return;
+      }
+      if (emojiCheck.isEmojiOnly && splitInputAttachments.length === 0) {
+        const nowMs = Date.now();
+        const recentSameEmojiMsg = splitMessages
+          .slice(-6)
+          .some((m) => {
+            if (!m || normalizeUserName(m.sender_name) !== currentUserName) return false;
+            const mTime = m.created_at ? new Date(m.created_at).getTime() : 0;
+            if (mTime > 0 && nowMs - mTime > 60 * 1000) return false;
+            return String(m.content || "").trim() === cleanedSplitText;
+          });
+        if (recentSameEmojiMsg) {
+          showToast("Bạn vừa mới gửi biểu tượng này, hệ thống đã chặn gửi lặp lại liên tiếp để tránh spam!", "warning");
+          return;
+        }
+      }
+    }
 
     const payload = {
       channel_id: splitChannel.id,
@@ -3435,7 +3489,17 @@ export const EnterpriseChatModule: React.FC = () => {
                           key={em}
                           type="button"
                           onClick={() => {
-                            const nextVal = (textareaRef.current ? textareaRef.current.value : inputTextRef.current) + em;
+                            const curVal = textareaRef.current ? textareaRef.current.value : inputTextRef.current;
+                            const nextVal = curVal + em;
+                            const check = inspectChatEmojiSpam(nextVal);
+                            if (check.blocked) {
+                              showToast(
+                                check.reason ||
+                                  `Chỉ cho phép tối đa ${MAX_SAME_EMOJI_REPEAT} icon cùng loại (tối đa ${MAX_TOTAL_EMOJIS_PER_MESSAGE} icon/tin nhắn)!`,
+                                "warning"
+                              );
+                              return;
+                            }
                             inputTextRef.current = nextVal;
                             if (textareaRef.current) {
                               textareaRef.current.value = nextVal;
@@ -3447,6 +3511,7 @@ export const EnterpriseChatModule: React.FC = () => {
                             }
                           }}
                           className="hover:scale-125 p-0.5 text-xs cursor-pointer"
+                          title={`Chèn nhanh biểu tượng ${em} (tối đa ${MAX_SAME_EMOJI_REPEAT} lần/tin nhắn)`}
                         >
                           {em}
                         </button>

@@ -1157,6 +1157,40 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Nội dung tin nhắn hoặc tệp đính kèm không được rỗng" }, { status: 400 });
       }
 
+      if (content && String(content).trim()) {
+        const rawText = String(content).trim();
+        const emojiMatches =
+          rawText.match(
+            /(?:\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*|[★☆♥♡⚡✨❗❓⚠️📌📎🔔👍❤️🚀👀✅🎉🔥💡])/gu
+          ) || [];
+        if (emojiMatches.length > 0) {
+          const emojiCounts = new Map<string, number>();
+          let maxSameEmoji = 0;
+          for (const em of emojiMatches) {
+            const key = em.replace(/\uFE0F/g, "");
+            const next = (emojiCounts.get(key) || 0) + 1;
+            emojiCounts.set(key, next);
+            if (next > maxSameEmoji) maxSameEmoji = next;
+          }
+          if (maxSameEmoji > 3) {
+            return NextResponse.json(
+              {
+                error: `Không được gửi lặp lại cùng một icon/biểu tượng quá 3 lần trong một tin nhắn (hiện có ${maxSameEmoji} icon trùng lặp)!`,
+              },
+              { status: 400 }
+            );
+          }
+          if (emojiMatches.length > 5) {
+            return NextResponse.json(
+              {
+                error: `Mỗi tin nhắn chỉ được gửi tối đa 5 icon/biểu tượng cảm xúc (hiện có ${emojiMatches.length} icon)!`,
+              },
+              { status: 400 }
+            );
+          }
+        }
+      }
+
       if (Array.isArray(attachments) && attachments.length > MAX_CHAT_ATTACHMENTS_PER_MESSAGE) {
         return NextResponse.json(
           { error: `Mỗi lần gửi trong chat nội bộ chỉ được đính kèm tối đa ${MAX_CHAT_ATTACHMENTS_PER_MESSAGE} hình ảnh / tệp tin.` },
@@ -1168,6 +1202,33 @@ export async function POST(req: NextRequest) {
       const resolvedChannelId = await canAccessChannel(ident, channel_id, channel_code);
       if (!resolvedChannelId) {
         return NextResponse.json({ error: "Không tìm thấy kênh chat hoặc bạn không có quyền truy cập" }, { status: 404 });
+      }
+
+      if (content && String(content).trim() && (!attachments || attachments.length === 0)) {
+        const trimmedContent = String(content).trim();
+        const nonEmojiRest = trimmedContent
+          .replace(
+            /(?:\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*|[★☆♥♡⚡✨❗❓⚠️📌📎🔔👍❤️🚀👀✅🎉🔥💡])/gu,
+            ""
+          )
+          .replace(/\s+/g, "");
+        if (nonEmojiRest.length === 0) {
+          const dupEmojiRes = await query(
+            `SELECT id FROM chat_messages
+              WHERE channel_id = $1
+                AND LOWER(TRIM(sender_name)) = LOWER(TRIM($2))
+                AND TRIM(content) = $3
+                AND created_at >= NOW() - INTERVAL '60 seconds'
+              LIMIT 1`,
+            [resolvedChannelId, sender_name || ident.name, trimmedContent]
+          ).catch(() => ({ rows: [] as any[] }));
+          if (dupEmojiRes.rows.length > 0) {
+            return NextResponse.json(
+              { error: "Bạn vừa mới gửi biểu tượng này, hệ thống đã chặn gửi lặp lại liên tiếp để tránh spam!" },
+              { status: 429 }
+            );
+          }
+        }
       }
 
       const { cleanedAttachments, contentKeys } = await normalizeAndDedupeChatAttachments(attachments);

@@ -22,7 +22,12 @@ import {
 import { useAuth } from "@/frontend/contexts/AuthContext";
 import { useNotification } from "@/frontend/contexts/NotificationContext";
 import { MainTab } from "@/frontend/components/Navbar";
-import { uploadSingleFileSmart, computeBrowserFileSha256, extractAttachmentContentKey } from "@/frontend/components/AttachmentPicker";
+import {
+  uploadSingleFileSmart,
+  computeBrowserFileSha256,
+  extractAttachmentContentKey,
+  inspectChatEmojiSpam
+} from "@/frontend/components/AttachmentPicker";
 import { dedupePersonnel, renderChatTextWithLinks } from "@/frontend/components/EnterpriseChatModule";
 
 const MAX_CHAT_ATTACHMENTS_PER_MESSAGE = 5;
@@ -354,6 +359,26 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
 
     const channel = channels.find(c => c.id === activeChannelId);
     const cleanedText = inputText.replace(/Đang tải hình ảnh \/ tệp lên\.\.\. Vui lòng đợi/gi, "").trim();
+    if (cleanedText) {
+      const emojiCheck = inspectChatEmojiSpam(cleanedText);
+      if (emojiCheck.blocked) {
+        showToast(emojiCheck.reason || "Tin nhắn chứa quá nhiều icon lặp lại!", "warning");
+        return;
+      }
+      if (emojiCheck.isEmojiOnly && inputAttachments.length === 0) {
+        const nowMs = Date.now();
+        const recentSameEmoji = messages.slice(-6).some((m) => {
+          if (!m || String(m.sender_name || "").trim().toLowerCase() !== String(currentUserName || "").trim().toLowerCase()) return false;
+          const mTime = m.created_at ? new Date(m.created_at).getTime() : 0;
+          if (mTime > 0 && nowMs - mTime > 60 * 1000) return false;
+          return String(m.content || "").trim() === cleanedText;
+        });
+        if (recentSameEmoji) {
+          showToast("Bạn vừa mới gửi biểu tượng này, hệ thống đã chặn gửi lặp lại liên tiếp!", "warning");
+          return;
+        }
+      }
+    }
     const payload = {
       channel_id: activeChannelId,
       channel_code: channel?.channel_code || "",

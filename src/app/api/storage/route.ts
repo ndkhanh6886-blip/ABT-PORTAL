@@ -44,6 +44,13 @@ function keyPolicy(key: string): KeyPolicy {
   if (key === "sales_company_config") return { read: null, write: ["settings.view", "sales.approve_discount"] };
   // Danh sách phương thức thanh toán (chi tiền NCC / thu tiền): ai cũng đọc, chỉ Quản trị viên sửa
   if (key === "finance_payment_methods") return { read: null, write: ["settings.view"] };
+  // Danh mục sản phẩm thương mại dùng chung giữa Kinh doanh, Kho, Cung ứng & Application
+  if (key === "sales_commercial_products") {
+    return {
+      read: ["sales.view", "warehouse.view", "procurement.view", "application.view", "legal.view", "finance.view"],
+      write: ["sales.view", "sales.create", "sales.edit", "warehouse.view", "warehouse.inbound", "procurement.view", "procurement.create_pr"],
+    };
+  }
   if (key === "customer_industry_groups" || key.startsWith("sales_")) return { read: ["sales.view"], write: ["sales.view"] };
   // Bảng việc / lịch / thông báo dùng chung toàn công ty: mọi nhân viên đã đăng nhập
   if (key.startsWith("unified_") || key === "tbr_activity_notifications") return { read: null, write: null };

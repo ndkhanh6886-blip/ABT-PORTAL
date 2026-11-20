@@ -1240,15 +1240,45 @@ export async function POST(req: NextRequest) {
     const authUser = await getAuthorizedUser(req);
     if (!authUser) return unauthorizedResponse();
     setAuditActor(authUser);
-    // Ghi dữ liệu Kinh doanh: người dùng phân hệ Kinh doanh / Kho (giao hàng); thao tác nhạy cảm cần quyền riêng
+    // Ghi dữ liệu Kinh doanh: người dùng phân hệ Kinh doanh / Kho / Cung ứng / Ứng dụng; thao tác nhạy cảm cần quyền riêng
     const salesAdmin = isAdminUser(authUser);
-    if (!salesAdmin && !hasPermission(authUser, "sales.view") && !hasPermission(authUser, "warehouse.view")) {
+    if (
+      !salesAdmin &&
+      !hasPermission(authUser, "sales.view") &&
+      !hasPermission(authUser, "warehouse.view") &&
+      !hasPermission(authUser, "procurement.view") &&
+      !hasPermission(authUser, "application.view")
+    ) {
       return forbiddenResponse("Bạn không có quyền thao tác dữ liệu Kinh doanh.");
     }
     const SALES_ACTION_PERMISSIONS: Record<string, string[]> = {
-      update_product_price: ["sales.approve_discount"],
-      product_price: ["sales.approve_discount"],
-      product: ["sales.approve_discount"],
+      update_product_price: [
+        "sales.approve_discount",
+        "sales.edit",
+        "sales.create",
+        "sales.view",
+        "procurement.view",
+        "warehouse.inbound",
+      ],
+      product_price: [
+        "sales.approve_discount",
+        "sales.edit",
+        "sales.create",
+        "sales.view",
+        "procurement.view",
+        "warehouse.inbound",
+      ],
+      product: [
+        "sales.view",
+        "sales.create",
+        "sales.edit",
+        "sales.approve_discount",
+        "warehouse.view",
+        "warehouse.inbound",
+        "procurement.view",
+        "procurement.create_pr",
+        "application.view",
+      ],
       delete_customer: ["sales.delete"],
       delete_quotation: ["sales.delete"],
       delete_contract: ["sales.delete"],
@@ -2983,6 +3013,21 @@ export async function POST(req: NextRequest) {
             [cleanCode, name, category, unit, specification, standard_price, cost_price, manufacturer, origin, min_stock_level]
           );
         }
+      }
+      try {
+        await mergeCatalogFields(null, cleanCode, {
+          code: cleanCode,
+          name: String(name || "").trim() || cleanCode,
+          category: category || "Hóa chất & Sinh phẩm",
+          unit: unit || "Cái",
+          specification: specification || "",
+          price: standard_price !== undefined ? Number(standard_price) : 0,
+          costPrice: cost_price !== undefined ? Number(cost_price) : 0,
+          brand: manufacturer || "",
+          origin: origin || "",
+        });
+      } catch (catalogErr) {
+        console.warn("Failed to sync product to catalog_items:", catalogErr);
       }
       return NextResponse.json({ success: true });
     }
