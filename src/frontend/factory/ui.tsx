@@ -88,7 +88,7 @@ export function Button({
     <button
       {...props}
       title={computedTitle}
-      className={`min-h-9 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer disabled:cursor-not-allowed ${styles} ${className}`}
+      className={`px-2.5 py-1 rounded-lg text-xs font-semibold leading-tight inline-flex items-center justify-center gap-1 whitespace-nowrap transition-colors cursor-pointer disabled:cursor-not-allowed ${styles} ${className}`}
     >
       {children}
     </button>

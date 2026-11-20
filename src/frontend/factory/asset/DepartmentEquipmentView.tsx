@@ -897,12 +897,14 @@ export function DepartmentEquipmentView({
                           <td className="py-2 pr-3">
                             <StatusBadge status={st[0]} label={st[1]} />
                           </td>
-                          <td className="py-2 text-right">
-                            <div className="flex flex-wrap justify-end gap-1.5">
+                          <td className="py-2 text-right whitespace-nowrap">
+                            <div className="inline-flex items-center justify-end gap-1 whitespace-nowrap">
                               {canManageAsset && (
                                 <>
                                   <Button
                                     variant={isEditingRow ? "primary" : "ghost"}
+                                    className="!px-2 !py-0.5 !text-[11px]"
+                                    title="Sửa thông tin thiết bị"
                                     onClick={() => {
                                       if (isEditingRow) {
                                         setEditingAsset(null);
@@ -926,11 +928,12 @@ export function DepartmentEquipmentView({
                                       });
                                     }}
                                   >
-                                    {isEditingRow ? "Đóng sửa" : "✏️ Sửa"}
+                                    {isEditingRow ? "Đóng" : "✏️ Sửa"}
                                   </Button>
                                   <Button
                                     variant="ghost"
-                                    className="text-rose-600 dark:text-rose-400"
+                                    className="!px-2 !py-0.5 !text-[11px] text-rose-600 dark:text-rose-400"
+                                    title="Xóa thiết bị"
                                     disabled={deleteAssetMut.isPending}
                                     onClick={() => {
                                       const reason = window.prompt(
@@ -948,6 +951,8 @@ export function DepartmentEquipmentView({
                               )}
                               <Button
                                 variant={isRequestingRow && !reqForm.out_of_service ? "primary" : "ghost"}
+                                className="!px-2 !py-0.5 !text-[11px]"
+                                title="Đề xuất Bảo trì / Hiệu chuẩn định kỳ thiết bị"
                                 onClick={() => {
                                   if (isRequestingRow && !reqForm.out_of_service) {
                                     setRequestAsset(null);
@@ -963,10 +968,12 @@ export function DepartmentEquipmentView({
                                   });
                                 }}
                               >
-                                🔧 Đề xuất Bảo trì / HC
+                                🔧 Bảo trì/HC
                               </Button>
                               <Button
                                 variant={isRequestingRow && reqForm.out_of_service ? "danger" : "ghost"}
+                                className="!px-2 !py-0.5 !text-[11px]"
+                                title="Báo hỏng khẩn cấp đề nghị Kỹ thuật kiểm tra sửa chữa"
                                 onClick={() => {
                                   if (isRequestingRow && reqForm.out_of_service) {
                                     setRequestAsset(null);
@@ -982,7 +989,7 @@ export function DepartmentEquipmentView({
                                   });
                                 }}
                               >
-                                🚨 Báo hỏng khẩn
+                                🚨 Báo hỏng
                               </Button>
                             </div>
                           </td>

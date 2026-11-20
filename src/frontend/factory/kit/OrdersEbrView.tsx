@@ -4322,7 +4322,7 @@ function DailyOperatorTrackerSection({
                   : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700"
               }`}
             >
-              🌐 Xem tất cả Lệnh SX đang mở ({orderGroups.length} lệnh)
+              🌐 Tất cả lệnh mở ({orderGroups.length})
             </button>
           </div>
 
@@ -4330,8 +4330,8 @@ function DailyOperatorTrackerSection({
             onClick={() => setShowOrderPicker((v) => !v)}
           >
             {showOrderPicker
-              ? "Đóng bảng chọn Lệnh SX"
-              : `➕ Chọn Lệnh SX đưa vào Kế hoạch ngày ${fmtDate(selectedPlanDate)} (${unscheduledOrdersForDate.length} lệnh chờ)`}
+              ? "Đóng bảng chọn"
+              : `➕ Chọn Lệnh SX (${unscheduledOrdersForDate.length})`}
           </Button>
         </div>
 
@@ -4482,15 +4482,15 @@ function DailyOperatorTrackerSection({
       <Card
         title={`1. Bảng Tổng Hợp Phân Công & Năng Suất Nhân Viên Theo Ca (${operatorStats.length} nhân sự)`}
         actions={
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             <Button onClick={() => setShowOrderPicker((v) => !v)}>
               {showOrderPicker
-                ? "Đóng bảng chọn Lệnh SX"
-                : `➕ Chọn Lệnh SX đưa vào Kế hoạch ngày (${unscheduledOrdersForDate.length})`}
+                ? "Đóng bảng chọn"
+                : `➕ Chọn Lệnh SX (${unscheduledOrdersForDate.length})`}
             </Button>
             {dateScope === "DAY" && (
               <Button variant="secondary" onClick={() => setDateScope("ALL")}>
-                🌐 Xem tất cả Lệnh SX đang mở ({orderGroups.length})
+                🌐 Tất cả lệnh mở ({orderGroups.length})
               </Button>
             )}
           </div>
@@ -4506,10 +4506,10 @@ function DailyOperatorTrackerSection({
             </div>
             <div className="flex flex-wrap items-center justify-center gap-2">
               <Button onClick={() => setShowOrderPicker(true)}>
-                ➕ Chọn Lệnh SX đưa vào Kế hoạch ngày {fmtDate(selectedPlanDate)} ({unscheduledOrdersForDate.length} lệnh chờ)
+                ➕ Chọn Lệnh SX ({unscheduledOrdersForDate.length} chờ)
               </Button>
               <Button variant="secondary" onClick={() => setDateScope("ALL")}>
-                🌐 Xem tất cả Lệnh SX đang mở ({orderGroups.length} lệnh)
+                🌐 Tất cả lệnh mở ({orderGroups.length})
               </Button>
             </div>
           </div>
@@ -4562,11 +4562,11 @@ function DailyOperatorTrackerSection({
       <Card
         title={`2. Bảng Kế Hoạch & Giám Sát Tiến Độ Theo Lệnh Sản Xuất (${scheduledOrdersForView.length} lệnh · ${visibleSteps.length} bước)`}
         actions={
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             <Button onClick={() => setShowOrderPicker((v) => !v)}>
               {showOrderPicker
-                ? "Đóng bảng chọn Lệnh SX"
-                : `➕ Chọn Lệnh SX vào ngày ${fmtDate(selectedPlanDate)} (${unscheduledOrdersForDate.length})`}
+                ? "Đóng bảng chọn"
+                : `➕ Chọn Lệnh SX (${unscheduledOrdersForDate.length})`}
             </Button>
             <select
               className={`${inputClass} !w-44 !py-1 text-xs`}
@@ -4727,10 +4727,10 @@ function DailyOperatorTrackerSection({
             {dateScope === "DAY" && (
               <div className="flex flex-wrap items-center justify-center gap-2">
                 <Button onClick={() => setShowOrderPicker(true)}>
-                  ➕ Chọn Lệnh SX đưa vào Kế hoạch ngày {fmtDate(selectedPlanDate)} ({unscheduledOrdersForDate.length} lệnh chờ)
+                  ➕ Chọn Lệnh SX ({unscheduledOrdersForDate.length} chờ)
                 </Button>
                 <Button variant="secondary" onClick={() => setDateScope("ALL")}>
-                  🌐 Xem tất cả Lệnh SX đang mở ({orderGroups.length} lệnh)
+                  🌐 Tất cả lệnh mở ({orderGroups.length})
                 </Button>
               </div>
             )}
@@ -4939,27 +4939,34 @@ function DailyOperatorTrackerSection({
 
                     {/* Cột 5: Thao tác điều độ */}
                     <td className="px-3 py-3 text-xs whitespace-nowrap">
-                      <div className="flex flex-col gap-1.5">
+                      <div className="inline-flex items-center gap-1 whitespace-nowrap">
                         <Button
                           variant="secondary"
+                          className="!px-2 !py-0.5 !text-[11px]"
+                          title="Xem chi tiết 5 bước công đoạn và phân công nhân viên theo từng bước"
                           onClick={() =>
                             setExpandedOrderIds((prev) => ({ ...prev, [g.order_id]: !prev[g.order_id] }))
                           }
                         >
-                          {isExpanded ? `▴ Thu gọn ${g.steps.length} bước` : `▾ Chi tiết / Phân công từng bước (${g.steps.length})`}
+                          {isExpanded ? "▴ Thu gọn" : `▾ ${g.steps.length} bước`}
                         </Button>
-                        <Button variant="ghost" onClick={() => onOpenOrderEbr(g.order_id)}>
-                          🔎 Mở Hồ sơ Lô (EBR)
+                        <Button
+                          variant="ghost"
+                          className="!px-2 !py-0.5 !text-[11px]"
+                          title="Mở chi tiết Hồ sơ Lô điện tử (EBR)"
+                          onClick={() => onOpenOrderEbr(g.order_id)}
+                        >
+                          🔎 EBR
                         </Button>
                         {g.planned_date && (
-                          <button
-                            type="button"
+                          <Button
+                            variant="ghost"
+                            className="!px-2 !py-0.5 !text-[11px] text-rose-600 dark:text-rose-400"
                             onClick={() => handleAssignWholeOrder(g.order_id, { unschedule: true })}
-                            className="text-[11px] text-rose-600 dark:text-rose-400 hover:underline cursor-pointer text-center pt-0.5"
                             title="Rút lệnh sản xuất này khỏi kế hoạch ngày để chuyển sang ngày khác"
                           >
-                            🗓️ Bỏ khỏi kế hoạch ngày
-                          </button>
+                            🗓️ Bỏ lịch
+                          </Button>
                         )}
                       </div>
                     </td>

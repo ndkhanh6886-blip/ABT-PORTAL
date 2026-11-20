@@ -662,30 +662,32 @@ export function ProductionPlanView({
                         );
                       })()}
                     </td>
-                    <td className="px-3 py-2 text-xs align-top">
-                      <div className="flex flex-col gap-1">
+                    <td className="px-3 py-2 text-xs align-top whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1 whitespace-nowrap">
                         {canPlan && o.status !== "COMPLETED" && (
                           <Button
                             variant={isEditing ? "secondary" : "ghost"}
+                            className="!px-2 !py-0.5 !text-[11px]"
                             title="Điều chỉnh ngày bắt đầu/kết thúc kế hoạch, trưởng nhóm phụ trách và ghi chú kế hoạch"
                             onClick={() => (isEditing ? setEditingId("") : startEdit(o))}
                           >
-                            {isEditing ? "Đóng sửa" : "✏️ Sửa kế hoạch"}
+                            {isEditing ? "Đóng" : "✏️ Sửa"}
                           </Button>
                         )}
                         {onOpenOrder && (
                           <Button
                             variant="ghost"
+                            className="!px-2 !py-0.5 !text-[11px]"
                             title="Mở chi tiết Hồ sơ lô điện tử (EBR) của lệnh để phân công nhân viên từng bước và thực hiện công đoạn"
                             onClick={() => onOpenOrder(o.id)}
                           >
-                            🔎 Mở Hồ sơ Lô (EBR)
+                            🔎 EBR
                           </Button>
                         )}
                         {canPlan && o.status === "DRAFT" && (
                           <Button
                             variant="ghost"
-                            className="text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                            className="!px-2 !py-0.5 !text-[11px] text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40"
                             title="Xóa Lệnh sản xuất đang ở trạng thái Bản nháp (giải phóng luôn mã lô dự kiến chưa xuất kho)"
                             onClick={() => {
                               setDeletingOrder(o);
@@ -693,7 +695,7 @@ export function ProductionPlanView({
                               setDeleteModalError(null);
                             }}
                           >
-                            🗑️ Xóa lệnh nháp
+                            🗑️ Xóa
                           </Button>
                         )}
                       </div>

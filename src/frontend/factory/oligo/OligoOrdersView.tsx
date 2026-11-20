@@ -651,22 +651,22 @@ export function OligoOrdersView({
                       className="py-2 pr-3 whitespace-nowrap"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <div className="inline-flex flex-wrap items-center gap-1">
+                      <div className="inline-flex items-center gap-1 whitespace-nowrap">
                         <button
                           type="button"
                           onClick={() => openOrderDetail(o.id)}
-                          className={`px-2.5 py-1 rounded-lg font-bold text-[11px] cursor-pointer shadow-2xs ${
+                          className={`px-2 py-1 rounded-md font-semibold text-[11px] leading-tight cursor-pointer shadow-2xs ${
                             isSelectedRow
                               ? "bg-slate-700 hover:bg-slate-800 text-white"
                               : "bg-emerald-600 hover:bg-emerald-700 text-white"
                           }`}
-                          title="Mở chi tiết đơn hàng này ngay tại dòng để nhập hoặc sửa danh sách trình tự"
+                          title="Mở chi tiết đơn hàng này ngay tại dòng để xem, nhập hoặc sửa danh sách trình tự"
                         >
                           {isSelectedRow
-                            ? "Đóng chi tiết ▲"
+                            ? "Đóng ▲"
                             : o.sequence_count === 0
-                              ? "🧬 Nhập trình tự"
-                              : "✏️ Xem / Sửa trình tự"}
+                              ? "🧬 Nhập TT"
+                              : "✏️ Trình tự"}
                         </button>
                         {o.sequence_count > 0 && (
                           <button
@@ -677,9 +677,9 @@ export function OligoOrdersView({
                               )
                             }
                             title="Xuất COA Đơn hàng (chỉ gồm các trình tự Primer & Probe)"
-                            className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] cursor-pointer"
+                            className="px-2 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-[11px] leading-tight cursor-pointer"
                           >
-                            📜 COA Đơn hàng
+                            📜 COA
                           </button>
                         )}
                         {ampCount > 0 && (
@@ -691,9 +691,9 @@ export function OligoOrdersView({
                               )
                             }
                             title="Xuất COA cho trình tự Amplicon"
-                            className="px-2 py-1 rounded-lg border border-purple-300 dark:border-purple-800 bg-purple-50 dark:bg-purple-950/50 hover:bg-purple-100 text-purple-800 dark:text-purple-300 font-bold text-[11px] cursor-pointer"
+                            className="px-2 py-1 rounded-md border border-purple-300 dark:border-purple-800 bg-purple-50 dark:bg-purple-950/50 hover:bg-purple-100 text-purple-800 dark:text-purple-300 font-semibold text-[11px] leading-tight cursor-pointer"
                           >
-                            🧬 COA Amplicon ({ampCount})
+                            🧬 COA Amp ({ampCount})
                           </button>
                         )}
                       </div>
