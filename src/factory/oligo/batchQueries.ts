@@ -105,12 +105,22 @@ export function scoreItemForReagentRole(
       }
       return 0;
     case "ALKYL":
-      if (/\b(alkyl\s*amidite|alkyl\s*phosphoramidite|alkyne\s*amidite)\b/i.test(nameL)) {
+      if (/\b(alkyl\s*amidite|alkyl\s*phosphoramidite|alkyne\s*amidite)\b/i.test(nameL) || codeU === "AM5") {
         return isPreparedOut ? 95 : 85;
       }
       return 0;
-    default:
+    default: {
+      const modKey = r.startsWith("MOD:") ? r.slice(4).trim().toUpperCase() : r.toUpperCase();
+      if (
+        modKey.length >= 2 &&
+        (codeU === modKey ||
+          codeU === `${modKey}-AMIDITE` ||
+          new RegExp(`\\b${modKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(nameL))
+      ) {
+        if (!/\b(cpg|cột|column)\b/i.test(nameL)) return 80;
+      }
       return 0;
+    }
   }
 }
 
@@ -375,8 +385,12 @@ export async function getBatch(tx: Tx, actor: AuthzActor, id: string) {
     await tx.query(
       `SELECT p.position_no, p.couplings, p.coupling_efficiency_pct::float AS coupling_efficiency_pct, p.result, p.contamination_warning,
               s.id AS sequence_id, s.code AS sequence_code, s.name, s.oligo_role, s.target_pathogen,
-              s.normalized_sequence, s.scale_code, s.status AS sequence_status, l.code AS column_lot_code
-         FROM oligo.synthesis_position p JOIN oligo.oligo_sequence s ON s.id = p.sequence_id JOIN inv.lot l ON l.id = p.column_lot_id
+              s.normalized_sequence, s.scale_code, s.status AS sequence_status,
+              l.code AS column_lot_code, ci.code AS column_item_code, ci.name AS column_item_name
+         FROM oligo.synthesis_position p
+         JOIN oligo.oligo_sequence s ON s.id = p.sequence_id
+         JOIN inv.lot l ON l.id = p.column_lot_id
+         LEFT JOIN master.item ci ON ci.id = l.item_id
         WHERE p.batch_id = $1 ORDER BY p.position_no`,
       [id]
     )

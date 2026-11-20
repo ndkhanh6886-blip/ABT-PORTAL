@@ -105,6 +105,9 @@ export function factoryRoute(
       if (error instanceof FactoryError) {
         return NextResponse.json({ error: error.message, code: error.code, details: error.details }, { status: error.status });
       }
+      if (error?.name === "SequenceError" || error?.constructor?.name === "SequenceError") {
+        return NextResponse.json({ error: error.message, code: "INVALID_SEQUENCE" }, { status: 400 });
+      }
       if (error?.code === "23505") {
         return NextResponse.json({ error: "Dữ liệu bị trùng với bản ghi đã có (mã hoặc khóa duy nhất).", code: "DUPLICATE" }, { status: 409 });
       }

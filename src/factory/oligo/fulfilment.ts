@@ -47,10 +47,11 @@ async function dispositionProblem(tx: Tx, s: any, disposition: string): Promise<
 
 /** RESYNTHESIZE: a new pending sequence (a pool master is replaced in its pool, so the members follow the new synthesis). */
 async function resynthesize(tx: Tx, actor: AuthzActor, s: any, ncr: Ncr) {
-  const a = analyze(s.raw_sequence, await loadCatalog(tx));
+  const cleanRaw = s.normalized_sequence || s.raw_sequence;
+  const a = analyze(cleanRaw, await loadCatalog(tx));
   const master = s.relation === "POOL_MASTER";
   const n = await insertSequence(tx, actor, {
-    order_id: s.order_id, org_unit_id: s.org_unit_id, line_no: s.line_no, name: s.name, raw: s.raw_sequence, a,
+    order_id: s.order_id, org_unit_id: s.org_unit_id, line_no: s.line_no, name: s.name, raw: cleanRaw, a,
     scale_code: s.scale_code, purification: s.purification, format: s.format,
     parent_sequence_id: master ? null : s.id, relation: master ? "POOL_MASTER" : "RESYNTH",
   });

@@ -225,7 +225,7 @@ async function parseLines(tx: Tx, text: string, defaults: z.infer<typeof linesSc
       const seqName = name || `Oligo ${line}`;
       const oligo_role = inferOligoRole(seqName, a, roleCol || defaults.oligo_role);
       const target_pathogen = (pathogenCol || defaults.target_pathogen || "").trim() || null;
-      out.push({ line, name: seqName, raw: raw!, scale_code: sc, purification: pu, format: foNorm, oligo_role, target_pathogen, a });
+      out.push({ line, name: seqName, raw: cleanedRaw, scale_code: sc, purification: pu, format: foNorm, oligo_role, target_pathogen, a });
     } catch (e) {
       if (e instanceof SequenceError) errors.push({ line, message: e.message });
       else throw e;

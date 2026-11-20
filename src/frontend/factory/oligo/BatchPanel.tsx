@@ -19,7 +19,7 @@ interface Batch {
   synthesizer_name: string;
   started_at: string | null;
   finished_at: string | null;
-  positions: { position_no: number; couplings: number; coupling_efficiency_pct: number | null; result: string | null; contamination_warning?: string | null; oligo_role?: string; target_pathogen?: string | null; sequence_code: string; name: string; normalized_sequence: string; scale_code: string; sequence_status: string; column_lot_code: string }[];
+  positions: { position_no: number; couplings: number; coupling_efficiency_pct: number | null; result: string | null; contamination_warning?: string | null; oligo_role?: string; target_pathogen?: string | null; sequence_code: string; name: string; normalized_sequence: string; scale_code: string; sequence_status: string; column_lot_code: string; column_item_code?: string | null; column_item_name?: string | null }[];
   reagents: { item_id: string; role: string; est_qty_base: number; actual_qty_base: number | null; item_code: string; item_name: string; base_uom: string }[];
   column_positions: number | null;
   lots: BatchLot[];
@@ -201,7 +201,16 @@ export function BatchPanel({ id, onClose }: { id: string; onClose: () => void })
                 <td className="py-1.5 pr-3 font-mono text-xs" title={p.normalized_sequence}>{p.sequence_code} <span className="font-sans text-slate-500">{p.name}</span></td>
                 <td className="py-1.5 pr-3 text-xs font-mono">{p.oligo_role || "PRIMER"}</td>
                 <td className="py-1.5 pr-3 text-xs">{p.scale_code}</td>
-                <td className="py-1.5 pr-3 font-mono text-xs">{p.column_lot_code}</td>
+                <td className="py-1.5 pr-3 text-xs">
+                  {p.column_item_code ? (
+                    <span>
+                      <b className="font-mono">{p.column_item_code}</b>
+                      {p.column_item_name ? ` — ${p.column_item_name}` : ""} · <span className="font-mono">Lô {p.column_lot_code}</span>
+                    </span>
+                  ) : (
+                    <span className="font-mono">{p.column_lot_code}</span>
+                  )}
+                </td>
                 <td className="py-1.5 pr-3 text-right">{p.couplings}</td>
                 <td className="py-1.5 pr-3 text-right">{p.coupling_efficiency_pct == null ? "—" : `${p.coupling_efficiency_pct}%`}</td>
                 <td className="py-1.5 pr-3 text-xs">

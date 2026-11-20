@@ -17,6 +17,7 @@ import { autoSyncOligoReagentMappings, scoreItemForReagentRole } from "./batchQu
 import { loadCatalog } from "./catalog";
 import { estimateConsumption, type ReagentRule } from "./consumption";
 import { recomputeOrdersOf } from "./orders";
+import { normalizeLegacySequence } from "./pricing";
 import { sequenceMachine } from "./sequences";
 import { followInstalledBottles, reservePortLines } from "./synthPorts";
 
@@ -39,7 +40,7 @@ export interface Batch {
 const DEMAND = "SYNTHESIS_BATCH" as const;
 
 async function warehousesOf(tx: Tx, orgUnitId: string): Promise<string[]> {
-  return (await tx.query("SELECT id FROM master.warehouse WHERE (owner_org_unit_id = $1 OR owner_org_unit_id IS NULL) AND status = 'ACTIVE'", [orgUnitId])).rows.map((r) => r.id);
+  return (await tx.query("SELECT id FROM master.warehouse WHERE (owner_org_unit_id = $1 OR owner_org_unit_id IS NULL OR code = 'KHO-OLIGO') AND status = 'ACTIVE'", [orgUnitId])).rows.map((r) => r.id);
 }
 
 /** Moves the batch's sequences and re-derives the status of every order they serve (pool members included). */
@@ -234,7 +235,15 @@ const planSchema = z.object({
   notes: z.string().trim().max(2000).optional().nullable(),
   allow_adjacent_contamination: z.boolean().optional().default(false),
   contamination_override_reason: z.string().trim().max(1000).optional().nullable(),
-  positions: z.array(z.object({ sequence_id: z.string().uuid(), column_lot_id: z.string().uuid("chọn lô cột CPG") })).min(1, "chọn ít nhất một trình tự"),
+  positions: z
+    .array(
+      z.object({
+        sequence_id: z.string().uuid(),
+        column_lot_id: z.string().uuid("chọn lô cột CPG"),
+        position_no: z.coerce.number().int().min(1).optional(),
+      })
+    )
+    .min(1, "chọn ít nhất một trình tự"),
 });
 
 function cleanBasesOnly(normalized: string): string {
@@ -355,12 +364,28 @@ export async function planBatch(tx: Tx, actor: AuthzActor, input: unknown) {
   for (const s of seqs) {
     if (s.status !== "PENDING") throw invalid(`${s.code} đã được xếp mẻ khác hoặc không còn chờ tổng hợp. Tải lại trang.`, undefined, "SEQUENCE_TAKEN");
     if (s.org_unit_id !== data.org_unit_id) throw invalid(`${s.code} thuộc phòng khác.`);
-    if (synth.supported_scales.length && !synth.supported_scales.includes(s.scale_code)) throw invalid(`Máy ${synth.code} không chạy thang ${s.scale_code} của ${s.code}.`);
+    if (synth.supported_scales?.length && !synth.supported_scales.includes(s.scale_code)) throw invalid(`Máy ${synth.code} không chạy thang ${s.scale_code} của ${s.code}.`);
   }
   const bySeq = new Map(seqs.map((s) => [s.id, s]));
+  const usedPosNos = new Set<number>();
   const analysed = data.positions.map((p, idx) => {
     const s = bySeq.get(p.sequence_id);
-    return { p, s, position_no: idx + 1, tokens: analyze(s.raw_sequence, catalog).tokens };
+    const posNo = p.position_no ?? idx + 1;
+    if (posNo < 1 || posNo > Number(synth.column_positions)) {
+      throw invalid(`Vị trí cột #${posNo} vượt quá số cột của máy ${synth.code} (${synth.column_positions} cột).`);
+    }
+    if (usedPosNos.has(posNo)) {
+      throw invalid(`Trùng vị trí cột #${posNo} trong cùng mẻ tổng hợp. Mỗi vị trí cột chỉ gắn 1 trình tự.`);
+    }
+    usedPosNos.add(posNo);
+    const rawForAnalyze = normalizeLegacySequence(s.raw_sequence || s.normalized_sequence) || s.normalized_sequence || s.raw_sequence;
+    let tokens;
+    try {
+      tokens = analyze(rawForAnalyze, catalog).tokens;
+    } catch (e: any) {
+      throw invalid(e?.message || `Trình tự ${s.code} không hợp lệ.`);
+    }
+    return { p, s, position_no: posNo, tokens };
   });
 
   // Check column-based cross-contamination between POSITIVE_CONTROL/TEMPLATE and PRIMER/PROBE columns
@@ -398,8 +423,8 @@ export async function planBatch(tx: Tx, actor: AuthzActor, input: unknown) {
     )
   ).rows[0] as Batch;
   const warehouses = await warehousesOf(tx, data.org_unit_id);
-  for (const [i, a] of analysed.entries()) {
-    const posNo = i + 1;
+  for (const a of analysed) {
+    const posNo = a.position_no;
     const warning = contam.warningsByPos.get(posNo) ?? null;
     await tx.query(
       "INSERT INTO oligo.synthesis_position (batch_id, position_no, sequence_id, column_lot_id, couplings, contamination_warning) VALUES ($1, $2, $3, $4, $5, $6)",
@@ -412,7 +437,45 @@ export async function planBatch(tx: Tx, actor: AuthzActor, input: unknown) {
   const perItem = new Map<string, number>();
   const rolesByItem = new Map<string, string[]>();
   for (const l of ported.rest) {
+    const isOptionalModRole = l.role === "ALKYL" || l.role === "MOD_DEFAULT" || l.role.startsWith("MOD:");
     let itemId = l.catalog_item_id ?? l.item_id ?? null;
+    if (!itemId && isOptionalModRole) {
+      // Check if warehouse has a stocked item matching this modification role
+      const modAltRows = (
+        await tx.query(
+          `WITH stock AS (
+             SELECT b.item_id, coalesce(sum(b.qty_on_hand - b.qty_reserved), 0)::float AS avail
+               FROM inv.stock_balance b
+               JOIN inv.lot lt ON lt.id = b.lot_id
+               JOIN master.location loc ON loc.id = b.location_id
+              WHERE loc.warehouse_id = ANY($1::uuid[])
+                AND NOT loc.is_quarantine
+                AND lt.status = 'RELEASED'
+                AND (lt.expiry_date IS NULL OR lt.expiry_date >= current_date)
+              GROUP BY b.item_id
+           )
+           SELECT i.id, i.code, i.name, s.avail
+             FROM stock s
+             JOIN master.item i ON i.id = s.item_id
+            WHERE s.avail > 0`,
+          [warehouses]
+        )
+      ).rows as { id: string; code: string; name: string; avail: number }[];
+      let bestModAlt: { id: string; score: number; avail: number } | null = null;
+      for (const alt of modAltRows) {
+        const sc = scoreItemForReagentRole(l.role, alt);
+        if (sc <= 0) continue;
+        if (!bestModAlt || sc > bestModAlt.score || (sc === bestModAlt.score && alt.avail > bestModAlt.avail)) {
+          bestModAlt = { id: alt.id, score: sc, avail: alt.avail };
+        }
+      }
+      if (bestModAlt) {
+        itemId = bestModAlt.id;
+      } else {
+        // 3' Quenchers (e.g. BHQ1 on CQ1 CPG column) or unmapped 5' modifications do not require a separate liquid reagent reservation
+        continue;
+      }
+    }
     if (!itemId) throw invalid(`Định mức "${l.label}" chưa gắn vật tư. Vào Tổng hợp Oligo → Định mức hóa chất để gắn mã vật tư.`, undefined, "REAGENT_UNMAPPED");
     let item = await getItem(tx, itemId);
     let qty = Math.round((await toBaseQty(tx, item, l.qty, l.uom)) * 1e6) / 1e6;
@@ -456,8 +519,13 @@ export async function planBatch(tx: Tx, actor: AuthzActor, input: unknown) {
           itemId = bestAlt.id;
           item = altItem;
           qty = Math.round(altQty * 1e6) / 1e6;
-          await tx.query("UPDATE oligo.reagent_rule SET item_id = $2, updated_at = now() WHERE role = $1", [l.role, itemId]);
+          if (!l.role.startsWith("MOD:")) {
+            await tx.query("UPDATE oligo.reagent_rule SET item_id = $2, updated_at = now() WHERE role = $1", [l.role, itemId]);
+          }
         }
+      } else if (isOptionalModRole && curAvail <= 0) {
+        // Unstocked placeholder item (e.g. ALKYL-AMIDITE when dye is coupled post-synthesis or via CPG): skip reservation
+        continue;
       }
     }
 

@@ -47,6 +47,8 @@ export function BatchPlanForm({ onCreated }: { onCreated: (id: string) => void }
   const [synthId, setSynthId] = useState("");
   const [lotId, setLotId] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
+  const [posNoBySeq, setPosNoBySeq] = useState<Record<string, number>>({});
+  const [lotBySeq, setLotBySeq] = useState<Record<string, string>>({});
   const [program, setProgram] = useState("");
   const [allowAdjacentContam, setAllowAdjacentContam] = useState(false);
   const [showPortsConfig, setShowPortsConfig] = useState(false);
@@ -145,9 +147,79 @@ export function BatchPlanForm({ onCreated }: { onCreated: (id: string) => void }
     });
   }, [allSequences, orderFilter, roleFilter, scaleFilter, searchQuery]);
 
+  const maxCols = synth?.column_positions ?? 12;
+
+  const resolvePosNo = (id: string, idxFallback: number): number => {
+    const explicit = posNoBySeq[id];
+    if (explicit && explicit >= 1 && explicit <= maxCols) return explicit;
+    return idxFallback + 1;
+  };
+
+  const assignSequenceToPos = (seqId: string, targetPos: number | null) => {
+    if (!targetPos || targetPos < 1) {
+      setPicked((prev) => prev.filter((x) => x !== seqId));
+      setPosNoBySeq((prev) => {
+        const next = { ...prev };
+        delete next[seqId];
+        return next;
+      });
+      return;
+    }
+    setPicked((prev) => {
+      const alreadyIn = prev.includes(seqId);
+      const nextPicked = alreadyIn ? prev : prev.length >= maxCols ? prev : [...prev, seqId];
+      if (!nextPicked.includes(seqId)) return prev;
+      setPosNoBySeq((prevMap) => {
+        const nextMap: Record<string, number> = { ...prevMap };
+        // Ensure every currently picked sequence has an explicit position number
+        const used = new Set<number>();
+        for (const id of nextPicked) {
+          if (id !== seqId && nextMap[id] && nextMap[id] >= 1 && nextMap[id] <= maxCols) {
+            used.add(nextMap[id]);
+          }
+        }
+        for (const id of nextPicked) {
+          if (id !== seqId && (!nextMap[id] || nextMap[id] < 1 || nextMap[id] > maxCols)) {
+            for (let c = 1; c <= maxCols; c++) {
+              if (!used.has(c)) {
+                nextMap[id] = c;
+                used.add(c);
+                break;
+              }
+            }
+          }
+        }
+        const oldPos = nextMap[seqId];
+        const holderId = nextPicked.find((id) => id !== seqId && nextMap[id] === targetPos);
+        if (holderId) {
+          if (oldPos && oldPos >= 1 && oldPos <= maxCols) {
+            nextMap[holderId] = oldPos;
+          } else {
+            for (let c = 1; c <= maxCols; c++) {
+              if (c !== targetPos && !Object.entries(nextMap).some(([k, v]) => k !== holderId && k !== seqId && v === c)) {
+                nextMap[holderId] = c;
+                break;
+              }
+            }
+          }
+        }
+        nextMap[seqId] = targetPos;
+        return nextMap;
+      });
+      return nextPicked;
+    });
+  };
+
   const plan = useMutation({
-    mutationFn: () =>
-      api<{ id: string }>("/api/factory/oligo/batches", {
+    mutationFn: () => {
+      const orderedPicked = [...picked]
+        .map((id, idx) => ({
+          sequence_id: id,
+          position_no: resolvePosNo(id, idx),
+          column_lot_id: lotBySeq[id] || lotId,
+        }))
+        .sort((a, b) => a.position_no - b.position_no);
+      return api<{ id: string }>("/api/factory/oligo/batches", {
         method: "POST",
         idempotent: true,
         json: {
@@ -155,22 +227,47 @@ export function BatchPlanForm({ onCreated }: { onCreated: (id: string) => void }
           synthesizer_id: synthId,
           program_name: program || null,
           allow_adjacent_contamination: allowAdjacentContam,
-          positions: picked.map((id) => ({ sequence_id: id, column_lot_id: lotId })),
+          contamination_override_reason: allowAdjacentContam
+            ? "Xác nhận xếp chung mẻ có kiểm soát nhiễm chéo cột theo phê duyệt kỹ thuật"
+            : null,
+          positions: orderedPicked,
         },
-      }),
+      });
+    },
     onSuccess: (b) => {
       setPicked([]);
+      setPosNoBySeq({});
+      setLotBySeq({});
       qc.invalidateQueries({ queryKey: ["factory", "oligo-batches"] });
       qc.invalidateQueries({ queryKey: ["factory", "oligo-batch-candidates"] });
       qc.invalidateQueries({ queryKey: ["factory", "oligo-orders"] });
       onCreated(b.id);
     },
   });
-  const toggle = (id: string) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : full ? p : [...p, id]));
+  const toggle = (id: string) => {
+    if (picked.includes(id)) {
+      assignSequenceToPos(id, null);
+    } else if (!full) {
+      const used = new Set(picked.map((pid, idx) => resolvePosNo(pid, idx)));
+      let nextFree = 1;
+      for (let c = 1; c <= maxCols; c++) {
+        if (!used.has(c)) {
+          nextFree = c;
+          break;
+        }
+      }
+      assignSequenceToPos(id, nextFree);
+    }
+  };
   const selectAllFitting = () => {
     if (!synth) return;
     const fittingIds = visible.filter((s) => fits(s.scale_code)).map((s) => s.id).slice(0, synth.column_positions);
+    const nextMap: Record<string, number> = {};
+    fittingIds.forEach((id, idx) => {
+      nextMap[id] = idx + 1;
+    });
     setPicked(fittingIds);
+    setPosNoBySeq(nextMap);
   };
 
   if (units.data && !units.data.length) return <Empty>Bạn chưa có quyền lập mẻ tổng hợp ở phòng Oligo nào.</Empty>;
@@ -226,10 +323,14 @@ export function BatchPlanForm({ onCreated }: { onCreated: (id: string) => void }
             )}
           </div>
         </Field>
-        <Field label="2. Lô cột CPG *" hint="Mỗi vị trí giữ chỗ 1 cột">
+        <Field label="2. Lô cột CPG mặc định *" hint="Mỗi vị trí giữ chỗ 1 cột (có thể đổi riêng từng cột ở bảng dưới)">
           <select className={inputClass} value={lotId} onChange={(e) => setLotId(e.target.value)}>
             <option value="">— Chọn lô cột CPG —</option>
-            {cand.data?.column_lots.map((l) => <option key={l.id} value={l.id}>{l.item_code} · {l.code} (còn {fmtQty(l.available)}{l.expiry_date ? `, HD ${fmtDate(l.expiry_date)}` : ""})</option>)}
+            {cand.data?.column_lots.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.item_code}{l.item_name ? ` — ${l.item_name}` : ""} · Lô {l.code} (còn {fmtQty(l.available)}{l.expiry_date ? `, HD ${fmtDate(l.expiry_date)}` : ""})
+              </option>
+            ))}
           </select>
         </Field>
         <Field label="Chương trình chạy máy"><input className={inputClass} value={program} onChange={(e) => setProgram(e.target.value)} placeholder="VD: STD-200NM-COL" /></Field>
@@ -358,15 +459,64 @@ export function BatchPlanForm({ onCreated }: { onCreated: (id: string) => void }
         <Empty>Không có trình tự nào khớp bộ lọc đang chọn. Hãy bấm &quot;✕ Xóa bộ lọc&quot; để xem toàn bộ {allSequences.length} trình tự.</Empty>
       )}
       {visible.length > 0 && (
-        <Table head={["Vị trí cột #", "Mã & Tên trình tự", "Vai trò / Tác nhân đích", "Đơn hàng / PO", "Hạn giao", "Thang", "Tinh sạch", "Số base", "Chuỗi (5'→3')"]}>
+        <Table head={["Vị trí cột #", "Lô cột CPG (Mã — Tên cột)", "Mã & Tên trình tự", "Vai trò / Tác nhân đích", "Đơn hàng / PO", "Hạn giao", "Thang", "Tinh sạch", "Số base", "Chuỗi (5'→3')"]}>
           {visible.map((s) => {
-            const pos = picked.indexOf(s.id);
+            const posIdx = picked.indexOf(s.id);
+            const isPicked = posIdx >= 0;
+            const assignedColNo = isPicked ? resolvePosNo(s.id, posIdx) : 0;
             const ok = fits(s.scale_code);
+            const rowLotId = lotBySeq[s.id] || lotId;
             return (
               <tr key={s.id} className={ok ? "cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800/50" : "opacity-40"} onClick={() => ok && toggle(s.id)}>
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <input type="checkbox" readOnly checked={pos >= 0} disabled={!ok || (full && pos < 0)} className="mr-1.5" />
-                  {pos >= 0 ? <span className="px-1.5 py-0.5 rounded bg-sky-700 text-white font-bold text-xs">Cột {pos + 1}</span> : <span className="text-xs text-slate-400">Chưa xếp</span>}
+                <td className="py-1.5 pr-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={isPicked}
+                      disabled={!ok || (full && !isPicked)}
+                      onChange={() => ok && toggle(s.id)}
+                      className="cursor-pointer"
+                    />
+                    <select
+                      aria-label={`Chọn vị trí cột cho ${s.code}`}
+                      disabled={!ok || (full && !isPicked)}
+                      value={isPicked ? String(assignedColNo) : ""}
+                      onChange={(e) => {
+                        const v = e.target.value ? Number(e.target.value) : null;
+                        assignSequenceToPos(s.id, v);
+                      }}
+                      className={`rounded-lg border px-2 py-0.5 text-xs font-bold cursor-pointer ${
+                        isPicked
+                          ? "bg-sky-700 text-white border-sky-700"
+                          : "bg-white dark:bg-slate-900 text-slate-500 border-slate-200 dark:border-slate-700"
+                      }`}
+                    >
+                      <option value="" className="bg-white text-slate-700">Chưa xếp</option>
+                      {Array.from({ length: maxCols }, (_, i) => i + 1).map((colNo) => {
+                        const holderId = picked.find((pid, idx) => pid !== s.id && resolvePosNo(pid, idx) === colNo);
+                        const holderSeq = holderId ? allSequences.find((x) => x.id === holderId) : null;
+                        return (
+                          <option key={colNo} value={colNo} className="bg-white text-slate-900">
+                            Cột {colNo}{holderSeq ? ` (đang gắn ${holderSeq.code})` : ""}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                </td>
+                <td className="py-1.5 pr-3" onClick={(e) => e.stopPropagation()}>
+                  <select
+                    aria-label={`Chọn lô cột CPG cho ${s.code}`}
+                    value={rowLotId}
+                    onChange={(e) => setLotBySeq((prev) => ({ ...prev, [s.id]: e.target.value }))}
+                    className="w-full max-w-[240px] rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-[11px] font-medium text-slate-800 dark:text-slate-200 cursor-pointer"
+                  >
+                    {cand.data?.column_lots.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.item_code}{l.item_name ? ` — ${l.item_name}` : ""} · Lô {l.code} (còn {fmtQty(l.available)})
+                      </option>
+                    ))}
+                  </select>
                 </td>
                 <td className="py-1.5 pr-3 font-mono text-xs">{s.code} <span className="font-sans text-slate-500">{s.name}</span></td>
                 <td className="py-1.5 pr-3 text-xs">

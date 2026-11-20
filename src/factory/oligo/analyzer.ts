@@ -259,9 +259,12 @@ export function tokenize(input: string, catalog: CatalogEntry[]): Token[] {
   };
   const isBaseRun = (chunk: string) => /^(?:\+[ACGTUacgtu]|[mf][ACGTU]|5[mM][Cc]|[ACGTURYSWKMBDHVNIacgturyswkmbdhvni])+$/.test(chunk);
 
-  for (const part of s.split(/(\/[^/]*\/)/)) {
+  for (const part of s.split(/(\/[^/]*\/|\[[^\]]*\])/)) {
     if (!part) continue;
-    if (part.startsWith("/") && part.endsWith("/") && part.length > 1) {
+    if (
+      (part.startsWith("/") && part.endsWith("/") && part.length > 1) ||
+      (part.startsWith("[") && part.endsWith("]") && part.length > 1)
+    ) {
       modToken(part.slice(1, -1));
       continue;
     }

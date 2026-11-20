@@ -165,11 +165,12 @@ export async function splitSequence(tx: Tx, actor: AuthzActor, id: string, input
   if (s.relation) throw invalid("Chỉ tách trình tự gốc (không tách trình tự đã tách, đã gộp hay tổng hợp lại).");
   await move(tx, actor, s, "split");
   const cur = (await tx.query("SELECT * FROM oligo.oligo_sequence WHERE id = $1", [id])).rows[0];
-  const a = analyze(cur.raw_sequence, await loadCatalog(tx));
+  const cleanedRaw = normalizeLegacySequence(cur.raw_sequence || cur.normalized_sequence) || cur.normalized_sequence || cur.raw_sequence;
+  const a = analyze(cleanedRaw, await loadCatalog(tx));
   for (const [i, p] of parts.entries()) {
     if (!(await tx.query("SELECT 1 FROM oligo.scale WHERE code = $1 AND status = 'ACTIVE'", [p.scale_code])).rowCount) throw invalid(`Thang "${p.scale_code}" không có trong cấu hình.`);
     await insertSequence(tx, actor, {
-      order_id: cur.order_id, org_unit_id: cur.org_unit_id, line_no: cur.line_no, name: p.name || `${cur.name}-${i + 1}`, raw: cur.raw_sequence, a,
+      order_id: cur.order_id, org_unit_id: cur.org_unit_id, line_no: cur.line_no, name: p.name || `${cur.name}-${i + 1}`, raw: cleanedRaw, a,
       scale_code: p.scale_code, purification: cur.purification, format: cur.format, parent_sequence_id: id, relation: "SPLIT",
     });
   }
@@ -224,9 +225,10 @@ export async function poolSequences(tx: Tx, actor: AuthzActor, input: unknown) {
   rounded[rounded.length - 1] = Math.round((100 - rounded.slice(0, -1).reduce((s, x) => s + x, 0)) * 100) / 100;
   if (!(await tx.query("SELECT 1 FROM oligo.scale WHERE code = $1 AND status = 'ACTIVE'", [data.scale_code])).rowCount) throw invalid(`Thang "${data.scale_code}" không có trong cấu hình.`);
 
-  const a = analyze(first.raw_sequence, await loadCatalog(tx));
+  const cleanedFirstRaw = normalizeLegacySequence(first.raw_sequence || first.normalized_sequence) || first.normalized_sequence || first.raw_sequence;
+  const a = analyze(cleanedFirstRaw, await loadCatalog(tx));
   const master = await insertSequence(tx, actor, {
-    order_id: null, org_unit_id: first.org_unit_id, line_no: null, name: `Gộp ${rows.map((r) => r.code).join(" + ")}`.slice(0, 200), raw: first.raw_sequence, a,
+    order_id: null, org_unit_id: first.org_unit_id, line_no: null, name: `Gộp ${rows.map((r) => r.code).join(" + ")}`.slice(0, 200), raw: cleanedFirstRaw, a,
     scale_code: data.scale_code, purification: first.purification, format: first.format, relation: "POOL_MASTER",
   });
   await authorize(tx, actor, "oligo.order.manage", first.org_unit_id);

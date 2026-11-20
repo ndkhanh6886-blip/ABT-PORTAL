@@ -54,7 +54,7 @@ async function synthesizer(tx: Tx, id: string) {
   return s;
 }
 const warehousesOf = async (tx: Tx, unit: string) =>
-  (await tx.query("SELECT id FROM master.warehouse WHERE owner_org_unit_id = $1 AND status = 'ACTIVE'", [unit])).rows.map((r) => r.id as string);
+  (await tx.query("SELECT id FROM master.warehouse WHERE (owner_org_unit_id = $1 OR owner_org_unit_id IS NULL OR code = 'KHO-OLIGO') AND status = 'ACTIVE'", [unit])).rows.map((r) => r.id as string);
 const runningBatch = async (tx: Tx, synthId: string) =>
   (await tx.query("SELECT code FROM oligo.synthesis_batch WHERE synthesizer_id = $1 AND status = 'RUNNING' LIMIT 1", [synthId])).rows[0]?.code as string | undefined;
 
@@ -469,10 +469,10 @@ export async function swapBottle(tx: Tx, actor: AuthzActor, batchId: string, inp
   const { lot } = await checkLotForRole(tx, synth, port.role, data.lot_id);
 
   const seqs = (
-    await tx.query("SELECT s.code, s.raw_sequence, s.molecule_type FROM oligo.synthesis_position p JOIN oligo.oligo_sequence s ON s.id = p.sequence_id WHERE p.batch_id = $1", [batchId])
+    await tx.query("SELECT s.code, s.raw_sequence, s.normalized_sequence, s.molecule_type FROM oligo.synthesis_position p JOIN oligo.oligo_sequence s ON s.id = p.sequence_id WHERE p.batch_id = $1", [batchId])
   ).rows;
   const catalog = await loadCatalog(tx);
-  const analysed = seqs.map((s) => ({ code: s.code, molecule_type: s.molecule_type, tokens: analyze(s.raw_sequence, catalog).tokens, fromCycle: data.cycle }));
+  const analysed = seqs.map((s) => ({ code: s.code, molecule_type: s.molecule_type, tokens: analyze(s.normalized_sequence || s.raw_sequence, catalog).tokens, fromCycle: data.cycle }));
   const maxCycles = Math.max(...analysed.map((a) => a.tokens.length));
   if (data.cycle > maxCycles) throw invalid(`Chu kỳ thay phải từ 2 đến ${maxCycles}.`);
   const rules: ReagentRule[] = (await tx.query("SELECT role, name, basis, qty::float AS qty, uom, item_id, status FROM oligo.reagent_rule")).rows;

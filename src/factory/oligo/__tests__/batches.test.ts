@@ -7,6 +7,7 @@ import { createAsset } from "../../asset/service";
 import { makeItem, makeSite, stockedLot, type Site } from "../../inv/__tests__/fixtures";
 import { analyze, type CatalogEntry } from "../analyzer";
 import { batchMachine, planBatch } from "../batches";
+import { getBatch } from "../batchQueries";
 import { estimateConsumption, type ReagentRule } from "../consumption";
 import { addSequences, createOligoOrder } from "../orders";
 import "../../modules";
@@ -136,5 +137,44 @@ describe("synthesis batches", () => {
     await expect(act(t.op, b.id, "abort", { reason: "Mất điện" })).rejects.toMatchObject({ code: "FORBIDDEN" });
     await act(t.lead, b.id, "abort", { reason: "Mất điện" });
     expect(await seqStatus(f.id)).toBe("FAILED");
+  });
+
+  it("plans a probe batch with bracket modifications, unmapped MOD_DEFAULT/ALKYL, custom column positions, and distinct CPG lots", async () => {
+    const t = await setup();
+    await getFactoryPool().query("UPDATE oligo.synthesizer SET column_positions = 12 WHERE asset_id = $1", [t.synth.id]);
+    await getFactoryPool().query("UPDATE oligo.reagent_rule SET item_id = NULL WHERE role IN ('MOD_DEFAULT', 'ALKYL')");
+    const cpgBhq1 = await makeItem(t.site, { name: "Cột CPG BHQ1 200nmol", base_uom: "pcs", item_type: "CONSUMABLE" });
+    const cpgBhq1Lot = await stockedLot(t.site, cpgBhq1.id, 10, "2031-01-01", { uom: "pcs" });
+
+    const probeOrder = await withTransaction((tx) => createOligoOrder(tx, t.op, { org_unit_id: t.site.dept }));
+    await withTransaction((tx) =>
+      addSequences(tx, t.op, probeOrder.id, {
+        text: [
+          "Primer-F; [FAM]CCAYTCRTCCBGCRGGBTR[BHQ1]; 200NMOL; HPLC; LYOPHILIZED",
+          "Primer-R; [HEX]CCAYTCRTCCBGCRTACRGGBTR[BHQ1]; 200NMOL; HPLC; LYOPHILIZED",
+          "Probe; [TXR]CCAYTCRTCCAAADDCBGCRGGBTR[BHQ1]; 200NMOL; HPLC; LYOPHILIZED",
+        ].join("\n"),
+        defaults: { scale_code: "200NMOL", purification: "HPLC", format: "LYOPHILIZED" },
+      })
+    );
+    const added = (await getFactoryPool().query("SELECT id, code FROM oligo.oligo_sequence WHERE order_id = $1 ORDER BY line_no", [probeOrder.id])).rows;
+    // Simulate legacy sequence row where raw_sequence still retained square brackets
+    await getFactoryPool().query("UPDATE oligo.oligo_sequence SET raw_sequence = '[FAM]CCAYTCRTCCBGCRGGBTR[BHQ1]' WHERE id = $1", [added[0].id]);
+
+    const batch = await withTransaction((tx) =>
+      planBatch(tx, t.op, {
+        org_unit_id: t.site.dept,
+        synthesizer_id: t.synth.id,
+        positions: [
+          { sequence_id: added[0].id, position_no: 2, column_lot_id: cpgBhq1Lot.id },
+          { sequence_id: added[1].id, position_no: 5, column_lot_id: cpgBhq1Lot.id },
+          { sequence_id: added[2].id, position_no: 9, column_lot_id: t.cpgLot.id },
+        ],
+      })
+    );
+    const detail = await withTransaction((tx) => getBatch(tx, t.op, batch.id));
+    expect(detail.positions.map((p: any) => p.position_no)).toEqual([2, 5, 9]);
+    expect(detail.positions[0].column_item_name).toBe("Cột CPG BHQ1 200nmol");
+    expect(detail.positions[2].column_item_name).toBe("Cột CPG");
   });
 });
