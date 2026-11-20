@@ -20,9 +20,12 @@ import {
   Image as ImageIcon
 } from "lucide-react";
 import { useAuth } from "@/frontend/contexts/AuthContext";
+import { useNotification } from "@/frontend/contexts/NotificationContext";
 import { MainTab } from "@/frontend/components/Navbar";
-import { uploadSingleFileSmart } from "@/frontend/components/AttachmentPicker";
+import { uploadSingleFileSmart, computeBrowserFileSha256, extractAttachmentContentKey } from "@/frontend/components/AttachmentPicker";
 import { dedupePersonnel, renderChatTextWithLinks } from "@/frontend/components/EnterpriseChatModule";
+
+const MAX_CHAT_ATTACHMENTS_PER_MESSAGE = 5;
 import {
   formatVietnamTime,
   formatVietnamDate,
@@ -37,6 +40,7 @@ interface FloatingChatWidgetProps {
 
 export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTab, setActiveTab }) => {
   const { user } = useAuth();
+  const { showToast } = useNotification();
   const [isOpen, setIsOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false); // Expanded in-place window
   const [channels, setChannels] = useState<any[]>([]);
@@ -197,14 +201,65 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
     const fileList = Array.isArray(files) ? files : Array.from(files);
     if (fileList.length === 0) return;
 
+    if (inputAttachments.length >= MAX_CHAT_ATTACHMENTS_PER_MESSAGE) {
+      showToast(`Mỗi lần gửi trong chat nội bộ chỉ được đính kèm tối đa ${MAX_CHAT_ATTACHMENTS_PER_MESSAGE} hình ảnh / tệp tin!`, "warning");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+
+    const existingDraftKeys = new Set<string>(
+      inputAttachments.map((a) => extractAttachmentContentKey(a)).filter(Boolean)
+    );
+
+    const nowMs = Date.now();
+    const recentChannelKeys = new Set<string>();
+    for (let idx = messages.length - 1; idx >= 0 && idx >= messages.length - 12; idx--) {
+      const m = messages[idx];
+      if (!m || String(m.sender_name || "").trim().toLowerCase() !== String(currentUserName || "").trim().toLowerCase()) continue;
+      const mTime = m.created_at ? new Date(m.created_at).getTime() : 0;
+      if (mTime > 0 && nowMs - mTime > 10 * 60 * 1000) continue;
+      if (Array.isArray(m.attachments)) {
+        for (const ma of m.attachments) {
+          const k = extractAttachmentContentKey(ma);
+          if (k) recentChannelKeys.add(k);
+        }
+      }
+    }
+
     setIsUploading(true);
     try {
-      const uploaded: Array<{ name: string; url: string; size?: number; type?: string }> = [];
-      for (const file of fileList) {
+      const uploaded: Array<{ name: string; url: string; size?: number; type?: string; sha256?: string }> = [];
+      let skippedInDraft = 0;
+      let skippedRecentDuplicate = 0;
+      let skippedOverLimit = 0;
+
+      for (let i = 0; i < fileList.length; i++) {
+        if (inputAttachments.length + uploaded.length >= MAX_CHAT_ATTACHMENTS_PER_MESSAGE) {
+          skippedOverLimit += fileList.length - i;
+          break;
+        }
+
+        const file = fileList[i];
+        const fileSha256 = await computeBrowserFileSha256(file);
+        const contentKey = fileSha256.startsWith("fallback_")
+          ? `fallback:${fileSha256}`
+          : `sha256:${fileSha256.toLowerCase().slice(0, 32)}`;
+
+        if (existingDraftKeys.has(contentKey)) {
+          skippedInDraft++;
+          continue;
+        }
+        if (recentChannelKeys.has(contentKey)) {
+          skippedRecentDuplicate++;
+          continue;
+        }
+        existingDraftKeys.add(contentKey);
+
         let fileUrl = "";
         let fileName = file.name;
         let fileSize = file.size;
         let fileType = file.type || "application/octet-stream";
+        let resolvedSha256 = fileSha256.startsWith("fallback_") ? undefined : fileSha256;
 
         const res = await uploadSingleFileSmart(file);
         if (res.success && res.url) {
@@ -212,21 +267,38 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
           fileName = res.name || file.name;
           fileSize = res.size || file.size;
           fileType = res.type || file.type || fileType;
+          if (res.sha256) resolvedSha256 = res.sha256;
         } else if (file.size <= 5 * 1024 * 1024) {
           fileUrl = await readFileAsDataUrl(file);
         }
 
         if (fileUrl) {
-          uploaded.push({
+          const uploadedObj = {
             name: fileName,
             url: fileUrl,
             size: fileSize,
-            type: fileType
-          });
+            type: fileType,
+            sha256: resolvedSha256
+          };
+          const serverKey = extractAttachmentContentKey(uploadedObj);
+          if (serverKey && recentChannelKeys.has(serverKey)) {
+            skippedRecentDuplicate++;
+            continue;
+          }
+          uploaded.push(uploadedObj);
         }
       }
       if (uploaded.length > 0) {
-        setInputAttachments(prev => [...prev, ...uploaded]);
+        setInputAttachments(prev => [...prev, ...uploaded].slice(0, MAX_CHAT_ATTACHMENTS_PER_MESSAGE));
+      }
+      if (skippedInDraft > 0) {
+        showToast(`Đã bỏ qua ${skippedInDraft} hình ảnh/tệp trùng lặp trong cùng lần gửi!`, "warning");
+      }
+      if (skippedRecentDuplicate > 0) {
+        showToast(`Đã chặn ${skippedRecentDuplicate} hình ảnh/tệp bạn vừa mới gửi trong cuộc trò chuyện này để tránh gây nặng hệ thống!`, "warning");
+      }
+      if (skippedOverLimit > 0) {
+        showToast(`Mỗi lần gửi chỉ được đính kèm tối đa ${MAX_CHAT_ATTACHMENTS_PER_MESSAGE} hình ảnh/tệp!`, "warning");
       }
     } catch (err) {
       console.error("Floating chat file upload error:", err);
@@ -305,6 +377,8 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
         setMessages(prev => [...prev, data.message]);
         markChannelAsReadLocal(activeChannelId, data.message.id);
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+      } else if (data.error) {
+        showToast(data.error, "warning");
       }
     } catch (e) {
       console.error(e);
@@ -723,7 +797,10 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
 
               {/* Attachment Preview & Upload Indicator */}
               {inputAttachments.length > 0 && (
-                <div className="px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex flex-wrap gap-1.5 max-h-24 overflow-y-auto shrink-0">
+                <div className="px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center gap-1.5 max-h-24 overflow-y-auto shrink-0">
+                  <span className="text-[10px] font-bold text-slate-500">
+                    📎 {inputAttachments.length}/{MAX_CHAT_ATTACHMENTS_PER_MESSAGE}:
+                  </span>
                   {inputAttachments.map((att, idx) => (
                     <div key={idx} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[10px]">
                       <span className="truncate max-w-[110px] font-semibold text-slate-700 dark:text-slate-200">{att.name}</span>

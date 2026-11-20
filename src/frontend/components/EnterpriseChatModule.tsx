@@ -50,7 +50,7 @@ import {
 import { useAuth, DEFAULT_MEMBERS } from "@/frontend/contexts/AuthContext";
 import { useNotification } from "@/frontend/contexts/NotificationContext";
 import { Modal } from "@/frontend/components/Modal";
-import { uploadSingleFileSmart } from "@/frontend/components/AttachmentPicker";
+import { uploadSingleFileSmart, computeBrowserFileSha256, extractAttachmentContentKey } from "@/frontend/components/AttachmentPicker";
 import {
   formatVietnamTime,
   formatVietnamDate,
@@ -62,6 +62,7 @@ import {
 import { nowVNDateTime } from "@/backend/services/dates";
 
 const NORMALIZED_USER_CACHE = new Map<string, string>();
+const MAX_CHAT_ATTACHMENTS_PER_MESSAGE = 5;
 
 export const normalizeUserName = (name?: string): string => {
   if (!name) return "Nhân viên ABT";
@@ -1206,13 +1207,15 @@ export const EnterpriseChatModule: React.FC = () => {
         setSplitMessages(prev => [...prev, data.message]);
         setTimeout(scrollSplitToBottom, 50);
         fetchChannels();
+      } else {
+        showToast(data.error || "Lỗi khi gửi tin nhắn", "error");
       }
     } catch (err: any) {
       showToast("Lỗi gửi tin: " + err.message, "error");
     }
   };
 
-  // 4. File & Image Upload Handler (Supports FileList and File[] with Base64 Fallback so it never hangs)
+  // 4. File & Image Upload Handler (Giới hạn tối đa 5 ảnh/file mỗi lần gửi & chống gửi lặp lại cùng 1 hình ảnh)
   const readFileAsDataUrl = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -1226,15 +1229,69 @@ export const EnterpriseChatModule: React.FC = () => {
     const fileList = Array.isArray(files) ? files : Array.from(files);
     if (fileList.length === 0) return;
 
+    const currentAttachments = isSplit ? splitInputAttachments : inputAttachments;
+    if (currentAttachments.length >= MAX_CHAT_ATTACHMENTS_PER_MESSAGE) {
+      showToast(`Mỗi lần gửi trong chat nội bộ chỉ được đính kèm tối đa ${MAX_CHAT_ATTACHMENTS_PER_MESSAGE} hình ảnh / tệp tin!`, "warning");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (imageInputRef.current) imageInputRef.current.value = "";
+      return;
+    }
+
+    const existingDraftKeys = new Set<string>(
+      currentAttachments.map((a) => extractAttachmentContentKey(a)).filter(Boolean)
+    );
+
+    // Tập hợp mã băm (SHA-256) của các hình ảnh/tệp mà chính người dùng vừa gửi trong kênh này (trong 10 phút gần nhất) để chặn gửi lặp lại gây nặng hệ thống
+    const activeStream = isSplit ? splitMessages : messages;
+    const nowMs = Date.now();
+    const recentChannelKeys = new Set<string>();
+    for (let idx = activeStream.length - 1; idx >= 0 && idx >= activeStream.length - 12; idx--) {
+      const m = activeStream[idx];
+      if (!m || normalizeUserName(m.sender_name) !== currentUserName) continue;
+      const mTime = m.created_at ? new Date(m.created_at).getTime() : 0;
+      if (mTime > 0 && nowMs - mTime > 10 * 60 * 1000) continue;
+      if (Array.isArray(m.attachments)) {
+        for (const ma of m.attachments) {
+          const k = extractAttachmentContentKey(ma);
+          if (k) recentChannelKeys.add(k);
+        }
+      }
+    }
+
     setIsUploading(true);
     try {
       const uploaded: any[] = [];
+      let skippedInDraft = 0;
+      let skippedRecentDuplicate = 0;
+      let skippedOverLimit = 0;
+
       for (let i = 0; i < fileList.length; i++) {
+        if (currentAttachments.length + uploaded.length >= MAX_CHAT_ATTACHMENTS_PER_MESSAGE) {
+          skippedOverLimit += fileList.length - i;
+          break;
+        }
+
         const file = fileList[i];
+        const fileSha256 = await computeBrowserFileSha256(file);
+        const contentKey = fileSha256.startsWith("fallback_")
+          ? `fallback:${fileSha256}`
+          : `sha256:${fileSha256.toLowerCase().slice(0, 32)}`;
+
+        if (existingDraftKeys.has(contentKey)) {
+          skippedInDraft++;
+          continue;
+        }
+        if (recentChannelKeys.has(contentKey)) {
+          skippedRecentDuplicate++;
+          continue;
+        }
+        existingDraftKeys.add(contentKey);
+
         let fileUrl = "";
         let fileName = file.name;
         let fileSize = file.size;
         let fileType = file.type || "application/octet-stream";
+        let resolvedSha256 = fileSha256.startsWith("fallback_") ? undefined : fileSha256;
 
         const res = await uploadSingleFileSmart(file);
         if (res.success && res.url) {
@@ -1242,6 +1299,7 @@ export const EnterpriseChatModule: React.FC = () => {
           fileName = res.name || file.name;
           fileSize = res.size || file.size;
           fileType = res.type || file.type || fileType;
+          if (res.sha256) resolvedSha256 = res.sha256;
         } else if (file.size <= 5 * 1024 * 1024) {
           // Chỉ fallback sang Base64 cho tệp/hình ảnh nhỏ <= 5MB nếu ngoại tuyến
           fileUrl = await readFileAsDataUrl(file);
@@ -1250,22 +1308,40 @@ export const EnterpriseChatModule: React.FC = () => {
         }
 
         if (fileUrl) {
-          uploaded.push({
+          const uploadedObj = {
             name: fileName,
             url: fileUrl,
             size: fileSize,
             type: fileType,
+            sha256: resolvedSha256,
             uploaded_at: nowVNDateTime()
-          });
+          };
+          const serverKey = extractAttachmentContentKey(uploadedObj);
+          if (serverKey && recentChannelKeys.has(serverKey)) {
+            skippedRecentDuplicate++;
+            continue;
+          }
+          uploaded.push(uploadedObj);
         }
       }
+
       if (uploaded.length > 0) {
         if (isSplit) {
-          setSplitInputAttachments(prev => [...prev, ...uploaded]);
+          setSplitInputAttachments(prev => [...prev, ...uploaded].slice(0, MAX_CHAT_ATTACHMENTS_PER_MESSAGE));
         } else {
-          setInputAttachments(prev => [...prev, ...uploaded]);
+          setInputAttachments(prev => [...prev, ...uploaded].slice(0, MAX_CHAT_ATTACHMENTS_PER_MESSAGE));
         }
-        showToast(`Đã đính kèm ${uploaded.length} tệp/hình ảnh`, "success");
+        showToast(`Đã đính kèm ${uploaded.length} tệp/hình ảnh (${currentAttachments.length + uploaded.length}/${MAX_CHAT_ATTACHMENTS_PER_MESSAGE} tối đa)`, "success");
+      }
+
+      if (skippedInDraft > 0) {
+        showToast(`Đã bỏ qua ${skippedInDraft} hình ảnh/tệp bị trùng lặp trong cùng lần gửi!`, "warning");
+      }
+      if (skippedRecentDuplicate > 0) {
+        showToast(`Đã chặn ${skippedRecentDuplicate} hình ảnh/tệp vừa mới được bạn gửi trong cuộc trò chuyện này để tránh gửi lặp lại gây nặng hệ thống!`, "warning");
+      }
+      if (skippedOverLimit > 0) {
+        showToast(`Chỉ cho phép tối đa ${MAX_CHAT_ATTACHMENTS_PER_MESSAGE} hình ảnh/tệp cho 1 lần gửi (đã bỏ qua ${skippedOverLimit} tệp vượt giới hạn)!`, "warning");
       }
     } catch (err: any) {
       showToast("Lỗi tải tệp: " + (err?.message || "Không xác định"), "error");
@@ -3214,7 +3290,14 @@ export const EnterpriseChatModule: React.FC = () => {
 
                 {/* Previews of attachments / pasted images */}
                 {inputAttachments.length > 0 && (
-                  <div className="flex flex-wrap gap-2 p-2 bg-slate-50 dark:bg-slate-950/60 rounded-xl border border-slate-200 dark:border-slate-800 max-h-36 overflow-y-auto">
+                  <div className="space-y-1 p-2 bg-slate-50 dark:bg-slate-950/60 rounded-xl border border-slate-200 dark:border-slate-800 max-h-40 overflow-y-auto">
+                    <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 dark:text-slate-400 px-1">
+                      <span>📎 Tệp &amp; Hình ảnh đính kèm ({inputAttachments.length}/{MAX_CHAT_ATTACHMENTS_PER_MESSAGE} tối đa cho 1 lần gửi)</span>
+                      {inputAttachments.length >= MAX_CHAT_ATTACHMENTS_PER_MESSAGE && (
+                        <span className="text-amber-600 dark:text-amber-400">Đã đạt giới hạn 5 tệp/lần gửi</span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
                     {inputAttachments.map((att, idx) => {
                       const isImg = att.type?.startsWith("image/") || /\.(png|jpe?g|webp)$/i.test(att.name);
                       return (
@@ -3256,6 +3339,7 @@ export const EnterpriseChatModule: React.FC = () => {
                         </div>
                       );
                     })}
+                    </div>
                   </div>
                 )}
 
@@ -3721,7 +3805,10 @@ export const EnterpriseChatModule: React.FC = () => {
 
               {/* Attachments preview in split view */}
               {splitInputAttachments.length > 0 && (
-                <div className="flex flex-wrap gap-1 p-1 bg-slate-50 dark:bg-slate-950/60 rounded-lg">
+                <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-50 dark:bg-slate-950/60 rounded-lg">
+                  <span className="text-[9px] font-bold text-slate-500 px-1">
+                    📎 {splitInputAttachments.length}/{MAX_CHAT_ATTACHMENTS_PER_MESSAGE}:
+                  </span>
                   {splitInputAttachments.map((att, idx) => (
                     <div key={idx} className="relative p-1 bg-white dark:bg-slate-800 rounded border border-slate-200 text-[10px] flex items-center gap-1">
                       <span className="truncate max-w-[80px]">{att.name}</span>

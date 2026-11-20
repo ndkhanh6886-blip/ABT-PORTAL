@@ -59,10 +59,14 @@ function validateFileExtensionAndSize(originalName: string, totalSize: number): 
   return null;
 }
 
-function buildSafeUniqueFileName(originalName: string): string {
+function buildContentAddressedFileName(originalName: string, sha256Hex: string): string {
   const ext = path.extname(originalName || "").toLowerCase();
+  const cleanHash = String(sha256Hex || "").toLowerCase().replace(/[^a-f0-9]/g, "").slice(0, 32);
+  if (cleanHash.length >= 16) {
+    // Lưu trữ theo mã băm nội dung (Content-Addressable Storage): cùng 1 hình ảnh/tệp dù gửi hay dán (Ctrl+V) bao nhiêu lần cũng chỉ lưu 1 bản duy nhất trên ổ cứng
+    return `sha256_${cleanHash}${ext}`;
+  }
   const baseRaw = path.basename(originalName || "file", ext);
-  // Chuyển tiếng Việt có dấu sang không dấu để tên file trên đĩa dễ đọc nhưng tuyệt đối an toàn
   const normalizedBase = baseRaw
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -72,8 +76,17 @@ function buildSafeUniqueFileName(originalName: string): string {
     .replace(/_+/g, "_")
     .replace(/^_|_$/g, "")
     .slice(0, 80);
-  // Thêm chuỗi ngẫu nhiên: hai người tải cùng tên trong cùng mili-giây không ghi đè nhau, tên tệp khó đoán
   return `${Date.now()}_${crypto.randomBytes(6).toString("hex")}_${normalizedBase || "file"}${ext}`;
+}
+
+async function computeFileSha256OnDisk(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    const stream = fs.createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("end", () => resolve(hash.digest("hex")));
+    stream.on("error", reject);
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -138,10 +151,16 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // Đã nhận đủ chunk cuối -> đổi tên file tạm sang file chính thức
-      const uniqueName = buildSafeUniqueFileName(originalFileName);
+      // Đã nhận đủ chunk cuối -> tính mã băm SHA-256 để chống trùng lặp tệp trên ổ đĩa
+      const sha256Hex = await computeFileSha256OnDisk(partPath);
+      const uniqueName = buildContentAddressedFileName(originalFileName, sha256Hex);
       const finalPath = path.join(UPLOAD_DIR, uniqueName);
-      await fsp.rename(partPath, finalPath);
+      const alreadyExists = fs.existsSync(finalPath);
+      if (alreadyExists) {
+        await fsp.unlink(partPath).catch(() => {});
+      } else {
+        await fsp.rename(partPath, finalPath);
+      }
 
       const fileUrl = `/api/upload?file=${encodeURIComponent(uniqueName)}&name=${encodeURIComponent(originalFileName)}`;
 
@@ -152,7 +171,9 @@ export async function POST(req: NextRequest) {
         fileName: uniqueName,
         url: fileUrl,
         size: stat.size || totalFileSize,
-        type: fileType
+        type: fileType,
+        sha256: sha256Hex,
+        deduplicated: alreadyExists,
       });
     }
 
@@ -170,10 +191,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const uniqueName = buildSafeUniqueFileName(file.name);
+    const buf = Buffer.from(await file.arrayBuffer());
+    const sha256Hex = crypto.createHash("sha256").update(buf).digest("hex");
+    const uniqueName = buildContentAddressedFileName(file.name, sha256Hex);
     const filePath = path.join(UPLOAD_DIR, uniqueName);
+    const alreadyExists = fs.existsSync(filePath);
 
-    await fsp.writeFile(filePath, Buffer.from(await file.arrayBuffer()));
+    if (!alreadyExists) {
+      await fsp.writeFile(filePath, buf);
+    }
 
     const fileUrl = `/api/upload?file=${encodeURIComponent(uniqueName)}&name=${encodeURIComponent(file.name)}`;
 
@@ -184,6 +210,8 @@ export async function POST(req: NextRequest) {
       url: fileUrl,
       size: file.size,
       type: file.type || "application/octet-stream",
+      sha256: sha256Hex,
+      deduplicated: alreadyExists,
     });
   } catch (error: any) {
     console.error("Upload error:", error);

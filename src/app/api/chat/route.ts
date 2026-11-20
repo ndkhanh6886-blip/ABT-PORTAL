@@ -4,6 +4,87 @@ import { query, logAudit, withTransaction, HttpError, httpErrorStatus } from "@/
 import { getAuthorizedUser, unauthorizedResponse, setAuditActor } from "@/backend/services/authz";
 import { normalizePersonText, personNameKey } from "@/backend/services/utils";
 import { getFactoryPool } from "@/factory/core/db";
+import fs from "fs";
+import fsp from "fs/promises";
+import path from "path";
+import crypto from "crypto";
+
+const MAX_CHAT_ATTACHMENTS_PER_MESSAGE = 5;
+const CHAT_UPLOAD_DIR = path.join(process.cwd(), "uploads");
+
+function getServerAttachmentContentKey(att: any): string {
+  if (!att || typeof att !== "object") return "";
+  if (att.sha256) return `sha256:${String(att.sha256).toLowerCase().slice(0, 32)}`;
+  const urlStr = String(att.url || "");
+  const m = urlStr.match(/sha256_([a-f0-9]{16,64})/i);
+  if (m) return `sha256:${m[1].toLowerCase().slice(0, 32)}`;
+  if (urlStr.startsWith("/api/upload")) {
+    try {
+      const u = new URL(urlStr, "http://localhost");
+      const f = u.searchParams.get("file");
+      if (f) return `file:${f.toLowerCase()}`;
+    } catch {}
+  }
+  return urlStr ? `url:${urlStr}` : "";
+}
+
+async function normalizeAndDedupeChatAttachments(rawAttachments: any): Promise<{
+  cleanedAttachments: any[];
+  contentKeys: string[];
+}> {
+  if (!Array.isArray(rawAttachments) || rawAttachments.length === 0) {
+    return { cleanedAttachments: [], contentKeys: [] };
+  }
+  const seenKeys = new Set<string>();
+  const cleanedAttachments: any[] = [];
+  const contentKeys: string[] = [];
+
+  for (const raw of rawAttachments) {
+    if (!raw || typeof raw !== "object" || !raw.url) continue;
+    const att = { ...raw };
+    const urlStr = String(att.url || "");
+
+    // Nếu trình duyệt gửi chuỗi Base64 (data:...;base64,...), tự động chuyển sang tệp vật lý đánh địa chỉ theo SHA-256 trên ổ đĩa để không làm phình bảng chat_messages
+    if (urlStr.startsWith("data:")) {
+      const dataMatch = urlStr.match(/^data:([^;]+);base64,(.+)$/);
+      if (dataMatch) {
+        try {
+          const mime = dataMatch[1] || "application/octet-stream";
+          const buf = Buffer.from(dataMatch[2], "base64");
+          const sha256Hex = crypto.createHash("sha256").update(buf).digest("hex");
+          const rawExt = path.extname(String(att.name || "")).toLowerCase();
+          const fallbackExt = mime.startsWith("image/") ? `.${mime.split("/")[1].replace(/[^a-z0-9]/gi, "") || "png"}` : ".bin";
+          const ext = rawExt || fallbackExt;
+          const uniqueName = `sha256_${sha256Hex.slice(0, 32)}${ext}`;
+          if (!fs.existsSync(CHAT_UPLOAD_DIR)) {
+            fs.mkdirSync(CHAT_UPLOAD_DIR, { recursive: true });
+          }
+          const filePath = path.join(CHAT_UPLOAD_DIR, uniqueName);
+          if (!fs.existsSync(filePath)) {
+            await fsp.writeFile(filePath, buf);
+          }
+          const origName = String(att.name || uniqueName);
+          att.url = `/api/upload?file=${encodeURIComponent(uniqueName)}&name=${encodeURIComponent(origName)}`;
+          att.sha256 = sha256Hex;
+          att.size = att.size || buf.length;
+        } catch {}
+      }
+    }
+
+    const key = getServerAttachmentContentKey(att);
+    if (key && seenKeys.has(key)) {
+      // Bỏ qua tệp/hình ảnh trùng lặp trong cùng 1 lần gửi
+      continue;
+    }
+    if (key) {
+      seenKeys.add(key);
+      contentKeys.push(key);
+    }
+    cleanedAttachments.push(att);
+  }
+
+  return { cleanedAttachments, contentKeys };
+}
 
 /**
  * Identity of the chat user comes from the server session. The browser used to send `user` /
@@ -1076,10 +1157,63 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Nội dung tin nhắn hoặc tệp đính kèm không được rỗng" }, { status: 400 });
       }
 
+      if (Array.isArray(attachments) && attachments.length > MAX_CHAT_ATTACHMENTS_PER_MESSAGE) {
+        return NextResponse.json(
+          { error: `Mỗi lần gửi trong chat nội bộ chỉ được đính kèm tối đa ${MAX_CHAT_ATTACHMENTS_PER_MESSAGE} hình ảnh / tệp tin.` },
+          { status: 400 }
+        );
+      }
+
       // Check or resolve channel strictly (preferring channel_code consistency if both are provided)
       const resolvedChannelId = await canAccessChannel(ident, channel_id, channel_code);
       if (!resolvedChannelId) {
         return NextResponse.json({ error: "Không tìm thấy kênh chat hoặc bạn không có quyền truy cập" }, { status: 404 });
+      }
+
+      const { cleanedAttachments, contentKeys } = await normalizeAndDedupeChatAttachments(attachments);
+
+      // Chặn gửi lặp lại cùng một hình ảnh / tệp tin nhiều lần liên tiếp trong cùng kênh chat (trong vòng 10 phút gần nhất)
+      if (contentKeys.length > 0) {
+        const recentRes = await query(
+          `SELECT content, attachments
+             FROM chat_messages
+            WHERE channel_id = $1
+              AND LOWER(TRIM(sender_name)) = LOWER(TRIM($2))
+              AND created_at >= NOW() - INTERVAL '10 minutes'
+            ORDER BY id DESC
+            LIMIT 8`,
+          [resolvedChannelId, sender_name || ident.name]
+        ).catch(() => ({ rows: [] as any[] }));
+
+        const recentSentKeys = new Set<string>();
+        for (const r of recentRes.rows) {
+          const rAtts = Array.isArray(r.attachments)
+            ? r.attachments
+            : typeof r.attachments === "string"
+            ? (() => { try { return JSON.parse(r.attachments); } catch { return []; } })()
+            : [];
+          if (Array.isArray(rAtts)) {
+            for (const ra of rAtts) {
+              const k = getServerAttachmentContentKey(ra);
+              if (k) recentSentKeys.add(k);
+            }
+          }
+        }
+
+        const freshAttachments = cleanedAttachments.filter((att) => {
+          const k = getServerAttachmentContentKey(att);
+          return !k || !recentSentKeys.has(k);
+        });
+
+        if (freshAttachments.length === 0 && !String(content || "").trim()) {
+          return NextResponse.json(
+            { error: "Hình ảnh / tệp này bạn vừa mới gửi trong cuộc trò chuyện. Hệ thống đã chặn gửi lặp lại cùng một hình ảnh để tránh gây nặng hệ thống." },
+            { status: 409 }
+          );
+        }
+
+        // Nếu tin nhắn có kèm chữ hoặc có tệp mới xen lẫn tệp trùng vừa gửi, chỉ giữ lại tệp mới chưa gửi trùng
+        cleanedAttachments.splice(0, cleanedAttachments.length, ...freshAttachments);
       }
 
       const chInfoRes = await query("SELECT id, channel_code FROM chat_channels WHERE id = $1 LIMIT 1", [resolvedChannelId]);
@@ -1099,7 +1233,7 @@ export async function POST(req: NextRequest) {
           sender_role || "Thành viên",
           sender_dept || "Kinh Doanh",
           content || "",
-          JSON.stringify(attachments || []),
+          JSON.stringify(cleanedAttachments),
           related_work ? JSON.stringify(related_work) : null,
           reply_to ? JSON.stringify(reply_to) : null
         ]

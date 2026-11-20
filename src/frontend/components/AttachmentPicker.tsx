@@ -3,7 +3,42 @@
 import React, { useState } from "react";
 import { Paperclip, UploadCloud, X, FileText, Film } from "lucide-react";
 
-export type Attachment = { name: string; url: string; size?: number; type?: string; uploaded_at?: string };
+export type Attachment = { name: string; url: string; size?: number; type?: string; uploaded_at?: string; sha256?: string };
+
+/**
+ * Tính mã băm SHA-256 của tệp ngay trên trình duyệt để phát hiện ảnh/file trùng lặp trước khi tải lên máy chủ.
+ */
+export async function computeBrowserFileSha256(file: File): Promise<string> {
+    try {
+        if (typeof window !== "undefined" && window.crypto?.subtle && file.size <= 50 * 1024 * 1024) {
+            const buf = await file.arrayBuffer();
+            const digest = await window.crypto.subtle.digest("SHA-256", buf);
+            return Array.from(new Uint8Array(digest))
+                .map((b) => b.toString(16).padStart(2, "0"))
+                .join("");
+        }
+    } catch {}
+    return `fallback_${file.size}_${file.name}_${file.lastModified || 0}`;
+}
+
+export function extractAttachmentContentKey(att: { url?: string; sha256?: string; name?: string; size?: number } | null | undefined): string {
+    if (!att) return "";
+    if (att.sha256) return `sha256:${String(att.sha256).toLowerCase().slice(0, 32)}`;
+    const urlStr = String(att.url || "");
+    const m = urlStr.match(/sha256_([a-f0-9]{16,64})/i);
+    if (m) return `sha256:${m[1].toLowerCase().slice(0, 32)}`;
+    if (urlStr.startsWith("/api/upload")) {
+        try {
+            const u = new URL(urlStr, "http://localhost");
+            const f = u.searchParams.get("file");
+            if (f) return `file:${f.toLowerCase()}`;
+        } catch {}
+    }
+    if (urlStr.startsWith("data:")) {
+        return `data:${urlStr.length}:${urlStr.slice(0, 64)}:${urlStr.slice(-64)}`;
+    }
+    return urlStr ? `url:${urlStr}` : "";
+}
 
 const isImage = (a: Attachment) => (a.type || "").startsWith("image/") || /\.(png|jpe?g|webp|gif|bmp)$/i.test(a.name || a.url);
 const isVideo = (a: Attachment) => (a.type || "").startsWith("video/") || /\.(mp4|mov|webm|mkv|avi)$/i.test(a.name || a.url);
@@ -20,7 +55,7 @@ const CHUNK_SIZE = 2 * 1024 * 1024; // 2 MB
 export async function uploadSingleFileSmart(
     file: File,
     onProgress?: (pct: number) => void
-): Promise<{ success: boolean; name: string; fileName?: string; url: string; size: number; type: string; error?: string }> {
+): Promise<{ success: boolean; name: string; fileName?: string; url: string; size: number; type: string; sha256?: string; deduplicated?: boolean; error?: string }> {
     try {
         if (file.size <= CHUNK_SIZE) {
             const fd = new FormData();
@@ -35,7 +70,9 @@ export async function uploadSingleFileSmart(
                     fileName: d.fileName,
                     url: d.url || d.fileUrl,
                     size: d.size || file.size,
-                    type: d.type || file.type || "application/octet-stream"
+                    type: d.type || file.type || "application/octet-stream",
+                    sha256: d.sha256,
+                    deduplicated: Boolean(d.deduplicated)
                 };
             }
             return {
@@ -109,7 +146,9 @@ export async function uploadSingleFileSmart(
                     fileName: finalData.fileName,
                     url: finalData.url || finalData.fileUrl,
                     size: finalData.size || file.size,
-                    type: finalData.type || file.type || "application/octet-stream"
+                    type: finalData.type || file.type || "application/octet-stream",
+                    sha256: finalData.sha256,
+                    deduplicated: Boolean(finalData.deduplicated)
                 };
             }
         }
