@@ -7033,12 +7033,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
             if (res.ok) {
                 const savedRes = await res.json();
-                const savedCustomer = savedRes.customer || {
-                    id: savedRes.id || (editingCustomer ? editingCustomer.id : Date.now()),
+                const savedCustomer = {
                     ...payload,
+                    ...(savedRes.customer || {}),
+                    id: savedRes.id || savedRes.customer?.id || (editingCustomer ? editingCustomer.id : Date.now()),
                     customer_code: codeTrimmed,
                     name: nameTrimmed,
-                    created_at: new Date().toISOString()
+                    special_price_list: custSpecialPriceList,
+                    created_at: editingCustomer?.created_at || new Date().toISOString()
                 };
 
                 // Update in-memory customer list immediately
@@ -7272,6 +7274,39 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             setIsContactModalOpen(false);
         } finally {
             setIsSavingContact(false);
+        }
+    };
+
+    const syncEditingCustomerSpecialPrices = (nextList: Array<{ product_code: string; product_name: string; special_price: number }>) => {
+        setCustSpecialPriceList(nextList);
+        if (editingCustomer) {
+            const targetId = editingCustomer.id;
+            const targetCode = editingCustomer.customer_code;
+            const targetName = String(editingCustomer.name || "").trim().toLowerCase();
+            setCustomers(prev => prev.map(c =>
+                (
+                    (targetId !== undefined && String(c.id) === String(targetId)) ||
+                    (targetCode && c.customer_code === targetCode) ||
+                    (targetName && String(c.name || "").trim().toLowerCase() === targetName)
+                )
+                    ? { ...c, special_price_list: nextList }
+                    : c
+            ));
+            setEditingCustomer((prev: any) => prev ? { ...prev, special_price_list: nextList } : prev);
+            if (selectedCustomer && (
+                (targetId !== undefined && String(selectedCustomer.id) === String(targetId)) ||
+                (targetCode && selectedCustomer.customer_code === targetCode) ||
+                (targetName && String(selectedCustomer.name || "").trim().toLowerCase() === targetName)
+            )) {
+                setSelectedCustomer((prev: any) => prev ? { ...prev, special_price_list: nextList } : prev);
+            }
+            if (typeof targetId === "number" && !isNaN(targetId)) {
+                fetch("/api/sales?action=customer", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ id: targetId, special_price_list: nextList })
+                }).catch(() => {});
+            }
         }
     };
 
@@ -8877,6 +8912,192 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }));
     };
 
+    // --- BẢNG GIÁ RIÊNG CHO TỪNG KHÁCH HÀNG (ƯU TIÊN ÁP DỤNG TRƯỚC GIÁ CHUẨN) ---
+    const parseCustomerSpecialPriceList = (rawList: any): Array<{ product_code: string; product_name?: string; special_price: number }> => {
+        if (!rawList) return [];
+        if (Array.isArray(rawList)) return rawList;
+        if (typeof rawList === "string") {
+            try {
+                const parsed = JSON.parse(rawList);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch {
+                return [];
+            }
+        }
+        return [];
+    };
+
+    const findMatchingCustomerRecords = (customerIdOrName: string | number | null | undefined): any[] => {
+        if (customerIdOrName === null || customerIdOrName === undefined) return [];
+        const key = String(customerIdOrName).trim();
+        if (!key) return [];
+        const keyLower = key.toLowerCase();
+        const allCusts = [...customers, ...salesNvkdCustomers];
+
+        const directMatches = allCusts.filter(c =>
+            c && (
+                String(c.id ?? "").trim() === key ||
+                String(c.customer_code ?? "").trim().toLowerCase() === keyLower ||
+                String(c.name ?? "").trim().toLowerCase() === keyLower
+            )
+        );
+
+        if (directMatches.length === 0) return [];
+
+        const matchedNames = new Set(directMatches.map(c => String(c.name ?? "").trim().toLowerCase()).filter(Boolean));
+        const matchedCodes = new Set(directMatches.map(c => String(c.customer_code ?? "").trim().toLowerCase()).filter(Boolean));
+
+        return allCusts.filter(c =>
+            c && (
+                directMatches.includes(c) ||
+                (c.name && matchedNames.has(String(c.name).trim().toLowerCase())) ||
+                (c.customer_code && matchedCodes.has(String(c.customer_code).trim().toLowerCase()))
+            )
+        );
+    };
+
+    const getCustomerSpecialPrice = (
+        customerIdOrName: string | number | null | undefined,
+        productCode: string | null | undefined,
+        parentCode?: string | null
+    ): number | null => {
+        if (!productCode && !parentCode) return null;
+        const matchedCusts = findMatchingCustomerRecords(customerIdOrName);
+        if (matchedCusts.length === 0) return null;
+
+        const prodObj = allSalesProducts.find(p => p.code === productCode) || biolabProducts.find(p => p.code === productCode);
+        const candidateCodes = [
+            productCode,
+            parentCode,
+            (prodObj as any)?.code,
+            (prodObj as any)?.parent_code,
+            (prodObj as any)?.parent_item_code,
+        ]
+            .map(v => String(v || "").trim())
+            .filter(Boolean);
+
+        if (candidateCodes.length === 0) return null;
+        const lowerCandidates = new Set(candidateCodes.map(c => c.toLowerCase()));
+        const normCandidates = new Set(candidateCodes.map(c => c.toLowerCase().replace(/[-\s_.]/g, "")).filter(Boolean));
+
+        for (const cust of matchedCusts) {
+            const sList = parseCustomerSpecialPriceList(cust.special_price_list);
+            for (const entry of sList) {
+                const entryCode = String(entry?.product_code || "").trim();
+                if (!entryCode) continue;
+                const entryLower = entryCode.toLowerCase();
+                const entryNorm = entryLower.replace(/[-\s_.]/g, "");
+                if (lowerCandidates.has(entryLower) || (entryNorm && normCandidates.has(entryNorm))) {
+                    const sp = Number(entry?.special_price);
+                    if (!isNaN(sp) && sp >= 0) {
+                        return sp;
+                    }
+                }
+            }
+        }
+        return null;
+    };
+
+    const resolveQuoteProductPrice = (
+        prod: any,
+        customerIdOrName?: string | number | null,
+        tier: "price" | "priceDealer1" | "priceDealer2" = quotePriceTier,
+        fallbackCode?: string | null
+    ): number => {
+        const code = prod?.code || fallbackCode || "";
+        const parentCode = prod?.parent_code || prod?.parent_item_code || null;
+        const specialPrice = getCustomerSpecialPrice(customerIdOrName, code, parentCode);
+        if (specialPrice !== null) {
+            return specialPrice;
+        }
+        return Number(prod?.[tier] || prod?.price || 0);
+    };
+
+    const resolveSoProductPrice = (
+        prod: any,
+        customerName?: string | null,
+        stockOrder: boolean = isStockOrder,
+        fallbackCode?: string | null
+    ): number => {
+        const code = prod?.code || fallbackCode || "";
+        const parentCode = prod?.parent_code || prod?.parent_item_code || null;
+        if (!stockOrder && customerName) {
+            const specialPrice = getCustomerSpecialPrice(customerName, code, parentCode);
+            if (specialPrice !== null) {
+                return specialPrice;
+            }
+        }
+        return Number(prod?.price || 0);
+    };
+
+    // Tự động đồng bộ đơn giá riêng của khách hàng cho các dòng sản phẩm đang ở mức giá chuẩn trong form Báo giá mới (kể cả khi khôi phục từ bản nháp hoặc vừa gán giá riêng)
+    useEffect(() => {
+        if (!isQuoteModalOpen || editingQuoteId || !quoteCustomerId) return;
+        setQuoteItems(prev => {
+            let changed = false;
+            const next = prev.map(item => {
+                if (!item.productCode || Boolean((item as any).isGift || (item as any).is_gift)) return item;
+                const sp = getCustomerSpecialPrice(quoteCustomerId, item.productCode, (item as any).parentCode);
+                if (sp === null) return item;
+                const prod = allSalesProducts.find(p => p.code === item.productCode) || biolabProducts.find(p => p.code === item.productCode);
+                const stdPrices = [
+                    0,
+                    Number(prod?.price || 0),
+                    Number((prod as any)?.priceDealer1 || 0),
+                    Number((prod as any)?.priceDealer2 || 0)
+                ];
+                const curPrice = Number(item.price || 0);
+                if (curPrice !== sp && stdPrices.includes(curPrice)) {
+                    changed = true;
+                    const qty = Number(item.quantity) || 1;
+                    const vatRate = item.vatRate !== undefined ? Number(item.vatRate) : 8;
+                    const discountRate = Number(item.discountRate) || 0;
+                    const finances = computeQuoteItemFinances(sp, qty, vatRate, discountRate);
+                    return {
+                        ...item,
+                        price: sp,
+                        vatRate: finances.vatRate,
+                        priceBeforeVat: finances.priceBeforeVat,
+                        totalBeforeVat: finances.totalBeforeVat,
+                        discountRate: finances.discountRate,
+                        discountAmount: finances.discountAmount,
+                        total: finances.total,
+                        vatAmount: finances.vatAmount
+                    };
+                }
+                return item;
+            });
+            return changed ? next : prev;
+        });
+    }, [isQuoteModalOpen, editingQuoteId, quoteCustomerId, customers, allSalesProducts]);
+
+    // Tự động đồng bộ đơn giá riêng của khách hàng cho các dòng sản phẩm đang ở mức giá chuẩn trong form Đơn hàng SO mới
+    useEffect(() => {
+        if (!isFactoryOrderModalOpen || editingFactoryOrderId || isStockOrder || !factoryOrderCustomerName || factoryOrderQuoteId || factoryOrderContractId) return;
+        setFactoryOrderItems(prev => {
+            let changed = false;
+            const next = prev.map(item => {
+                if (!item.productCode || Boolean((item as any).isGift || (item as any).is_gift)) return item;
+                const sp = getCustomerSpecialPrice(factoryOrderCustomerName, item.productCode, (item as any).parentCode);
+                if (sp === null) return item;
+                const prod = allSalesProducts.find(p => p.code === item.productCode) || biolabProducts.find(p => p.code === item.productCode);
+                const stdPrices = [
+                    0,
+                    Number(prod?.price || 0),
+                    Number((prod as any)?.priceDealer1 || 0),
+                    Number((prod as any)?.priceDealer2 || 0)
+                ];
+                const curPrice = Number(item.unitPrice || 0);
+                if (curPrice !== sp && stdPrices.includes(curPrice)) {
+                    changed = true;
+                    return { ...item, unitPrice: sp };
+                }
+                return item;
+            });
+            return changed ? next : prev;
+        });
+    }, [isFactoryOrderModalOpen, editingFactoryOrderId, isStockOrder, factoryOrderCustomerName, factoryOrderQuoteId, factoryOrderContractId, customers, allSalesProducts]);
+
     // --- ABT 130-SKU OLIGO SEQUENCE COMBINATOR (Phối hợp nhiều mã Oligo chi tiết cho cùng 1 trình tự) ---
     const [openOligoBuilderTarget, setOpenOligoBuilderTarget] = useState<"QUOTE" | "ORDER" | null>(null);
     const [oligoSeqName, setOligoSeqName] = useState("");
@@ -8999,7 +9220,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         if (target === "QUOTE") {
             const newRows = combo.items.map((comp) => {
-                const fin = computeQuoteItemFinances(comp.unitPrice, comp.totalQty, 8, 0);
+                const specialPr = oligoPriceOverrides[comp.code] === undefined
+                    ? getCustomerSpecialPrice(quoteCustomerId, comp.code)
+                    : null;
+                const finalUnitPr = specialPr !== null ? specialPr : comp.unitPrice;
+                const fin = computeQuoteItemFinances(finalUnitPr, comp.totalQty, 8, 0);
                 return {
                     productCode: comp.code,
                     productName: comp.name,
@@ -9012,7 +9237,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     oligoRole: comp.role,
                     notes: `${comp.reason} (Nhóm trình tự: ${combo.seqLabel})`,
                     quantity: comp.totalQty,
-                    price: comp.unitPrice,
+                    price: finalUnitPr,
                     ...financesToQuoteFields(fin),
                 };
             });
@@ -9025,23 +9250,29 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 "success"
             );
         } else {
-            const newOrderRows = combo.items.map((comp) => ({
-                productCode: comp.code,
-                productName: comp.name,
-                unit: comp.unit,
-                specification: makeRowSpec(comp),
-                sequence: combo.formattedSeq,
-                oligoGroupId,
-                oligoSeqLabel: combo.seqLabel,
-                oligoRole: comp.role,
-                notes: `${comp.reason} (Nhóm trình tự: ${combo.seqLabel})`,
-                quantity: comp.totalQty,
-                unitPrice: comp.unitPrice,
-                vatRate: 8,
-                vat: 8,
-                targetAllocations: [],
-                needsInvoice: true,
-            }));
+            const newOrderRows = combo.items.map((comp) => {
+                const specialPr = (!isStockOrder && oligoPriceOverrides[comp.code] === undefined)
+                    ? getCustomerSpecialPrice(factoryOrderCustomerName, comp.code)
+                    : null;
+                const finalUnitPr = specialPr !== null ? specialPr : comp.unitPrice;
+                return {
+                    productCode: comp.code,
+                    productName: comp.name,
+                    unit: comp.unit,
+                    specification: makeRowSpec(comp),
+                    sequence: combo.formattedSeq,
+                    oligoGroupId,
+                    oligoSeqLabel: combo.seqLabel,
+                    oligoRole: comp.role,
+                    notes: `${comp.reason} (Nhóm trình tự: ${combo.seqLabel})`,
+                    quantity: comp.totalQty,
+                    unitPrice: finalUnitPr,
+                    vatRate: 8,
+                    vat: 8,
+                    targetAllocations: [],
+                    needsInvoice: true,
+                };
+            });
             setFactoryOrderItems((prev) => {
                 const cleaned = prev.length === 1 && !prev[0].productCode ? [] : prev;
                 return [...cleaned, ...newOrderRows];
@@ -29058,6 +29289,28 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     if (!editingQuoteId && prevCustId && prevCustId !== newCustId) {
                                         setQuoteNoteTerms(defaultQuoteNoteTerms);
                                     }
+                                    // Tự động áp dụng bảng giá riêng của khách hàng mới chọn (hoặc giá chuẩn theo hạng giá) cho các dòng sản phẩm đang có
+                                    setQuoteItems(prev => prev.map(item => {
+                                        if (!item.productCode || Boolean((item as any).isGift || (item as any).is_gift)) return item;
+                                        const prod = allSalesProducts.find(p => p.code === item.productCode) || biolabProducts.find(p => p.code === item.productCode);
+                                        if (!prod && getCustomerSpecialPrice(newCustId, item.productCode, (item as any).parentCode) === null) return item;
+                                        const nextPrice = resolveQuoteProductPrice(prod, newCustId, quotePriceTier, item.productCode);
+                                        const qty = Number(item.quantity) || 1;
+                                        const vatRate = item.vatRate !== undefined ? Number(item.vatRate) : 8;
+                                        const discountRate = Number(item.discountRate) || 0;
+                                        const finances = computeQuoteItemFinances(nextPrice, qty, vatRate, discountRate);
+                                        return {
+                                            ...item,
+                                            price: nextPrice,
+                                            vatRate: finances.vatRate,
+                                            priceBeforeVat: finances.priceBeforeVat,
+                                            totalBeforeVat: finances.totalBeforeVat,
+                                            discountRate: finances.discountRate,
+                                            discountAmount: finances.discountAmount,
+                                            total: finances.total,
+                                            vatAmount: finances.vatAmount
+                                        };
+                                    }));
                                 }}
                                 required
                                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
@@ -29135,9 +29388,24 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     const tier = e.target.value as "price" | "priceDealer1" | "priceDealer2";
                                     setQuotePriceTier(tier);
                                     setQuoteItems(prev => prev.map(item => {
-                                        const prod = allSalesProducts.find(p => p.code === item.productCode);
-                                        const newPrice = prod ? (prod[tier] || prod.price) : 0;
-                                        return { ...item, price: newPrice };
+                                        if (!item.productCode || Boolean((item as any).isGift || (item as any).is_gift)) return item;
+                                        const prod = allSalesProducts.find(p => p.code === item.productCode) || biolabProducts.find(p => p.code === item.productCode);
+                                        const newPrice = resolveQuoteProductPrice(prod, quoteCustomerId, tier, item.productCode);
+                                        const qty = Number(item.quantity) || 1;
+                                        const vatRate = item.vatRate !== undefined ? Number(item.vatRate) : 8;
+                                        const discountRate = Number(item.discountRate) || 0;
+                                        const finances = computeQuoteItemFinances(newPrice, qty, vatRate, discountRate);
+                                        return {
+                                            ...item,
+                                            price: newPrice,
+                                            vatRate: finances.vatRate,
+                                            priceBeforeVat: finances.priceBeforeVat,
+                                            totalBeforeVat: finances.totalBeforeVat,
+                                            discountRate: finances.discountRate,
+                                            discountAmount: finances.discountAmount,
+                                            total: finances.total,
+                                            vatAmount: finances.vatAmount
+                                        };
                                     }));
                                 }}
                                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 font-bold text-indigo-400"
@@ -29373,7 +29641,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                     const code = p.code;
                                                                                     const prod = allSalesProducts.find(prod => prod.code === code) || biolabProducts.find(prod => prod.code === code);
                                                                                     const isRowGift = Boolean((item as any).isGift || (item as any).is_gift);
-                                                                                    const finalPrice = isRowGift ? 0 : (prod ? (prod[quotePriceTier] || prod.price) : 0);
+                                                                                    const finalPrice = isRowGift ? 0 : resolveQuoteProductPrice(prod, quoteCustomerId, quotePriceTier, code);
                                                                                     const finalSpec = prod ? (prod.specification || (prod.name.toLowerCase().includes("kit") ? "50 test/hộp" : prod.unit || "")) : "50 test/hộp";
                                                                                     const finalMfg = formatSupplierShortName((prod as any)?.isCommercial ? ((prod as any).brand || (prod as any).supplier || "ABT") : "ABT");
                                                                                     const finalNotes = item.notes || (stockIntel.atp > 0 ? "Hàng có sẵn, giao ngay" : (stockIntel.incomingQty > 0 ? `Hàng đang về (${stockIntel.incomingQty} sp)` : "Hàng đặt, giao sau 2-4 tuần"));
@@ -29447,9 +29715,30 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                     </div>
                                                                                 </div>
                                                                                 <div className="shrink-0 text-right pt-0.5">
-                                                                                    <div className="text-emerald-400 font-mono font-bold text-sm">
-                                                                                        {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(p[quotePriceTier] || p.price)} đ
-                                                                                    </div>
+                                                                                    {(() => {
+                                                                                        const custSpecialPrice = getCustomerSpecialPrice(quoteCustomerId, p.code, p.parent_code || (p as any).parent_item_code);
+                                                                                        const stdTierPrice = Number(p[quotePriceTier] || p.price || 0);
+                                                                                        const displayPrice = custSpecialPrice !== null ? custSpecialPrice : stdTierPrice;
+                                                                                        return (
+                                                                                            <>
+                                                                                                <div className="text-emerald-400 font-mono font-bold text-sm">
+                                                                                                    {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(displayPrice)} đ
+                                                                                                </div>
+                                                                                                {custSpecialPrice !== null && (
+                                                                                                    <div className="flex items-center justify-end gap-1 mt-0.5">
+                                                                                                        <span className="text-[9px] font-bold text-amber-300 bg-amber-950/80 border border-amber-600/50 px-1.5 py-0.5 rounded">
+                                                                                                            🏷️ Giá riêng KH
+                                                                                                        </span>
+                                                                                                        {stdTierPrice > 0 && stdTierPrice !== custSpecialPrice && (
+                                                                                                            <span className="text-[10px] text-slate-500 line-through font-mono">
+                                                                                                                {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(stdTierPrice)}đ
+                                                                                                            </span>
+                                                                                                        )}
+                                                                                                    </div>
+                                                                                                )}
+                                                                                            </>
+                                                                                        );
+                                                                                    })()}
                                                                                     <div className="text-[10px] text-slate-400">
                                                                                         /{p.unit || "Hộp"}
                                                                                     </div>
@@ -29778,7 +30067,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     } as any);
                                                                 } else {
                                                                     const prod = allSalesProducts.find(prod => prod.code === item.productCode) || biolabProducts.find(prod => prod.code === item.productCode);
-                                                                    const restoredPrice = prod ? (prod[quotePriceTier] || prod.price || 0) : 0;
+                                                                    const restoredPrice = resolveQuoteProductPrice(prod, quoteCustomerId, quotePriceTier, item.productCode);
                                                                     updateQuoteItemAt(index, {
                                                                         isGift: false,
                                                                         price: restoredPrice,
@@ -30739,6 +31028,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 setContractPartyBEmail("");
                                                 setContractPartyBTaxCode("");
                                             }
+                                            setDirectContractItems(prev => prev.map(item => {
+                                                if (!item.productCode) return item;
+                                                const prod = allSalesProducts.find(p => p.code === item.productCode) || biolabProducts.find(p => p.code === item.productCode);
+                                                return { ...item, price: resolveQuoteProductPrice(prod, cid, contractPriceTier, item.productCode) };
+                                            }));
                                         }}
                                         required
                                         className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
@@ -30773,8 +31067,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             const tier = e.target.value as "price" | "priceDealer1" | "priceDealer2";
                                             setContractPriceTier(tier);
                                             setDirectContractItems(prev => prev.map(item => {
-                                                const prod = biolabProducts.find(p => p.code === item.productCode);
-                                                const newPrice = prod ? (prod[tier] || prod.price) : 0;
+                                                if (!item.productCode) return item;
+                                                const prod = allSalesProducts.find(p => p.code === item.productCode) || biolabProducts.find(p => p.code === item.productCode);
+                                                const newPrice = resolveQuoteProductPrice(prod, directContractCustomerId, tier, item.productCode);
                                                 return { ...item, price: newPrice };
                                             }));
                                         }}
@@ -30847,8 +31142,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     key={p.code}
                                                                     onClick={() => {
                                                                         const code = p.code;
-                                                                        const prod = allSalesProducts.find(prod => prod.code === code);
-                                                                        const finalPrice = prod ? (prod[contractPriceTier] || prod.price) : 0;
+                                                                        const prod = allSalesProducts.find(prod => prod.code === code) || biolabProducts.find(prod => prod.code === code);
+                                                                        const finalPrice = resolveQuoteProductPrice(prod, directContractCustomerId, contractPriceTier, code);
                                                                         setDirectContractItems(prev => prev.map((it, i) => i === index ? {
                                                                             ...it,
                                                                             productCode: code,
@@ -30882,8 +31177,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     </div>
                                                                     <div className="shrink-0 text-right pt-0.5">
                                                                         <div className="text-emerald-400 font-mono font-bold text-sm">
-                                                                            {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(p[contractPriceTier] || p.price)} đ
+                                                                            {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(resolveQuoteProductPrice(p, directContractCustomerId, contractPriceTier, p.code))} đ
                                                                         </div>
+                                                                        {getCustomerSpecialPrice(directContractCustomerId, p.code, (p as any).parent_code || (p as any).parent_item_code) !== null && (
+                                                                            <div className="text-[9px] font-bold text-amber-300 bg-amber-950/80 border border-amber-600/50 px-1.5 py-0.5 rounded inline-block mt-0.5">
+                                                                                🏷️ Giá riêng KH
+                                                                            </div>
+                                                                        )}
                                                                         <div className="text-[10px] text-slate-400">/{p.unit || "Hộp"}</div>
                                                                     </div>
                                                                 </div>
@@ -31687,6 +31987,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         }
 
                                         // Chốt chặn logic an toàn: Tránh "râu ông nọ cắm cằm bà kia"
+                                        let hasValidLinkedDoc = false;
                                         if (factoryOrderContractId || factoryOrderQuoteId) {
                                             const existingContract = contracts.find(c => c.id === factoryOrderContractId);
                                             const existingQuote = quotations.find(q => q.id === factoryOrderQuoteId);
@@ -31697,7 +31998,20 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 setFactoryOrderQuoteId("");
                                                 setFactoryOrderNotes("");
                                                 showToast("Đã tự động gỡ liên kết Hợp đồng/Báo giá và ghi chú cũ do bạn đã đổi sang khách hàng khác.", "info");
+                                            } else {
+                                                hasValidLinkedDoc = true;
                                             }
+                                        }
+
+                                        // Tự động áp dụng bảng giá riêng của khách hàng mới chọn (hoặc giá chuẩn) cho các dòng sản phẩm đang có
+                                        if (!isStockOrder && !hasValidLinkedDoc && prevCust !== val) {
+                                            setFactoryOrderItems(prev => prev.map(it => {
+                                                if (!it.productCode || Boolean((it as any).isGift || (it as any).is_gift)) return it;
+                                                const prod = allSalesProducts.find(p => p.code === it.productCode) || biolabProducts.find(p => p.code === it.productCode);
+                                                if (!prod && getCustomerSpecialPrice(val, it.productCode, (it as any).parentCode) === null) return it;
+                                                const nextUnitPrice = resolveSoProductPrice(prod, val, false, it.productCode);
+                                                return { ...it, unitPrice: nextUnitPrice };
+                                            }));
                                         }
                                     }}
                                     required
@@ -32244,7 +32558,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                         {factoryOrderItems.map((item, index) => {
                             const currentProd = allSalesProducts.find(prod => prod.code === item.productCode) || biolabProducts.find(prod => prod.code === item.productCode);
-                            const uPrice = item.unitPrice !== undefined ? item.unitPrice : (currentProd?.price || 0);
+                            const uPrice = item.unitPrice !== undefined ? item.unitPrice : resolveSoProductPrice(currentProd, factoryOrderCustomerName, isStockOrder, item.productCode);
                             const lineTotal = (Number(item.quantity) || 0) * Number(uPrice);
                             const stockIntel = getProductLiveStockIntelligence(item.productCode);
                             const allocList = item.targetAllocations || [];
@@ -32318,7 +32632,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                 unit: nextUnit,
                                                                                 quantity: autoBaseQty,
                                                                                 specification: it.specification && it.productCode === p.code ? it.specification : (p.specification || ""),
-                                                                                unitPrice: Boolean((it as any).isGift || (it as any).is_gift) ? 0 : (p.price || 0),
+                                                                                unitPrice: Boolean((it as any).isGift || (it as any).is_gift) ? 0 : resolveSoProductPrice(p, factoryOrderCustomerName, isStockOrder, p.code),
                                                                                 isGift: Boolean((it as any).isGift || (it as any).is_gift)
                                                                             };
                                                                         }));
@@ -32343,11 +32657,20 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             )}
                                                                         </div>
                                                                         <div className="flex items-center gap-2 shrink-0">
-                                                                            {p.price ? (
-                                                                                <span className="text-[11px] text-emerald-400 font-mono font-bold">
-                                                                                    {p.price.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ
-                                                                                </span>
-                                                                            ) : null}
+                                                                            {(() => {
+                                                                                const sp = !isStockOrder ? getCustomerSpecialPrice(factoryOrderCustomerName, p.code, (p as any).parent_code || (p as any).parent_item_code) : null;
+                                                                                const displayPr = sp !== null ? sp : (p.price || 0);
+                                                                                return displayPr ? (
+                                                                                    <span className="text-[11px] text-emerald-400 font-mono font-bold flex items-center gap-1">
+                                                                                        {sp !== null && (
+                                                                                            <span className="text-[9px] px-1 py-0.2 rounded bg-amber-950/90 text-amber-300 border border-amber-600/50 font-sans">
+                                                                                                🏷️ Giá riêng KH
+                                                                                            </span>
+                                                                                        )}
+                                                                                        <span>{displayPr.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ</span>
+                                                                                    </span>
+                                                                                ) : null;
+                                                                            })()}
                                                                             {p.brand ? (
                                                                                 <span className="text-[10px] text-slate-500 font-mono">{p.brand}</span>
                                                                             ) : null}
@@ -32389,7 +32712,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     return { ...it, isGift: true, unitPrice: 0, notes: (it as any).notes || "🎁 Hàng tặng theo chính sách (0đ)" };
                                                                 }
                                                                 const prod = allSalesProducts.find(p => p.code === it.productCode) || biolabProducts.find(p => p.code === it.productCode);
-                                                                return { ...it, isGift: false, unitPrice: prod?.price || 0, notes: (it as any).notes === "🎁 Hàng tặng theo chính sách (0đ)" ? "" : (it as any).notes };
+                                                                return { ...it, isGift: false, unitPrice: resolveSoProductPrice(prod, factoryOrderCustomerName, isStockOrder, it.productCode), notes: (it as any).notes === "🎁 Hàng tặng theo chính sách (0đ)" ? "" : (it as any).notes };
                                                             }));
                                                         }}
                                                         className="w-3.5 h-3.5 rounded accent-pink-500 cursor-pointer"
@@ -40751,20 +41074,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         }
                                         const prod = allSalesProducts.find(p => p.code === newSpecialProductCode);
                                         const existingIdx = custSpecialPriceList.findIndex(item => item.product_code === newSpecialProductCode);
+                                        let nextList: Array<{ product_code: string; product_name: string; special_price: number }>;
                                         if (existingIdx >= 0) {
-                                            const updated = [...custSpecialPriceList];
-                                            updated[existingIdx].special_price = newSpecialPrice;
-                                            setCustSpecialPriceList(updated);
+                                            nextList = [...custSpecialPriceList];
+                                            nextList[existingIdx] = { ...nextList[existingIdx], special_price: newSpecialPrice };
                                         } else {
-                                            setCustSpecialPriceList(prev => [
-                                                ...prev,
+                                            nextList = [
+                                                ...custSpecialPriceList,
                                                 {
                                                     product_code: newSpecialProductCode,
                                                     product_name: prod?.name || newSpecialProductCode,
                                                     special_price: newSpecialPrice
                                                 }
-                                            ]);
+                                            ];
                                         }
+                                        syncEditingCustomerSpecialPrices(nextList);
                                         setNewSpecialProductCode("");
                                         setNewSpecialPrice(0);
                                         showToast("Đã thêm vào bảng giá riêng!", "success");
@@ -40797,7 +41121,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     <td className="p-2 text-center">
                                                         <button
                                                             type="button"
-                                                            onClick={() => setCustSpecialPriceList(prev => prev.filter((_, i) => i !== idx))}
+                                                            onClick={() => {
+                                                                const nextList = custSpecialPriceList.filter((_, i) => i !== idx);
+                                                                syncEditingCustomerSpecialPrices(nextList);
+                                                            }}
                                                             className="text-rose-400 hover:text-rose-300 text-xs cursor-pointer"
                                                             title="Xóa giá này"
                                                         >
