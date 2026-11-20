@@ -4353,6 +4353,94 @@ export const UnifiedWorkspace: React.FC = () => {
     return isNaN(parsed) ? null : parsed;
   };
 
+  const [slaWeekendMode, setSlaWeekendMode] = useState<"SKIP_SAT_SUN" | "SKIP_SUN" | "CALENDAR_24_7">(() => {
+    if (typeof window !== "undefined") {
+      const saved = window.localStorage.getItem("abt_wf_sla_weekend_mode");
+      if (saved === "SKIP_SAT_SUN" || saved === "SKIP_SUN" || saved === "CALENDAR_24_7") return saved;
+    }
+    return "SKIP_SAT_SUN";
+  });
+
+  const isVnWeekendAtMs = useCallback(
+    (ms: number, mode: "SKIP_SAT_SUN" | "SKIP_SUN" | "CALENDAR_24_7" = slaWeekendMode): boolean => {
+      if (mode === "CALENDAR_24_7") return false;
+      // Vietnam is UTC+7; 1970-01-01 was Thursday (day 4)
+      const vnDayIndex = Math.floor((ms + 7 * 3600000) / 86400000);
+      const dow = ((vnDayIndex + 4) % 7 + 7) % 7; // 0 = Sun, 6 = Sat
+      if (mode === "SKIP_SAT_SUN") return dow === 0 || dow === 6;
+      return dow === 0;
+    },
+    [slaWeekendMode]
+  );
+
+  const addSlaHoursWithWeekendMode = useCallback(
+    (startMs: number, slaHours: number, mode: "SKIP_SAT_SUN" | "SKIP_SUN" | "CALENDAR_24_7" = slaWeekendMode): number => {
+      if (mode === "CALENDAR_24_7") return startMs + slaHours * 3600000;
+      let cursor = startMs;
+      let remainingMs = Math.max(1, slaHours) * 3600000;
+      const stepMs = 3600000; // 1-hour resolution
+      let guard = 0;
+      while (remainingMs > 0 && guard < 24 * 120) {
+        guard++;
+        const chunk = Math.min(stepMs, remainingMs);
+        if (!isVnWeekendAtMs(cursor, mode)) {
+          remainingMs -= chunk;
+        }
+        cursor += chunk;
+      }
+      // If landing inside a weekend, roll forward to Monday 08:00 VN
+      while (isVnWeekendAtMs(cursor, mode) && guard < 24 * 130) {
+        guard++;
+        cursor += stepMs;
+      }
+      return cursor;
+    },
+    [isVnWeekendAtMs, slaWeekendMode]
+  );
+
+  const computeWorkingHoursBetween = useCallback(
+    (fromMs: number, toMs: number, mode: "SKIP_SAT_SUN" | "SKIP_SUN" | "CALENDAR_24_7" = slaWeekendMode): number => {
+      if (mode === "CALENDAR_24_7") return (toMs - fromMs) / 3600000;
+      const sign = toMs >= fromMs ? 1 : -1;
+      let cursor = Math.min(fromMs, toMs);
+      const end = Math.max(fromMs, toMs);
+      let workingMs = 0;
+      const stepMs = 3600000;
+      let guard = 0;
+      while (cursor < end && guard < 24 * 120) {
+        guard++;
+        const chunk = Math.min(stepMs, end - cursor);
+        if (!isVnWeekendAtMs(cursor, mode)) {
+          workingMs += chunk;
+        }
+        cursor += chunk;
+      }
+      return (sign * workingMs) / 3600000;
+    },
+    [isVnWeekendAtMs, slaWeekendMode]
+  );
+
+  const computeWfDueDateVN = useCallback(
+    (workingDays: number, mode: "SKIP_SAT_SUN" | "SKIP_SUN" | "CALENDAR_24_7" = slaWeekendMode): string => {
+      const days = Math.max(1, Math.ceil(workingDays));
+      if (mode === "CALENDAR_24_7") {
+        return toVNDateString(new Date(Date.now() + days * 86400000));
+      }
+      let cursorMs = Date.now();
+      let remaining = days;
+      let guard = 0;
+      while (remaining > 0 && guard < 180) {
+        guard++;
+        cursorMs += 86400000;
+        if (!isVnWeekendAtMs(cursorMs, mode)) {
+          remaining--;
+        }
+      }
+      return toVNDateString(new Date(cursorMs));
+    },
+    [isVnWeekendAtMs, slaWeekendMode]
+  );
+
   const formatDurationHours = (hoursFloat: number): string => {
     const absH = Math.abs(hoursFloat);
     if (absH >= 48) {
@@ -4396,14 +4484,16 @@ export const UnifiedWorkspace: React.FC = () => {
         rawStart = wfSteps[sIdx - 1]?.completed_at || wf?.updated_at || wf?.created_at;
       }
     }
+    const effectiveWeekendMode: "SKIP_SAT_SUN" | "SKIP_SUN" | "CALENDAR_24_7" =
+      st?.weekend_mode || wfSteps[0]?.weekend_mode || slaWeekendMode;
     const startMs = parseWfTimestampMs(rawStart);
-    const deadlineMs = startMs ? startMs + slaHours * 3600000 : null;
+    const deadlineMs = startMs ? addSlaHoursWithWeekendMode(startMs, slaHours, effectiveWeekendMode) : null;
     const deadlineLabel = deadlineMs ? formatDeadlineShortVN(deadlineMs) : "";
 
     if (isDone) {
       const doneMs = parseWfTimestampMs(st?.completed_at || wf?.updated_at);
       if (deadlineMs && doneMs && doneMs > deadlineMs) {
-        const lateH = (doneMs - deadlineMs) / 3600000;
+        const lateH = Math.max(0.1, computeWorkingHoursBetween(deadlineMs, doneMs, effectiveWeekendMode));
         return {
           slaHours,
           startMs,
@@ -4441,7 +4531,7 @@ export const UnifiedWorkspace: React.FC = () => {
     }
 
     const nowMs = Date.now();
-    const remainingHours = (deadlineMs - nowMs) / 3600000;
+    const remainingHours = computeWorkingHoursBetween(nowMs, deadlineMs, effectiveWeekendMode);
     // Ngưỡng "Sắp đến hạn SLA bước": còn <= 25% thời lượng SLA (tối thiểu 1h, tối đa 6h)
     const dueSoonThresholdHours = Math.max(1, Math.min(6, slaHours * 0.25));
 
@@ -5837,10 +5927,16 @@ export const UnifiedWorkspace: React.FC = () => {
           assignee_name: stepAssignee,
           sla_hours: s.sla_hours || 24,
           deliverables: s.deliverables || "",
+          step_type: s.step_type,
+          proposal_template_code: s.proposal_template_code,
+          weekend_mode: s.weekend_mode || slaWeekendMode,
           status: idx === 0 ? "IN_PROGRESS" : "PENDING"
         };
       })
     );
+    const totalStepHours = stepsCopy.reduce((sum: number, s: any) => sum + (Number(s.sla_hours) || 24), 0);
+    const initMode = stepsCopy[0]?.weekend_mode || slaWeekendMode;
+    const initWorkingDays = stepsCopy.length > 0 ? Math.max(1, Math.ceil(totalStepHours / 24)) : (tmpl.sla_days || 5);
 
     setWfForm({
       id: undefined,
@@ -5854,7 +5950,7 @@ export const UnifiedWorkspace: React.FC = () => {
       target_dept: stepsCopy.length > 0 && stepsCopy[0].dept ? stepsCopy[0].dept : (tmpl.target_dept || tmpl.targetDept || "Application"),
       customer_name: "",
       product_info: "",
-      due_date: toVNDateString(new Date(Date.now() + (tmpl.sla_days || 5) * 86400000)),
+      due_date: computeWfDueDateVN(initWorkingDays, initMode),
       description: tmpl.description || "",
       steps: stepsCopy
     } as any);
@@ -15146,16 +15242,22 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         assignee_name: cleanedAssignee,
                         sla_hours: s.sla_hours || 24,
                         deliverables: s.deliverables || "",
+                        step_type: s.step_type,
+                        proposal_template_code: s.proposal_template_code,
+                        weekend_mode: s.weekend_mode || slaWeekendMode,
                         status: idx === 0 ? "IN_PROGRESS" : "PENDING"
                       };
                     });
+                    const totalStepHours = stepsCopy.reduce((sum: number, s: any) => sum + (Number(s.sla_hours) || 24), 0);
+                    const initMode = stepsCopy[0]?.weekend_mode || slaWeekendMode;
+                    const initWorkingDays = stepsCopy.length > 0 ? Math.max(1, Math.ceil(totalStepHours / 24)) : (tmpl.sla_days || 5);
                     setWfForm({
                       ...wfForm,
                       workflow_type: selectedVal,
                       requester_dept: normalizeWorkspaceDept(tmpl.source_dept || tmpl.sourceDept || "Kinh Doanh"),
                       target_dept: stepsCopy.length > 0 ? stepsCopy[0].dept : normalizeWorkspaceDept(tmpl.target_dept || tmpl.targetDept || "Application"),
                       assignee_name: stepsCopy.length > 0 ? stepsCopy[0].assignee_name : "",
-                      due_date: toVNDateString(new Date(Date.now() + (tmpl.sla_days || 5) * 86400000)),
+                      due_date: computeWfDueDateVN(initWorkingDays, initMode),
                       description: tmpl.description || wfForm.description,
                       steps: stepsCopy
                     });
@@ -15286,11 +15388,38 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           (wfForm.steps || []).reduce((sum: number, s: any) => sum + (Number(s.sla_hours) || 24), 0) / 24
                         )
                       )}{" "}
-                      ngày)
+                      ngày làm việc)
                     </span>
+                    <select
+                      value={(wfForm.steps && wfForm.steps[0]?.weekend_mode) || slaWeekendMode}
+                      onChange={(e) => {
+                        const nextMode = e.target.value as "SKIP_SAT_SUN" | "SKIP_SUN" | "CALENDAR_24_7";
+                        setSlaWeekendMode(nextMode);
+                        if (typeof window !== "undefined") {
+                          window.localStorage.setItem("abt_wf_sla_weekend_mode", nextMode);
+                        }
+                        const currentSteps = (wfForm.steps || []).map((st: any) => ({
+                          ...st,
+                          weekend_mode: nextMode,
+                        }));
+                        const totalHours = currentSteps.reduce((sum: number, s: any) => sum + (Number(s.sla_hours) || 24), 0);
+                        const workingDays = Math.max(1, Math.ceil(totalHours / 24));
+                        setWfForm({
+                          ...wfForm,
+                          due_date: computeWfDueDateVN(workingDays, nextMode),
+                          steps: currentSteps,
+                        });
+                      }}
+                      className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-indigo-50 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 cursor-pointer"
+                      title="Cài đặt bỏ qua ngày nghỉ cuối tuần khi tính hạn SLA từng bước và hạn chót hoàn tất"
+                    >
+                      <option value="SKIP_SAT_SUN">🗓️ Bỏ qua Thứ 7 &amp; CN (Làm T2–T6)</option>
+                      <option value="SKIP_SUN">🗓️ Bỏ qua Chủ nhật (Làm T2–T7)</option>
+                      <option value="CALENDAR_24_7">⏱️ Tính cả cuối tuần (24/7)</option>
+                    </select>
                   </div>
                   <span className="text-[11px] text-slate-400 block">
-                    Chỉnh sửa trực tiếp nội dung, phòng ban, nhân sự, <strong>Thời gian SLA (giờ)</strong> từng bước và bấm <strong>&quot;💾 Lưu lại vào Mẫu quy trình&quot;</strong> để lưu cố định.
+                    Chỉnh sửa trực tiếp nội dung, phòng ban, nhân sự, <strong>Thời gian SLA (giờ)</strong> từng bước (hệ thống tự động trừ ngày nghỉ cuối tuần theo lịch đã chọn) và bấm <strong>&quot;💾 Lưu lại vào Mẫu quy trình&quot;</strong> để lưu cố định cho các lần tạo phiếu sau.
                   </span>
                 </div>
               </div>
@@ -15308,10 +15437,12 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   type="button"
                   onClick={() => {
                     const currentSteps = wfForm.steps || [];
+                    const activeMode = currentSteps[0]?.weekend_mode || slaWeekendMode;
                     const newStep = {
                       step_index: currentSteps.length,
                       step_type: "APPROVAL_GATE",
                       proposal_template_code: "TTR",
+                      weekend_mode: activeMode,
                       title: `Trình duyệt đề xuất & Phê duyệt phương án`,
                       dept: "Ban Giám Đốc",
                       departments: ["Ban Giám Đốc"],
@@ -15325,7 +15456,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     const totalHours = nextSteps.reduce((sum: number, s: any) => sum + (Number(s.sla_hours) || 24), 0);
                     setWfForm({
                       ...wfForm,
-                      due_date: toVNDateString(new Date(Date.now() + Math.max(1, Math.ceil(totalHours / 24)) * 86400000)),
+                      due_date: computeWfDueDateVN(Math.max(1, Math.ceil(totalHours / 24)), activeMode),
                       steps: nextSteps
                     });
                   }}
@@ -15339,9 +15470,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   type="button"
                   onClick={() => {
                     const currentSteps = wfForm.steps || [];
+                    const activeMode = currentSteps[0]?.weekend_mode || slaWeekendMode;
                     const newStep = {
                       step_index: currentSteps.length,
                       step_type: "EXECUTION",
+                      weekend_mode: activeMode,
                       title: `Bước ${currentSteps.length + 1}: Bàn giao`,
                       dept: "Application",
                       departments: ["Application"],
@@ -15355,7 +15488,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     const totalHours = nextSteps.reduce((sum: number, s: any) => sum + (Number(s.sla_hours) || 24), 0);
                     setWfForm({
                       ...wfForm,
-                      due_date: toVNDateString(new Date(Date.now() + Math.max(1, Math.ceil(totalHours / 24)) * 86400000)),
+                      due_date: computeWfDueDateVN(Math.max(1, Math.ceil(totalHours / 24)), activeMode),
                       steps: nextSteps
                     });
                   }}
@@ -15636,12 +15769,13 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             onChange={(e) => {
                               const val = Math.max(1, parseInt(e.target.value, 10) || 1);
                               const cloned = [...(wfForm.steps || [])];
-                              cloned[idx] = { ...cloned[idx], sla_hours: val };
+                              const activeMode = cloned[0]?.weekend_mode || slaWeekendMode;
+                              cloned[idx] = { ...cloned[idx], sla_hours: val, weekend_mode: activeMode };
                               const nextSteps = reindexWorkflowSteps(cloned);
                               const totalHours = nextSteps.reduce((sum: number, s: any) => sum + (Number(s.sla_hours) || 24), 0);
                               setWfForm({
                                 ...wfForm,
-                                due_date: toVNDateString(new Date(Date.now() + Math.max(1, Math.ceil(totalHours / 24)) * 86400000)),
+                                due_date: computeWfDueDateVN(Math.max(1, Math.ceil(totalHours / 24)), activeMode),
                                 steps: nextSteps
                               });
                             }}
