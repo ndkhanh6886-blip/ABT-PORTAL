@@ -322,4 +322,63 @@ describe("Proposal approval routing & escalation rules", () => {
     expect(resDnxhd.steps[0].dept).toBe("Kế Toán");
     expect(resDnxhd.steps[0].roleType).toBe("REVIEWER");
   });
+
+  it("displays the specific Kế toán viên approver (Trần Hồng Thi) configured in the template instead of generic 'Kế toán viên'", () => {
+    const templateSteps = [
+      {
+        stepOrder: 1,
+        stepName: "Kế toán trưởng duyệt chi",
+        roleType: "REVIEWER" as const,
+        defaultDept: "Kế Toán",
+        defaultApprover: "Kế toán trưởng",
+        slaHours: 9
+      },
+      {
+        stepOrder: 2,
+        stepName: "Kế toán viên",
+        roleType: "REVIEWER" as const,
+        defaultDept: "Kế Toán",
+        defaultApprover: "Trần Hồng Thi",
+        slaHours: 8
+      }
+    ];
+
+    const stepsFromGeneric: ProposalStepInstance[] = [
+      {
+        stepOrder: 1,
+        stepName: "Kế toán trưởng duyệt chi",
+        roleType: "REVIEWER",
+        dept: "Kế Toán",
+        approverName: "Nguyễn Văn Hiếu",
+        status: "APPROVED",
+        decidedBy: "Nguyễn Văn Hiếu",
+        decidedAt: "2026-11-20 09:44",
+        slaHours: 9
+      },
+      {
+        stepOrder: 2,
+        stepName: "Kế toán viên",
+        roleType: "REVIEWER",
+        dept: "Kế Toán",
+        approverName: "Kế toán viên",
+        status: "PENDING_NOW",
+        slaHours: 8
+      }
+    ];
+
+    const res = normalizeProposalStepsForRequester(
+      stepsFromGeneric,
+      "Kinh Doanh",
+      "Huỳnh Thị Ngọc Huyền",
+      SAMPLE_PERSONNEL,
+      templateSteps
+    );
+    expect(res.steps[1]).toMatchObject({
+      stepOrder: 2,
+      stepName: "Kế toán viên",
+      roleType: "REVIEWER",
+      dept: "Kế Toán",
+      approverName: "Trần Hồng Thi"
+    });
+  });
 });

@@ -853,6 +853,10 @@ export function isGenericRoleApproverLabel(label: any): boolean {
     s === "trưởng bộ phận" ||
     s === "ban giám đốc" ||
     s === "kế toán trưởng" ||
+    s === "kế toán viên" ||
+    s === "nhân viên kế toán" ||
+    s === "chuyên viên kế toán" ||
+    s === "thủ quỹ" ||
     s === "hành chính nhân sự" ||
     s === "kế toán" ||
     s === "pháp chế" ||
@@ -950,6 +954,49 @@ export function resolveChiefAccountantApprover(personnelList?: any[]): string {
   return "Kế toán trưởng";
 }
 
+/**
+ * Tìm nhân sự Kế toán viên cụ thể theo cấu hình biểu mẫu (`templateSteps`) hoặc danh sách nhân sự ABT (`personnelList`).
+ * Khắc phục trường hợp bước duyệt ghi "Kế toán viên" nhưng chưa hiển thị tên Kế toán viên đã cấu hình trong mẫu (VD: "Trần Hồng Thi").
+ */
+export function resolveAccountantStaffApprover(
+  personnelList?: any[],
+  templateSteps?: ProposalStepTemplate[],
+  stepName?: string,
+  stepIdx?: number
+): string {
+  if (Array.isArray(templateSteps) && templateSteps.length > 0) {
+    const normStepName = canonName(stepName || "");
+    const byName = templateSteps.find(
+      (t) =>
+        (normStepName && canonName(t.stepName) === normStepName) ||
+        String(t.stepName || "").toLowerCase().normalize("NFC").includes("kế toán viên")
+    );
+    if (byName?.defaultApprover && !isGenericRoleApproverLabel(byName.defaultApprover)) {
+      return cleanStaffDisplayName(sanitizeLegacyTbrApproverName(byName.defaultApprover));
+    }
+    if (typeof stepIdx === "number" && templateSteps[stepIdx]?.defaultApprover) {
+      const cand = templateSteps[stepIdx].defaultApprover;
+      if (!isGenericRoleApproverLabel(cand)) {
+        return cleanStaffDisplayName(sanitizeLegacyTbrApproverName(cand));
+      }
+    }
+  }
+  const matched = (personnelList || []).find((p: any) => {
+    const pos = String(p?.position || "").toLowerCase().normalize("NFC").trim();
+    const name = String(p?.full_name || p?.name || "").normalize("NFC");
+    if (/võ\s+thị\s+ngọc\s+giàu|ngọc\s+giàu/i.test(name)) return false;
+    return (
+      pos.includes("kế toán viên") ||
+      pos === "kế toán" ||
+      (pos.includes("kế toán") && !pos.includes("kế toán trưởng"))
+    );
+  });
+  if (matched?.full_name || matched?.name) {
+    return cleanStaffDisplayName(matched.full_name || matched.name);
+  }
+  return "Trần Hồng Thi";
+}
+
 export function formatEscalatedStepName(rawStepName: string, bodRoleTitle: string): string {
   const s = String(rawStepName || "").trim();
   if (!s) return `${bodRoleTitle} phê duyệt`;
@@ -979,14 +1026,15 @@ export function normalizeProposalStepsForRequester(
   steps: ProposalStepInstance[],
   requesterDept: string,
   requesterName: string,
-  personnelList?: any[]
+  personnelList?: any[],
+  templateSteps?: ProposalStepTemplate[]
 ): { steps: ProposalStepInstance[]; changed: boolean } {
   if (!Array.isArray(steps) || steps.length === 0) return { steps: [], changed: false };
   const resolvedReqDept = requesterDept && requesterDept !== "all" ? requesterDept : "Kinh Doanh";
   const reqIsLeader = isPersonDeptHeadOrDeputy(requesterName, resolvedReqDept, personnelList);
   let changed = false;
 
-  const mapped = steps.map((rawSt) => {
+  const mapped = steps.map((rawSt, stepIdx) => {
     // Làm sạch tên Kế toán trưởng TBR cũ ("Võ Thị Ngọc Giàu") nếu có và đồng bộ lại roleType theo phòng ban/người duyệt
     const cleanApprover = sanitizeLegacyTbrApproverName(rawSt.approverName);
     const inferredRole = inferProposalStepRoleType(rawSt.dept, cleanApprover, rawSt.stepName, rawSt.roleType);
@@ -1001,22 +1049,47 @@ export function normalizeProposalStepsForRequester(
       return st;
     }
 
+    // Nếu biểu mẫu quy trình đã chỉ định đích danh người duyệt cụ thể cho bước này (VD: Kế toán viên = "Trần Hồng Thi")
+    // mà trên bước của phiếu đang để nhãn chức danh chung (VD: "Kế toán viên"), tự động đồng bộ đúng tên người duyệt từ mẫu.
+    if (Array.isArray(templateSteps) && templateSteps.length > 0 && isGenericRoleApproverLabel(st.approverName)) {
+      const matchedTmplStep =
+        templateSteps.find((t) => canonName(t.stepName) === canonName(st.stepName)) ||
+        (templateSteps[stepIdx] && canonName(templateSteps[stepIdx].defaultDept) === canonName(st.dept)
+          ? templateSteps[stepIdx]
+          : undefined);
+      if (matchedTmplStep?.defaultApprover && !isGenericRoleApproverLabel(matchedTmplStep.defaultApprover)) {
+        const concreteFromTmpl = cleanStaffDisplayName(sanitizeLegacyTbrApproverName(matchedTmplStep.defaultApprover));
+        if (concreteFromTmpl && st.approverName !== concreteFromTmpl) {
+          changed = true;
+          st = { ...st, approverName: concreteFromTmpl };
+        }
+      }
+    }
+
     const approverLower = String(st.approverName || "").toLowerCase().normalize("NFC").trim();
     const deptLower = String(st.dept || "").toLowerCase().normalize("NFC").trim();
     const stepNameLower = String(st.stepName || "").toLowerCase().normalize("NFC").trim();
 
-    // Nếu bước duyệt được cấu hình cho Kế toán / Kế toán trưởng: giữ nguyên phòng Kế Toán & Kế toán trưởng
+    // Nếu bước duyệt được cấu hình cho Kế toán / Kế toán trưởng / Kế toán viên: giữ nguyên phòng Kế Toán & đúng người duyệt
     if (
       approverLower === "kế toán trưởng" ||
+      approverLower === "kế toán viên" ||
       approverLower === "kế toán" ||
       deptLower === "kế toán" ||
-      stepNameLower.includes("kế toán trưởng")
+      stepNameLower.includes("kế toán trưởng") ||
+      stepNameLower.includes("kế toán viên")
     ) {
       const targetDept = st.dept && st.dept !== "Ban Giám Đốc" ? st.dept : "Kế Toán";
-      const targetApprover =
-        approverLower === "kế toán trưởng" || isGenericRoleApproverLabel(st.approverName)
-          ? resolveChiefAccountantApprover(personnelList)
-          : st.approverName;
+      const isAccountantStaffStep =
+        approverLower === "kế toán viên" ||
+        approverLower === "nhân viên kế toán" ||
+        approverLower === "chuyên viên kế toán" ||
+        (stepNameLower.includes("kế toán viên") && !stepNameLower.includes("kế toán trưởng"));
+      const targetApprover = !isGenericRoleApproverLabel(st.approverName)
+        ? st.approverName
+        : isAccountantStaffStep
+          ? resolveAccountantStaffApprover(personnelList, templateSteps, st.stepName, stepIdx)
+          : resolveChiefAccountantApprover(personnelList);
       if (st.dept !== targetDept || st.approverName !== targetApprover || st.roleType !== "REVIEWER") {
         changed = true;
         return {
@@ -1382,13 +1455,15 @@ export function ProposalsApprovalView({
 
       const { merged, sanitizedAny } = mergeTemplateLists(serverList, localList, DEFAULT_PROPOSAL_TEMPLATES);
       setTemplates(merged);
+      try {
+        if (typeof window !== "undefined") {
+          localStorage.setItem("workspace_proposal_templates", JSON.stringify(merged));
+        }
+      } catch {}
 
       // Nếu có mẫu mới hoặc vừa làm sạch tên TBR cũ ("Võ Thị Ngọc Giàu") / sửa lại roleType -> tự động lưu đồng bộ lên server
       if (merged.length > serverList.length || sanitizedAny) {
         try {
-          if (typeof window !== "undefined") {
-            localStorage.setItem("workspace_proposal_templates", JSON.stringify(merged));
-          }
           await fetch("/api/storage?key=workspace_proposal_templates", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1533,21 +1608,29 @@ export function ProposalsApprovalView({
         attachmentLabel: st.attachmentLabel || ""
       };
     });
-    return normalizeProposalStepsForRequester(rawSteps, resolvedDept, reqName, personnelList).steps;
+    return normalizeProposalStepsForRequester(
+      rawSteps,
+      resolvedDept,
+      reqName,
+      personnelList,
+      tmpl.defaultSteps
+    ).steps;
   };
 
   // Tự động chuẩn hóa các đề xuất đang chờ duyệt (PENDING / DRAFT / RETURNED) nếu trước đó gán nhãn chung
-  // (VD: "Trưởng phòng QA/QC") hoặc do Phó/Trưởng phòng đề xuất cần chuyển lên PGĐ phụ trách nhóm / GĐ duyệt
+  // (VD: "Kế toán viên", "Trưởng phòng QA/QC") hoặc do Phó/Trưởng phòng đề xuất cần chuyển lên PGĐ phụ trách nhóm / GĐ duyệt
   useEffect(() => {
     if (!Array.isArray(proposals) || proposals.length === 0) return;
     let anyChanged = false;
     const nextList = proposals.map((p) => {
       if (!p || (p.status !== "PENDING" && p.status !== "DRAFT" && p.status !== "RETURNED")) return p;
+      const tmpl = templates.find((t) => t.id === p.templateId);
       const norm = normalizeProposalStepsForRequester(
         p.steps || [],
         p.requesterDept || "Kinh Doanh",
         p.requesterName || "",
-        personnelList
+        personnelList,
+        tmpl?.defaultSteps
       );
       if (!norm.changed) return p;
       anyChanged = true;
@@ -1568,7 +1651,37 @@ export function ProposalsApprovalView({
         if (updatedSel) setSelectedProposal(updatedSel);
       }
     }
-  }, [proposals, personnelList]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [proposals, personnelList, templates]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Khi Modal Tạo Mới Đề Xuất đang mở và danh sách biểu mẫu `templates` vừa tải xong từ máy chủ,
+  // tự động đồng bộ lại `steps` và `followers` theo cấu hình mẫu mới nhất (bao gồm cả bước Kế toán viên).
+  useEffect(() => {
+    if (!isFormModalOpen || editingProposalId) return;
+    const tmpl = templates.find((t) => t.id === selectedTemplateId) || templates[0];
+    if (!tmpl) return;
+    const reqDept = defaultConcreteDeptForScope(selectedDept, userDept);
+    const freshSteps = buildStepsFromTemplate(tmpl, reqDept, formState.totalAmount);
+    const freshFollowers = Array.isArray(tmpl.defaultFollowers)
+      ? Array.from(new Set(tmpl.defaultFollowers.map((n) => cleanStaffDisplayName(n)).filter(Boolean)))
+      : [];
+    setFormState((prev) => {
+      const sameSteps =
+        prev.steps.length === freshSteps.length &&
+        prev.steps.every(
+          (s, i) =>
+            s.stepName === freshSteps[i]?.stepName &&
+            s.dept === freshSteps[i]?.dept &&
+            s.approverName === freshSteps[i]?.approverName
+        );
+      if (sameSteps && prev.followers.length >= freshFollowers.length) return prev;
+      return {
+        ...prev,
+        steps: freshSteps,
+        followers: prev.followers.length > 0 ? prev.followers : freshFollowers,
+        executorName: freshSteps[freshSteps.length - 1]?.approverName || prev.executorName
+      };
+    });
+  }, [templates, isFormModalOpen, editingProposalId, selectedTemplateId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const generateProposalCode = (tmpl: ProposalTemplate) => {
     const year = new Date().getFullYear();
@@ -1583,8 +1696,11 @@ export function ProposalsApprovalView({
     return `${prefix}-${year}-${String(maxSeq + 1).padStart(3, "0")}`;
   };
 
-  const openCreateProposalModal = (tmplId?: string) => {
-    const tmpl = templates.find((t) => t.id === tmplId) || templates[0];
+  const openCreateProposalModal = (tmplId?: string, overrideTemplate?: ProposalTemplate) => {
+    const tmpl =
+      (overrideTemplate ? sanitizeTemplateForAbt(overrideTemplate).template : undefined) ||
+      templates.find((t) => t.id === tmplId) ||
+      templates[0];
     setEditingProposalId(null);
     setSelectedTemplateId(tmpl.id);
     const reqDept = defaultConcreteDeptForScope(selectedDept, userDept);
@@ -1622,6 +1738,30 @@ export function ProposalsApprovalView({
       sendBellNotify: true
     });
     setIsFormModalOpen(true);
+
+    // Tải đồng bộ biểu mẫu mới nhất từ máy chủ trong nền (phòng trường hợp mẫu vừa được sửa ở tab/tài khoản khác)
+    if (!overrideTemplate) {
+      fetch("/api/storage?key=workspace_proposal_templates", { headers: { "x-no-cache": "1" } })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => {
+          if (Array.isArray(j?.data) && j.data.length > 0) {
+            const cleanedServer = j.data.map((t: ProposalTemplate) => sanitizeTemplateForAbt(t).template);
+            setTemplates((prev) => {
+              const byId = new Map<string, ProposalTemplate>();
+              for (const item of cleanedServer) if (item?.id) byId.set(item.id, item);
+              for (const item of prev) if (item?.id && !byId.has(item.id)) byId.set(item.id, item);
+              const nextMerged = Array.from(byId.values());
+              try {
+                if (typeof window !== "undefined") {
+                  localStorage.setItem("workspace_proposal_templates", JSON.stringify(nextMerged));
+                }
+              } catch {}
+              return nextMerged;
+            });
+          }
+        })
+        .catch(() => {});
+    }
   };
 
   // Switch template inside Create Modal
@@ -1950,7 +2090,13 @@ export function ProposalsApprovalView({
           stepOrder: i + 1
         }))
       : buildStepsFromTemplate(activeTemplate, reqDept, formState.totalAmount, reqName);
-    let stepsList = normalizeProposalStepsForRequester(initialStepsList, reqDept, reqName, personnelList).steps;
+    let stepsList = normalizeProposalStepsForRequester(
+      initialStepsList,
+      reqDept,
+      reqName,
+      personnelList,
+      activeTemplate?.defaultSteps
+    ).steps;
 
     // Nếu Gửi duyệt lại từ trạng thái RETURNED hoặc DRAFT -> đặt bước đầu tiên chưa APPROVED thành PENDING_NOW
     let activeIdx = 0;
@@ -5791,11 +5937,16 @@ export function ProposalsApprovalView({
                   <>
                     <button
                       type="button"
-                      onClick={() => {
+                      onClick={async () => {
                         const target = editingTemplate;
+                        const exists = templates.some((t) => t.id === target.id);
+                        const next = exists
+                          ? templates.map((t) => (t.id === target.id ? target : t))
+                          : [target, ...templates];
+                        await saveTemplatesToStorage(next);
                         setIsTemplateBuilderOpen(false);
                         setEditingTemplate(null);
-                        openCreateProposalModal(target.id);
+                        openCreateProposalModal(target.id, target);
                       }}
                       className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold cursor-pointer shadow-sm"
                     >
