@@ -118,6 +118,17 @@ interface Detail {
 
 const refreshKeys = ["oligo-post", "oligo-post-detail", "oligo-orders", "oligo-order", "qc-tests"];
 
+/** Returns the minimum guaranteed recovery yield (nmol) for a synthesis scale (30% of scale, e.g. 100NMOL -> 30 nmol). */
+export function getMinGuaranteedNmolForScale(scaleCode: string | null | undefined): number {
+  const raw = String(scaleCode ?? "").trim().toUpperCase();
+  if (/1\s*U(MOL)?/i.test(raw) || raw === "1000NMOL") return 300;
+  const m = raw.match(/(\d+)\s*NMOL/i) ?? raw.match(/^(\d+)$/);
+  if (m && Number(m[1]) > 0) {
+    return Math.round(Number(m[1]) * 0.3 * 100) / 100;
+  }
+  return 30;
+}
+
 /** Format a compact summary of the last logged step values for the table column "Ghi nhận bước gần nhất". */
 function summarizeStepValues(step: FrozenStep | undefined, values: Record<string, string | number | null> | null | undefined): string[] {
   if (!values || typeof values !== "object") return [];
@@ -512,30 +523,47 @@ function StepExecutionModal({
                       )}
                     </div>
 
-                    {liveOdPreview && (
-                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 rounded-xl bg-white dark:bg-slate-900 p-2.5 border border-sky-200 dark:border-sky-900 text-xs">
-                        <div>
-                          <span className="text-slate-500 block text-[11px]">Tổng OD</span>
-                          <b className="text-sm text-slate-900 dark:text-slate-100">{fmtQty(liveOdPreview.odTotal)}</b>
+                    {liveOdPreview && (() => {
+                      const minNmol = getMinGuaranteedNmolForScale(s?.scale_code ?? row.scale_code);
+                      const meetsMin = liveOdPreview.nmol >= minNmol;
+                      return (
+                        <div className="space-y-1.5">
+                          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 rounded-xl bg-white dark:bg-slate-900 p-2.5 border border-sky-200 dark:border-sky-900 text-xs">
+                            <div>
+                              <span className="text-slate-500 block text-[11px]">Tổng OD</span>
+                              <b className="text-sm text-slate-900 dark:text-slate-100">{fmtQty(liveOdPreview.odTotal)}</b>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 block text-[11px]">Hiệu suất (nmol)</span>
+                              <b className={`text-sm ${meetsMin ? "text-emerald-700 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
+                                {fmtQty(liveOdPreview.nmol)}
+                              </b>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 block text-[11px]">Khối lượng (µg)</span>
+                              <b className="text-sm">{fmtQty(liveOdPreview.ug)}</b>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 block text-[11px]">OD / ống</span>
+                              <b className="text-sm">{fmtQty(liveOdPreview.odPerTube)}</b>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 block text-[11px]">Pha 100 µM</span>
+                              <b className="text-sm text-sky-700 dark:text-sky-400">{fmtQty(liveOdPreview.vol100um)} µL</b>
+                            </div>
+                          </div>
+                          <div className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border ${
+                            meetsMin
+                              ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"
+                              : "bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 border-rose-200 dark:border-rose-800"
+                          }`}>
+                            {meetsMin
+                              ? `✓ Đạt ngưỡng cam kết thang ${s?.scale_code ?? row.scale_code} (≥ ${fmtQty(minNmol)} nmol)`
+                              : `⚠️ Hiệu suất thu hồi (${fmtQty(liveOdPreview.nmol)} nmol) thấp hơn ngưỡng cam kết thang ${s?.scale_code ?? row.scale_code} (≥ ${fmtQty(minNmol)} nmol)`}
+                          </div>
                         </div>
-                        <div>
-                          <span className="text-slate-500 block text-[11px]">Hiệu suất (nmol)</span>
-                          <b className="text-sm text-emerald-700 dark:text-emerald-400">{fmtQty(liveOdPreview.nmol)}</b>
-                        </div>
-                        <div>
-                          <span className="text-slate-500 block text-[11px]">Khối lượng (µg)</span>
-                          <b className="text-sm">{fmtQty(liveOdPreview.ug)}</b>
-                        </div>
-                        <div>
-                          <span className="text-slate-500 block text-[11px]">OD / ống</span>
-                          <b className="text-sm">{fmtQty(liveOdPreview.odPerTube)}</b>
-                        </div>
-                        <div>
-                          <span className="text-slate-500 block text-[11px]">Pha 100 µM</span>
-                          <b className="text-sm text-sky-700 dark:text-sky-400">{fmtQty(liveOdPreview.vol100um)} µL</b>
-                        </div>
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     <Field label="Ghi chú bước Đo OD (nếu có)">
                       <input
@@ -1322,11 +1350,15 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                               • Phiếu xuất kho: <span className="font-mono">{r.last_step_doc}</span>
                             </div>
                           )}
-                          {Number(r.od_total) > 0 && (
-                            <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
-                              • Đo OD: {fmtQty(r.od_total)} OD · {fmtQty(r.nmol)} nmol
-                            </div>
-                          )}
+                          {Number(r.od_total) > 0 && (() => {
+                            const minNmol = getMinGuaranteedNmolForScale(r.scale_code);
+                            const meetsMin = Number(r.nmol ?? 0) >= minNmol;
+                            return (
+                              <div className={`text-[11px] font-semibold ${meetsMin ? "text-emerald-700 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
+                                • Đo OD: {fmtQty(r.od_total)} OD · {fmtQty(r.nmol)} nmol ({meetsMin ? `≥ ${fmtQty(minNmol)} nmol` : `< ${fmtQty(minNmol)} nmol`})
+                              </div>
+                            );
+                          })()}
                         </div>
                       )}
                     </td>

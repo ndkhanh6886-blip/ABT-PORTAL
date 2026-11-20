@@ -43,16 +43,29 @@ export async function orderCoa(tx: Tx, actor: AuthzActor, orderId: string) {
         [s.tested_id]
       )
     ).rows[0];
-    const results = test
+    const rawResults = test
       ? (
           await tx.query(
-            `SELECT p.seq, p.name, p.unit, p.method, p.lower_limit::float AS lower_limit, p.upper_limit::float AS upper_limit, p.value_type, p.target,
+            `SELECT p.seq, p.name, p.unit, p.method, p.lower_limit::float AS lower_limit, p.upper_limit::float AS upper_limit, p.value_type, p.target, p.derived_metric,
                     r.value_numeric::float AS value_numeric, r.observed_numeric::float AS observed_numeric, r.value_text, r.passed
                FROM qms.qc_result r JOIN qms.qc_spec_parameter p ON p.id = r.parameter_id WHERE r.test_id = $1 ORDER BY p.seq`,
             [test.id]
           )
         ).rows
       : [];
+    const scaleRaw = String(s.scale_code ?? "").trim().toUpperCase();
+    const scaleNmolMatch = /1\s*U(MOL)?/i.test(scaleRaw) ? 1000 : Number((scaleRaw.match(/(\d+)\s*NMOL/i) ?? [])[1] || 100);
+    const minNmolForScale = Math.round(scaleNmolMatch * 0.3 * 100) / 100;
+    const results = rawResults.map((r: any) => {
+      if (r.derived_metric === "YIELD_NMOL" && (r.lower_limit == null || Number(r.lower_limit) <= 0.1)) {
+        return {
+          ...r,
+          lower_limit: minNmolForScale,
+          target: `≥ ${minNmolForScale} nmol`,
+        };
+      }
+      return r;
+    });
     const is_amplicon =
       Boolean(s.is_amplicon) ||
       s.product_type === "AMPLICON_LINEAR" ||

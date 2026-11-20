@@ -1629,28 +1629,45 @@ export function OligoOrderPanel({
           )}
 
           {o.sequences.length > 0 && (
-            <Table head={["Mã", "Tên", "Trình tự", "Dài", "Loại", "Thang / tinh sạch", "MW (Da)", "Tm (°C)", "GC %", "nmol/OD", "Trạng thái", "Thao tác"]}>
+            <Table
+              head={[
+                "Mã & Tên trình tự",
+                "Trình tự (5' → 3') & Biến đổi",
+                "Thông số Lý hóa",
+                "Thang · Tinh sạch · Định dạng",
+                "Trạng thái",
+                "Thao tác",
+              ]}
+            >
               {o.sequences.map((s) => {
                 const isEditingThis = editingSeqId === s.id;
                 return (
-                  <tr key={s.id} className={s.status === "CANCELLED" ? "opacity-50" : ""}>
-                    <td className="py-2 pr-3 font-mono font-bold">{s.code}</td>
-                    <td className="py-2 pr-3">
-                      {isEditingThis ? (
-                        <input
-                          type="text"
-                          className={`${inputClass} w-36 font-semibold`}
-                          value={seqDraft.name}
-                          onChange={(e) => setSeqDraft((d) => ({ ...d, name: e.target.value }))}
-                        />
-                      ) : (
-                        <>
-                          {s.name}
-                          {s.relation === "SPLIT" && <span className="text-slate-400"> (ống tách)</span>}
-                        </>
-                      )}
+                  <tr key={s.id} className={`align-top ${s.status === "CANCELLED" ? "opacity-50" : ""}`}>
+                    <td className="py-2 pr-3 min-w-[160px]">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-mono font-bold text-sky-700 dark:text-sky-400">{s.code}</span>
+                        <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-semibold text-slate-600 dark:text-slate-300">
+                          {s.molecule_type === "RNA" ? "RNA " : ""}
+                          {PRODUCT[s.product_type as keyof typeof PRODUCT]}
+                        </span>
+                      </div>
+                      <div className="mt-0.5 font-semibold text-slate-900 dark:text-slate-100">
+                        {isEditingThis ? (
+                          <input
+                            type="text"
+                            className={`${inputClass} w-40 font-semibold mt-1`}
+                            value={seqDraft.name}
+                            onChange={(e) => setSeqDraft((d) => ({ ...d, name: e.target.value }))}
+                          />
+                        ) : (
+                          <>
+                            {s.name}
+                            {s.relation === "SPLIT" && <span className="text-slate-400"> (ống tách)</span>}
+                          </>
+                        )}
+                      </div>
                     </td>
-                    <td className="py-2 pr-3 font-mono break-all max-w-80">
+                    <td className="py-2 pr-3 font-mono break-all max-w-96">
                       {isEditingThis ? (
                         <input
                           type="text"
@@ -1661,16 +1678,38 @@ export function OligoOrderPanel({
                         />
                       ) : (
                         <>
-                          {s.normalized_sequence}
-                          {s.raw_sequence !== s.normalized_sequence && <div className="font-sans text-[11px] text-slate-400">nhập: {s.raw_sequence}</div>}
-                          {s.modifications.length > 0 && <div className="font-sans text-[11px] text-sky-700 dark:text-sky-400">Modification: {s.modifications.join(", ")}</div>}
-                          {s.warnings.map((w, i) => <div key={i} className="font-sans text-[11px] text-amber-700 dark:text-amber-400">⚠ {w}</div>)}
+                          <div>{s.normalized_sequence}</div>
+                          {s.raw_sequence !== s.normalized_sequence && (
+                            <div className="font-sans text-[11px] text-slate-400">nhập: {s.raw_sequence}</div>
+                          )}
+                          <div className="font-sans text-[11px] text-slate-500 mt-0.5">
+                            Dài: <b>{s.base_count} nt</b>
+                            {s.modifications.length > 0 && (
+                              <span className="text-sky-700 dark:text-sky-400 font-semibold">
+                                {" "}· Mod: {s.modifications.join(", ")}
+                              </span>
+                            )}
+                          </div>
+                          {s.warnings.map((w, i) => (
+                            <div key={i} className="font-sans text-[11px] text-amber-700 dark:text-amber-400">
+                              ⚠ {w}
+                            </div>
+                          ))}
                         </>
                       )}
                     </td>
-                    <td className="py-2 pr-3 text-right">{s.base_count}</td>
-                    <td className="py-2 pr-3 whitespace-nowrap">{s.molecule_type === "RNA" ? "RNA " : ""}{PRODUCT[s.product_type as keyof typeof PRODUCT]}</td>
-                    <td className="py-2 pr-3 whitespace-nowrap">
+                    <td className="py-2 pr-3 text-xs whitespace-nowrap">
+                      <div>
+                        MW: <b>{s.mw.toLocaleString("vi-VN")} Da</b>
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        Tm: <b>{s.tm.toLocaleString("vi-VN")} °C</b> · GC: <b>{s.gc_percent.toLocaleString("vi-VN")}%</b>
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        {s.nmol_per_od.toLocaleString("vi-VN")} nmol/OD
+                      </div>
+                    </td>
+                    <td className="py-2 pr-3 text-xs">
                       {isEditingThis ? (
                         <div className="flex flex-wrap items-center gap-1">
                           <select
@@ -1709,14 +1748,16 @@ export function OligoOrderPanel({
                         </div>
                       ) : (
                         <>
-                          {scales.data?.find((x) => x.code === s.scale_code)?.label ?? s.scale_code} · {PURIFICATION[s.purification as keyof typeof PURIFICATION]} · {FORMAT[s.format as keyof typeof FORMAT]}
+                          <div className="font-semibold text-slate-800 dark:text-slate-200">
+                            {scales.data?.find((x) => x.code === s.scale_code)?.label ?? s.scale_code} ·{" "}
+                            {PURIFICATION[s.purification as keyof typeof PURIFICATION]}
+                          </div>
+                          <div className="text-[11px] text-slate-500">
+                            {FORMAT[s.format as keyof typeof FORMAT]}
+                          </div>
                         </>
                       )}
                     </td>
-                    <td className="py-2 pr-3 text-right whitespace-nowrap">{s.mw.toLocaleString("vi-VN")}</td>
-                    <td className="py-2 pr-3 text-right">{s.tm.toLocaleString("vi-VN")}</td>
-                    <td className="py-2 pr-3 text-right">{s.gc_percent.toLocaleString("vi-VN")}</td>
-                    <td className="py-2 pr-3 text-right">{s.nmol_per_od.toLocaleString("vi-VN")}</td>
                     <td className="py-2 pr-3 whitespace-nowrap">
                       <StatusBadge status={SEQ_STATUS[s.status][0]} label={SEQ_STATUS[s.status][1]} />
                     </td>

@@ -1314,62 +1314,44 @@ export async function printOrderCoa(
           s.product_type === "PROBE" || (s.modifications && s.modifications.length > 0)
             ? "Probe"
             : "Primer";
-        const modsText = Array.isArray(s.modifications) && s.modifications.length > 0 ? s.modifications.join(", ") : "None";
-        const yieldText = s.measured
-          ? `${num(s.measured.od_total)} OD · ${num(s.measured.nmol)} nmol · ${num(s.measured.ug)} µg (${s.measured.tube_count} ống)`
-          : "Chưa đo OD";
-        const qcBadge = s.qc ? `ĐẠT (${esc(s.qc.code)})` : "CHƯA QC";
+        const modsText =
+          Array.isArray(s.modifications) && s.modifications.length > 0 ? s.modifications.join(", ") : "";
+        const tubeCount = s.measured?.tube_count || 1;
+        const formatLabel = s.format === "LIQUID" ? "Dung dịch" : "Đông khô";
+        const yieldHtml = s.measured
+          ? `<b>${num(s.measured.nmol)} nmol</b> (${num(s.measured.od_total)} OD)<br><span style="font-size:8pt;color:#334155;">${num(s.measured.ug)} µg</span>`
+          : `<span style="color:#64748b;">Chưa đo</span>`;
+        const vol100umText =
+          s.measured && Number(s.measured.nmol) > 0
+            ? `<b>${num(Math.round(Number(s.measured.nmol) * 10 * 10) / 10)} µL</b>`
+            : "—";
 
         return `<tr>
           <td style="text-align:center;">${idx + 1}</td>
-          <td><b>${esc(s.code)}</b><br><span style="font-size:8pt;color:#334155;">${esc(s.name)}</span></td>
-          <td style="text-align:center;">${esc(roleLabel)}</td>
-          <td class="seq">${esc(s.normalized_sequence)}</td>
-          <td style="text-align:center;">${esc(modsText)}</td>
-          <td class="r">${esc(s.base_count)}</td>
-          <td class="r">${num(s.mw)}</td>
-          <td class="r">${num(s.tm)}</td>
-          <td class="r">${num(s.gc_percent)}%</td>
-          <td>${esc(s.scale_code)} · ${esc(s.purification)}<br><span style="font-size:8pt;">${
-            s.format === "LIQUID" ? "Dung dịch" : "Đông khô"
-          }</span></td>
-          <td>${yieldText}</td>
-          <td style="text-align:center;font-weight:bold;">${qcBadge}</td>
+          <td>
+            <b>${esc(s.code)}</b> <span style="font-size:7.5pt;padding:0.5pt 3pt;border:0.5pt solid #cbd5e1;border-radius:2pt;">${esc(roleLabel)}</span><br>
+            <span style="font-size:8.5pt;color:#0f172a;font-weight:bold;">${esc(s.name)}</span>
+          </td>
+          <td class="seq">
+            <div>${esc(s.normalized_sequence)}</div>
+            <div style="font-family:Arial,sans-serif;font-size:7.5pt;color:#475569;margin-top:1.5pt;">
+              Dài: <b>${esc(s.base_count)} nt</b>${modsText ? ` · Mod: <b>${esc(modsText)}</b>` : ""}
+            </div>
+          </td>
+          <td>
+            <div>MW: <b>${num(s.mw)} Da</b></div>
+            <div style="font-size:8pt;color:#334155;">Tm: <b>${num(s.tm)} °C</b> · GC: <b>${num(s.gc_percent)}%</b></div>
+          </td>
+          <td>
+            <div><b>${esc(s.scale_code)} · ${esc(s.purification)}</b></div>
+            <div style="font-size:8pt;color:#334155;">${formatLabel} (${tubeCount} ống)</div>
+          </td>
+          <td>${yieldHtml}</td>
+          <td class="r">${vol100umText}</td>
         </tr>`;
       })
       .join("");
 
-    const ppQcResultRows = primerProbeSeqs.flatMap((s: any) =>
-      s.qc && Array.isArray(s.qc.results)
-        ? s.qc.results.map((r: any) => ({ seqCode: s.code, ...r }))
-        : []
-    );
-
-    const ppQcTableBody =
-      ppQcResultRows.length > 0
-        ? ppQcResultRows
-            .map(
-              (r: any, rIdx: number) => `<tr>
-                <td>${rIdx + 1}. [${esc(r.seqCode)}] ${esc(r.name)}</td>
-                <td>${esc(r.method || "—")}</td>
-                <td>${spec(r)} ${esc(r.unit ?? "")}</td>
-                <td>${value(r, r.unit)}</td>
-                <td><b>${r.passed == null ? "—" : r.passed ? "Đạt" : "Không đạt"}</b></td>
-              </tr>`
-            )
-            .join("")
-        : `<tr><td colspan="5" style="text-align:center;color:#64748b;">Chưa có dữ liệu kiểm nghiệm QC được phê duyệt</td></tr>`;
-
-    const allHaveQc =
-      primerProbeSeqs.length > 0 &&
-      primerProbeSeqs.every((s: any) => Boolean(s.qc && Array.isArray(s.qc.results) && s.qc.results.length > 0));
-    const allPassed =
-      allHaveQc &&
-      primerProbeSeqs.every((s: any) => s.qc.results.every((r: any) => r.passed === true));
-    const ppConclusion =
-      allPassed && allHaveQc
-        ? "ĐẠT TIÊU CHUẨN CHẤT LƯỢNG (PASSED)"
-        : "BẢN XEM TRƯỚC — CHƯA HOÀN TẤT KIỂM NGHIỆM QC";
     const ppReviewerSig = primerProbeSeqs.map((s: any) => s.qc?.signature).find(Boolean) ?? null;
 
     const primerProbeCoaHtml = `
@@ -1380,22 +1362,17 @@ export async function printOrderCoa(
           Số chứng chỉ: <b>COA-${esc(o.code)}-PP</b> · Tiêu chuẩn áp dụng: ISO 13485:2016 / TCCS-ABT-OLIGO
         </div>
         ${orderMetaHtml}
-        <div style="font-weight:bold;margin:6pt 0 3pt;">I. BẢNG THÔNG SỐ LÝ HÓA &amp; KẾT QUẢ KIỂM ĐỊNH PRIMER / PROBE (${primerProbeSeqs.length} TRÌNH TỰ):</div>
+        <div style="font-weight:bold;margin:6pt 0 3pt;">BẢNG THÔNG SỐ LÝ HÓA &amp; ĐỊNH LƯỢNG PRIMER / PROBE (${primerProbeSeqs.length} TRÌNH TỰ):</div>
         <table>
           <thead>
             <tr>
               <th style="width:4%;text-align:center;">#</th>
-              <th style="width:13%;">Mã &amp; Tên Oligo</th>
-              <th style="width:6%;text-align:center;">Loại</th>
-              <th style="width:24%;">Trình tự (5' → 3')</th>
-              <th style="width:8%;text-align:center;">Mod 5'/3'</th>
-              <th style="width:4%;text-align:right;">Dài (nt)</th>
-              <th style="width:7%;text-align:right;">MW (Da)</th>
-              <th style="width:5%;text-align:right;">Tm (°C)</th>
-              <th style="width:5%;text-align:right;">%GC</th>
-              <th style="width:9%;">Thang / Tinh sạch</th>
-              <th style="width:10%;">Lượng thu được</th>
-              <th style="width:5%;text-align:center;">QC</th>
+              <th style="width:17%;">Mã &amp; Tên Oligo</th>
+              <th style="width:31%;">Trình tự (5' → 3') &amp; Biến đổi</th>
+              <th style="width:15%;">Thông số Lý hóa</th>
+              <th style="width:12%;">Quy cách Tổng hợp</th>
+              <th style="width:12%;">Lượng thu được</th>
+              <th style="width:9%;text-align:right;">Pha 100 µM</th>
             </tr>
           </thead>
           <tbody>
@@ -1403,36 +1380,22 @@ export async function printOrderCoa(
           </tbody>
         </table>
 
-        <div style="font-weight:bold;margin:8pt 0 3pt;">II. CHỈ TIÊU KIỂM SOÁT CHẤT LƯỢNG NHÓM PRIMER &amp; PROBE:</div>
-        <table>
-          <thead>
-            <tr>
-              <th>Chỉ tiêu kiểm tra</th>
-              <th>Phương pháp</th>
-              <th>Tiêu chuẩn chấp nhận</th>
-              <th>Kết quả</th>
-              <th>Đánh giá</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${ppQcTableBody}
-          </tbody>
-        </table>
+        <div style="font-size:8.5pt;color:#334155;margin-top:6pt;line-height:1.45;">
+          <div>• <b>Cam kết hiệu suất thu hồi theo thang tổng hợp (Scale):</b> Thang 50 nmol (<b>≥ 15 nmol</b>) · Thang 100 nmol (<b>≥ 30 nmol</b>) · Thang 200 nmol (<b>≥ 60 nmol</b>) · Thang 500 nmol (<b>≥ 150 nmol</b>) · Thang 1000 nmol (<b>≥ 300 nmol</b>).</div>
+          <div>• <b>Hướng dẫn bảo quản &amp; hoàn nguyên:</b> Bảo quản ở -20°C. Ly tâm nhẹ (spin-down) ống trước khi mở nắp; thêm thể tích đệm TE (pH 8.0) hoặc nước Nuclease-free theo cột <b>&ldquo;Pha 100 µM&rdquo;</b> để thu được dung dịch gốc <b>100 µM (100 pmol/µL)</b>.</div>
+        </div>
 
-        <p style="margin-top:6pt;"><b>KẾT LUẬN CHUNG (PRIMER &amp; PROBE): ${ppConclusion}.</b></p>
         <table class="meta" style="margin-top:12pt;width:100%;">
           <tr>
             <td style="width:50%;text-align:center;">
-              <b>PHÒNG TỔNG HỢP OLIGO</b><br>
-              <span style="font-size:8.5pt;color:#475569;">(Đã kiểm tra thông số tổng hợp &amp; tinh sạch)</span><br><br><br>
-              <b>Tổ trưởng Tổng hợp Oligo</b>
+              <b>BỘ PHẬN HẬU TỔNG HỢP &amp; QC OLIGO</b><br>
+              <span style="font-size:8.5pt;color:#475569;">(Đã kiểm tra định lượng OD260, hiệu suất thu hồi &amp; tinh sạch)</span><br><br><br>
+              <b>${ppReviewerSig ? esc(ppReviewerSig.signer_name) : "Tổ trưởng Tổng hợp Oligo"}</b>
             </td>
             <td style="width:50%;text-align:center;">
-              <b>PHÒNG ĐẢM BẢO &amp; KIỂM SOÁT CHẤT LƯỢNG (QA/QC)</b><br>
-              <span style="font-size:8.5pt;color:#475569;">${
-                ppReviewerSig ? sig(ppReviewerSig) : "Chưa có chữ ký phê duyệt QC"
-              }</span><br><br><br>
-              <b>${ppReviewerSig ? esc(ppReviewerSig.signer_name) : "Trưởng bộ phận QA/QC"}</b>
+              <b>PHÒNG TỔNG HỢP OLIGO PHÊ DUYỆT</b><br>
+              <span style="font-size:8.5pt;color:#475569;">(Xác nhận xuất xưởng đạt cam kết thang tổng hợp)</span><br><br><br>
+              <b>Trưởng phòng Tổng hợp Oligo</b>
             </td>
           </tr>
         </table>

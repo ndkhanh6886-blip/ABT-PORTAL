@@ -183,13 +183,18 @@ export function AnalysisView({ canManageOrders, canManageCatalog }: { canManageO
   const tabs: [Kind, string][] = [["PRIMER", "Primer"], ["PROBE", "Probe đánh dấu"], ["AMPLICON", "Amplicon"], ["PLASMID", "Cấu hình plasmid"]];
   const params = (r: Row) => (
     <>
-      <td className="py-1.5 pr-3 text-right">{r.base_count}</td>
-      <td className="py-1.5 pr-3 text-right">{n(r.gc_percent)}</td>
-      <td className="py-1.5 pr-3 text-right">{n(r.tm)}</td>
-      <td className="py-1.5 pr-3 text-right whitespace-nowrap">{n(r.ext_coeff_260)}</td>
-      <td className="py-1.5 pr-3 text-right">{n(r.nmol_per_od)}</td>
-      <td className="py-1.5 pr-3 text-right">{n(r.ug_per_od)}</td>
-      <td className="py-1.5 pr-3 text-right whitespace-nowrap">{n(r.mw)}</td>
+      <td className="py-1.5 pr-3 text-xs whitespace-nowrap">
+        <div>Dài: <b>{r.base_count} nt</b></div>
+        <div className="text-[11px] text-slate-500">Tm: <b>{n(r.tm)} °C</b> · GC: <b>{n(r.gc_percent)}%</b></div>
+      </td>
+      <td className="py-1.5 pr-3 text-xs whitespace-nowrap">
+        <div>MW: <b>{n(r.mw)} Da</b></div>
+        <div className="text-[11px] text-slate-500">ε260: {n(r.ext_coeff_260)}</div>
+      </td>
+      <td className="py-1.5 pr-3 text-xs whitespace-nowrap">
+        <div><b>{n(r.nmol_per_od)}</b> nmol/OD</div>
+        <div className="text-[11px] text-slate-500">{n(r.ug_per_od)} µg/OD</div>
+      </td>
     </>
   );
   return (
@@ -215,7 +220,7 @@ export function AnalysisView({ canManageOrders, canManageCatalog }: { canManageO
                 head={
                   kind === "AMPLICON"
                     ? ["Đơn", "Mã / tên", "Trình tự 5'→3'", "Dài", "GC %", "MW", "Plasmid", "Phân mảnh", "Trạng thái"]
-                    : ["Đơn", "Mã / tên", "Trình tự 5'→3'", "Dài", "GC %", "Tm °C", "ε260", "nmol/OD", "µg/OD", "MW", "Trạng thái"]
+                    : ["Đơn", "Mã & Tên trình tự", "Trình tự 5'→3' & Mod", "Dài · Tm · GC%", "MW · ε260", "Quy đổi OD", "Trạng thái"]
                 }
               >
                 {list.data.rows.map((r) => (
