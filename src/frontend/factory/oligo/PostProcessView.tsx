@@ -561,7 +561,7 @@ function StepExecutionModal({
                             disabled={saveOdAndStepMut.isPending || !liveOdPreview}
                             onClick={() => saveOdAndStepMut.mutate(true)}
                           >
-                            🚀 Lưu Đo OD &amp; Gửi QC ngay
+                            ✅ Lưu Đo OD &amp; Xác nhận Đạt QC (Hoàn tất)
                           </Button>
                         )}
                       </div>
@@ -596,16 +596,16 @@ function StepExecutionModal({
                   </div>
                 ) : (
                   <p className="text-xs text-amber-700 dark:text-amber-300">
-                    Trình tự chưa có số liệu đo OD260. Vui lòng nhập kết quả đo OD trước khi gửi QC.
+                    Trình tự chưa có số liệu đo OD260. Vui lòng nhập kết quả đo OD trước khi xác nhận QC.
                   </p>
                 )}
                 <div className="flex flex-wrap items-center gap-2 pt-1">
-                  {editable && Number(rec?.od_total ?? row.od_total ?? 0) > 0 && (
+                  {canManage && (s?.status === "POST_PROCESSING" || s?.status === "QC") && Number(rec?.od_total ?? row.od_total ?? 0) > 0 && (
                     <Button
                       disabled={submitQcMut.isPending}
                       onClick={() => submitQcMut.mutate()}
                     >
-                      🚀 Hoàn tất Hậu tổng hợp &amp; Gửi QC
+                      ✅ Xác nhận Đạt QC &amp; Hoàn tất (Phòng Oligo)
                     </Button>
                   )}
                   {canLabel && Number(rec?.od_total ?? row.od_total ?? 0) > 0 && (
@@ -1031,12 +1031,12 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                   🧬 {og.label} ({og.count})
                 </button>
               ))}
-              {canManage && filteredList.some((r) => r.status === "SYNTHESIZED" || r.status === "POST_PROCESSING") && (
+              {canManage && filteredList.some((r) => r.status === "SYNTHESIZED" || r.status === "POST_PROCESSING" || r.status === "QC") && (
                 <button
                   type="button"
                   onClick={() => {
                     const selectableIds = filteredList
-                      .filter((r) => r.status === "SYNTHESIZED" || r.status === "POST_PROCESSING")
+                      .filter((r) => r.status === "SYNTHESIZED" || r.status === "POST_PROCESSING" || r.status === "QC")
                       .map((r) => r.id);
                     const allSelected = selectableIds.every((id) => picked.includes(id));
                     setPicked(allSelected ? [] : selectableIds);
@@ -1044,7 +1044,7 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                   className="ml-auto px-2.5 py-0.5 rounded-lg text-xs font-bold border border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-800 dark:text-indigo-200 cursor-pointer"
                 >
                   ☑️ Chọn / Bỏ chọn toàn bộ danh sách đang lọc (
-                  {filteredList.filter((r) => r.status === "SYNTHESIZED" || r.status === "POST_PROCESSING").length})
+                  {filteredList.filter((r) => r.status === "SYNTHESIZED" || r.status === "POST_PROCESSING" || r.status === "QC").length})
                 </button>
               )}
             </div>
@@ -1102,9 +1102,9 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                 <Button
                   variant="ghost"
                   disabled={batchAct.isPending}
-                  onClick={() => batchAct.mutate({ action: "batch_submit_qc", sequence_ids: picked })}
+                  onClick={() => batchAct.mutate({ action: "batch_confirm_qc", sequence_ids: picked, qc_result: "PASS" })}
                 >
-                  🚀 Gửi QC các chuỗi đã đo OD
+                  ✅ Xác nhận Đạt QC &amp; Hoàn tất các chuỗi đã đo OD
                 </Button>
               </div>
             </div>
@@ -1156,7 +1156,7 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                   >
                     {/* 1. Checkbox */}
                     <td className="py-3 pr-2">
-                      {canManage && (r.status === "POST_PROCESSING" || r.status === "SYNTHESIZED") && (
+                      {canManage && (r.status === "POST_PROCESSING" || r.status === "SYNTHESIZED" || r.status === "QC") && (
                         <input
                           type="checkbox"
                           checked={picked.includes(r.id)}
@@ -1265,12 +1265,10 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                         </div>
                       ) : r.status === "QC" ? (
                         <div className="space-y-0.5">
-                          <StatusBadge status={SEQ_STATUS[r.status][0]} label={SEQ_STATUS[r.status][1]} />
-                          {r.qc_code && (
-                            <div className="text-[11px] font-mono text-slate-500">
-                              {r.qc_code} · {QC_STATUS_LABEL[r.qc_status!] ?? r.qc_status}
-                            </div>
-                          )}
+                          <StatusBadge status={SEQ_STATUS[r.status][0]} label="Chờ Xác nhận QC (Phòng Oligo)" />
+                          <div className="text-[11px] text-slate-500">
+                            {Number(r.od_total) > 0 ? `Đã đo ${fmtQty(r.od_total)} OD · Sẵn sàng xác nhận` : "Chờ xác nhận kết quả"}
+                          </div>
                         </div>
                       ) : r.status === "COMPLETED" ? (
                         <StatusBadge status={SEQ_STATUS[r.status][0]} label={SEQ_STATUS[r.status][1]} />
@@ -1280,7 +1278,7 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                             ✅ Hoàn tất {totalSteps}/{totalSteps} bước
                           </div>
                           <div className="text-[11px] text-slate-500">
-                            {Number(r.od_total) > 0 ? "Sẵn sàng gửi QC" : "Cần nhập kết quả Đo OD"}
+                            {Number(r.od_total) > 0 ? "Sẵn sàng xác nhận Đạt QC" : "Cần nhập kết quả Đo OD"}
                           </div>
                         </div>
                       )}
@@ -1368,13 +1366,14 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                                 disabled={batchAct.isPending}
                                 onClick={() =>
                                   batchAct.mutate({
-                                    action: "batch_submit_qc",
+                                    action: "batch_confirm_qc",
                                     sequence_ids: [r.id],
+                                    qc_result: "PASS",
                                   })
                                 }
                                 className="w-full rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-1.5 shadow-xs transition cursor-pointer flex items-center justify-center gap-1"
                               >
-                                🚀 Gửi QC
+                                ✅ Xác nhận Đạt QC
                               </button>
                             )}
 
@@ -1388,6 +1387,31 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                           </>
                         ) : (
                           <>
+                            {canManage && r.status === "QC" && (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={batchAct.isPending}
+                                  onClick={() =>
+                                    batchAct.mutate({
+                                      action: "batch_confirm_qc",
+                                      sequence_ids: [r.id],
+                                      qc_result: "PASS",
+                                    })
+                                  }
+                                  className="w-full rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-1.5 shadow-xs transition cursor-pointer flex items-center justify-center gap-1"
+                                >
+                                  ✅ Xác nhận Đạt QC
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setRerunRow(r)}
+                                  className="w-full rounded-lg border border-rose-300 dark:border-rose-800/80 bg-rose-50/40 dark:bg-rose-950/20 hover:bg-rose-100/70 dark:hover:bg-rose-950/50 text-rose-700 dark:text-rose-400 font-semibold text-[11px] px-2.5 py-1 transition cursor-pointer flex items-center justify-center gap-1"
+                                >
+                                  ↻ Không đạt / Chạy lại
+                                </button>
+                              </>
+                            )}
                             <button
                               type="button"
                               onClick={() => setStepModalRow({ row: r, mode: "HISTORY" })}
@@ -1577,7 +1601,7 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                   });
                 }}
               >
-                🚀 Lưu Đo OD &amp; Gửi QC Hàng loạt
+                ✅ Lưu Đo OD &amp; Xác nhận Đạt QC Hàng loạt
               </Button>
             </div>
           </div>

@@ -363,7 +363,8 @@ export async function listQcTests(tx: Tx, actor: AuthzActor, status?: string) {
          LEFT JOIN kit.production_order po ON t.entity_type = 'PRODUCTION_ORDER' AND po.id = t.entity_id
          LEFT JOIN inv.lot pol ON pol.id = po.lot_id
          LEFT JOIN master.item poi ON poi.id = po.product_item_id
-        WHERE ($1::text IS NULL AND t.status NOT IN ('REVIEWED', 'CANCELLED')) OR t.status = $1
+        WHERE t.entity_type <> 'OLIGO_SEQUENCE'
+          AND (($1::text IS NULL AND t.status NOT IN ('REVIEWED', 'CANCELLED')) OR t.status = $1)
         ORDER BY t.created_at DESC LIMIT 200`,
       [status ?? null]
     )

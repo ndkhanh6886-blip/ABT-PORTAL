@@ -244,6 +244,106 @@ export async function sendToQc(tx: Tx, actor: AuthzActor, seqId: string) {
   return createQcTest(tx, actor, { entity_type: "OLIGO_SEQUENCE", entity_id: seqId, spec_id: spec.id, test_kind: "FQC" });
 }
 
+/**
+ * Performs and confirms Oligo QC in-house by Oligo department staff directly inside the Post-Synthesis workflow
+ * (without transferring the QC task to the QA/QC department).
+ * Also populates `qms.qc_test` & `qms.qc_result` as REVIEWED so Order COA certificates have complete analytical metrics.
+ */
+export async function confirmOligoPostQc(
+  tx: Tx,
+  actor: AuthzActor,
+  seqId: string,
+  opts: { result?: "PASS" | "FAIL"; notes?: string | null } = {}
+) {
+  let s = await lockSequence(tx, seqId);
+  await authorize(tx, actor, "oligo.post.manage", s.org_unit_id);
+  const verdict: "PASS" | "FAIL" = opts.result === "FAIL" ? "FAIL" : "PASS";
+
+  let test = (
+    await tx.query(
+      "SELECT * FROM qms.qc_test WHERE entity_type = 'OLIGO_SEQUENCE' AND entity_id = $1 AND status NOT IN ('REVIEWED', 'CANCELLED') ORDER BY created_at DESC LIMIT 1 FOR UPDATE",
+      [seqId]
+    )
+  ).rows[0];
+
+  if (s.status === "POST_PROCESSING") {
+    test = await sendToQc(tx, actor, seqId);
+    s = await lockSequence(tx, seqId);
+  } else if (s.status === "QC" && !test) {
+    const spec = await oligoSpec(tx);
+    if (spec) {
+      test = await createQcTest(tx, actor, { entity_type: "OLIGO_SEQUENCE", entity_id: seqId, spec_id: spec.id, test_kind: "FQC" });
+    }
+  }
+
+  if (s.status !== "QC") {
+    throw invalid(`Trình tự ${s.code} đang ở trạng thái ${s.status}, không ở bước xác nhận QC sau tổng hợp.`);
+  }
+
+  const rec = await liveRecord(tx, seqId, false);
+  if (test) {
+    const params = (
+      await tx.query("SELECT * FROM qms.qc_spec_parameter WHERE spec_id = $1 ORDER BY seq", [test.spec_id])
+    ).rows;
+    for (const p of params) {
+      let valNum: number | null = null;
+      let valText: string | null = null;
+      if (p.derived_metric === "OD_TOTAL") {
+        valNum = Number(rec?.od_total ?? 0);
+      } else if (p.derived_metric === "YIELD_NMOL") {
+        valNum = Number(rec?.nmol ?? 0);
+      } else if (p.derived_metric === "YIELD_UG") {
+        valNum = Number(rec?.ug ?? 0);
+      } else if (p.value_type === "NUMERIC") {
+        valNum = Number(p.lower_limit ?? rec?.od_total ?? 1);
+      } else {
+        valText = verdict;
+      }
+      const passed = verdict === "PASS";
+      await tx.query(
+        `INSERT INTO qms.qc_result (test_id, parameter_id, value_numeric, value_text, passed, entered_by)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (test_id, parameter_id) DO UPDATE
+           SET value_numeric = EXCLUDED.value_numeric,
+               value_text = EXCLUDED.value_text,
+               passed = EXCLUDED.passed,
+               entered_by = EXCLUDED.entered_by,
+               entered_at = now()`,
+        [test.id, p.id, valNum, valText, passed, actor.userId]
+      );
+    }
+    await tx.query(
+      `UPDATE qms.qc_test
+          SET status = 'REVIEWED',
+              overall_result = $2,
+              analyst_id = COALESCE(analyst_id, $3),
+              reviewer_id = $3,
+              reviewed_at = now(),
+              version = version + 1,
+              updated_at = now(),
+              updated_by = $3
+        WHERE id = $1`,
+      [test.id, verdict, actor.userId]
+    );
+  }
+
+  if (verdict === "PASS") {
+    await move(tx, actor, s, "qc_passed", opts.notes || "Nhân viên phòng Oligo xác nhận Đạt QC sau tổng hợp", true);
+  } else {
+    await move(tx, actor, s, "qc_failed", opts.notes || "Nhân viên phòng Oligo xác nhận Không đạt QC sau tổng hợp", true);
+  }
+
+  await writeAudit(tx, actor, {
+    entityType: "oligo_sequence",
+    entityId: s.id,
+    action: "confirm_oligo_qc",
+    changes: { status: ["QC", verdict === "PASS" ? "COMPLETED" : "FAILED"], qc_result: [null, verdict] },
+    reason: opts.notes || null,
+  });
+
+  return { sequence_id: s.id, code: s.code, status: verdict === "PASS" ? "COMPLETED" : "FAILED", qc_result: verdict };
+}
+
 const QUEUE_STATUSES = ["SYNTHESIZED", "POST_PROCESSING", "QC"];
 
 /** Sequences between synthesis and completion with their post-processing record and latest QC test. */
@@ -372,10 +472,11 @@ registerQcSubject("OLIGO_SEQUENCE", {
 });
 
 const batchPostSchema = z.object({
-  action: z.enum(["batch_start", "batch_measure", "batch_submit_qc", "batch_assign_workflow", "batch_rerun"]),
+  action: z.enum(["batch_start", "batch_measure", "batch_submit_qc", "batch_confirm_qc", "batch_assign_workflow", "batch_rerun"]),
   sequence_ids: z.array(z.string().uuid()).min(1, "chọn ít nhất 1 trình tự").max(200),
   workflow_id: z.string().trim().max(100).optional().nullable(),
   rerun_mode: z.enum(["REWIND_STEP", "RESET_POST", "RESYNTHESIZE"]).optional().default("RESET_POST"),
+  qc_result: z.enum(["PASS", "FAIL"]).optional().default("PASS"),
   reason: z.string().trim().max(500).optional().nullable(),
   a260: z.coerce.number().positive().max(1000).optional(),
   per_sequence_a260: z.record(z.string(), z.coerce.number().positive().max(1000)).optional(),
@@ -533,22 +634,26 @@ export async function batchPostProcessAction(tx: Tx, actor: AuthzActor, input: u
       await ensureSopStepsCompletedForBatch(tx, actor, rec);
 
       if (d.auto_submit_qc) {
-        await sendToQc(tx, actor, seqId);
+        await confirmOligoPostQc(tx, actor, seqId, { result: "PASS", notes: d.reason });
       }
       processed.push(s.code);
     }
     return { action: d.action, count: processed.length, codes: processed };
   }
 
-  if (d.action === "batch_submit_qc") {
+  if (d.action === "batch_submit_qc" || d.action === "batch_confirm_qc") {
     for (const seqId of ids) {
       const s = await lockSequence(tx, seqId);
-      if (s.status !== "POST_PROCESSING") continue;
-      const rec = await liveRecord(tx, seqId, true);
-      if (!rec || rec.status !== "OPEN" || !(Number(rec.od_total) > 0)) continue;
-      await ensureSopStepsCompletedForBatch(tx, actor, rec);
-      await sendToQc(tx, actor, seqId);
-      processed.push(s.code);
+      if (s.status === "POST_PROCESSING") {
+        const rec = await liveRecord(tx, seqId, true);
+        if (!rec || rec.status !== "OPEN" || !(Number(rec.od_total) > 0)) continue;
+        await ensureSopStepsCompletedForBatch(tx, actor, rec);
+        await confirmOligoPostQc(tx, actor, seqId, { result: d.qc_result, notes: d.reason });
+        processed.push(s.code);
+      } else if (s.status === "QC") {
+        await confirmOligoPostQc(tx, actor, seqId, { result: d.qc_result, notes: d.reason });
+        processed.push(s.code);
+      }
     }
     return { action: d.action, count: processed.length, codes: processed };
   }

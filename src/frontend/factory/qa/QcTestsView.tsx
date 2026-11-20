@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { Fragment, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActionBar, type AllowedAction } from "../actions";
 import { api, fmtDate, fmtQty, useFactoryMe } from "../api";
@@ -691,7 +691,21 @@ export function QcTestsView() {
   const [queueFilter, setQueueFilter] = useState<"ALL" | "IQC" | "IPQC" | "FQC">("ALL");
   const [openingReleaseNotice, setOpeningReleaseNotice] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [selectedSource, setSelectedSource] = useState<"queue" | "list" | "coa">("list");
+  const [selectedAnchorId, setSelectedAnchorId] = useState<string | null>(null);
   const [selectedCoa, setSelectedCoa] = useState<any | null>(null);
+
+  const openTestInline = (testId: string, source: "queue" | "list" | "coa", anchorId?: string) => {
+    const targetAnchor = anchorId ?? testId;
+    if (selected === testId && selectedSource === source && selectedAnchorId === targetAnchor) {
+      setSelected(null);
+      setSelectedAnchorId(null);
+      return;
+    }
+    setSelected(testId);
+    setSelectedSource(source);
+    setSelectedAnchorId(targetAnchor);
+  };
   const [showProactiveForm, setShowProactiveForm] = useState(false);
   const [proactiveLotId, setProactiveLotId] = useState("");
   const [proactiveKind, setProactiveKind] = useState<"IQC" | "IPQC" | "FQC" | "RELEASE" | "STABILITY">("IQC");
@@ -819,16 +833,25 @@ export function QcTestsView() {
   };
 
   const receiveLotMut = useMutation({
-    mutationFn: (payload: { lot_id: string; test_kind?: string; spec_id?: string | null }) =>
+    mutationFn: (payload: { lot_id: string; test_kind?: string; spec_id?: string | null; _source?: "queue" | "list" }) =>
       api<{ test_id: string; test_code: string }>("/api/factory/qms/ops", {
         method: "POST",
-        json: { op: "receive_lot_qc", ...payload },
+        json: {
+          op: "receive_lot_qc",
+          lot_id: payload.lot_id,
+          test_kind: payload.test_kind,
+          spec_id: payload.spec_id,
+        },
       }),
-    onSuccess: (res) => {
+    onSuccess: (res, vars) => {
       qc.invalidateQueries({ queryKey: ["factory", "qc-tests"] });
       qc.invalidateQueries({ queryKey: ["factory", "qa-ops"] });
       setShowProactiveForm(false);
-      if (res?.test_id) setSelected(res.test_id);
+      if (res?.test_id) {
+        setSelected(res.test_id);
+        setSelectedSource(vars._source ?? "queue");
+        setSelectedAnchorId(vars.lot_id);
+      }
     },
   });
 
@@ -862,20 +885,42 @@ export function QcTestsView() {
   const openingQueueCount = queue.filter((q) => q.origin === "OPENING").length;
   const canReleaseOpening = Boolean(me.data?.is_root || me.data?.permissions?.includes("inv.lot.release"));
 
+  const renderInlineDetailPanel = (testId: string) => (
+    <QcDetailPanel
+      key={testId}
+      id={testId}
+      standards={qaOps.data?.standards ?? []}
+      standardUsages={qaOps.data?.standard_usages ?? []}
+      formsConfig={formsConfig}
+      issuedCoas={qaOps.data?.issued_coas ?? []}
+      onClose={() => {
+        setSelected(null);
+        setSelectedAnchorId(null);
+      }}
+    />
+  );
+
+  const isQueueRowSelected = (q: any) =>
+    Boolean(
+      selected &&
+        selectedSource === "queue" &&
+        (selectedAnchorId === q.lot_id || q.latest_test_id === selected)
+    );
+
+  const isRenderedInlineInQueue = Boolean(selected && selectedSource === "queue" && filteredQueue.some(isQueueRowSelected));
+  const isRenderedInlineInList = Boolean(
+    selected && selectedSource === "list" && (list.data ?? []).some((r) => r.id === selected)
+  );
+  const isRenderedInlineInCoa = Boolean(
+    selected &&
+      selectedSource === "coa" &&
+      (qaOps.data?.issued_coas ?? []).some(
+        (c: any) => c.qc_test_id === selected && (!selectedAnchorId || c.id === selectedAnchorId)
+      )
+  );
+
   return (
     <div className="flex flex-col gap-3">
-      {selected && (
-        <QcDetailPanel
-          key={selected}
-          id={selected}
-          standards={qaOps.data?.standards ?? []}
-          standardUsages={qaOps.data?.standard_usages ?? []}
-          formsConfig={formsConfig}
-          issuedCoas={qaOps.data?.issued_coas ?? []}
-          onClose={() => setSelected(null)}
-        />
-      )}
-
       {/* Unified 1-Stop QC Reception Queue */}
       <Card
         title="📥 Trung tâm Tiếp nhận Yêu cầu QC Một Cửa (Nguyên liệu IQC · Bán thành phẩm IPQC · Thành phẩm FQC)"
@@ -940,6 +985,7 @@ export function QcTestsView() {
                 lot_id: proactiveLotId,
                 test_kind: proactiveKind,
                 spec_id: proactiveSpecId || null,
+                _source: "queue",
               });
             }}
           >
@@ -978,60 +1024,81 @@ export function QcTestsView() {
           </form>
         )}
 
+        {selected && selectedSource === "queue" && !isRenderedInlineInQueue && (
+          <div className="mb-3">{renderInlineDetailPanel(selected)}</div>
+        )}
+
         {filteredQueue.length === 0 ? (
           <Empty>Hiện không có lô hàng nào đang chờ lấy mẫu hoặc chờ QC trong hàng đợi này.</Empty>
         ) : (
           <Table head={["Phân loại QC", "Số Lô (Lot)", "Mã & Tên Vật tư / BTP / Thành phẩm", "Số lượng · Kho", "Hạn dùng", "Trạng thái Lô", "Phiếu QC hiện tại", "Thao tác tại QC"]}>
-            {filteredQueue.map((q) => (
-              <tr key={q.lot_id}>
-                <td className="py-2 pr-3">
-                  <StatusBadge status={QC_CATEGORY_LABEL[q.qc_category]?.badge ?? "QUARANTINE"} label={q.qc_category} />
-                </td>
-                <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">
-                  {q.lot_code}
-                  {q.mfr_lot_no && <div className="text-[11px] text-slate-400">NSX: {q.mfr_lot_no}</div>}
-                </td>
-                <td className="py-2 pr-3">
-                  <div className="font-semibold">{q.item_code} — {q.item_name}</div>
-                  <div className="text-[11px] text-slate-500">Nguồn: {q.origin} · Loại: {q.item_type}</div>
-                </td>
-                <td className="py-2 pr-3 font-mono">
-                  {fmtQty(q.qty_on_hand)} {q.base_uom}
-                  <div className="text-[11px] text-slate-400">{q.warehouse_locations || "—"}</div>
-                </td>
-                <td className="py-2 pr-3 font-mono whitespace-nowrap">{fmtDate(q.expiry_date)}</td>
-                <td className="py-2 pr-3">
-                  <StatusBadge status={q.lot_status} label={q.lot_status === "QUARANTINE" ? "Biệt trữ chờ lấy mẫu" : "Đang kiểm QC"} />
-                </td>
-                <td className="py-2 pr-3">
-                  {q.latest_test_code ? (
-                    <button
-                      type="button"
-                      className="font-mono font-semibold text-sky-700 dark:text-sky-400 underline cursor-pointer"
-                      onClick={() => setSelected(q.latest_test_id)}
-                    >
-                      {q.latest_test_code} ({QC_STATUS_LABEL[q.latest_test_status] ?? q.latest_test_status})
-                    </button>
-                  ) : (
-                    <span className="text-slate-400 text-xs">Chưa lập phiếu</span>
+            {filteredQueue.map((q) => {
+              const rowExpanded = isQueueRowSelected(q);
+              return (
+                <Fragment key={q.lot_id}>
+                  <tr className={rowExpanded ? "bg-sky-50/70 dark:bg-sky-950/30" : ""}>
+                    <td className="py-2 pr-3">
+                      <StatusBadge status={QC_CATEGORY_LABEL[q.qc_category]?.badge ?? "QUARANTINE"} label={q.qc_category} />
+                    </td>
+                    <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">
+                      {q.lot_code}
+                      {q.mfr_lot_no && <div className="text-[11px] text-slate-400">NSX: {q.mfr_lot_no}</div>}
+                    </td>
+                    <td className="py-2 pr-3">
+                      <div className="font-semibold">{q.item_code} — {q.item_name}</div>
+                      <div className="text-[11px] text-slate-500">Nguồn: {q.origin} · Loại: {q.item_type}</div>
+                    </td>
+                    <td className="py-2 pr-3 font-mono">
+                      {fmtQty(q.qty_on_hand)} {q.base_uom}
+                      <div className="text-[11px] text-slate-400">{q.warehouse_locations || "—"}</div>
+                    </td>
+                    <td className="py-2 pr-3 font-mono whitespace-nowrap">{fmtDate(q.expiry_date)}</td>
+                    <td className="py-2 pr-3">
+                      <StatusBadge status={q.lot_status} label={q.lot_status === "QUARANTINE" ? "Biệt trữ chờ lấy mẫu" : "Đang kiểm QC"} />
+                    </td>
+                    <td className="py-2 pr-3">
+                      {q.latest_test_code ? (
+                        <button
+                          type="button"
+                          className="font-mono font-semibold text-sky-700 dark:text-sky-400 underline cursor-pointer"
+                          onClick={() => openTestInline(q.latest_test_id, "queue", q.lot_id)}
+                        >
+                          {q.latest_test_code} ({QC_STATUS_LABEL[q.latest_test_status] ?? q.latest_test_status})
+                        </button>
+                      ) : (
+                        <span className="text-slate-400 text-xs">Chưa lập phiếu</span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3">
+                      {q.latest_test_id ? (
+                        <Button
+                          variant={rowExpanded ? "secondary" : "ghost"}
+                          onClick={() => openTestInline(q.latest_test_id, "queue", q.lot_id)}
+                        >
+                          {rowExpanded ? "Đóng phiếu QC ▲" : "📝 Cập nhật KQ QC ▼"}
+                        </Button>
+                      ) : (
+                        <Button
+                          onClick={() =>
+                            receiveLotMut.mutate({ lot_id: q.lot_id, test_kind: q.qc_category, _source: "queue" })
+                          }
+                          disabled={receiveLotMut.isPending}
+                        >
+                          🧪 Tiếp nhận & Lập phiếu {q.qc_category}
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                  {rowExpanded && selected && (
+                    <tr className="bg-sky-50/40 dark:bg-sky-950/20">
+                      <td colSpan={8} className="p-3 border-b-2 border-sky-400 dark:border-sky-700">
+                        {renderInlineDetailPanel(selected)}
+                      </td>
+                    </tr>
                   )}
-                </td>
-                <td className="py-2 pr-3">
-                  {q.latest_test_id ? (
-                    <Button variant="ghost" onClick={() => setSelected(q.latest_test_id)}>
-                      Mở phiếu QC
-                    </Button>
-                  ) : (
-                    <Button
-                      onClick={() => receiveLotMut.mutate({ lot_id: q.lot_id, test_kind: q.qc_category })}
-                      disabled={receiveLotMut.isPending}
-                    >
-                      🧪 Tiếp nhận & Lập phiếu {q.qc_category}
-                    </Button>
-                  )}
-                </td>
-              </tr>
-            ))}
+                </Fragment>
+              );
+            })}
           </Table>
         )}
       </Card>
@@ -1047,34 +1114,71 @@ export function QcTestsView() {
         }
       >
         <ErrorNote error={list.error} />
+        {selected && selectedSource === "list" && !isRenderedInlineInList && (
+          <div className="mb-3">{renderInlineDetailPanel(selected)}</div>
+        )}
         {list.data?.length === 0 && <Empty>Không có phiếu QC nào.</Empty>}
         {list.data && list.data.length > 0 && (
-          <Table head={["Mã phiếu", "Đối tượng (Lô NVL / BTP / Thành phẩm / Oligo)", "Loại QC", "Tiêu chuẩn áp dụng", "Trạng thái", "Kết luận", "COA (Do QC cấp)"]}>
-            {list.data.map((r) => (
-              <tr key={r.id} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setSelected(r.id)}>
-                <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">{r.code}</td>
-                <td className="py-2 pr-3">
-                  {r.lot_code
-                    ? `Lô ${r.lot_code} · ${r.item_code} ${r.item_name}${r.order_code ? ` (${r.order_code})` : ""}`
-                    : r.sequence_code
-                      ? `Oligo ${r.sequence_code} · ${r.sequence_name}`
-                      : "—"}
-                </td>
-                <td className="py-2 pr-3 font-mono font-semibold">{r.test_kind}</td>
-                <td className="py-2 pr-3 font-mono">{r.spec_code}</td>
-                <td className="py-2 pr-3 whitespace-nowrap">{QC_STATUS_LABEL[r.status]}</td>
-                <td className="py-2 pr-3">{r.overall_result ? <StatusBadge status={r.overall_result === "PASS" ? "RELEASED" : "REJECTED"} label={r.overall_result === "PASS" ? "Đạt" : "Không đạt"} /> : "—"}</td>
-                <td className="py-2 pr-3 font-mono text-xs">
-                  {r.coa_code ? (
-                    <span className="px-2 py-0.5 rounded-lg bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-bold">
-                      📜 {r.coa_code}
-                    </span>
-                  ) : (
-                    <span className="text-slate-400">—</span>
+          <Table head={["Mã phiếu", "Đối tượng (Lô NVL / BTP / Thành phẩm)", "Loại QC", "Tiêu chuẩn áp dụng", "Trạng thái", "Kết luận", "COA (Do QC cấp)", "Thao tác"]}>
+            {list.data.map((r) => {
+              const rowExpanded = selected === r.id && selectedSource === "list";
+              return (
+                <Fragment key={r.id}>
+                  <tr
+                    className={`cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 ${
+                      rowExpanded ? "bg-sky-50/70 dark:bg-sky-950/30" : ""
+                    }`}
+                    onClick={() => openTestInline(r.id, "list", r.id)}
+                  >
+                    <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">{r.code}</td>
+                    <td className="py-2 pr-3">
+                      {r.lot_code
+                        ? `Lô ${r.lot_code} · ${r.item_code} ${r.item_name}${r.order_code ? ` (${r.order_code})` : ""}`
+                        : r.sequence_code
+                          ? `Oligo ${r.sequence_code} · ${r.sequence_name}`
+                          : "—"}
+                    </td>
+                    <td className="py-2 pr-3 font-mono font-semibold">{r.test_kind}</td>
+                    <td className="py-2 pr-3 font-mono">{r.spec_code}</td>
+                    <td className="py-2 pr-3 whitespace-nowrap">{QC_STATUS_LABEL[r.status]}</td>
+                    <td className="py-2 pr-3">
+                      {r.overall_result ? (
+                        <StatusBadge
+                          status={r.overall_result === "PASS" ? "RELEASED" : "REJECTED"}
+                          label={r.overall_result === "PASS" ? "Đạt" : "Không đạt"}
+                        />
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 font-mono text-xs">
+                      {r.coa_code ? (
+                        <span className="px-2 py-0.5 rounded-lg bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-bold">
+                          📜 {r.coa_code}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">—</span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        variant={rowExpanded ? "secondary" : "ghost"}
+                        onClick={() => openTestInline(r.id, "list", r.id)}
+                      >
+                        {rowExpanded ? "Đóng phiếu ▲" : "📝 Cập nhật KQ QC ▼"}
+                      </Button>
+                    </td>
+                  </tr>
+                  {rowExpanded && (
+                    <tr className="bg-sky-50/40 dark:bg-sky-950/20">
+                      <td colSpan={8} className="p-3 border-b-2 border-sky-400 dark:border-sky-700">
+                        {renderInlineDetailPanel(r.id)}
+                      </td>
+                    </tr>
                   )}
-                </td>
-              </tr>
-            ))}
+                </Fragment>
+              );
+            })}
           </Table>
         )}
       </Card>
@@ -2083,120 +2187,139 @@ export function QcTestsView() {
           </form>
         )}
 
+        {selected && selectedSource === "coa" && !isRenderedInlineInCoa && (
+          <div className="mb-3">{renderInlineDetailPanel(selected)}</div>
+        )}
         {(qaOps.data?.issued_coas ?? []).length === 0 ? (
           <Empty>Chưa có COA nào được cấp phát. Duyệt đạt Phiếu QC để cấp COA và tự động ánh xạ sang Phòng Sản xuất Kit &amp; Kinh doanh.</Empty>
         ) : (
           <Table head={["Số COA (Do QC cấp)", "Phiếu QC gốc", "Mã Lô & Sản phẩm", "NSX → HSD", "Quy cách / SL Đạt", "Người kiểm nghiệm & Người ký duyệt COA", "Trạng thái Ánh xạ", "Thao tác"]}>
-            {(qaOps.data?.issued_coas ?? []).map((c: any) => (
-              <tr key={c.id}>
-                <td className="py-2 pr-3 font-mono text-xs font-bold text-emerald-700 dark:text-emerald-400">
-                  <div>{c.code}</div>
-                  <div className="flex flex-wrap gap-1 mt-0.5 font-sans">
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                      v{c.revision_no ?? 1}
-                    </span>
-                    {c.is_superseded && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
-                        Đã thay thế (Superseded)
-                      </span>
-                    )}
-                  </div>
-                </td>
-                <td className="py-2 pr-3 font-mono text-xs">
-                  {c.qc_test_code ? (
-                    <button
-                      type="button"
-                      className="text-sky-700 dark:text-sky-400 underline font-semibold cursor-pointer"
-                      onClick={() => c.qc_test_id && setSelected(c.qc_test_id)}
-                    >
-                      {c.qc_test_code}
-                    </button>
-                  ) : (
-                    <span className="text-slate-400">—</span>
+            {(qaOps.data?.issued_coas ?? []).map((c: any) => {
+              const rowExpanded =
+                selected &&
+                selectedSource === "coa" &&
+                c.qc_test_id === selected &&
+                (!selectedAnchorId || c.id === selectedAnchorId);
+              return (
+                <Fragment key={c.id}>
+                  <tr className={rowExpanded ? "bg-sky-50/70 dark:bg-sky-950/30" : ""}>
+                    <td className="py-2 pr-3 font-mono text-xs font-bold text-emerald-700 dark:text-emerald-400">
+                      <div>{c.code}</div>
+                      <div className="flex flex-wrap gap-1 mt-0.5 font-sans">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                          v{c.revision_no ?? 1}
+                        </span>
+                        {c.is_superseded && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                            Đã thay thế (Superseded)
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-2 pr-3 font-mono text-xs">
+                      {c.qc_test_code ? (
+                        <button
+                          type="button"
+                          className="text-sky-700 dark:text-sky-400 underline font-semibold cursor-pointer"
+                          onClick={() => c.qc_test_id && openTestInline(c.qc_test_id, "coa", c.id)}
+                        >
+                          {c.qc_test_code}
+                        </button>
+                      ) : (
+                        <span className="text-slate-400">—</span>
+                      )}
+                      {c.spec_code && <div className="text-[11px] text-slate-400">{c.spec_code} v{c.spec_version ?? 1}</div>}
+                    </td>
+                    <td className="py-2 pr-3 text-xs">
+                      <div className="font-mono font-bold text-sky-700 dark:text-sky-300">Lô: {c.lot_code}</div>
+                      <div className="font-medium">{c.product_code} — {c.product_name}</div>
+                    </td>
+                    <td className="py-2 pr-3 text-xs font-mono whitespace-nowrap">
+                      {fmtDate(c.mfg_date)} → {fmtDate(c.expiry_date)}
+                    </td>
+                    <td className="py-2 pr-3 text-xs">
+                      <div className="font-semibold">{fmtQty(c.good_qty)} {c.uom}</div>
+                      <div className="text-[11px] text-slate-400">
+                        {Number(c.tests_per_kit) > 0 ? `${c.tests_per_kit} test/Kit` : "Bán thành phẩm / Lô đơn"}
+                        {c.actual_ph ? ` · pH ${c.actual_ph}` : ""}
+                      </div>
+                    </td>
+                    <td className="py-2 pr-3 text-xs">
+                      {c.analyst_name && <div className="text-slate-500">KN: <b>{c.analyst_name}</b></div>}
+                      <div>Ký duyệt: <b className="text-emerald-700 dark:text-emerald-400">{c.issued_by_name}</b></div>
+                    </td>
+                    <td className="py-2 pr-3 text-xs">
+                      <StatusBadge
+                        status={c.is_superseded ? "CANCELLED" : "RELEASED"}
+                        label={
+                          c.is_superseded
+                            ? "Bản cũ (Đã cấp phụ lục mới)"
+                            : c.order_code
+                              ? `Đã ánh xạ → ${c.order_code}`
+                              : "Đã ánh xạ sang SX & KD"
+                        }
+                      />
+                    </td>
+                    <td className="py-2 pr-3 text-xs whitespace-nowrap">
+                      <div className="inline-flex flex-wrap items-center gap-1">
+                        <button
+                          type="button"
+                          title="Xem & Tùy chọn Ngôn ngữ COA"
+                          className="px-2 py-1 rounded-lg text-[11px] font-medium border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                          onClick={() => {
+                            setEditingCoa(null);
+                            setSelectedCoa(c);
+                          }}
+                        >
+                          📄 Xem COA
+                        </button>
+                        <button
+                          type="button"
+                          title="Xuất COA Tiếng Việt"
+                          className="px-2 py-1 rounded-lg text-[11px] font-medium border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                          onClick={() => printKitCoaCertificate(c, formsConfig, "VI")}
+                        >
+                          🇻🇳 Việt
+                        </button>
+                        <button
+                          type="button"
+                          title="Export COA in English"
+                          className="px-2 py-1 rounded-lg text-[11px] font-medium border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                          onClick={() => printKitCoaCertificate(c, formsConfig, "EN")}
+                        >
+                          🇬🇧 EN
+                        </button>
+                        <button
+                          type="button"
+                          title="Sửa thông tin & chỉ tiêu trên COA"
+                          className="px-2 py-1 rounded-lg text-[11px] font-medium border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                          onClick={() => startEditingCoa(c)}
+                        >
+                          ✏️ Sửa
+                        </button>
+                        {c.qc_test_id && (
+                          <button
+                            type="button"
+                            title="In Phiếu Trả Kết quả QC gốc (BM-QC-TR-01)"
+                            className="px-2 py-1 rounded-lg text-[11px] font-medium border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                            onClick={() => printTestCoa(c.qc_test_id, formsConfig).catch((e) => window.alert(e.message))}
+                          >
+                            🖨️ Phiếu KQ QC
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                  {rowExpanded && c.qc_test_id && (
+                    <tr className="bg-sky-50/40 dark:bg-sky-950/20">
+                      <td colSpan={8} className="p-3 border-b-2 border-sky-400 dark:border-sky-700">
+                        {renderInlineDetailPanel(c.qc_test_id)}
+                      </td>
+                    </tr>
                   )}
-                  {c.spec_code && <div className="text-[11px] text-slate-400">{c.spec_code} v{c.spec_version ?? 1}</div>}
-                </td>
-                <td className="py-2 pr-3 text-xs">
-                  <div className="font-mono font-bold text-sky-700 dark:text-sky-300">Lô: {c.lot_code}</div>
-                  <div className="font-medium">{c.product_code} — {c.product_name}</div>
-                </td>
-                <td className="py-2 pr-3 text-xs font-mono whitespace-nowrap">
-                  {fmtDate(c.mfg_date)} → {fmtDate(c.expiry_date)}
-                </td>
-                <td className="py-2 pr-3 text-xs">
-                  <div className="font-semibold">{fmtQty(c.good_qty)} {c.uom}</div>
-                  <div className="text-[11px] text-slate-400">
-                    {Number(c.tests_per_kit) > 0 ? `${c.tests_per_kit} test/Kit` : "Bán thành phẩm / Lô đơn"}
-                    {c.actual_ph ? ` · pH ${c.actual_ph}` : ""}
-                  </div>
-                </td>
-                <td className="py-2 pr-3 text-xs">
-                  {c.analyst_name && <div className="text-slate-500">KN: <b>{c.analyst_name}</b></div>}
-                  <div>Ký duyệt: <b className="text-emerald-700 dark:text-emerald-400">{c.issued_by_name}</b></div>
-                </td>
-                <td className="py-2 pr-3 text-xs">
-                  <StatusBadge
-                    status={c.is_superseded ? "CANCELLED" : "RELEASED"}
-                    label={
-                      c.is_superseded
-                        ? "Bản cũ (Đã cấp phụ lục mới)"
-                        : c.order_code
-                          ? `Đã ánh xạ → ${c.order_code}`
-                          : "Đã ánh xạ sang SX & KD"
-                    }
-                  />
-                </td>
-                <td className="py-2 pr-3 text-xs whitespace-nowrap">
-                  <div className="inline-flex flex-wrap items-center gap-1">
-                    <button
-                      type="button"
-                      title="Xem & Tùy chọn Ngôn ngữ COA"
-                      className="px-2 py-1 rounded-lg text-[11px] font-medium border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                      onClick={() => {
-                        setEditingCoa(null);
-                        setSelectedCoa(c);
-                      }}
-                    >
-                      📄 Xem COA
-                    </button>
-                    <button
-                      type="button"
-                      title="Xuất COA Tiếng Việt"
-                      className="px-2 py-1 rounded-lg text-[11px] font-medium border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                      onClick={() => printKitCoaCertificate(c, formsConfig, "VI")}
-                    >
-                      🇻🇳 Việt
-                    </button>
-                    <button
-                      type="button"
-                      title="Export COA in English"
-                      className="px-2 py-1 rounded-lg text-[11px] font-medium border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                      onClick={() => printKitCoaCertificate(c, formsConfig, "EN")}
-                    >
-                      🇬🇧 EN
-                    </button>
-                    <button
-                      type="button"
-                      title="Sửa thông tin & chỉ tiêu trên COA"
-                      className="px-2 py-1 rounded-lg text-[11px] font-medium border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                      onClick={() => startEditingCoa(c)}
-                    >
-                      ✏️ Sửa
-                    </button>
-                    {c.qc_test_id && (
-                      <button
-                        type="button"
-                        title="In Phiếu Trả Kết quả QC gốc (BM-QC-TR-01)"
-                        className="px-2 py-1 rounded-lg text-[11px] font-medium border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                        onClick={() => printTestCoa(c.qc_test_id, formsConfig).catch((e) => window.alert(e.message))}
-                      >
-                        🖨️ Phiếu KQ QC
-                      </button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
+                </Fragment>
+              );
+            })}
           </Table>
         )}
       </Card>
