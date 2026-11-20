@@ -99,7 +99,38 @@ export async function coaForTest(tx: Tx, actor: AuthzActor, testId: string) {
               [t.entity_id]
             )
           ).rows[0]
-        : null;
+        : t.entity_type === "DEVICE_UNIT"
+          ? (
+              await tx.query(
+                `SELECT du.id,
+                        du.serial_no AS code,
+                        du.serial_no AS mfr_lot_no,
+                        COALESCE(du.updated_at::date, du.created_at::date) AS mfg_date,
+                        NULL::date AS expiry_date,
+                        dm.code AS item_code,
+                        dm.name AS item_name,
+                        'Máy'::text AS base_uom,
+                        'Nhiệt độ phòng (15–30 °C), khô ráo'::text AS item_storage_condition,
+                        1::float AS lot_qty,
+                        'Máy'::text AS uom,
+                        dord.code AS order_code,
+                        io.kd_po_code AS kd_po_code,
+                        NULL::text AS tccs_code,
+                        CONCAT('Serial ', du.serial_no, COALESCE(' · Rev ' || drev.revision, ''), COALESCE(' · FW ' || du.firmware_version, '')) AS specification,
+                        'Nhiệt độ phòng (15–30 °C), khô ráo'::text AS bom_storage_condition,
+                        NULL::int AS tests_per_kit,
+                        NULL::int AS shelf_life_months
+                   FROM device.device_unit du
+                   JOIN device.device_model dm ON dm.id = du.model_id
+                   LEFT JOIN device.model_revision drev ON drev.id = du.model_revision_id
+                   LEFT JOIN device.device_order dord ON dord.id = du.order_id
+                   LEFT JOIN intake.internal_order_line iol ON iol.id = dord.internal_order_line_id
+                   LEFT JOIN intake.internal_order io ON io.id = iol.order_id
+                  WHERE du.id = $1`,
+                [t.entity_id]
+              )
+            ).rows[0]
+          : null;
 
   // Match test parameters against qms.qc_method to enrich equipment name when not explicitly stored on qc_result
   let methods: { code: string; name: string; instrument_type: string | null }[] = [];

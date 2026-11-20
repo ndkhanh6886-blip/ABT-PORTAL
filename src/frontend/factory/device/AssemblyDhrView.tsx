@@ -1022,11 +1022,13 @@ export function AssemblyDhrView() {
                 2. Kiểm tra thử nghiệm (Đạt / Không đạt), Ký phiếu thử nghiệm &amp; Chuyển QC
               </h3>
 
-              {(u.status === "BURN_IN" || (u.status === "IN_ASSEMBLY" && u.components.length > 0)) && (
+              {(u.status === "BURN_IN" || u.status === "FQC" || (u.status === "IN_ASSEMBLY" && u.components.length > 0)) && (
                 <div className="p-3.5 rounded-xl border-2 border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/40 dark:bg-slate-950/60 flex flex-col gap-3">
                   <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-indigo-200/70 dark:border-slate-800">
                     <div className="text-xs font-extrabold text-indigo-950 dark:text-indigo-200">
-                      🧪 Phiếu Kiểm Tra Thử Nghiệm Thiết Bị (Trạm cuối KTCN trước khi chuyển QC)
+                      {u.status === "FQC"
+                        ? "📎 Bổ sung / Cập nhật File Phiếu thử nghiệm đã ký & Đường dẫn NAS (Đồng bộ sang Phiếu FQC tại QA/QC)"
+                        : "🧪 Phiếu Kiểm Tra Thử Nghiệm Thiết Bị (Trạm cuối KTCN trước khi chuyển QC)"}
                     </div>
                     <button
                       type="button"
@@ -1146,14 +1148,16 @@ export function AssemblyDhrView() {
 
                   <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
                     <Button
-                      variant="ghost"
+                      variant={u.status === "FQC" ? "primary" : "ghost"}
                       disabled={unitWorkMut.isPending}
                       onClick={() =>
                         unitWorkMut.mutate({
                           kind: "burn_in",
-                          result: burnForm.result,
+                          result: u.status === "FQC" ? "PASS" : burnForm.result,
                           nas_path: burnForm.nas_path.trim() || null,
-                          notes: burnForm.notes.trim() || null,
+                          notes:
+                            burnForm.notes.trim() ||
+                            (u.status === "FQC" ? "Bổ sung file Phiếu kiểm tra thử nghiệm thiết bị cho QC" : null),
                           checklist: burnForm.checklist,
                           attachment_name: burnForm.attachment_name || null,
                           attachment_data: burnForm.attachment_data || null,
@@ -1161,28 +1165,32 @@ export function AssemblyDhrView() {
                         })
                       }
                     >
-                      💾 Ghi kết quả Kiểm tra thử nghiệm
+                      {u.status === "FQC"
+                        ? "💾 Lưu bổ sung File Phiếu thử nghiệm & NAS cho QC"
+                        : "💾 Ghi kết quả Kiểm tra thử nghiệm"}
                     </Button>
-                    <Button
-                      disabled={unitWorkMut.isPending}
-                      onClick={() => {
-                        const allChecked = burnForm.checklist.map((c) => ({ ...c, passed: true }));
-                        setBurnForm((prev) => ({ ...prev, result: "PASS", checklist: allChecked }));
-                        unitWorkMut.mutate({
-                          kind: "burn_in",
-                          result: "PASS",
-                          nas_path: burnForm.nas_path.trim() || null,
-                          notes: burnForm.notes.trim() || "Đã kiểm tra thử nghiệm ĐẠT, ký phiếu thử nghiệm và chuyển sang QC",
-                          checklist: allChecked,
-                          attachment_name: burnForm.attachment_name || null,
-                          attachment_data: burnForm.attachment_data || null,
-                          auto_advance_to_fqc: true,
-                          fqc_assignee_id: fqcAssignee ? Number(fqcAssignee) : null,
-                        });
-                      }}
-                    >
-                      ⚡ Tick PASS nhanh &amp; Chuyển ngay sang QC (FQC)
-                    </Button>
+                    {u.status !== "FQC" && (
+                      <Button
+                        disabled={unitWorkMut.isPending}
+                        onClick={() => {
+                          const allChecked = burnForm.checklist.map((c) => ({ ...c, passed: true }));
+                          setBurnForm((prev) => ({ ...prev, result: "PASS", checklist: allChecked }));
+                          unitWorkMut.mutate({
+                            kind: "burn_in",
+                            result: "PASS",
+                            nas_path: burnForm.nas_path.trim() || null,
+                            notes: burnForm.notes.trim() || "Đã kiểm tra thử nghiệm ĐẠT, ký phiếu thử nghiệm và chuyển sang QC",
+                            checklist: allChecked,
+                            attachment_name: burnForm.attachment_name || null,
+                            attachment_data: burnForm.attachment_data || null,
+                            auto_advance_to_fqc: true,
+                            fqc_assignee_id: fqcAssignee ? Number(fqcAssignee) : null,
+                          });
+                        }}
+                      >
+                        ⚡ Tick PASS nhanh &amp; Chuyển ngay sang QC (FQC)
+                      </Button>
+                    )}
                   </div>
                 </div>
               )}

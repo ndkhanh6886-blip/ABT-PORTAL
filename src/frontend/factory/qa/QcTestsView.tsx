@@ -24,6 +24,8 @@ import { QcDocumentPreview } from "./QcDocumentPreview";
 interface QcRow {
   id: string;
   code: string;
+  entity_type?: string;
+  entity_id?: string;
   test_kind: string;
   status: string;
   overall_result: string | null;
@@ -35,6 +37,17 @@ interface QcRow {
   sequence_code: string | null;
   sequence_name: string | null;
   order_code?: string | null;
+  device_serial_no?: string | null;
+  device_revision_code?: string | null;
+  device_firmware_version?: string | null;
+  trial_result?: string | null;
+  trial_nas_path?: string | null;
+  trial_attachment_name?: string | null;
+  trial_attachment_data?: string | null;
+  trial_has_attachment?: boolean | null;
+  trial_checklist_json?: string | any[] | null;
+  trial_recorded_by_name?: string | null;
+  trial_notes?: string | null;
   coa_code?: string | null;
   created_at: string;
 }
@@ -97,6 +110,121 @@ function OligoReference({ r }: { r: Record<string, any> }) {
   return (
     <div className="grid gap-x-4 gap-y-1 sm:grid-cols-2 text-xs p-3 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800">
       {items.map(([k, v]) => <div key={k}><span className="text-slate-500">{k}: </span>{v}</div>)}
+    </div>
+  );
+}
+
+function DeviceReference({ t }: { t: QcDetail }) {
+  const ref = t.subject?.reference?.kind === "DEVICE_UNIT" ? t.subject.reference : null;
+  const trial = ref?.trial_run ?? null;
+  const serialNo = t.device_serial_no ?? ref?.serial_no ?? t.lot_code ?? "—";
+  const modelCode = t.item_code ?? ref?.model_code ?? "—";
+  const modelName = t.item_name ?? ref?.model_name ?? "";
+  const revisionCode = t.device_revision_code ?? ref?.revision_code ?? null;
+  const orderCode = t.order_code ?? ref?.order_code ?? null;
+  const firmware = t.device_firmware_version ?? ref?.firmware_version ?? null;
+  const trialResult = t.trial_result ?? trial?.result ?? null;
+  const trialNasPath = t.trial_nas_path ?? trial?.nas_path ?? null;
+  const trialAttachmentName = t.trial_attachment_name ?? trial?.attachment_name ?? null;
+  const trialAttachmentData = t.trial_attachment_data ?? trial?.attachment_data ?? null;
+  const trialRecordedBy = t.trial_recorded_by_name ?? trial?.recorded_by_name ?? null;
+  const trialNotes = t.trial_notes ?? trial?.notes ?? null;
+  const rawChecklist = t.trial_checklist_json ?? trial?.checklist_json ?? null;
+  let checklist: Array<{ code?: string; label: string; passed: boolean }> = [];
+  if (Array.isArray(rawChecklist)) {
+    checklist = rawChecklist;
+  } else if (typeof rawChecklist === "string" && rawChecklist.trim()) {
+    try {
+      const parsed = JSON.parse(rawChecklist);
+      if (Array.isArray(parsed)) checklist = parsed;
+    } catch {
+      checklist = [];
+    }
+  }
+
+  return (
+    <div className="p-3 rounded-xl bg-sky-50/60 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800/70 flex flex-col gap-2 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="font-extrabold text-sky-950 dark:text-sky-200 flex flex-wrap items-center gap-2">
+          <span>🖥️ Hồ sơ Thiết bị (DHR) &amp; Kết quả Kiểm tra thử nghiệm từ Phòng KTCN</span>
+          <span className="px-2 py-0.5 rounded-lg bg-sky-700 text-white font-mono">
+            Serial: {serialNo}
+          </span>
+          {orderCode && (
+            <span className="px-2 py-0.5 rounded-lg bg-indigo-100 dark:bg-indigo-900/50 text-indigo-800 dark:text-indigo-200 font-mono">
+              Lệnh SX: {orderCode}
+            </span>
+          )}
+        </div>
+        {trialAttachmentName && trialAttachmentData ? (
+          <a
+            href={trialAttachmentData}
+            download={trialAttachmentName}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-2xs"
+          >
+            📎 Tải Phiếu thử nghiệm KTCN: {trialAttachmentName}
+          </a>
+        ) : (
+          <span className="px-2.5 py-1 rounded-lg bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200 font-bold">
+            ⚠️ KTCN chưa đính kèm file Phiếu thử nghiệm (Có thể bổ sung ngay tại Hồ sơ DHR của Serial {serialNo})
+          </span>
+        )}
+      </div>
+
+      <div className="grid gap-x-4 gap-y-1 sm:grid-cols-3 text-xs">
+        <div>
+          <span className="text-slate-500">Số Serial (SN): </span>
+          <b className="font-mono text-slate-900 dark:text-slate-100">{serialNo}</b>
+        </div>
+        <div>
+          <span className="text-slate-500">Model Thiết bị: </span>
+          <b>{modelCode}{modelName ? ` — ${modelName}` : ""}</b>
+        </div>
+        <div>
+          <span className="text-slate-500">Phiên bản / Firmware: </span>
+          <span className="font-mono">
+            {revisionCode ? `Rev ${revisionCode}` : "—"}
+            {firmware ? ` · FW ${firmware}` : ""}
+            {ref?.component_count != null ? ` · ${ref.component_count} linh kiện DHR` : ""}
+          </span>
+        </div>
+        <div>
+          <span className="text-slate-500">KQ Thử nghiệm KTCN: </span>
+          {trialResult ? (
+            <b className={trialResult === "PASS" ? "text-emerald-700 dark:text-emerald-300" : "text-rose-600"}>
+              {trialResult === "PASS" ? "PASS — ĐẠT" : "FAIL — KHÔNG ĐẠT"}
+            </b>
+          ) : (
+            "—"
+          )}
+          {trialRecordedBy ? ` (Bởi: ${trialRecordedBy})` : ""}
+        </div>
+        <div>
+          <span className="text-slate-500">Mã phiếu / Đường dẫn NAS: </span>
+          <span className="font-mono">{trialNasPath || "Chưa nhập đường dẫn NAS"}</span>
+        </div>
+        <div>
+          <span className="text-slate-500">Ghi chú KTCN: </span>
+          <span>{trialNotes || "—"}</span>
+        </div>
+      </div>
+
+      {checklist.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 pt-1 border-t border-sky-200/70 dark:border-sky-800/60">
+          {checklist.map((item, idx) => (
+            <span
+              key={item.code || idx}
+              className={`px-2 py-0.5 rounded-md text-[11px] font-semibold ${
+                item.passed
+                  ? "bg-emerald-100/80 dark:bg-emerald-950/60 text-emerald-900 dark:text-emerald-200"
+                  : "bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-200"
+              }`}
+            >
+              {item.passed ? "✓" : "✕"} {item.label}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -293,10 +421,19 @@ function QcDetailPanel({
       {t && (
         <div className="flex flex-col gap-3">
           <p className="text-xs text-slate-600 dark:text-slate-300">
-            {t.lot_code ? `Lô ${t.lot_code} — ${t.item_code} ${t.item_name}` : t.subject?.label ?? t.spec_name} · {QC_STATUS_LABEL[t.status]} · Kiểm nghiệm: {t.analyst_name ?? "—"} · Duyệt: {t.reviewer_name ?? "—"}
+            {t.entity_type === "DEVICE_UNIT"
+              ? `Thiết bị Serial ${t.device_serial_no ?? t.lot_code ?? "—"} — ${t.item_code ?? ""} ${t.item_name ?? ""}${t.device_revision_code ? ` (Rev ${t.device_revision_code})` : ""}${t.order_code ? ` · Lệnh ${t.order_code}` : ""}`
+              : t.lot_code
+                ? `Lô ${t.lot_code} — ${t.item_code} ${t.item_name}`
+                : t.subject?.label ?? t.spec_name}{" "}
+            · {QC_STATUS_LABEL[t.status]} · Kiểm nghiệm: {t.analyst_name ?? "—"} · Duyệt: {t.reviewer_name ?? "—"}
             {t.retest_reason && <> · Ghi chú / Kiểm lại: <b>{t.retest_reason}</b></>}
           </p>
-          {t.subject?.reference && <OligoReference r={t.subject.reference} />}
+          {t.entity_type === "DEVICE_UNIT" ? (
+            <DeviceReference t={t} />
+          ) : (
+            t.subject?.reference && <OligoReference r={t.subject.reference} />
+          )}
 
           {/* Reference Standard & Control Panel Suitability Check Section */}
           <div className="p-3 rounded-xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/40 dark:bg-indigo-950/20 flex flex-col gap-2 text-xs">
@@ -1132,11 +1269,39 @@ export function QcTestsView() {
                   >
                     <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">{r.code}</td>
                     <td className="py-2 pr-3">
-                      {r.lot_code
-                        ? `Lô ${r.lot_code} · ${r.item_code} ${r.item_name}${r.order_code ? ` (${r.order_code})` : ""}`
-                        : r.sequence_code
-                          ? `Oligo ${r.sequence_code} · ${r.sequence_name}`
-                          : "—"}
+                      {r.entity_type === "DEVICE_UNIT" || r.device_serial_no ? (
+                        <div className="flex flex-col gap-0.5">
+                          <div className="font-semibold text-slate-900 dark:text-slate-100">
+                            🖥️ Serial <span className="font-mono text-sky-700 dark:text-sky-300">{r.device_serial_no ?? r.lot_code}</span>
+                            {" · "}
+                            {r.item_code} {r.item_name}
+                            {r.device_revision_code ? ` (Rev ${r.device_revision_code})` : ""}
+                            {r.order_code ? ` · Lệnh ${r.order_code}` : ""}
+                          </div>
+                          <div className="text-[11px] flex flex-wrap items-center gap-1.5">
+                            {r.trial_attachment_name ? (
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-semibold">
+                                📎 Phiếu thử nghiệm: {r.trial_attachment_name}
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-semibold">
+                                ⚠️ Chưa đính kèm file phiếu thử nghiệm
+                              </span>
+                            )}
+                            {r.trial_nas_path && (
+                              <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono">
+                                📁 NAS: {r.trial_nas_path}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ) : r.lot_code ? (
+                        `Lô ${r.lot_code} · ${r.item_code} ${r.item_name}${r.order_code ? ` (${r.order_code})` : ""}`
+                      ) : r.sequence_code ? (
+                        `Oligo ${r.sequence_code} · ${r.sequence_name}`
+                      ) : (
+                        "—"
+                      )}
                     </td>
                     <td className="py-2 pr-3 font-mono font-semibold">{r.test_kind}</td>
                     <td className="py-2 pr-3 font-mono">{r.spec_code}</td>

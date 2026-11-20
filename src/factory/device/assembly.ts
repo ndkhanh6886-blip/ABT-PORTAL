@@ -532,8 +532,56 @@ export const deviceUnitMachine = defineMachine<DeviceUnitStatus, DeviceUnitRow>(
 
 registerQcSubject("DEVICE_UNIT", {
   label: async (tx, id) => {
-    const u = (await tx.query("SELECT serial_no FROM device.device_unit WHERE id = $1", [id])).rows[0];
-    return u ? `Máy ${u.serial_no}` : id;
+    const u = (
+      await tx.query(
+        `SELECT u.serial_no, m.code AS model_code, m.name AS model_name,
+                r.revision AS revision_code, o.code AS order_code
+           FROM device.device_unit u
+           LEFT JOIN device.device_model m ON m.id = u.model_id
+           LEFT JOIN device.model_revision r ON r.id = u.model_revision_id
+           LEFT JOIN device.device_order o ON o.id = u.order_id
+          WHERE u.id = $1`,
+        [id]
+      )
+    ).rows[0];
+    if (!u) return id;
+    return `Máy Serial ${u.serial_no} · ${u.model_code ?? ""} — ${u.model_name ?? ""}${u.revision_code ? ` (Rev ${u.revision_code})` : ""}${u.order_code ? ` · Lệnh ${u.order_code}` : ""}`;
+  },
+  reference: async (tx, id) => {
+    const u = (
+      await tx.query(
+        `SELECT u.id, u.serial_no, u.status, u.firmware_version,
+                m.code AS model_code, m.name AS model_name,
+                r.revision AS revision_code, o.code AS order_code,
+                (SELECT COUNT(*)::int FROM device.device_unit_component c WHERE c.unit_id = u.id) AS component_count
+           FROM device.device_unit u
+           LEFT JOIN device.device_model m ON m.id = u.model_id
+           LEFT JOIN device.model_revision r ON r.id = u.model_revision_id
+           LEFT JOIN device.device_order o ON o.id = u.order_id
+          WHERE u.id = $1`,
+        [id]
+      )
+    ).rows[0];
+    if (!u) return null;
+    const trial = (
+      await tx.query(
+        `SELECT br.id, br.result, br.notes, br.nas_path, br.checklist_json,
+                br.attachment_name, br.attachment_data,
+                (br.attachment_data IS NOT NULL AND br.attachment_data <> '') AS has_attachment,
+                up.display_name AS recorded_by_name, br.created_at
+           FROM device.burn_in_run br
+           LEFT JOIN core.user_profile up ON up.user_id = br.recorded_by
+          WHERE br.unit_id = $1
+          ORDER BY br.created_at DESC
+          LIMIT 1`,
+        [id]
+      )
+    ).rows[0];
+    return {
+      kind: "DEVICE_UNIT",
+      ...u,
+      trial_run: trial ?? null,
+    };
   },
   onReviewed: async (tx, actor, test) => {
     const unit = (await tx.query("SELECT * FROM device.device_unit WHERE id = $1 FOR UPDATE", [test.entity_id])).rows[0] as
@@ -1002,8 +1050,11 @@ export async function recordBurnInRun(tx: Tx, actor: AuthzActor, unitId: string,
       { trusted: true }
     );
   }
-  if (unit.status !== "BURN_IN") {
-    throw invalid("Máy phải đang ở bước Kiểm tra thử nghiệm (BURN_IN) mới ghi được kết quả thử nghiệm.");
+  if (unit.status !== "BURN_IN" && unit.status !== "FQC") {
+    throw invalid("Máy phải đang ở bước Kiểm tra thử nghiệm (BURN_IN) hoặc Đang chờ QC (FQC) mới ghi / bổ sung được Phiếu kiểm tra thử nghiệm.");
+  }
+  if (unit.status === "FQC" && d.result === "FAIL") {
+    throw invalid("Máy đã chuyển sang bước Kiểm tra xuất xưởng (FQC). Ở bước này chỉ được phép bổ sung / cập nhật File phiếu thử nghiệm hoặc đường dẫn NAS.");
   }
   if (d.test_asset_id) {
     await assertUsable(tx, d.test_asset_id);

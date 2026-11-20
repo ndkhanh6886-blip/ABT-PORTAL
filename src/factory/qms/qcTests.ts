@@ -305,9 +305,23 @@ export async function getQcTest(tx: Tx, id: string) {
     await tx.query(
       `SELECT t.*, s.code AS spec_code, s.spec_version, s.name AS spec_name,
               a.display_name AS analyst_name, r.display_name AS reviewer_name,
-              COALESCE(l.code, pol.code) AS lot_code,
-              COALESCE(i.code, poi.code) AS item_code,
-              COALESCE(i.name, poi.name) AS item_name,
+              COALESCE(l.code, pol.code, du.serial_no) AS lot_code,
+              COALESCE(i.code, poi.code, dm.code) AS item_code,
+              COALESCE(i.name, poi.name, dm.name) AS item_name,
+              COALESCE(po.code, dord.code) AS order_code,
+              du.serial_no AS device_serial_no,
+              drev.revision AS device_revision_code,
+              du.firmware_version AS device_firmware_version,
+              du.status AS device_unit_status,
+              dtr.result AS trial_result,
+              dtr.nas_path AS trial_nas_path,
+              dtr.attachment_name AS trial_attachment_name,
+              dtr.attachment_data AS trial_attachment_data,
+              dtr.has_attachment AS trial_has_attachment,
+              dtr.checklist_json AS trial_checklist_json,
+              dtr.notes AS trial_notes,
+              dtr.recorded_by_name AS trial_recorded_by_name,
+              dtr.created_at AS trial_created_at,
               (SELECT c.code FROM kit.coa_certificate c
                 WHERE c.qc_test_id = t.id
                    OR (COALESCE(l.id, pol.id) IS NOT NULL AND c.lot_id = COALESCE(l.id, pol.id))
@@ -320,6 +334,20 @@ export async function getQcTest(tx: Tx, id: string) {
          LEFT JOIN kit.production_order po ON t.entity_type = 'PRODUCTION_ORDER' AND po.id = t.entity_id
          LEFT JOIN inv.lot pol ON pol.id = po.lot_id
          LEFT JOIN master.item poi ON poi.id = po.product_item_id
+         LEFT JOIN device.device_unit du ON t.entity_type = 'DEVICE_UNIT' AND du.id = t.entity_id
+         LEFT JOIN device.device_order dord ON dord.id = du.order_id
+         LEFT JOIN device.device_model dm ON dm.id = du.model_id
+         LEFT JOIN device.model_revision drev ON drev.id = du.model_revision_id
+         LEFT JOIN LATERAL (
+           SELECT br.result, br.notes, br.nas_path, br.attachment_name, br.attachment_data,
+                  (br.attachment_data IS NOT NULL AND br.attachment_data <> '') AS has_attachment,
+                  br.checklist_json, up.display_name AS recorded_by_name, br.created_at
+             FROM device.burn_in_run br
+             LEFT JOIN core.user_profile up ON up.user_id = br.recorded_by
+            WHERE br.unit_id = du.id
+            ORDER BY br.created_at DESC
+            LIMIT 1
+         ) dtr ON du.id IS NOT NULL
         WHERE t.id = $1`,
       [id]
     )
@@ -347,11 +375,20 @@ export async function listQcTests(tx: Tx, actor: AuthzActor, status?: string) {
     await tx.query(
       `SELECT t.id, t.code, t.entity_type, t.entity_id, t.test_kind, t.status, t.overall_result, t.version, t.created_at, t.analyst_id,
               s.code AS spec_code, s.name AS spec_name,
-              COALESCE(l.code, pol.code) AS lot_code,
-              COALESCE(i.code, poi.code) AS item_code,
-              COALESCE(i.name, poi.name) AS item_name,
+              COALESCE(l.code, pol.code, du.serial_no) AS lot_code,
+              COALESCE(i.code, poi.code, dm.code) AS item_code,
+              COALESCE(i.name, poi.name, dm.name) AS item_name,
               sq.code AS sequence_code, sq.name AS sequence_name,
-              po.code AS order_code,
+              COALESCE(po.code, dord.code) AS order_code,
+              du.serial_no AS device_serial_no,
+              drev.revision AS device_revision_code,
+              du.firmware_version AS device_firmware_version,
+              dtr.result AS trial_result,
+              dtr.nas_path AS trial_nas_path,
+              dtr.attachment_name AS trial_attachment_name,
+              dtr.has_attachment AS trial_has_attachment,
+              dtr.recorded_by_name AS trial_recorded_by_name,
+              dtr.notes AS trial_notes,
               (SELECT c.code FROM kit.coa_certificate c
                 WHERE c.qc_test_id = t.id
                    OR (COALESCE(l.id, pol.id) IS NOT NULL AND c.lot_id = COALESCE(l.id, pol.id))
@@ -363,6 +400,20 @@ export async function listQcTests(tx: Tx, actor: AuthzActor, status?: string) {
          LEFT JOIN kit.production_order po ON t.entity_type = 'PRODUCTION_ORDER' AND po.id = t.entity_id
          LEFT JOIN inv.lot pol ON pol.id = po.lot_id
          LEFT JOIN master.item poi ON poi.id = po.product_item_id
+         LEFT JOIN device.device_unit du ON t.entity_type = 'DEVICE_UNIT' AND du.id = t.entity_id
+         LEFT JOIN device.device_order dord ON dord.id = du.order_id
+         LEFT JOIN device.device_model dm ON dm.id = du.model_id
+         LEFT JOIN device.model_revision drev ON drev.id = du.model_revision_id
+         LEFT JOIN LATERAL (
+           SELECT br.result, br.notes, br.nas_path, br.attachment_name,
+                  (br.attachment_data IS NOT NULL AND br.attachment_data <> '') AS has_attachment,
+                  up.display_name AS recorded_by_name, br.created_at
+             FROM device.burn_in_run br
+             LEFT JOIN core.user_profile up ON up.user_id = br.recorded_by
+            WHERE br.unit_id = du.id
+            ORDER BY br.created_at DESC
+            LIMIT 1
+         ) dtr ON du.id IS NOT NULL
         WHERE t.entity_type <> 'OLIGO_SEQUENCE'
           AND (($1::text IS NULL AND t.status NOT IN ('REVIEWED', 'CANCELLED')) OR t.status = $1)
         ORDER BY t.created_at DESC LIMIT 200`,
