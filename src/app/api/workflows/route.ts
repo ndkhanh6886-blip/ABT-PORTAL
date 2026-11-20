@@ -333,19 +333,133 @@ async function ensureFictionalAssigneesCleaned() {
        SET assignee_name = '' 
        WHERE LOWER(TRIM(assignee_name)) IN ('phạm quốc tuấn', 'lê kỹ thuật', 'nguyễn văn a', 'nguyễn văn nam', 'trần thủ kho', 'trần thị thảo', 'đội vận chuyển')`
     );
-    const wfRows = await query(`SELECT id, steps FROM workflow_requests WHERE steps IS NOT NULL`);
+    const wfRows = await query(`SELECT * FROM workflow_requests WHERE steps IS NOT NULL`);
+    const doneTasksRes = await query(`SELECT task_code, related_workflow_code, result FROM company_tasks WHERE status = 'DONE' AND related_workflow_code IS NOT NULL`);
+    const doneTasksByWf = new Map<string, Array<{ task_code: string; result: string }>>();
+    for (const dt of doneTasksRes.rows) {
+      const code = String(dt.related_workflow_code || "").trim();
+      if (!code) continue;
+      const arr = doneTasksByWf.get(code) || [];
+      arr.push({ task_code: String(dt.task_code || "").trim(), result: String(dt.result || "").trim() });
+      doneTasksByWf.set(code, arr);
+    }
+
     for (const row of wfRows.rows) {
       if (Array.isArray(row.steps)) {
         let changed = false;
-        const cleanedSteps = row.steps.map((s: any) => {
-          const cleaned = cleanAssigneeName(s?.assignee_name);
-          if (cleaned !== (s?.assignee_name || "")) {
+        let reconciledDoneStep = false;
+        const wfCode = String(row.workflow_code || "").trim();
+        const wfDoneTasks = doneTasksByWf.get(wfCode) || [];
+        const currIdx = typeof row.current_step_index === "number" ? row.current_step_index : 0;
+        let nextResultsSummary = String(row.results_summary || "").trim();
+
+        const cleanedSteps = row.steps.map((s: any, idx: number) => {
+          let nextStep = { ...s };
+          const cleaned = cleanAssigneeName(nextStep?.assignee_name);
+          if (cleaned !== (nextStep?.assignee_name || "")) {
             changed = true;
-            return { ...s, assignee_name: cleaned };
+            nextStep.assignee_name = cleaned;
           }
-          return s;
+          const expectedTaskCodes = idx === 0
+            ? [`TSK-${wfCode}`, `TSK-${wfCode}-S1`]
+            : [`TSK-${wfCode}-S${idx + 1}`];
+          const matchedDoneTask = idx <= currIdx
+            ? wfDoneTasks.find((t) => expectedTaskCodes.some((ec) => ec.toUpperCase() === t.task_code.toUpperCase()))
+            : undefined;
+
+          if (
+            nextStep.status !== "COMPLETED" &&
+            (nextStep.task_completed === true ||
+              String(nextStep.deliverables_note || "").includes("Đã hoàn thành trên Bảng Công Việc") ||
+              Boolean(matchedDoneTask))
+          ) {
+            changed = true;
+            reconciledDoneStep = true;
+            const stepNote = String(nextStep.deliverables_note || matchedDoneTask?.result || "Đã hoàn thành trên Bảng Công Việc").trim();
+            nextStep = {
+              ...nextStep,
+              status: "COMPLETED",
+              task_completed: true,
+              completed_at: nextStep.completed_at || nowVNDateTime(),
+              completed_by: nextStep.completed_by || nextStep.assignee_name || row.assignee_name || "Hệ Thống",
+              deliverables_note: stepNote
+            };
+            const summaryTag = `[B${idx + 1} - ${nextStep.title || `Bước ${idx + 1}`}]`;
+            if (stepNote && !nextResultsSummary.includes(summaryTag)) {
+              nextResultsSummary = nextResultsSummary
+                ? `${nextResultsSummary}\n${summaryTag}: ${stepNote}`
+                : `${summaryTag}: ${stepNote}`;
+            }
+          }
+          return nextStep;
         });
-        if (changed) {
+
+        if (reconciledDoneStep && cleanedSteps.length > 0 && !isPurchaseRequest(row)) {
+          const nextPendingIdx = cleanedSteps.findIndex((st: any) => st?.status !== "COMPLETED");
+          let nextCurrIdx = currIdx;
+          let nextWfStatus = row.status;
+          let nextTargetDept = row.target_dept;
+          let nextAssigneeName = row.assignee_name;
+
+          if (nextPendingIdx !== -1) {
+            nextCurrIdx = nextPendingIdx;
+            cleanedSteps[nextPendingIdx] = {
+              ...cleanedSteps[nextPendingIdx],
+              status: "IN_PROGRESS",
+              started_at: cleanedSteps[nextPendingIdx].started_at || nowVNDateTime()
+            };
+            nextTargetDept = cleanedSteps[nextPendingIdx].dept || nextTargetDept;
+            nextAssigneeName = cleanedSteps[nextPendingIdx].assignee_name || "";
+            nextWfStatus = "IN_PROGRESS";
+
+            const nextTaskCode = `TSK-${wfCode}-S${nextPendingIdx + 1}`;
+            const existingNextTask = await query("SELECT id FROM company_tasks WHERE task_code = $1 LIMIT 1", [nextTaskCode]);
+            if (existingNextTask.rows.length === 0) {
+              const prevStepNote = cleanedSteps[Math.max(0, nextPendingIdx - 1)]?.deliverables_note || "Đã hoàn thành bước trước";
+              await query(
+                `INSERT INTO company_tasks (
+                   task_code, title, department, task_category, assignee_name, customer_name,
+                   priority, status, deadline, description, related_workflow_code, logs,
+                   created_by_name
+                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+                [
+                  nextTaskCode,
+                  `[Bước ${nextPendingIdx + 1}/${cleanedSteps.length}] ${cleanedSteps[nextPendingIdx].title} (${wfCode})`,
+                  nextTargetDept,
+                  "Phối hợp liên phòng ban",
+                  nextAssigneeName,
+                  row.customer_name || "",
+                  row.priority || "MEDIUM",
+                  "TODO",
+                  row.due_date || null,
+                  `Nhiệm vụ: ${cleanedSteps[nextPendingIdx].deliverables || cleanedSteps[nextPendingIdx].title}\nKết quả bước trước: ${prevStepNote}`,
+                  wfCode,
+                  JSON.stringify([{ time: nowVNDateTime(), action: `Tự động chuyển sang Bước ${nextPendingIdx + 1} sau khi hoàn thành trên Bảng Công Việc`, actor: "Hệ Thống" }]),
+                  row.requester_name || "Hệ Thống"
+                ]
+              );
+            }
+          } else {
+            nextCurrIdx = cleanedSteps.length - 1;
+            nextWfStatus = "COMPLETED";
+          }
+
+          await query(
+            `UPDATE workflow_requests
+             SET steps = $1, current_step_index = $2, status = $3, target_dept = $4, assignee_name = $5,
+                 results_summary = $6, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $7`,
+            [
+              JSON.stringify(cleanedSteps),
+              nextCurrIdx,
+              nextWfStatus,
+              nextTargetDept,
+              nextAssigneeName,
+              nextResultsSummary,
+              row.id
+            ]
+          );
+        } else if (changed) {
           await query(`UPDATE workflow_requests SET steps = $1 WHERE id = $2`, [JSON.stringify(cleanedSteps), row.id]);
         }
       }
@@ -570,47 +684,152 @@ export async function POST(req: NextRequest) {
             const targetStepIdx = stepMatch ? Math.max(0, Number(stepMatch[1]) - 1) : currIdx;
             const wfLogs = Array.isArray(wfRow.logs) ? [...wfRow.logs] : [];
             let nextWfStatus = wfRow.status;
+            let nextCurrentStepIndex = currIdx;
+            let nextTargetDept = wfRow.target_dept;
+            let nextAssigneeName = wfRow.assignee_name;
+            let nextResultsSummary = String(wfRow.results_summary || "").trim();
 
             if (status === "IN_PROGRESS") {
               if (nextWfStatus === "PENDING") nextWfStatus = "IN_PROGRESS";
               if (wfSteps[targetStepIdx] && wfSteps[targetStepIdx].status === "PENDING") {
-                wfSteps[targetStepIdx] = { ...wfSteps[targetStepIdx], status: "IN_PROGRESS" };
+                wfSteps[targetStepIdx] = {
+                  ...wfSteps[targetStepIdx],
+                  status: "IN_PROGRESS",
+                  started_at: wfSteps[targetStepIdx].started_at || nowVNDateTime()
+                };
               }
             } else if (status === "DONE") {
+              const stepNote = text || wfSteps[targetStepIdx]?.deliverables_note || "Đã hoàn thành trên Bảng Công Việc";
+              const completedStepTitle = wfSteps[targetStepIdx]?.title || `Bước ${targetStepIdx + 1}`;
               if (wfSteps[targetStepIdx]) {
                 wfSteps[targetStepIdx] = {
                   ...wfSteps[targetStepIdx],
+                  status: "COMPLETED",
                   task_completed: true,
-                  deliverables_note: text || wfSteps[targetStepIdx].deliverables_note || "Đã hoàn thành trên Bảng Công Việc"
+                  completed_at: wfSteps[targetStepIdx].completed_at || nowVNDateTime(),
+                  completed_by: wfSteps[targetStepIdx].completed_by || actorName,
+                  deliverables_note: stepNote
                 };
               }
-              if (prevTask?.status !== "DONE") {
-                wfLogs.push({
-                  time: nowVNDateTime(),
-                  action: `[Bảng Công Việc]: ${actorName} đã hoàn thành công việc ${effectiveTaskCode || ""}${text ? ` — Kết quả: ${text}` : ""}`,
-                  actor: actorName
-                });
+              if (!isPurchaseRequest(wfRow) && stepNote) {
+                const summaryTag = wfSteps.length > 0
+                  ? `[B${targetStepIdx + 1} - ${completedStepTitle}]`
+                  : `[${effectiveTaskCode || "Task"}]`;
+                if (!nextResultsSummary.includes(summaryTag)) {
+                  nextResultsSummary = nextResultsSummary
+                    ? `${nextResultsSummary}\n${summaryTag}: ${stepNote}`
+                    : `${summaryTag}: ${stepNote}`;
+                }
               }
-              // Nếu quy trình 1 bước (không cấu hình nhiều bước) và không phải PR cần quyền duyệt riêng -> hoàn tất phiếu
-              if (wfSteps.length === 0 && !isPurchaseRequest(wfRow) && nextWfStatus !== "COMPLETED") {
-                nextWfStatus = "COMPLETED";
-              } else if (nextWfStatus === "PENDING") {
-                nextWfStatus = "IN_PROGRESS";
+
+              if (wfSteps.length > 0 && !isPurchaseRequest(wfRow)) {
+                const nextPendingIdx = wfSteps.findIndex((st: any) => st?.status !== "COMPLETED");
+                if (nextPendingIdx !== -1) {
+                  nextCurrentStepIndex = nextPendingIdx;
+                  wfSteps[nextPendingIdx] = {
+                    ...wfSteps[nextPendingIdx],
+                    status: "IN_PROGRESS",
+                    started_at: wfSteps[nextPendingIdx].started_at || nowVNDateTime()
+                  };
+                  nextTargetDept = wfSteps[nextPendingIdx].dept || nextTargetDept;
+                  nextAssigneeName = wfSteps[nextPendingIdx].assignee_name || "";
+                  nextWfStatus = "IN_PROGRESS";
+
+                  if (prevTask?.status !== "DONE") {
+                    wfLogs.push({
+                      time: nowVNDateTime(),
+                      action: `[Bảng Công Việc → Tự động hoàn thành Bước ${targetStepIdx + 1}: ${completedStepTitle}] ➔ Chuyển sang Bước ${nextPendingIdx + 1}: ${wfSteps[nextPendingIdx].title || `Bước ${nextPendingIdx + 1}`} (${nextAssigneeName || "Chờ phân công"} - ${nextTargetDept})`,
+                      actor: actorName
+                    });
+                  }
+
+                  const nextTaskCode = `TSK-${wfCode}-S${nextPendingIdx + 1}`;
+                  const existingNextTask = await query("SELECT id FROM company_tasks WHERE task_code = $1 LIMIT 1", [nextTaskCode]);
+                  if (existingNextTask.rows.length > 0) {
+                    await query(
+                      `UPDATE company_tasks
+                       SET title = $1, department = $2, assignee_name = $3,
+                           status = CASE WHEN status = 'DONE' THEN status ELSE 'TODO' END,
+                           description = $4,
+                           logs = COALESCE(logs, '[]'::jsonb) || $5::jsonb
+                       WHERE id = $6`,
+                      [
+                        `[Bước ${nextPendingIdx + 1}/${wfSteps.length}] ${wfSteps[nextPendingIdx].title} (${wfCode})`,
+                        nextTargetDept,
+                        nextAssigneeName,
+                        `Nhiệm vụ: ${wfSteps[nextPendingIdx].deliverables || wfSteps[nextPendingIdx].title}\nKết quả bước trước: ${stepNote}`,
+                        JSON.stringify([{ time: nowVNDateTime(), action: `Tự động kích hoạt Bước ${nextPendingIdx + 1} sau khi hoàn thành Bước ${targetStepIdx + 1} trên Bảng Công Việc`, actor: actorName }]),
+                        existingNextTask.rows[0].id
+                      ]
+                    );
+                  } else {
+                    await query(
+                      `INSERT INTO company_tasks (
+                         task_code, title, department, task_category, assignee_name, customer_name,
+                         priority, status, deadline, description, related_workflow_code, logs,
+                         created_by, created_by_name
+                       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+                      [
+                        nextTaskCode,
+                        `[Bước ${nextPendingIdx + 1}/${wfSteps.length}] ${wfSteps[nextPendingIdx].title} (${wfCode})`,
+                        nextTargetDept,
+                        "Phối hợp liên phòng ban",
+                        nextAssigneeName,
+                        wfRow.customer_name || "",
+                        wfRow.priority || "MEDIUM",
+                        "TODO",
+                        wfRow.due_date || null,
+                        `Nhiệm vụ: ${wfSteps[nextPendingIdx].deliverables || wfSteps[nextPendingIdx].title}\nKết quả bước trước: ${stepNote}`,
+                        wfCode,
+                        JSON.stringify([{ time: nowVNDateTime(), action: `Tự động chuyển giao từ Bước ${targetStepIdx + 1} (hoàn thành trên Bảng Công Việc)`, actor: actorName }]),
+                        me.username || null,
+                        wfRow.requester_name || actorName
+                      ]
+                    );
+                  }
+                } else {
+                  nextCurrentStepIndex = wfSteps.length - 1;
+                  nextWfStatus = "COMPLETED";
+                  if (prevTask?.status !== "DONE") {
+                    wfLogs.push({
+                      time: nowVNDateTime(),
+                      action: `[Bảng Công Việc → Tự động hoàn thành Bước ${targetStepIdx + 1}: ${completedStepTitle}] ➔ Hoàn tất toàn bộ quy trình (${wfSteps.length} bước)!`,
+                      actor: actorName
+                    });
+                  }
+                }
+              } else {
+                if (prevTask?.status !== "DONE") {
+                  wfLogs.push({
+                    time: nowVNDateTime(),
+                    action: `[Bảng Công Việc]: ${actorName} đã hoàn thành công việc ${effectiveTaskCode || ""}${text ? ` — Kết quả: ${text}` : ""}`,
+                    actor: actorName
+                  });
+                }
+                // Nếu quy trình 1 bước (không cấu hình nhiều bước) và không phải PR cần quyền duyệt riêng -> hoàn tất phiếu
+                if (wfSteps.length === 0 && !isPurchaseRequest(wfRow) && nextWfStatus !== "COMPLETED") {
+                  nextWfStatus = "COMPLETED";
+                } else if (nextWfStatus === "PENDING") {
+                  nextWfStatus = "IN_PROGRESS";
+                }
               }
             }
 
             await query(
               `UPDATE workflow_requests
                SET status = $1, steps = $2, logs = $3,
-                   results_summary = CASE WHEN $4 != '' AND NOT $5 THEN COALESCE(NULLIF(results_summary, '') || E'\n' || $4, $4) ELSE results_summary END,
+                   current_step_index = $4, target_dept = $5, assignee_name = $6,
+                   results_summary = $7,
                    updated_at = CURRENT_TIMESTAMP
-               WHERE id = $6`,
+               WHERE id = $8`,
               [
                 nextWfStatus,
                 JSON.stringify(wfSteps),
                 JSON.stringify(wfLogs),
-                text && status === "DONE" ? `[${effectiveTaskCode || "Task"}]: ${text}` : "",
-                isPurchaseRequest(wfRow),
+                nextCurrentStepIndex,
+                nextTargetDept,
+                nextAssigneeName,
+                nextResultsSummary,
                 wfRow.id
               ]
             );
