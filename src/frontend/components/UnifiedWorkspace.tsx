@@ -5861,6 +5861,55 @@ export const UnifiedWorkspace: React.FC = () => {
     setIsWorkflowModalOpen(true);
   };
 
+  const isWorkflowApprovalGateStep = useCallback((st: any): boolean => {
+    if (!st) return false;
+    if (st.step_type === "APPROVAL_GATE") return true;
+    if (st.step_type === "EXECUTION") return false;
+    const titleLower = String(st.title || "").toLowerCase();
+    return /(trình duyệt|phê duyệt|trình ban giám đốc|kế toán trưởng duyệt|duyệt chi|duyệt po|duyệt hợp đồng)/i.test(titleLower);
+  }, []);
+
+  const handleRollbackWorkflowStep = async (wf: any) => {
+    if (!wf) return;
+    const steps = Array.isArray(wf.steps) ? wf.steps : [];
+    const currentIdx = typeof wf.current_step_index === "number" ? wf.current_step_index : 0;
+    if (currentIdx <= 0) {
+      showToast("Quy trình đang ở bước đầu tiên, không thể lùi bước thêm.", "warning");
+      return;
+    }
+    const prevStep = steps[currentIdx - 1];
+    const reason = window.prompt(
+      `Từ chối / Trả hồ sơ từ Bước ${currentIdx + 1} về Bước ${currentIdx} (${prevStep?.title || "Bước trước"} — ${prevStep?.dept || ""}) để bổ sung.\nNhập lý do trả lại:`,
+      "Yêu cầu bổ sung lại báo giá / hồ sơ trình duyệt"
+    );
+    if (reason === null) return;
+    if (!reason.trim()) {
+      showToast("Vui lòng nhập rõ lý do trả lại bước trước!", "warning");
+      return;
+    }
+    try {
+      const res = await fetch("/api/workflows?action=rollback_step", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: wf.id,
+          rollback_reason: reason.trim(),
+          actor: currentStaffName || "Người duyệt",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        showToast(`Đã trả quy trình về Bước ${currentIdx} để bổ sung hồ sơ!`, "info");
+        setIsAdvanceStepModalOpen(false);
+        fetchData();
+      } else {
+        showToast(data.error || "Không thể trả lại bước trước", "error");
+      }
+    } catch (e: any) {
+      showToast("Lỗi kết nối: " + e.message, "error");
+    }
+  };
+
   // Open Stage-Gate Step Advance Modal
   const handleOpenAdvanceStep = (wf: any) => {
     const steps = Array.isArray(wf.steps) ? wf.steps : [];
@@ -10488,16 +10537,58 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
                         {/* Top Action buttons */}
                         <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                          {hasSteps && wf.status !== "COMPLETED" && (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenAdvanceStep(wf)}
-                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
-                            >
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                              <span>Nghiệm Thu Bước {currentIdx + 1} &amp; Bàn Giao</span>
-                            </button>
-                          )}
+                          {hasSteps && wf.status !== "COMPLETED" && (() => {
+                            const curSt = wfSteps[currentIdx];
+                            const isApprovalGate = isWorkflowApprovalGateStep(curSt);
+                            return (
+                              <>
+                                {isApprovalGate && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setActiveSubTab("proposals");
+                                      setProposalCreateTrigger((prev) => prev + 1);
+                                      showToast(
+                                        `Đã mở biểu mẫu lập Tờ trình / Đề xuất cho Bước ${currentIdx + 1} (${wf.workflow_code})`,
+                                        "info"
+                                      );
+                                    }}
+                                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 shadow-2xs flex items-center gap-1 transition-all cursor-pointer"
+                                    title="Mở biểu mẫu Tờ trình & Đề xuất phê duyệt đa cấp cho bước cổng phê duyệt xen kẽ này"
+                                  >
+                                    <FileText className="w-3.5 h-3.5" />
+                                    <span>📝 Lập Tờ Trình Đề Xuất{curSt?.proposal_template_code ? ` (${curSt.proposal_template_code})` : ""}</span>
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenAdvanceStep(wf)}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold text-white shadow-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+                                    isApprovalGate
+                                      ? "bg-emerald-600 hover:bg-emerald-700"
+                                      : "bg-indigo-600 hover:bg-indigo-700"
+                                  }`}
+                                >
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  <span>
+                                    {isApprovalGate
+                                      ? `✅ Phê Duyệt Bước ${currentIdx + 1} & Mở Khóa Bước Tiếp`
+                                      : `Nghiệm Thu Bước ${currentIdx + 1} & Bàn Giao`}
+                                  </span>
+                                </button>
+                                {currentIdx > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRollbackWorkflowStep(wf)}
+                                    className="px-2.5 py-1.5 rounded-lg text-xs font-bold border border-rose-300 dark:border-rose-800 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 shadow-2xs flex items-center gap-1 transition-all cursor-pointer"
+                                    title={`Từ chối / Trả hồ sơ về Bước ${currentIdx} để bổ sung`}
+                                  >
+                                    <span>↩️ Trả Về Bước {currentIdx}</span>
+                                  </button>
+                                )}
+                              </>
+                            );
+                          })()}
 
                           {!hasSteps && wf.status === "PENDING" && (
                             <button
@@ -10673,22 +10764,29 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                     }`}
                                   >
                                     <div className="flex items-center justify-between gap-1 mb-1">
-                                      <span className={`text-[10px] font-extrabold uppercase px-1.5 py-0.2 rounded ${
-                                        isDone ? "bg-emerald-200/60 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200"
-                                        : isCurrent ? "bg-indigo-200/80 dark:bg-indigo-900/80 text-indigo-800 dark:text-indigo-200 animate-pulse"
-                                        : "bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
-                                      }`}>
-                                        Bước {sIdx + 1}
-                                      </span>
+                                      <div className="flex items-center gap-1 flex-wrap">
+                                        <span className={`text-[10px] font-extrabold uppercase px-1.5 py-0.2 rounded ${
+                                          isDone ? "bg-emerald-200/60 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200"
+                                          : isCurrent ? "bg-indigo-200/80 dark:bg-indigo-900/80 text-indigo-800 dark:text-indigo-200 animate-pulse"
+                                          : "bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
+                                        }`}>
+                                          Bước {sIdx + 1}
+                                        </span>
+                                        {isWorkflowApprovalGateStep(st) && (
+                                          <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700">
+                                            🛡️ Cổng Duyệt{st.proposal_template_code ? ` · ${st.proposal_template_code}` : ""}
+                                          </span>
+                                        )}
+                                      </div>
                                       {isDone ? (
                                         <span className="flex items-center gap-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
                                           <CheckCircle2 className="w-3.5 h-3.5" />
-                                          Hoàn tất
+                                          {isWorkflowApprovalGateStep(st) ? "Đã duyệt" : "Hoàn tất"}
                                         </span>
                                       ) : isCurrent ? (
                                         <span className="flex items-center gap-0.5 text-[10px] font-bold text-indigo-600 dark:text-indigo-400">
                                           <Clock className="w-3.5 h-3.5 animate-spin" />
-                                          Đang xử lý
+                                          {isWorkflowApprovalGateStep(st) ? "Chờ phê duyệt" : "Đang xử lý"}
                                         </span>
                                       ) : (
                                         <span className="text-[10px] font-semibold text-slate-400">Chờ</span>
@@ -15212,6 +15310,38 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     const currentSteps = wfForm.steps || [];
                     const newStep = {
                       step_index: currentSteps.length,
+                      step_type: "APPROVAL_GATE",
+                      proposal_template_code: "TTR",
+                      title: `Trình duyệt đề xuất & Phê duyệt phương án`,
+                      dept: "Ban Giám Đốc",
+                      departments: ["Ban Giám Đốc"],
+                      assignee_name: "",
+                      assignees: [],
+                      sla_hours: 24,
+                      deliverables: "Tờ trình đề xuất đã được phê duyệt",
+                      status: "PENDING"
+                    };
+                    const nextSteps = reindexWorkflowSteps([...currentSteps, newStep]);
+                    const totalHours = nextSteps.reduce((sum: number, s: any) => sum + (Number(s.sla_hours) || 24), 0);
+                    setWfForm({
+                      ...wfForm,
+                      due_date: toVNDateString(new Date(Date.now() + Math.max(1, Math.ceil(totalHours / 24)) * 86400000)),
+                      steps: nextSteps
+                    });
+                  }}
+                  className="text-xs font-bold text-amber-800 dark:text-amber-300 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 px-3 py-1.5 rounded-xl border border-amber-300 dark:border-amber-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+                  title="Chèn thêm một bước Đề xuất / Cổng Phê duyệt xen kẽ trong quy trình phối hợp"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>+ Thêm bước Đề xuất / Phê duyệt</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const currentSteps = wfForm.steps || [];
+                    const newStep = {
+                      step_index: currentSteps.length,
+                      step_type: "EXECUTION",
                       title: `Bước ${currentSteps.length + 1}: Bàn giao`,
                       dept: "Application",
                       departments: ["Application"],
@@ -15327,7 +15457,31 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       </div>
 
                       <div className="md:col-span-3 space-y-1">
-                        <label className="block text-[10px] font-bold text-slate-400">Nội dung công việc bước {idx + 1}</label>
+                        <div className="flex items-center justify-between gap-1">
+                          <label className="block text-[10px] font-bold text-slate-400">Nội dung bước {idx + 1}</label>
+                          <select
+                            value={isWorkflowApprovalGateStep(step) ? "APPROVAL_GATE" : "EXECUTION"}
+                            onChange={(e) => {
+                              const nextType = e.target.value;
+                              updateStepAt((cur) => ({
+                                ...cur,
+                                step_type: nextType,
+                                ...(nextType === "APPROVAL_GATE" && !cur.proposal_template_code
+                                  ? { proposal_template_code: "" }
+                                  : {}),
+                              }));
+                            }}
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold border cursor-pointer ${
+                              isWorkflowApprovalGateStep(step)
+                                ? "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-700"
+                                : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                            }`}
+                            title="Chọn loại bước: Bước thực thi công việc hoặc Bước đề xuất / cổng phê duyệt xen kẽ"
+                          >
+                            <option value="EXECUTION">⚡ Bước Thực thi</option>
+                            <option value="APPROVAL_GATE">🛡️ Bước Đề xuất / Duyệt</option>
+                          </select>
+                        </div>
                         <input
                           type="text"
                           value={step.title}
@@ -15335,9 +15489,27 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             const val = e.target.value;
                             updateStepAt((cur) => ({ ...cur, title: val }));
                           }}
-                          placeholder="Tên công việc của bước..."
+                          placeholder="Tên công việc / Bước trình duyệt..."
                           className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-semibold"
                         />
+                        {isWorkflowApprovalGateStep(step) && (
+                          <select
+                            value={step.proposal_template_code || ""}
+                            onChange={(e) => {
+                              const tplCode = e.target.value;
+                              updateStepAt((cur) => ({ ...cur, step_type: "APPROVAL_GATE", proposal_template_code: tplCode }));
+                            }}
+                            className="w-full px-2 py-1 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50/70 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 text-[10px] font-bold cursor-pointer"
+                            title="Chọn biểu mẫu Tờ trình / Đề xuất gắn với bước phê duyệt này (hoặc duyệt trực tiếp trên bước)"
+                          >
+                            <option value="">🛡️ Duyệt trực tiếp ngay trên bước quy trình</option>
+                            <option value="TTR">📝 Gắn mẫu TTR — Tờ trình Xin ý kiến / Duyệt BGĐ</option>
+                            <option value="DXM">🛒 Gắn mẫu DXM — Đề xuất Mua sắm Vật tư / Thiết bị</option>
+                            <option value="DNTT">💳 Gắn mẫu DNTT — Đề nghị Thanh toán</option>
+                            <option value="DNTU">💵 Gắn mẫu DNTU — Đề nghị Tạm ứng</option>
+                            <option value="QT">🧾 Gắn mẫu QT — Đề nghị Quyết toán</option>
+                          </select>
+                        )}
                         <input
                           type="text"
                           value={step.deliverables || ""}
@@ -15345,7 +15517,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             const val = e.target.value;
                             updateStepAt((cur) => ({ ...cur, deliverables: val }));
                           }}
-                          placeholder="📋 Yêu cầu đầu ra (VD: Biên bản nghiệm thu, phiếu xuất...)"
+                          placeholder="📋 Yêu cầu đầu ra (VD: Biên bản nghiệm thu, tờ trình đã duyệt...)"
                           className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 text-[11px]"
                         />
                         {Boolean((wfForm as any).id) && (
@@ -15738,25 +15910,49 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   Mỗi bước sẽ có phòng ban phụ trách, người thực hiện mặc định và tiêu chuẩn hồ sơ đầu ra bắt buộc.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  const cur = templateForm.steps || [];
-                  const newSt = {
-                    step_index: cur.length,
-                    title: `Bước ${cur.length + 1}: Thực hiện`,
-                    dept: templateForm.target_dept || "Application",
-                    assignee_name: "",
-                    sla_hours: 24,
-                    deliverables: "Biên bản nghiệm thu kỹ thuật"
-                  };
-                  setTemplateForm({ ...templateForm, steps: [...cur, newSt] });
-                }}
-                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-1 shadow-xs"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>+ Thêm Bước</span>
-              </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cur = templateForm.steps || [];
+                    const newSt = {
+                      step_index: cur.length,
+                      step_type: "APPROVAL_GATE",
+                      proposal_template_code: "TTR",
+                      title: `Bước ${cur.length + 1}: Trình duyệt đề xuất & Phê duyệt`,
+                      dept: "Ban Giám Đốc",
+                      assignee_name: "",
+                      sla_hours: 24,
+                      deliverables: "Tờ trình đề xuất đã được phê duyệt"
+                    };
+                    setTemplateForm({ ...templateForm, steps: [...cur, newSt] });
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 flex items-center gap-1 shadow-2xs cursor-pointer"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>+ Thêm Bước Đề Xuất / Phê Duyệt</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cur = templateForm.steps || [];
+                    const newSt = {
+                      step_index: cur.length,
+                      step_type: "EXECUTION",
+                      title: `Bước ${cur.length + 1}: Thực hiện`,
+                      dept: templateForm.target_dept || "Application",
+                      assignee_name: "",
+                      sla_hours: 24,
+                      deliverables: "Biên bản nghiệm thu kỹ thuật"
+                    };
+                    setTemplateForm({ ...templateForm, steps: [...cur, newSt] });
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-1 shadow-xs cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ Thêm Bước Thực Thi</span>
+                </button>
+              </div>
             </div>
 
             <div className="space-y-2.5">
@@ -15863,8 +16059,31 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5">
-                      <div className="md:col-span-5">
-                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Tên bước công việc *</label>
+                      <div className="md:col-span-5 space-y-1">
+                        <div className="flex items-center justify-between gap-1">
+                          <label className="block text-[10px] font-bold text-slate-500">Tên bước công việc *</label>
+                          <select
+                            value={isWorkflowApprovalGateStep(st) ? "APPROVAL_GATE" : "EXECUTION"}
+                            onChange={(e) => {
+                              const nextType = e.target.value;
+                              updateTmplStepAt((cur) => ({
+                                ...cur,
+                                step_type: nextType,
+                                ...(nextType === "APPROVAL_GATE" && !cur.proposal_template_code
+                                  ? { proposal_template_code: "" }
+                                  : {}),
+                              }));
+                            }}
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold border cursor-pointer ${
+                              isWorkflowApprovalGateStep(st)
+                                ? "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-700"
+                                : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                            }`}
+                          >
+                            <option value="EXECUTION">⚡ Bước Thực thi / Bàn giao</option>
+                            <option value="APPROVAL_GATE">🛡️ Bước Đề xuất / Cổng Phê duyệt xen kẽ</option>
+                          </select>
+                        </div>
                         <input
                           type="text"
                           required
@@ -15873,9 +16092,26 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             const val = e.target.value;
                             updateTmplStepAt((cur) => ({ ...cur, title: val }));
                           }}
-                          placeholder="VD: Kiểm tra tính khả thi & tiếp nhận mẫu"
+                          placeholder="VD: Kiểm tra tính khả thi / Trình duyệt phương án..."
                           className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 font-bold"
                         />
+                        {isWorkflowApprovalGateStep(st) && (
+                          <select
+                            value={st.proposal_template_code || ""}
+                            onChange={(e) => {
+                              const tplCode = e.target.value;
+                              updateTmplStepAt((cur) => ({ ...cur, step_type: "APPROVAL_GATE", proposal_template_code: tplCode }));
+                            }}
+                            className="w-full px-2 py-1 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50/70 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 text-[10px] font-bold cursor-pointer"
+                          >
+                            <option value="">🛡️ Duyệt trực tiếp ngay trên bước quy trình (không cần lập Tờ trình rời)</option>
+                            <option value="TTR">📝 Gắn mẫu TTR — Tờ trình Xin ý kiến / Duyệt BGĐ</option>
+                            <option value="DXM">🛒 Gắn mẫu DXM — Đề xuất Mua sắm Vật tư / Thiết bị</option>
+                            <option value="DNTT">💳 Gắn mẫu DNTT — Đề nghị Thanh toán</option>
+                            <option value="DNTU">💵 Gắn mẫu DNTU — Đề nghị Tạm ứng</option>
+                            <option value="QT">🧾 Gắn mẫu QT — Đề nghị Quyết toán</option>
+                          </select>
+                        )}
                       </div>
 
                       <div className="md:col-span-4 space-y-1">
