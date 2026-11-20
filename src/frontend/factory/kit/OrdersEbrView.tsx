@@ -4479,13 +4479,40 @@ function DailyOperatorTrackerSection({
       </div>
 
       {/* Bảng 1: Tổng hợp khối lượng công việc & tiến độ theo từng Nhân viên */}
-      <Card title={`1. Bảng Tổng Hợp Phân Công & Năng Suất Nhân Viên Theo Ca (${operatorStats.length} nhân sự)`}>
+      <Card
+        title={`1. Bảng Tổng Hợp Phân Công & Năng Suất Nhân Viên Theo Ca (${operatorStats.length} nhân sự)`}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <Button onClick={() => setShowOrderPicker((v) => !v)}>
+              {showOrderPicker
+                ? "Đóng bảng chọn Lệnh SX"
+                : `➕ Chọn Lệnh SX đưa vào Kế hoạch ngày (${unscheduledOrdersForDate.length})`}
+            </Button>
+            {dateScope === "DAY" && (
+              <Button variant="secondary" onClick={() => setDateScope("ALL")}>
+                🌐 Xem tất cả Lệnh SX đang mở ({orderGroups.length})
+              </Button>
+            )}
+          </div>
+        }
+      >
         {operatorStats.length === 0 ? (
-          <Empty>
-            Chưa có Lệnh sản xuất nào được xếp lịch cho ngày {fmtDate(selectedPlanDate)}. Bấm nút{" "}
-            <b>&ldquo;➕ Chọn Lệnh SX đưa vào Kế hoạch ngày&rdquo;</b> ở thanh phía trên (hoặc bấm{" "}
-            <b>&ldquo;🌐 Xem tất cả Lệnh SX đang mở&rdquo;</b>) để phân công.
-          </Empty>
+          <div className="py-5 px-4 text-center space-y-3">
+            <div className="text-xs text-slate-600 dark:text-slate-300">
+              Chưa có Lệnh sản xuất nào được xếp lịch cho ngày <b>{fmtDate(selectedPlanDate)}</b>.
+              {unscheduledOrdersForDate.length > 0
+                ? ` Hiện đang có ${unscheduledOrdersForDate.length} Lệnh sản xuất đang mở chờ xếp lịch.`
+                : ""}
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Button onClick={() => setShowOrderPicker(true)}>
+                ➕ Chọn Lệnh SX đưa vào Kế hoạch ngày {fmtDate(selectedPlanDate)} ({unscheduledOrdersForDate.length} lệnh chờ)
+              </Button>
+              <Button variant="secondary" onClick={() => setDateScope("ALL")}>
+                🌐 Xem tất cả Lệnh SX đang mở ({orderGroups.length} lệnh)
+              </Button>
+            </div>
+          </div>
         ) : (
           <Table
             head={[
@@ -4536,6 +4563,11 @@ function DailyOperatorTrackerSection({
         title={`2. Bảng Kế Hoạch & Giám Sát Tiến Độ Theo Lệnh Sản Xuất (${scheduledOrdersForView.length} lệnh · ${visibleSteps.length} bước)`}
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            <Button onClick={() => setShowOrderPicker((v) => !v)}>
+              {showOrderPicker
+                ? "Đóng bảng chọn Lệnh SX"
+                : `➕ Chọn Lệnh SX vào ngày ${fmtDate(selectedPlanDate)} (${unscheduledOrdersForDate.length})`}
+            </Button>
             <select
               className={`${inputClass} !w-44 !py-1 text-xs`}
               value={dailyShiftFilter}
@@ -4570,12 +4602,139 @@ function DailyOperatorTrackerSection({
           </div>
         }
       >
+        {(showOrderPicker || (dateScope === "DAY" && scheduledOrdersForView.length === 0 && unscheduledOrdersForDate.length > 0)) && (
+          <div className="mb-4 rounded-xl border-2 border-sky-400/80 dark:border-sky-700 bg-sky-50/40 dark:bg-sky-950/30 p-3.5 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs font-bold text-slate-800 dark:text-slate-100">
+                ☑️ Tích chọn các Lệnh Sản Xuất muốn triển khai trong ngày <b>{fmtDate(selectedPlanDate)}</b> và phân công Nhân viên / Ca trực:
+              </div>
+              {unscheduledOrdersForDate.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const allIds = unscheduledOrdersForDate.map((g) => g.order_id);
+                    setPickedOrderIds(pickedOrderIds.length === allIds.length ? [] : allIds);
+                  }}
+                  className="text-xs font-bold text-sky-700 dark:text-sky-400 hover:underline cursor-pointer"
+                >
+                  {pickedOrderIds.length === unscheduledOrdersForDate.length ? "Bỏ chọn tất cả" : "Chọn tất cả lệnh đang chờ"}
+                </button>
+              )}
+            </div>
+
+            {unscheduledOrdersForDate.length === 0 ? (
+              <div className="text-xs text-slate-500 py-2">
+                Tất cả các Lệnh sản xuất đang mở đều đã được đưa vào kế hoạch ngày {fmtDate(selectedPlanDate)}.
+              </div>
+            ) : (
+              <>
+                <div className="max-h-60 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 divide-y divide-slate-100 dark:divide-slate-800">
+                  {unscheduledOrdersForDate.map((g) => {
+                    const checked = pickedOrderIds.includes(g.order_id);
+                    const doneCnt = g.steps.filter((s) => s.status === "DONE" || s.status === "SKIPPED").length;
+                    return (
+                      <label
+                        key={g.order_id}
+                        className={`flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-xs cursor-pointer hover:bg-sky-50/60 dark:hover:bg-sky-950/30 ${
+                          checked ? "bg-sky-50 dark:bg-sky-950/40" : ""
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() =>
+                              setPickedOrderIds(
+                                checked ? pickedOrderIds.filter((id) => id !== g.order_id) : [...pickedOrderIds, g.order_id]
+                              )
+                            }
+                          />
+                          <div>
+                            <span className="font-mono font-bold text-sky-700 dark:text-sky-400">{g.order_code}</span>
+                            <span className="mx-1.5">·</span>
+                            <span className="font-bold text-slate-900 dark:text-slate-100">{g.product_code}</span>
+                            <span className="text-slate-600 dark:text-slate-300"> — {g.product_name}</span>
+                            <div className="text-[11px] text-slate-500">
+                              Lô: <b className="font-mono">{g.lot_code ?? "Chưa cấp"}</b> · SL: <b>{fmtQty(g.planned_qty)} {g.uom}</b>
+                              {g.kd_po_code ? ` · PO: ${g.kd_po_code}` : ""}
+                              {g.planned_date ? ` · Đang lịch ngày: ${fmtDate(g.planned_date)}` : " · Chưa xếp ngày"}
+                            </div>
+                          </div>
+                        </div>
+                        <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                          Tiến độ: {doneCnt}/{g.steps.length} bước
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-wrap items-end gap-2 pt-1">
+                  <div className="min-w-[220px]">
+                    <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                      Nhân viên phụ trách chính (Tùy chọn)
+                    </label>
+                    <select
+                      className={`${inputClass} !py-1.5 text-xs`}
+                      value={bulkAssignee}
+                      onChange={(e) => setBulkAssignee(e.target.value)}
+                    >
+                      <option value="">-- Chọn nhân viên phòng Sản xuất Kit --</option>
+                      {operatorOptions.map((op) => (
+                        <option key={op} value={op}>
+                          {op}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="min-w-[180px]">
+                    <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                      Ca sản xuất
+                    </label>
+                    <select
+                      className={`${inputClass} !py-1.5 text-xs`}
+                      value={bulkShift}
+                      onChange={(e) => setBulkShift(e.target.value)}
+                    >
+                      {Object.entries(SHIFT_LABELS).map(([k, lbl]) => (
+                        <option key={k} value={k}>
+                          {lbl}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <Button
+                    disabled={pickedOrderIds.length === 0 || savingOrderId === "BATCH"}
+                    onClick={handleBatchScheduleOrdersToDay}
+                  >
+                    {savingOrderId === "BATCH"
+                      ? "Đang lưu kế hoạch..."
+                      : `📅 Đưa ${pickedOrderIds.length} Lệnh đã chọn vào Kế hoạch ngày ${fmtDate(selectedPlanDate)}`}
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         {scheduledOrdersForView.length === 0 ? (
-          <Empty>
-            {dateScope === "DAY"
-              ? `Chưa có Lệnh sản xuất nào trong kế hoạch ngày ${fmtDate(selectedPlanDate)}. Bấm "➕ Chọn Lệnh SX đưa vào Kế hoạch ngày" ở trên hoặc chuyển sang "🌐 Xem tất cả Lệnh SX đang mở".`
-              : "Không có Lệnh sản xuất nào khớp với bộ lọc hiện tại."}
-          </Empty>
+          <div className="py-5 px-4 text-center space-y-3">
+            <div className="text-xs text-slate-600 dark:text-slate-300">
+              {dateScope === "DAY"
+                ? `Chưa có Lệnh sản xuất nào trong kế hoạch ngày ${fmtDate(selectedPlanDate)}.`
+                : "Không có Lệnh sản xuất nào khớp với bộ lọc hiện tại."}
+            </div>
+            {dateScope === "DAY" && (
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Button onClick={() => setShowOrderPicker(true)}>
+                  ➕ Chọn Lệnh SX đưa vào Kế hoạch ngày {fmtDate(selectedPlanDate)} ({unscheduledOrdersForDate.length} lệnh chờ)
+                </Button>
+                <Button variant="secondary" onClick={() => setDateScope("ALL")}>
+                  🌐 Xem tất cả Lệnh SX đang mở ({orderGroups.length} lệnh)
+                </Button>
+              </div>
+            )}
+          </div>
         ) : (
           <Table
             head={[
