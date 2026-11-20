@@ -76,6 +76,8 @@ export const DEPARTMENT_POSITIONS: Record<string, DepartmentPositionGroup> = {
     badgeColor: "bg-pink-100 text-pink-700 border-pink-200 dark:bg-pink-950/50 dark:text-pink-400 dark:border-pink-800",
     borderTheme: "border-pink-500",
     positions: [
+      { title: "Trưởng bộ phận Marketing", defaultRole: "sales_head", level: "Manager", desc: "Điều hành hoạt động Marketing, truyền thông thương hiệu và hội thảo khoa học" },
+      { title: "Phó Trưởng bộ phận Marketing", defaultRole: "sales_head", level: "Manager", desc: "Phụ trách triển khai chiến dịch truyền thông, tài liệu sản phẩm; thay Trưởng bộ phận khi vắng" },
       { title: "Nhân viên Marketing", defaultRole: "marketing", level: "Staff", desc: "Nội dung số, brochure, hội thảo và truyền thông sản phẩm" }
     ]
   },
@@ -86,6 +88,7 @@ export const DEPARTMENT_POSITIONS: Record<string, DepartmentPositionGroup> = {
     badgeColor: "bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/50 dark:text-purple-400 dark:border-purple-800",
     borderTheme: "border-purple-500",
     positions: [
+      { title: "Trưởng phòng Ứng dụng", defaultRole: "app_head", level: "Manager", desc: "Điều hành phòng Ứng dụng, phê duyệt kế hoạch demo/thẩm định và ký nghiệm thu kỹ thuật" },
       { title: "Phó Trưởng phòng Ứng dụng", defaultRole: "app_head", level: "Manager", desc: "Điều hành phòng, phân công kỹ sư, ký nghiệm thu kỹ thuật" },
       { title: "Trưởng nhóm Công nghiệp", defaultRole: "app_rep", level: "Specialist", desc: "Phụ trách nhóm khách hàng công nghiệp" },
       { title: "Nhân viên Ứng dụng", defaultRole: "app_rep", level: "Staff", desc: "Chạy mẫu, demo, hỗ trợ kỹ thuật tại phòng xét nghiệm" },
@@ -100,6 +103,7 @@ export const DEPARTMENT_POSITIONS: Record<string, DepartmentPositionGroup> = {
     borderTheme: "border-amber-500",
     positions: [
       { title: "Trưởng bộ phận Cung ứng Kho", defaultRole: "staff", level: "Manager", desc: "Duyệt cấp phát FEFO Kho Nhà máy, phiếu kho và đề nghị mua NVL nhà máy (vai trò nhà máy WH_HEAD / PUR_HEAD)" },
+      { title: "Phó Trưởng bộ phận Cung ứng Kho", defaultRole: "staff", level: "Manager", desc: "Phụ trách điều phối Cung ứng Kỹ thuật & Kho Nhà máy; duyệt phiếu kho và đề nghị mua NVL khi Trưởng bộ phận ủy quyền" },
       { title: "Nhân viên Cung ứng Kho", defaultRole: "staff", level: "Specialist", desc: "Cung ứng Kỹ thuật: đề nghị mua PR, đơn PO NVL/hóa chất sản xuất, theo dõi hàng về, hồ sơ CO/CQ (vai trò nhà máy PUR_STAFF / WH_STAFF)" },
       { title: "Nhân viên Kho", defaultRole: "staff", level: "Staff", desc: "Kho Nhà Máy (P-KHO): nhập, xuất cấp phát NVL theo lô FEFO, thẻ kho, chuỗi lạnh sản xuất (WH_STAFF)" },
       { title: "Nhân viên Admin Kho", defaultRole: "staff", level: "Staff", desc: "Kho Nhà Máy (P-KHO): lập phiếu nhập / xuất / chuyển kho nhà máy, đối soát tồn kho (WH_STAFF)" }
@@ -113,6 +117,7 @@ export const DEPARTMENT_POSITIONS: Record<string, DepartmentPositionGroup> = {
     borderTheme: "border-sky-500",
     positions: [
       { title: "Trưởng phòng R&D", defaultRole: "rd_head", level: "Manager", desc: "Chỉ đạo đề tài, phê duyệt DHF, công thức và chuyển giao công nghệ" },
+      { title: "Phó Trưởng phòng R&D", defaultRole: "rd_head", level: "Manager", desc: "Điều phối chuyên môn nghiên cứu, thẩm định DHF và thay Trưởng phòng phê duyệt khi vắng" },
       { title: "Nhân viên R&D", defaultRole: "rd_staff", level: "Staff", desc: "Thí nghiệm, nhật ký ELN, pha chế mẫu thử, đánh giá độ ổn định" }
     ]
   },
@@ -123,6 +128,7 @@ export const DEPARTMENT_POSITIONS: Record<string, DepartmentPositionGroup> = {
     badgeColor: "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-400 dark:border-emerald-800",
     borderTheme: "border-emerald-500",
     positions: [
+      { title: "Trưởng phòng Sản xuất", defaultRole: "kit_head", level: "Manager", desc: "Quản lý toàn diện Phòng Sản xuất Kit, phê duyệt định mức BOM, lệnh sản xuất và hồ sơ lô eBR" },
       { title: "Phó Trưởng phòng Sản xuất", defaultRole: "kit_head", level: "Manager", desc: "Điều hành sản xuất, phát lệnh sản xuất, ký duyệt hồ sơ lô" },
       { title: "Trưởng nhóm Sản xuất tách chiết", defaultRole: "kit_staff", level: "Specialist", desc: "Phụ trách nhóm sản xuất hóa chất tách chiết" },
       { title: "Trưởng nhóm Sản xuất mix", defaultRole: "kit_staff", level: "Specialist", desc: "Phụ trách nhóm pha chế MasterMix" },
@@ -137,6 +143,7 @@ export const DEPARTMENT_POSITIONS: Record<string, DepartmentPositionGroup> = {
     borderTheme: "border-violet-500",
     positions: [
       { title: "Trưởng phòng Tổng hợp Oligo", defaultRole: "oligo_head", level: "Manager", desc: "Điều phối đơn Oligo, duyệt mẻ tổng hợp và kết quả QC, duyệt giao hàng" },
+      { title: "Phó Trưởng phòng Tổng hợp Oligo", defaultRole: "oligo_head", level: "Manager", desc: "Điều hành chuyên môn tổng hợp & tinh sạch Oligo, duyệt mẻ tổng hợp và kết quả QC khi Trưởng phòng ủy quyền" },
       { title: "Trưởng nhóm Sản xuất", defaultRole: "oligo_staff", level: "Specialist", desc: "Phụ trách nhóm vận hành máy tổng hợp và hậu xử lý" },
       { title: "Nhân viên Tổng hợp Oligo", defaultRole: "oligo_staff", level: "Staff", desc: "Vận hành máy tổng hợp, hậu xử lý, tinh sạch, đo OD, chia lọ" }
     ]
@@ -149,6 +156,7 @@ export const DEPARTMENT_POSITIONS: Record<string, DepartmentPositionGroup> = {
     borderTheme: "border-amber-500",
     positions: [
       { title: "Trưởng phòng KTCN", defaultRole: "device_head", level: "Manager", desc: "Điều hành phòng; duyệt cổng dự án và ký phát hành phần mềm, ECO, lệnh lắp ráp (chưa bố trí: Ban Giám Đốc duyệt thay)" },
+      { title: "Phó Trưởng phòng KTCN", defaultRole: "device_head", level: "Manager", desc: "Phụ trách kỹ thuật thiết bị, hồ sơ DMR/DHR, lệnh lắp ráp và bảo trì sửa chữa" },
       { title: "Trưởng nhóm Sản xuất thiết bị", defaultRole: "device_staff", level: "Specialist", desc: "Phụ trách lắp ráp thiết bị theo lệnh sản xuất, ký phiếu BM 21-01" },
       { title: "Trưởng nhóm Lắp đặt – Bảo trì – Sửa chữa thiết bị", defaultRole: "device_staff", level: "Specialist", desc: "Phụ trách lắp đặt, bảo trì, hiệu chuẩn và sửa chữa thiết bị" },
       { title: "Trưởng nhóm Hành Chính Kỹ Thuật Công Nghệ", defaultRole: "device_staff", level: "Specialist", desc: "Hồ sơ kỹ thuật, kế hoạch và hành chính của phòng" },
@@ -166,6 +174,7 @@ export const DEPARTMENT_POSITIONS: Record<string, DepartmentPositionGroup> = {
     borderTheme: "border-cyan-500",
     positions: [
       { title: "Trưởng phòng IT", defaultRole: "it_head", level: "Manager", desc: "Điều hành phòng IT; duyệt cổng dự án và ký phát hành phần mềm (chưa bố trí: Ban Giám Đốc duyệt thay)" },
+      { title: "Phó Trưởng phòng IT", defaultRole: "it_head", level: "Manager", desc: "Phụ trách hạ tầng CNTT và dự án phát triển phần mềm IEC 62304; thay Trưởng phòng điều hành khi vắng" },
       { title: "Nhân viên nghiên cứu phần mềm", defaultRole: "it_staff", level: "Staff", desc: "Phát triển phần mềm phân tích và điều khiển thiết bị, phần mềm nội bộ (hồ sơ thiết kế IEC 62304)" },
       { title: "Nhân viên IT", defaultRole: "it_staff", level: "Staff", desc: "IT chung toàn công ty: máy tính, mạng, máy chủ, tài khoản, sao lưu" }
     ]
@@ -177,6 +186,7 @@ export const DEPARTMENT_POSITIONS: Record<string, DepartmentPositionGroup> = {
     badgeColor: "bg-teal-100 text-teal-700 border-teal-200 dark:bg-teal-950/50 dark:text-teal-400 dark:border-teal-800",
     borderTheme: "border-teal-500",
     positions: [
+      { title: "Trưởng phòng QC-QA", defaultRole: "qa_qc_lead", level: "Manager", desc: "Quản lý hệ thống chất lượng ISO 13485, phê duyệt kết quả QC, giải phóng lô và CAPA" },
       { title: "Phó Trưởng phòng QC-QA", defaultRole: "qa_qc_lead", level: "Manager", desc: "Điều hành phòng, duyệt kết quả QC, giải phóng lô, thu hồi" },
       { title: "Nhân viên QC", defaultRole: "qa_qc", level: "Staff", desc: "Lấy mẫu, kiểm nghiệm, ghi kết quả QC" },
       { title: "Nhân viên ISO", defaultRole: "qa_qc", level: "Staff", desc: "Kiểm soát tài liệu, đào tạo, đánh giá nội bộ ISO 13485" }
