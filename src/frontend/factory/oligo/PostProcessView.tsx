@@ -1332,15 +1332,15 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                     </td>
 
                     {/* 7. Contextual Step Actions (Rightmost Column) */}
-                    <td className="py-3 pl-1 min-w-[148px]">
-                      <div className="flex flex-col gap-1.5">
+                    <td className="py-2.5 pl-1">
+                      <div className="flex flex-wrap items-center gap-1 max-w-[220px]">
                         {isEditableRow ? (
                           <>
                             {!hasWorkflow || loggedSteps === 0 ? (
                               <button
                                 type="button"
                                 onClick={() => setStepModalRow({ row: r, mode: "CURRENT_STEP" })}
-                                className="w-full rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs px-3 py-1.5 shadow-xs transition cursor-pointer flex items-center justify-center gap-1"
+                                className="rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-[11px] px-2.5 py-1 shadow-xs transition cursor-pointer inline-flex items-center gap-1 whitespace-nowrap"
                               >
                                 ▶ Bắt đầu
                               </button>
@@ -1348,22 +1348,23 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                               <button
                                 type="button"
                                 onClick={() => setStepModalRow({ row: r, mode: "CURRENT_STEP" })}
-                                className="w-full rounded-lg bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs px-3 py-1.5 shadow-xs transition cursor-pointer flex items-center justify-center gap-1"
+                                className="rounded-lg bg-sky-600 hover:bg-sky-700 text-white font-bold text-[11px] px-2.5 py-1 shadow-xs transition cursor-pointer inline-flex items-center gap-1 whitespace-nowrap"
                               >
-                                📝 Cập nhật &amp; Đi tiếp
+                                📝 Bước tiếp
                               </button>
                             ) : !(Number(r.od_total) > 0) ? (
                               <button
                                 type="button"
                                 onClick={() => setStepModalRow({ row: r, mode: "CURRENT_STEP" })}
-                                className="w-full rounded-lg bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs px-3 py-1.5 shadow-xs transition cursor-pointer flex items-center justify-center gap-1"
+                                className="rounded-lg bg-sky-600 hover:bg-sky-700 text-white font-bold text-[11px] px-2.5 py-1 shadow-xs transition cursor-pointer inline-flex items-center gap-1 whitespace-nowrap"
                               >
-                                📏 Nhập Đo OD
+                                📏 Đo OD
                               </button>
                             ) : (
                               <button
                                 type="button"
                                 disabled={batchAct.isPending}
+                                title="Xác nhận Đạt QC và hoàn tất trình tự này"
                                 onClick={() =>
                                   batchAct.mutate({
                                     action: "batch_confirm_qc",
@@ -1371,18 +1372,19 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                                     qc_result: "PASS",
                                   })
                                 }
-                                className="w-full rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-1.5 shadow-xs transition cursor-pointer flex items-center justify-center gap-1"
+                                className="rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] px-2.5 py-1 shadow-xs transition cursor-pointer inline-flex items-center gap-1 whitespace-nowrap"
                               >
-                                ✅ Xác nhận Đạt QC
+                                ✅ Đạt QC
                               </button>
                             )}
 
                             <button
                               type="button"
+                              title="Báo lỗi / Yêu cầu tổng hợp hoặc tinh sạch lại"
                               onClick={() => setRerunRow(r)}
-                              className="w-full rounded-lg border border-rose-300 dark:border-rose-800/80 bg-rose-50/40 dark:bg-rose-950/20 hover:bg-rose-100/70 dark:hover:bg-rose-950/50 text-rose-700 dark:text-rose-400 font-semibold text-[11px] px-2.5 py-1 transition cursor-pointer flex items-center justify-center gap-1"
+                              className="rounded-lg border border-rose-300 dark:border-rose-800/80 bg-rose-50/40 dark:bg-rose-950/20 hover:bg-rose-100/70 dark:hover:bg-rose-950/50 text-rose-700 dark:text-rose-400 font-semibold text-[11px] px-2 py-1 transition cursor-pointer inline-flex items-center gap-1 whitespace-nowrap"
                             >
-                              ↻ Báo lỗi / Chạy lại
+                              ↻ Chạy lại
                             </button>
                           </>
                         ) : (
@@ -1392,6 +1394,7 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                                 <button
                                   type="button"
                                   disabled={batchAct.isPending}
+                                  title="Xác nhận trình tự Đạt QC và chuyển sang Đã hoàn thành"
                                   onClick={() =>
                                     batchAct.mutate({
                                       action: "batch_confirm_qc",
@@ -1399,33 +1402,36 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                                       qc_result: "PASS",
                                     })
                                   }
-                                  className="w-full rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-1.5 shadow-xs transition cursor-pointer flex items-center justify-center gap-1"
+                                  className="rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] px-2.5 py-1 shadow-xs transition cursor-pointer inline-flex items-center gap-1 whitespace-nowrap"
                                 >
-                                  ✅ Xác nhận Đạt QC
+                                  ✅ Đạt QC
                                 </button>
                                 <button
                                   type="button"
+                                  title="Không đạt QC / Yêu cầu chạy lại"
                                   onClick={() => setRerunRow(r)}
-                                  className="w-full rounded-lg border border-rose-300 dark:border-rose-800/80 bg-rose-50/40 dark:bg-rose-950/20 hover:bg-rose-100/70 dark:hover:bg-rose-950/50 text-rose-700 dark:text-rose-400 font-semibold text-[11px] px-2.5 py-1 transition cursor-pointer flex items-center justify-center gap-1"
+                                  className="rounded-lg border border-rose-300 dark:border-rose-800/80 bg-rose-50/40 dark:bg-rose-950/20 hover:bg-rose-100/70 dark:hover:bg-rose-950/50 text-rose-700 dark:text-rose-400 font-semibold text-[11px] px-2 py-1 transition cursor-pointer inline-flex items-center gap-1 whitespace-nowrap"
                                 >
-                                  ↻ Không đạt / Chạy lại
+                                  ↻ Chạy lại
                                 </button>
                               </>
                             )}
                             <button
                               type="button"
+                              title="Xem nhật ký các bước hậu tổng hợp"
                               onClick={() => setStepModalRow({ row: r, mode: "HISTORY" })}
-                              className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 text-slate-700 dark:text-slate-200 font-semibold text-xs px-2.5 py-1.5 transition cursor-pointer"
+                              className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 text-slate-700 dark:text-slate-200 font-semibold text-[11px] px-2 py-1 transition cursor-pointer whitespace-nowrap"
                             >
-                              📋 Xem nhật ký
+                              📋 Nhật ký
                             </button>
                             {canLabel && Number(r.od_total) > 0 && (
                               <button
                                 type="button"
+                                title="In nhãn ống Oligo"
                                 onClick={() => printWithReprint([r.id])}
-                                className="w-full rounded-lg border border-sky-200 dark:border-sky-800 bg-sky-50/60 dark:bg-sky-950/30 text-sky-700 dark:text-sky-300 font-semibold text-[11px] px-2.5 py-1 transition cursor-pointer"
+                                className="rounded-lg border border-sky-200 dark:border-sky-800 bg-sky-50/60 dark:bg-sky-950/30 text-sky-700 dark:text-sky-300 font-semibold text-[11px] px-2 py-1 transition cursor-pointer whitespace-nowrap"
                               >
-                                🏷️ In nhãn ống
+                                🏷️ Nhãn
                               </button>
                             )}
                           </>

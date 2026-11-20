@@ -3763,7 +3763,6 @@ export function ProjectsView({
         {filteredProjects.length > 0 && (
           <Table
             head={[
-              "Mã dự án",
               "Loại đề tài",
               "Lĩnh vực",
               "Giai đoạn (Stage)",
@@ -3776,7 +3775,7 @@ export function ProjectsView({
           >
             {filteredProjects.map((r) => {
               const assignees: string[] = Array.isArray(r.assignees) ? r.assignees : [];
-              const colCount = canEdit || canDelete ? 9 : 8;
+              const colCount = canEdit || canDelete ? 8 : 7;
               return (
                 <React.Fragment key={r.id}>
                   <tr
@@ -3798,10 +3797,7 @@ export function ProjectsView({
                     className="cursor-pointer hover:bg-sky-50/40 dark:hover:bg-slate-800/50"
                     onClick={() => setSelected(r.id)}
                   >
-                    <td className="pb-2.5 pt-1 pl-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400 whitespace-nowrap">
-                      {r.code}
-                    </td>
-                    <td className="pb-2.5 pt-1 pr-3 text-xs whitespace-nowrap">
+                    <td className="pb-2.5 pt-1 pl-2 pr-3 text-xs whitespace-nowrap">
                       {PROJ_TYPE_LABEL[r.project_type] ?? r.project_type}
                     </td>
                     <td className="pb-2.5 pt-1 pr-3 whitespace-nowrap">
