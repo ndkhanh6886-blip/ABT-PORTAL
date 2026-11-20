@@ -310,7 +310,9 @@ describe("factory/workhub cross-department aggregation", () => {
 
         const ioItem = result.workItems.find((w) => w.code === `IO-${tag}`);
         expect(ioItem).toBeDefined();
-        expect(ioItem?.dept).toBe("Đơn Nội Bộ");
+        expect(ioItem?.dept).toBe("Sản Xuất Kit");
+        expect(ioItem?.involvedDepts).not.toContain("Kinh Doanh");
+        expect(ioItem?.includeInTaskBoard).toBe(false);
 
         const rdProj = result.projects.find((p) => p.id === `PRJ-RD-${tag}`);
         expect(rdProj).toBeDefined();

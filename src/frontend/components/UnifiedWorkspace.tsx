@@ -3294,7 +3294,7 @@ export const UnifiedWorkspace: React.FC = () => {
     return false;
   }, [userDept, wfInvolvesMe, filterDept, departmentStaffList, taskHasAssignee]);
 
-  // Không hiển thị các công việc sản xuất thường quy của Phòng Sản Xuất Kit và Tổng Hợp Oligo trên Bảng công việc điều hành chung
+  // Không hiển thị các hoạt động sản xuất, nghiên cứu, kiểm nghiệm, kho vận thường quy trên Bảng công việc điều hành chung
   const ROUTINE_PROD_HUB_SOURCES = useMemo(
     () =>
       new Set([
@@ -3304,6 +3304,26 @@ export const UnifiedWorkspace: React.FC = () => {
         "OLIGO_ORDER",
         "OLIGO_BATCH",
         "OLIGO_POST",
+        "PREP_ORDER",
+        "INTERNAL_ORDER",
+        "RD_WBS",
+        "RD_ELN",
+        "RD_PROJECT",
+        "TECH_TRANSFER",
+        "SW_RELEASE",
+        "DEVICE_ORDER",
+        "SERVICE_TICKET",
+        "DEVICE_ECO",
+        "SUBCONTRACT",
+        "ASSET_EVENT",
+        "QC_TEST",
+        "DEVIATION_CAPA",
+        "NCR",
+        "STOCK_DOC",
+        "TECH_PR",
+        "TECH_PO",
+        "PLAN_TASK",
+        "WORK_TASK",
       ]),
     []
   );
