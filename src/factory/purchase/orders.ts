@@ -152,8 +152,123 @@ export async function listOrders(tx: Tx, actor: AuthzActor, status?: string) {
   }
   return (
     await tx.query(
-      `SELECT po.id, po.code, po.status, po.order_date, po.expected_date, po.total_amount::text AS total_amount, p.code AS supplier_code, p.name AS supplier_name,
-              (SELECT count(*)::int FROM purchase.purchase_order_line l WHERE l.po_id = po.id) AS line_count
+      `SELECT po.id, po.code, po.status, po.order_date, po.expected_date, po.total_amount::text AS total_amount,
+              p.code AS supplier_code, p.name AS supplier_name,
+              (SELECT count(*)::int FROM purchase.purchase_order_line l WHERE l.po_id = po.id) AS line_count,
+              COALESCE(
+                (SELECT array_agg(DISTINCT w.code ORDER BY w.code)
+                   FROM purchase.purchase_order_line l
+                   JOIN master.warehouse w ON w.id = l.target_warehouse_id
+                  WHERE l.po_id = po.id),
+                ARRAY[]::text[]
+              ) AS warehouse_codes,
+              COALESCE(
+                (SELECT jsonb_agg(
+                          jsonb_build_object(
+                            'item_code', i.code,
+                            'item_name', i.name,
+                            'qty_ordered', l.qty_ordered::float,
+                            'qty_received', l.qty_received::float,
+                            'uom', l.uom,
+                            'warehouse_code', w.code,
+                            'pr_code', pr.code
+                          ) ORDER BY l.line_no
+                        )
+                   FROM purchase.purchase_order_line l
+                   JOIN master.item i ON i.id = l.item_id
+                   JOIN master.warehouse w ON w.id = l.target_warehouse_id
+                   JOIN purchase.purchase_request_line prl ON prl.id = l.pr_line_id
+                   JOIN purchase.purchase_request pr ON pr.id = prl.pr_id
+                  WHERE l.po_id = po.id),
+                '[]'::jsonb
+              ) AS items_summary,
+              COALESCE(
+                (SELECT jsonb_agg(
+                          jsonb_build_object(
+                            'gr_code', gr.code,
+                            'stock_doc_code', sd.code,
+                            'warehouse_code', w.code,
+                            'location_code', loc.code,
+                            'lot_id', lot.id,
+                            'lot_code', lot.code,
+                            'lot_status', lot.status,
+                            'qty', grl.qty::float,
+                            'uom', grl.uom,
+                            'received_at', gr.received_at
+                          ) ORDER BY gr.received_at ASC, grl.id ASC
+                        )
+                   FROM purchase.goods_receipt gr
+                   JOIN purchase.goods_receipt_line grl ON grl.receipt_id = gr.id
+                   LEFT JOIN inv.stock_document sd ON sd.id = grl.stock_document_id
+                   LEFT JOIN master.location loc ON loc.id = grl.location_id
+                   LEFT JOIN master.warehouse w ON w.id = COALESCE(sd.warehouse_id, loc.warehouse_id)
+                   LEFT JOIN inv.lot lot ON lot.id = grl.lot_id
+                  WHERE gr.po_id = po.id),
+                '[]'::jsonb
+              ) AS receipt_docs,
+              COALESCE(
+                (SELECT jsonb_agg(
+                          jsonb_build_object(
+                            'doc_code', d.code,
+                            'doc_type', d.doc_type,
+                            'reason_code', d.reason_code,
+                            'from_wh_code', fw.code,
+                            'from_loc_code', fl.code,
+                            'to_wh_code', tw.code,
+                            'to_loc_code', tl.code,
+                            'qty', sdl.qty::float,
+                            'uom', sdl.uom,
+                            'occurred_at', COALESCE(d.posted_at, d.created_at)
+                          ) ORDER BY COALESCE(d.posted_at, d.created_at) ASC, sdl.line_no ASC
+                        )
+                   FROM inv.stock_document_line sdl
+                   JOIN inv.stock_document d ON d.id = sdl.document_id
+                   LEFT JOIN master.location fl ON fl.id = sdl.from_location_id
+                   LEFT JOIN master.warehouse fw ON fw.id = fl.warehouse_id
+                   LEFT JOIN master.location tl ON tl.id = sdl.to_location_id
+                   LEFT JOIN master.warehouse tw ON tw.id = tl.warehouse_id
+                  WHERE d.status = 'POSTED'
+                    AND sdl.lot_id IN (
+                      SELECT grl2.lot_id
+                        FROM purchase.goods_receipt gr2
+                        JOIN purchase.goods_receipt_line grl2 ON grl2.receipt_id = gr2.id
+                       WHERE gr2.po_id = po.id AND grl2.lot_id IS NOT NULL
+                    )
+                    AND d.id NOT IN (
+                      SELECT grl3.stock_document_id
+                        FROM purchase.goods_receipt gr3
+                        JOIN purchase.goods_receipt_line grl3 ON grl3.receipt_id = gr3.id
+                       WHERE gr3.po_id = po.id AND grl3.stock_document_id IS NOT NULL
+                    )),
+                '[]'::jsonb
+              ) AS downstream_moves,
+              COALESCE(
+                (SELECT jsonb_agg(
+                          jsonb_build_object(
+                            'warehouse_code', w.code,
+                            'location_code', loc.code,
+                            'is_quarantine', loc.is_quarantine,
+                            'lot_code', lot.code,
+                            'lot_status', lot.status,
+                            'qty_on_hand', sb.qty_on_hand::float,
+                            'qty_reserved', sb.qty_reserved::float,
+                            'uom', i.base_uom
+                          ) ORDER BY w.code ASC, loc.code ASC
+                        )
+                   FROM inv.stock_balance sb
+                   JOIN master.location loc ON loc.id = sb.location_id
+                   JOIN master.warehouse w ON w.id = loc.warehouse_id
+                   JOIN inv.lot lot ON lot.id = sb.lot_id
+                   JOIN master.item i ON i.id = sb.item_id
+                  WHERE sb.qty_on_hand > 0
+                    AND sb.lot_id IN (
+                      SELECT grl4.lot_id
+                        FROM purchase.goods_receipt gr4
+                        JOIN purchase.goods_receipt_line grl4 ON grl4.receipt_id = gr4.id
+                       WHERE gr4.po_id = po.id AND grl4.lot_id IS NOT NULL
+                    )),
+                '[]'::jsonb
+              ) AS current_stock_places
          FROM purchase.purchase_order po JOIN master.partner p ON p.id = po.supplier_id
         WHERE ($1::text IS NULL OR po.status = $1)
           AND ($2::uuid[] IS NULL OR (po.status IN ('ISSUED', 'PARTIALLY_RECEIVED')
@@ -178,7 +293,7 @@ export async function getOrder(tx: Tx, actor: AuthzActor, id: string) {
     await tx.query(
       `SELECT l.id, l.line_no, l.item_id, i.code AS item_code, i.name AS item_name, i.tracking, l.uom, l.qty_ordered::text AS qty_ordered,
               l.qty_received::text AS qty_received, l.unit_price::text AS unit_price, l.vat_rate::text AS vat_rate,
-              w.id AS warehouse_id, w.code AS warehouse_code, w.owner_org_unit_id, pr.code AS pr_code
+              w.id AS warehouse_id, w.code AS warehouse_code, w.name AS warehouse_name, w.owner_org_unit_id, pr.code AS pr_code
          FROM purchase.purchase_order_line l JOIN master.item i ON i.id = l.item_id JOIN master.warehouse w ON w.id = l.target_warehouse_id
          JOIN purchase.purchase_request_line prl ON prl.id = l.pr_line_id JOIN purchase.purchase_request pr ON pr.id = prl.pr_id
         WHERE l.po_id = $1 ORDER BY l.line_no`,
@@ -191,7 +306,103 @@ export async function getOrder(tx: Tx, actor: AuthzActor, id: string) {
     (await Promise.all(lines.map((l) => hasFactoryPermission(tx, actor, "purchase.receipt.post", l.owner_org_unit_id)))).some(Boolean);
   if (!canSee) throw forbidden("Bạn chưa có quyền xem đơn mua này.");
   const receipts = (
-    await tx.query("SELECT r.id, r.code, r.received_at, r.delivery_note_no, up.display_name AS received_by_name FROM purchase.goods_receipt r LEFT JOIN core.user_profile up ON up.user_id = r.received_by WHERE r.po_id = $1 ORDER BY r.received_at", [id])
+    await tx.query(
+      `SELECT r.id, r.code, r.received_at, r.delivery_note_no, up.display_name AS received_by_name,
+              COALESCE(
+                (SELECT array_agg(DISTINCT sd.code ORDER BY sd.code)
+                   FROM purchase.goods_receipt_line grl
+                   JOIN inv.stock_document sd ON sd.id = grl.stock_document_id
+                  WHERE grl.receipt_id = r.id),
+                ARRAY[]::text[]
+              ) AS stock_doc_codes
+         FROM purchase.goods_receipt r
+         LEFT JOIN core.user_profile up ON up.user_id = r.received_by
+        WHERE r.po_id = $1
+        ORDER BY r.received_at`,
+      [id]
+    )
   ).rows;
-  return { ...po, lines, receipts };
+
+  const receipt_lines = (
+    await tx.query(
+      `SELECT grl.id, gr.code AS gr_code, gr.received_at, gr.delivery_note_no,
+              up.display_name AS received_by_name,
+              sd.id AS stock_doc_id, sd.code AS stock_doc_code,
+              w.code AS warehouse_code, w.name AS warehouse_name,
+              loc.code AS intake_location_code, loc.name AS intake_location_name, loc.is_quarantine AS intake_is_quarantine,
+              i.code AS item_code, i.name AS item_name,
+              grl.qty::float AS qty, grl.uom,
+              lot.id AS lot_id, lot.code AS lot_code, lot.status AS lot_status,
+              COALESCE(grl.mfr_lot_no, lot.mfr_lot_no) AS mfr_lot_no,
+              COALESCE(grl.mfg_date, lot.mfg_date)::text AS mfg_date,
+              COALESCE(grl.expiry_date, lot.expiry_date)::text AS expiry_date
+         FROM purchase.goods_receipt gr
+         JOIN purchase.goods_receipt_line grl ON grl.receipt_id = gr.id
+         JOIN master.item i ON i.id = grl.item_id
+         LEFT JOIN core.user_profile up ON up.user_id = gr.received_by
+         LEFT JOIN inv.stock_document sd ON sd.id = grl.stock_document_id
+         LEFT JOIN master.location loc ON loc.id = grl.location_id
+         LEFT JOIN master.warehouse w ON w.id = COALESCE(sd.warehouse_id, loc.warehouse_id)
+         LEFT JOIN inv.lot lot ON lot.id = grl.lot_id
+        WHERE gr.po_id = $1
+        ORDER BY gr.received_at ASC, grl.id ASC`,
+      [id]
+    )
+  ).rows;
+
+  const receivedLotIds = Array.from(new Set(receipt_lines.map((r: any) => r.lot_id).filter(Boolean)));
+  const current_balances = receivedLotIds.length
+    ? (
+        await tx.query(
+          `SELECT sb.lot_id, lot.code AS lot_code, lot.status AS lot_status,
+                  i.code AS item_code, i.name AS item_name, i.base_uom AS uom,
+                  w.code AS warehouse_code, w.name AS warehouse_name,
+                  loc.code AS location_code, loc.name AS location_name, loc.is_quarantine,
+                  sb.qty_on_hand::float AS qty_on_hand,
+                  sb.qty_reserved::float AS qty_reserved,
+                  (sb.qty_on_hand - sb.qty_reserved)::float AS available
+             FROM inv.stock_balance sb
+             JOIN inv.lot lot ON lot.id = sb.lot_id
+             JOIN master.item i ON i.id = sb.item_id
+             JOIN master.location loc ON loc.id = sb.location_id
+             JOIN master.warehouse w ON w.id = loc.warehouse_id
+            WHERE sb.lot_id = ANY($1::uuid[]) AND sb.qty_on_hand > 0
+            ORDER BY w.code ASC, loc.code ASC`,
+          [receivedLotIds]
+        )
+      ).rows
+    : [];
+
+  const lot_movements = receivedLotIds.length
+    ? (
+        await tx.query(
+          `SELECT sdl.id AS line_id, sdl.line_no,
+                  d.id AS document_id, d.code AS document_code, d.doc_type, d.reason_code, d.notes,
+                  d.source_entity_type, d.source_entity_id,
+                  COALESCE(d.posted_at, d.created_at) AS occurred_at,
+                  w.code AS doc_warehouse_code,
+                  up.display_name AS performed_by_name,
+                  i.code AS item_code, i.name AS item_name,
+                  lot.code AS lot_code, lot.status AS lot_status,
+                  fw.code AS from_wh_code, fl.code AS from_loc_code,
+                  tw.code AS to_wh_code, tl.code AS to_loc_code,
+                  sdl.qty::float AS qty, sdl.uom
+             FROM inv.stock_document_line sdl
+             JOIN inv.stock_document d ON d.id = sdl.document_id
+             JOIN master.warehouse w ON w.id = d.warehouse_id
+             JOIN master.item i ON i.id = sdl.item_id
+             LEFT JOIN inv.lot lot ON lot.id = sdl.lot_id
+             LEFT JOIN master.location fl ON fl.id = sdl.from_location_id
+             LEFT JOIN master.warehouse fw ON fw.id = fl.warehouse_id
+             LEFT JOIN master.location tl ON tl.id = sdl.to_location_id
+             LEFT JOIN master.warehouse tw ON tw.id = tl.warehouse_id
+             LEFT JOIN core.user_profile up ON up.user_id = COALESCE(d.posted_by, d.created_by)
+            WHERE d.status = 'POSTED' AND sdl.lot_id = ANY($1::uuid[])
+            ORDER BY COALESCE(d.posted_at, d.created_at) ASC, d.code ASC, sdl.line_no ASC`,
+          [receivedLotIds]
+        )
+      ).rows
+    : [];
+
+  return { ...po, lines, receipts, receipt_lines, current_balances, lot_movements };
 }
