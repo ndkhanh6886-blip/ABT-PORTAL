@@ -1578,6 +1578,10 @@ function OrderPanel({ id, onClose }: { id: string; onClose: () => void }) {
           </Table>
 
           {o.actions.some((a) => a.action === "accept") && <AcceptForm order={o} onDone={refresh} />}
+
+          {/* BẢNG NỔ ĐỊNH MỨC BOM & DỰ TRÙ NGUYÊN LIỆU THEO FORECAST / ĐƠN NỘI BỘ (MRP) */}
+          <OrderMrpForecastSection orderId={o.id} kdPoCode={o.kd_po_code} isForecast={Boolean(o.kd_po_code?.startsWith("FC-") || o.notes?.includes("FORECAST"))} />
+
           <div className="flex flex-wrap items-center justify-between gap-2">
             <ActionBar
               endpoint={`/api/factory/intake/orders/${o.id}/actions`}
@@ -1707,6 +1711,552 @@ function OrderPanel({ id, onClose }: { id: string; onClose: () => void }) {
   );
 }
 
+interface ForecastMrpResponse {
+  order_id: string;
+  order_code: string;
+  kd_po_code: string;
+  org_unit_code: string;
+  org_unit_name: string;
+  module_key: string;
+  department_warehouse_code: string;
+  shortage_count: number;
+  linked_prs: {
+    id: string;
+    code: string;
+    status: string;
+    priority: string;
+    needed_by: string | null;
+    reason: string;
+  }[];
+  components: {
+    component_item_id: string | null;
+    component_code: string;
+    component_name: string;
+    uom: string;
+    source_type: "BUY" | "SUBCONTRACT" | "REAGENT" | "PACKAGING";
+    used_by_products: string[];
+    gross_required_qty: number;
+    dept_available_qty: number;
+    hub_available_qty: number;
+    total_available_qty: number;
+    open_pr_po_qty: number;
+    net_shortage_qty: number;
+    est_unit_price: number;
+  }[];
+}
+
+function OrderMrpForecastSection({
+  orderId,
+  kdPoCode,
+  isForecast,
+}: {
+  orderId: string;
+  kdPoCode: string;
+  isForecast: boolean;
+}) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(isForecast);
+  const [prMode, setPrMode] = useState<"SHORTAGE_ONLY" | "FULL_GROSS">("SHORTAGE_ONLY");
+  const [bufferPct, setBufferPct] = useState("5");
+  const [createdPrBanner, setCreatedPrBanner] = useState<{ pr_code: string; message: string } | null>(null);
+
+  const mrpQuery = useQuery({
+    queryKey: ["factory", "order-mrp", orderId],
+    queryFn: () => api<ForecastMrpResponse>(`/api/factory/intake/ops?mrp_order_id=${orderId}`),
+    enabled: open,
+  });
+
+  const createPrMut = useMutation({
+    mutationFn: () =>
+      api<{ pr_id: string; pr_code: string; line_count: number; message: string }>("/api/factory/intake/ops", {
+        method: "POST",
+        idempotent: true,
+        json: {
+          op: "create_pr_from_order_mrp",
+          order_id: orderId,
+          mode: prMode,
+          safety_buffer_pct: Math.max(0, Number(bufferPct) || 0),
+        },
+      }),
+    onSuccess: (res) => {
+      setCreatedPrBanner({ pr_code: res.pr_code, message: res.message });
+      mrpQuery.refetch();
+      qc.invalidateQueries({ queryKey: ["factory", "purchase", "requests"] });
+    },
+  });
+
+  const data = mrpQuery.data;
+
+  return (
+    <div className="p-3.5 rounded-xl bg-amber-50/60 dark:bg-amber-950/25 border border-amber-300/80 dark:border-amber-800/70 flex flex-col gap-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-extrabold text-amber-950 dark:text-amber-200 flex items-center gap-1.5">
+            <span>📊 Bảng Nổ Định Mức BOM &amp; Dự Trù Nguyên Liệu (MRP) — {kdPoCode}</span>
+            {isForecast && (
+              <span className="px-2 py-0.5 rounded-full bg-amber-600 text-white text-[10px] font-extrabold">
+                FORECAST QUÝ
+              </span>
+            )}
+          </div>
+          <div className="text-[11px] text-slate-600 dark:text-slate-400">
+            Tự động nổ định mức BOM của các mã hàng trong đơn/Forecast, đối chiếu tồn kho khả dụng (Kho Phòng + Kho Tổng) &amp; PR/PO mở để phát hành Phiếu Đề nghị Mua hàng (PR) sang Cung ứng NVL.
+          </div>
+        </div>
+        <Button variant={open ? "ghost" : "primary"} onClick={() => setOpen((v) => !v)}>
+          {open ? "Ẩn bảng Nổ BOM & Dự trù ▲" : "📊 Mở Bảng Nổ BOM & Dự Trù Nguyên Liệu (MRP) ▼"}
+        </Button>
+      </div>
+
+      {open && (
+        <div className="flex flex-col gap-3 pt-1">
+          {mrpQuery.isLoading && <p className="text-xs text-slate-500">Đang nổ định mức BOM và đối chiếu tồn kho…</p>}
+          <ErrorNote error={mrpQuery.error} />
+          <ErrorNote error={createPrMut.error} />
+
+          {createdPrBanner && (
+            <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-900 dark:text-emerald-200 font-bold">
+              <span>✅ {createdPrBanner.message}</span>
+              <button
+                type="button"
+                onClick={() =>
+                  window.dispatchEvent(new CustomEvent("factory-switch-tab", { detail: { tab: "factory-purchase" } }))
+                }
+                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold cursor-pointer"
+              >
+                Mở Cung Ứng NVL ({createdPrBanner.pr_code}) ↗
+              </button>
+            </div>
+          )}
+
+          {data && (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800/70">
+                <div className="flex flex-wrap items-center gap-3 text-xs">
+                  <span>
+                    Phòng phụ trách: <b>{data.org_unit_name}</b> (Kho nhận: <b className="font-mono">{data.department_warehouse_code}</b>)
+                  </span>
+                  <span>·</span>
+                  <span>
+                    Tổng số mã NVL/Linh kiện BOM: <b>{data.components.length} mã</b>
+                  </span>
+                  <span>·</span>
+                  <span>
+                    Số mã thiếu cần mua:{" "}
+                    <b className={data.shortage_count > 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600"}>
+                      {data.shortage_count} mã
+                    </b>
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    className={`${inputClass} !w-52 !py-1 !text-xs`}
+                    value={prMode}
+                    onChange={(e) => setPrMode(e.target.value as "SHORTAGE_ONLY" | "FULL_GROSS")}
+                  >
+                    <option value="SHORTAGE_ONLY">Chỉ lập PR cho lượng THIẾU (Net Shortage)</option>
+                    <option value="FULL_GROSS">Lập PR toàn bộ định mức Quý (Full Gross BOM)</option>
+                  </select>
+                  <div className="flex items-center gap-1 text-xs">
+                    <span className="text-slate-600 dark:text-slate-400 whitespace-nowrap">+ Dự phòng (%):</span>
+                    <input
+                      className={`${inputClass} !w-14 !py-1 !text-xs text-center`}
+                      inputMode="decimal"
+                      value={bufferPct}
+                      onChange={(e) => setBufferPct(e.target.value)}
+                    />
+                  </div>
+                  <Button
+                    onClick={() => createPrMut.mutate()}
+                    disabled={createPrMut.isPending || data.components.length === 0}
+                  >
+                    {createPrMut.isPending
+                      ? "Đang phát hành PR…"
+                      : "🛒 Phát Hành PR Dự Trù Nguyên Liệu → Cung Ứng NVL"}
+                  </Button>
+                </div>
+              </div>
+
+              {data.linked_prs.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                  <span className="font-bold text-slate-700 dark:text-slate-300">
+                    🔗 Phiếu Đề nghị Mua hàng (PR) đã phát hành từ Forecast/Đơn này:
+                  </span>
+                  {data.linked_prs.map((pr) => (
+                    <button
+                      key={pr.id}
+                      type="button"
+                      onClick={() =>
+                        window.dispatchEvent(
+                          new CustomEvent("factory-switch-tab", { detail: { tab: "factory-purchase" } })
+                        )
+                      }
+                      className="px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-950/70 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 font-mono text-[11px] font-bold hover:underline cursor-pointer"
+                    >
+                      {pr.code} [{pr.status}] ↗
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <Table
+                head={[
+                  "Mã & Tên Nguyên Vật Liệu / Hóa Chất / Linh Kiện",
+                  "Nhóm",
+                  "Phục vụ Mã Thành phẩm (Forecast)",
+                  "Tổng Nhu Cầu BOM (Gross)",
+                  "Tồn Khả Dụng (Kho Phòng + Kho Tổng)",
+                  "Đang Đặt (PR/PO Mở)",
+                  "SL Thiếu Cần Mua (Net Shortage)",
+                ]}
+              >
+                {data.components.map((c) => {
+                  const isShort = c.net_shortage_qty > 0;
+                  return (
+                    <tr key={c.component_code}>
+                      <td className="py-2 pr-3">
+                        <div className="font-mono font-bold text-slate-900 dark:text-white">{c.component_code}</div>
+                        <div className="text-[11px] text-slate-600 dark:text-slate-300">{c.component_name}</div>
+                      </td>
+                      <td className="py-2 pr-3 whitespace-nowrap">
+                        <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[10px] font-bold">
+                          {c.source_type === "PACKAGING"
+                            ? "📦 Bao bì"
+                            : c.source_type === "SUBCONTRACT"
+                              ? "🛠️ Gia công"
+                              : c.source_type === "BUY"
+                                ? "🔌 Linh kiện mua"
+                                : "🧪 Hóa chất / BTP"}
+                        </span>
+                      </td>
+                      <td className="py-2 pr-3 text-[11px] font-mono text-slate-600 dark:text-slate-300 max-w-56">
+                        {c.used_by_products.join(", ")}
+                      </td>
+                      <td className="py-2 pr-3 whitespace-nowrap font-bold">
+                        {fmtQty(c.gross_required_qty)} {c.uom}
+                      </td>
+                      <td className="py-2 pr-3 whitespace-nowrap">
+                        <div className="font-semibold">
+                          {fmtQty(c.total_available_qty)} {c.uom}
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          Kho phòng: {fmtQty(c.dept_available_qty)} · Kho Tổng: {fmtQty(c.hub_available_qty)}
+                        </div>
+                      </td>
+                      <td className="py-2 pr-3 whitespace-nowrap text-slate-600 dark:text-slate-300">
+                        {fmtQty(c.open_pr_po_qty)} {c.uom}
+                      </td>
+                      <td className="py-2 pr-3 whitespace-nowrap">
+                        {isShort ? (
+                          <span className="px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/70 text-rose-800 dark:text-rose-200 font-bold text-[11px]">
+                            ⚠️ Thiếu: {fmtQty(c.net_shortage_qty)} {c.uom}
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-200 font-bold text-[11px]">
+                            ✅ Đủ tồn kho
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </Table>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const SAMPLE_Q4_FORECAST_TEXT = [
+  "LBC-021\tBộ nhuộm gram\t20",
+  "DD-016\tPBS Buffer 10X, pH 7.4\t20",
+  "DD-030\tTrisure Reagent\t5",
+  "DD-039\tTE 1X Buffer pH 8.0\t2",
+  "DD-059\t6X GelGreen Loading buffer With Tricolor\t20",
+  "DD-073\tTopClean® DNA/RNA Away\t3",
+  "DD-074\tWB1 buffer\t10",
+  "DD-075\tWB2 buffer\t10",
+  "DD-076\tEB buffer\t3",
+  "DD-078\tCL buffer\t10",
+  "HI-612\tTopPURE® Maga Genomic Extraction Kit\t30",
+  "THE-004\tMáy ủ nhiệt khô ABT Dry Bath\t2",
+  "OLG-001\tBộ Primer / Probe tổng hợp theo yêu cầu\t15",
+].join("\n");
+
+function classifyClientItemDomain(code: string, name: string): "KIT" | "OLIGO" | "DEVICE" {
+  const c = code.trim().toUpperCase();
+  const t = `${code} ${name}`.toUpperCase();
+  if (
+    c.startsWith("OLG-") ||
+    c.startsWith("OLI-") ||
+    c.startsWith("PRI-") ||
+    c.startsWith("PRB-") ||
+    t.includes("OLIGO") ||
+    t.includes("PRIMER") ||
+    t.includes("PROBE")
+  ) {
+    return "OLIGO";
+  }
+  if (
+    c.startsWith("THE-") ||
+    c.startsWith("MPS-") ||
+    c.startsWith("MBC-") ||
+    c.startsWith("EQ-") ||
+    c.startsWith("DEV-") ||
+    t.includes("MÁY") ||
+    t.includes("THIẾT BỊ")
+  ) {
+    return "DEVICE";
+  }
+  return "KIT";
+}
+
+function parseForecastPasteText(raw: string): { product_code: string; product_name: string; quantity: number }[] {
+  const lines = raw
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const out: { product_code: string; product_name: string; quantity: number }[] = [];
+
+  for (const ln of lines) {
+    if (/^(THỐNG KÊ|MÃ\s|STT)/i.test(ln)) continue;
+    const cols = ln.includes("\t")
+      ? ln.split("\t").map((c) => c.trim())
+      : ln.split(/[;|,]/).map((c) => c.trim());
+
+    if (cols.length >= 2) {
+      const code = cols[0].replace(/\s+/g, "").toUpperCase();
+      const lastCol = cols[cols.length - 1];
+      const qtyNum = Number(lastCol.replace(/[^\d.,]/g, "").replace(",", "."));
+      const name = cols.length >= 3 ? cols.slice(1, -1).join(" ") : code;
+      if (code && /^[A-Z0-9._-]{3,}$/i.test(code) && qtyNum > 0) {
+        out.push({ product_code: code, product_name: name || code, quantity: qtyNum });
+      }
+    }
+  }
+  return out;
+}
+
+function QuarterlyForecastCreatorPanel({
+  onDone,
+  onCancel,
+}: {
+  onDone: (firstOrderId: string | null) => void;
+  onCancel: () => void;
+}) {
+  const qc = useQueryClient();
+  const [forecastPeriod, setForecastPeriod] = useState("Quý IV.2026");
+  const [forecastCode, setForecastCode] = useState("FC-Q4-2026");
+  const [requestedDate, setRequestedDate] = useState(() =>
+    new Date(Date.now() + 30 * 86400 * 1000).toISOString().slice(0, 10)
+  );
+  const [notes, setNotes] = useState(
+    "Dự trù nguyên vật liệu theo bảng Forecast Quý của Phòng Kinh doanh (Tự động tách về P-KIT, P-THIET-BI, P-OLIGO)"
+  );
+  const [pasteText, setPasteText] = useState(SAMPLE_Q4_FORECAST_TEXT);
+  const [resultOrders, setResultOrders] = useState<any[] | null>(null);
+
+  const parsedRows = parseForecastPasteText(pasteText);
+  const kitRows = parsedRows.filter((r) => classifyClientItemDomain(r.product_code, r.product_name) === "KIT");
+  const deviceRows = parsedRows.filter((r) => classifyClientItemDomain(r.product_code, r.product_name) === "DEVICE");
+  const oligoRows = parsedRows.filter((r) => classifyClientItemDomain(r.product_code, r.product_name) === "OLIGO");
+
+  const submitMut = useMutation({
+    mutationFn: () =>
+      api<{ forecast_code: string; created_orders: any[] }>("/api/factory/intake/ops", {
+        method: "POST",
+        idempotent: true,
+        json: {
+          op: "create_quarterly_forecast",
+          forecast_period: forecastPeriod,
+          forecast_code: forecastCode || undefined,
+          requested_date: requestedDate,
+          notes,
+          items: parsedRows,
+        },
+      }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["factory", "internal-orders"] });
+      setResultOrders(res.created_orders ?? []);
+    },
+  });
+
+  return (
+    <Card
+      title="📊 Lập Bảng Forecast Quý (Kinh Doanh) → Tự Động Tách Luồng Sang 3 Phòng SX (Kit · KTCN · Oligo) Để Dự Trù Nguyên Liệu (MRP)"
+      actions={
+        <Button variant="ghost" onClick={onCancel}>
+          Đóng ✕
+        </Button>
+      }
+    >
+      <div className="flex flex-col gap-3.5">
+        {/* Tóm tắt quy trình 4 bước */}
+        <div className="grid gap-2.5 sm:grid-cols-4 text-xs">
+          <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800">
+            <div className="font-extrabold text-amber-900 dark:text-amber-200">1️⃣ Kinh doanh nhập/dán Forecast Quý</div>
+            <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
+              Dán trực tiếp bảng <b>MÃ | TÊN HÀNG HÓA | SỐ LƯỢNG</b> từ Email/Excel (các dòng không có SL như DD-042 tự động bỏ qua).
+            </div>
+          </div>
+          <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800">
+            <div className="font-extrabold text-emerald-900 dark:text-emerald-200">2️⃣ Tự động phân luồng 3 Phòng SX</div>
+            <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
+              Hệ thống căn cứ Mã SKU &amp; Nhóm sản phẩm để tách thành các phiếu dự trù riêng cho <b>P-KIT</b>, <b>P-THIET-BI (KTCN)</b> và <b>P-OLIGO</b>.
+            </div>
+          </div>
+          <div className="p-2.5 rounded-xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800">
+            <div className="font-extrabold text-sky-900 dark:text-sky-200">3️⃣ Nổ định mức BOM &amp; Trừ tồn kho</div>
+            <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
+              Mỗi phòng mở phiếu Forecast của mình ➔ Hệ thống tự nổ BOM (Hóa chất, BTP, Bao bì, Linh kiện, Amidite) &amp; trừ tồn Kho Phòng + Kho Tổng.
+            </div>
+          </div>
+          <div className="p-2.5 rounded-xl bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800">
+            <div className="font-extrabold text-purple-900 dark:text-purple-200">4️⃣ 1-Click Phát hành PR sang Cung ứng</div>
+            <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
+              Trưởng phòng SX rà soát lượng thiếu (Net Shortage) và bấm <b>1-Click Tạo PR Dự trù Quý</b> chuyển thẳng sang <b>Cung Ứng NVL</b>.
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-4">
+          <Field label="Kỳ Forecast *">
+            <input
+              className={inputClass}
+              value={forecastPeriod}
+              onChange={(e) => setForecastPeriod(e.target.value)}
+              placeholder="VD: Quý IV.2026"
+            />
+          </Field>
+          <Field label="Mã Bảng Forecast Quý *">
+            <input
+              className={inputClass}
+              value={forecastCode}
+              onChange={(e) => setForecastCode(e.target.value)}
+              placeholder="VD: FC-Q4-2026"
+            />
+          </Field>
+          <Field label="Thời hạn cần hoàn tất dự trù NVL">
+            <input
+              className={inputClass}
+              type="date"
+              value={requestedDate}
+              onChange={(e) => setRequestedDate(e.target.value)}
+            />
+          </Field>
+          <Field label="Ghi chú gửi các Phòng Sản xuất">
+            <input className={inputClass} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </Field>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-12">
+          <div className="lg:col-span-5 flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200">
+                📋 Dán bảng Thống kê Forecast từ Email / Excel (MÃ | TÊN HÀNG HÓA | SỐ LƯỢNG):
+              </span>
+              <button
+                type="button"
+                onClick={() => setPasteText(SAMPLE_Q4_FORECAST_TEXT)}
+                className="text-[11px] font-bold text-sky-700 dark:text-sky-300 hover:underline cursor-pointer"
+              >
+                Nạp lại mẫu Quý IV.2026
+              </button>
+            </div>
+            <textarea
+              rows={11}
+              className={`${inputClass} font-mono text-xs`}
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              placeholder={"LBC-021\tBộ nhuộm gram\t20\nDD-016\tPBS Buffer 10X, pH 7.4\t20"}
+            />
+          </div>
+
+          <div className="lg:col-span-7 flex flex-col gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200">
+                🔀 Xem trước kết quả Tự động Phân luồng ({parsedRows.length} mã hàng hợp lệ):
+              </span>
+              <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold">
+                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300">
+                  🧪 P-KIT: {kitRows.length} mã
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-sky-100 text-sky-800 dark:bg-sky-950/70 dark:text-sky-300">
+                  ⚙️ P-THIET-BI (KTCN): {deviceRows.length} mã
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 dark:bg-purple-950/70 dark:text-purple-300">
+                  🧬 P-OLIGO: {oligoRows.length} mã
+                </span>
+              </div>
+            </div>
+
+            <div className="max-h-60 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-2">
+              <Table head={["#", "Mã Hàng Hóa", "Tên Hàng Hóa", "SL Forecast", "Phòng SX Nhận Dự Trù NVL"]}>
+                {parsedRows.map((r, i) => {
+                  const dom = classifyClientItemDomain(r.product_code, r.product_name);
+                  const meta = MODULE_META[dom];
+                  return (
+                    <tr key={`${r.product_code}-${i}`}>
+                      <td className="py-1.5 pr-2 text-xs">{i + 1}</td>
+                      <td className="py-1.5 pr-2 font-mono font-bold text-xs">{r.product_code}</td>
+                      <td className="py-1.5 pr-2 text-xs">{r.product_name}</td>
+                      <td className="py-1.5 pr-2 font-bold text-xs">{fmtQty(r.quantity)}</td>
+                      <td className="py-1.5 pr-2">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${meta.color}`}>
+                          {meta.badge}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </Table>
+            </div>
+          </div>
+        </div>
+
+        <ErrorNote error={submitMut.error} />
+
+        {resultOrders && resultOrders.length > 0 && (
+          <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-800 flex flex-col gap-2">
+            <div className="text-xs font-extrabold text-emerald-900 dark:text-emerald-200">
+              ✅ Đã phát hành &amp; tự động tách Bảng Forecast Quý thành {resultOrders.length} Phiếu Dự Trù Nội Bộ về các Phòng Sản Xuất:
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {resultOrders.map((ord) => (
+                <button
+                  key={ord.id}
+                  type="button"
+                  onClick={() => onDone(ord.id)}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer shadow-xs"
+                >
+                  📊 Mở {ord.kd_po_code} ({ord.org_unit_name} · {ord.routed_items?.length ?? 0} mã) &amp; Xem Nổ BOM Dự Trù ↗
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-2">
+          <Button variant="ghost" onClick={onCancel}>
+            Hủy
+          </Button>
+          <Button
+            disabled={parsedRows.length === 0 || submitMut.isPending}
+            onClick={() => submitMut.mutate()}
+          >
+            {submitMut.isPending
+              ? "Đang phân luồng Forecast…"
+              : `🚀 Phát Hành Forecast Quý & Chuyển Sang Các Phòng Sản Xuất (${parsedRows.length} mã)`}
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 /** "Đơn nội bộ": purchase orders of Kinh doanh received by the 3 production departments (Kit, Oligo, Device). */
 export function FactoryOrdersModule() {
   const qc = useQueryClient();
@@ -1725,6 +2275,7 @@ export function FactoryOrdersModule() {
     return null;
   });
   const [creating, setCreating] = useState(false);
+  const [creatingForecast, setCreatingForecast] = useState(false);
 
   const deleteRowMut = useMutation({
     mutationFn: (orderId: string) =>
@@ -1868,6 +2419,16 @@ export function FactoryOrdersModule() {
         </button>
       </div>
 
+      {creatingForecast && (
+        <QuarterlyForecastCreatorPanel
+          onCancel={() => setCreatingForecast(false)}
+          onDone={(orderId) => {
+            setCreatingForecast(false);
+            if (orderId) setSelected(orderId);
+          }}
+        />
+      )}
+
       {creating && (
         <NewInternalOrderForm
           onDone={(newId) => {
@@ -1880,7 +2441,7 @@ export function FactoryOrdersModule() {
       {selected && <OrderPanel key={selected} id={selected} onClose={() => setSelected(null)} />}
 
       <Card
-        title="Danh sách Đơn Nội Bộ từ Khối Kinh Doanh & Điều Phối Về 3 Phòng Sản Xuất"
+        title="Danh sách Đơn Nội Bộ & Forecast Quý từ Khối Kinh Doanh & Điều Phối Về 3 Phòng Sản Xuất"
         actions={
           <div className="flex flex-wrap md:flex-nowrap items-center justify-end gap-2">
             <select
@@ -1907,8 +2468,28 @@ export function FactoryOrdersModule() {
                 </option>
               ))}
             </select>
+            {!creatingForecast && (
+              <button
+                type="button"
+                onClick={() => {
+                  setCreating(false);
+                  setCreatingForecast(true);
+                }}
+                className="px-2.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold whitespace-nowrap shrink-0 cursor-pointer shadow-xs"
+              >
+                📊 Tạo Forecast Quý &amp; Dự Trù NVL
+              </button>
+            )}
             {!creating && (
-              <Button className="whitespace-nowrap shrink-0" onClick={() => setCreating(true)}>+ Tạo Đơn Nội Bộ</Button>
+              <Button
+                className="whitespace-nowrap shrink-0"
+                onClick={() => {
+                  setCreatingForecast(false);
+                  setCreating(true);
+                }}
+              >
+                + Tạo Đơn Nội Bộ
+              </Button>
             )}
           </div>
         }

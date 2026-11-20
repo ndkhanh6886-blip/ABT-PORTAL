@@ -12,6 +12,8 @@ import { ensureInternalOrderLineKitSpecColumns } from "./kdEvents";
 import { createProductionOrder } from "../kit/ordersEbr";
 import { addSequences, createOligoOrder } from "../oligo/orders";
 import { convertPoToWorkOrder } from "../device/workflow";
+import { createRequest } from "../purchase/requests";
+import { DEFAULT_ABT_KIT_BOM_COMPONENTS } from "@/shared/defaultKitBomComponents";
 import { findAccessorySet, isExtractionAccessoryProduct } from "@/frontend/utils/extractionAccessories";
 import { kitSpecOf, kitSpecToFactorySupplyAndTube, kitSpecLabel, hasKitSpec, hasPackagingSpec } from "@/frontend/utils/packagingForm";
 import "./permissions";
@@ -34,20 +36,28 @@ export async function getInternalOrderCatalogOptions(tx: Tx, actor: AuthzActor) 
     await tx.query(
       `SELECT i.id, i.code, i.name, i.item_type, i.base_uom, i.kd_item_code,
               CASE
-                WHEN i.item_type = 'DEVICE' OR EXISTS (SELECT 1 FROM device.device_model dm WHERE dm.item_id = i.id OR upper(dm.code) = upper(i.code)) THEN 'DEVICE'
-                WHEN i.item_type = 'OLIGO_SERVICE' OR i.code LIKE 'OLI-%' OR i.code LIKE 'PRIMER-%' OR i.code LIKE 'PROBE-%' THEN 'OLIGO'
+                WHEN i.item_type = 'DEVICE'
+                  OR i.code LIKE 'THE-%' OR i.code LIKE 'MPS-%' OR i.code LIKE 'MBC-%' OR i.code LIKE 'EQ-%' OR i.code LIKE 'DEV-%'
+                  OR EXISTS (SELECT 1 FROM device.device_model dm WHERE dm.item_id = i.id OR upper(dm.code) = upper(i.code)) THEN 'DEVICE'
+                WHEN i.item_type = 'OLIGO_SERVICE'
+                  OR i.code LIKE 'OLG-%' OR i.code LIKE 'OLI-%' OR i.code LIKE 'PRI-%' OR i.code LIKE 'PRB-%'
+                  OR i.code LIKE 'PRIMER-%' OR i.code LIKE 'PROBE-%' THEN 'OLIGO'
                 ELSE 'KIT'
               END AS domain_key
          FROM master.item i
         WHERE i.status = 'ACTIVE'
           AND (
             i.item_type IN ('FINISHED_KIT', 'DEVICE', 'OLIGO_SERVICE', 'SEMI_FINISHED')
-            OR i.code LIKE 'KIT-%'
-            OR i.code LIKE 'OLI-%'
+            OR i.code LIKE 'KIT-%' OR i.code LIKE 'LBC-%' OR i.code LIKE 'DD-%'
+            OR i.code LIKE 'SQH-%' OR i.code LIKE 'SDS-%' OR i.code LIKE 'SDV-%'
+            OR i.code LIKE 'HI-%' OR i.code LIKE 'EXS-%' OR i.code LIKE 'EXM-%'
+            OR i.code LIKE 'AMP-%' OR i.code LIKE 'PIP-%' OR i.code LIKE 'POP-%'
+            OR i.code LIKE 'OLG-%' OR i.code LIKE 'OLI-%'
+            OR i.code LIKE 'THE-%' OR i.code LIKE 'MPS-%' OR i.code LIKE 'MBC-%' OR i.code LIKE 'EQ-%'
             OR EXISTS (SELECT 1 FROM device.device_model dm WHERE dm.item_id = i.id OR upper(dm.code) = upper(i.code))
           )
         ORDER BY i.code ASC
-        LIMIT 100`
+        LIMIT 1500`
     )
   ).rows;
 
@@ -665,11 +675,14 @@ export interface SyncKdOrderToInternalInput {
   oligo_sequences_text?: string | null;
 }
 
-function classifyKdItemDomain(code: string, name: string, category: string, spec: string): "KIT" | "OLIGO" | "DEVICE" {
-  const c = code.toUpperCase();
+export function classifyKdItemDomain(code: string, name: string, category: string, spec: string): "KIT" | "OLIGO" | "DEVICE" {
+  const c = code.trim().toUpperCase();
   const text = `${code} ${name} ${category} ${spec}`.toUpperCase();
   if (
+    c.startsWith("OLG-") ||
     c.startsWith("OLI-") ||
+    c.startsWith("PRI-") ||
+    c.startsWith("PRB-") ||
     c.startsWith("PRIMER") ||
     c.startsWith("PROBE") ||
     text.includes("OLIGO") ||
@@ -677,13 +690,16 @@ function classifyKdItemDomain(code: string, name: string, category: string, spec
     text.includes("PROBE") ||
     text.includes("TAQMAN") ||
     text.includes("MỒI") ||
-    text.includes("ĐẦU DÒ") ||
-    text.includes("AMPLICON")
+    text.includes("ĐẦU DÒ")
   ) {
     return "OLIGO";
   }
   if (
     c.startsWith("DEV-") ||
+    c.startsWith("THE-") ||
+    c.startsWith("MPS-") ||
+    c.startsWith("MBC-") ||
+    c.startsWith("EQ-") ||
     c.startsWith("ABT-EXTR") ||
     c.startsWith("ABT-PCR") ||
     c.startsWith("MÁY") ||
@@ -692,7 +708,9 @@ function classifyKdItemDomain(code: string, name: string, category: string, spec
     text.includes("THIẾT BỊ") ||
     text.includes("THERMAL CYCLER") ||
     text.includes("EXTRACTOR") ||
-    text.includes("CENTRIFUGE")
+    text.includes("CENTRIFUGE") ||
+    text.includes("LINH KIỆN KỸ THUẬT") ||
+    text.includes("NỘI THẤT PTN")
   ) {
     return "DEVICE";
   }
@@ -913,8 +931,621 @@ export async function syncKdOrderOrPoToInternalOrder(tx: Tx, input: SyncKdOrderT
       }
     }
 
-    createdOrders.push(order);
+    createdOrders.push({
+      ...order,
+      module_key: domain,
+      org_unit_code: unit.code,
+      org_unit_name: unit.name,
+      routed_items: grouped[domain].map((g) => ({
+        product_code: g.item.kd_item_code || g.item.code,
+        product_name: g.raw.product_name || g.item.name,
+        unit: g.raw.unit || g.item.base_uom,
+        quantity: g.qty,
+      })),
+    });
   }
 
   return createdOrders;
+}
+
+const createForecastSchema = z.object({
+  forecast_period: z.string().trim().min(2).default("Quý IV.2026"),
+  forecast_code: z.string().trim().optional().nullable(),
+  requested_date: z.string().optional().nullable(),
+  notes: z.string().trim().optional().nullable(),
+  items: z
+    .array(
+      z.object({
+        product_code: z.string().trim().min(1),
+        product_name: z.string().trim().optional().nullable(),
+        unit: z.string().trim().optional().nullable(),
+        quantity: z.coerce.number().positive(),
+        category: z.string().trim().optional().nullable(),
+        specification: z.string().trim().optional().nullable(),
+      })
+    )
+    .min(1, "Cần ít nhất 1 mã hàng trong bảng Forecast Quý"),
+});
+
+/**
+ * Tiếp nhận Bảng Forecast Quý từ Phòng Kinh doanh (có thể chứa hỗn hợp sản phẩm của cả 3 phòng),
+ * tự động tra cứu danh mục và tách thành các Đơn Dự Trù Forecast Nội Bộ chuyển về đúng:
+ * - `P-KIT` (Phòng Sản xuất Kit): Kit PCR, Kit tách chiết, Tế bào học (`LBC-*`), Dung dịch/Hóa chất (`DD-*`), Giải pháp tự pha (`AMP-*`, `PIP-*`, `POP-*`)...
+ * - `P-DEVICE` (Phòng Kỹ thuật – Thiết bị / KTCN): Thiết bị SHPT, Thiết bị cơ bản ABT (`THE-*`, `MPS-*`, `MBC-*`, `EQ-*`, `DEV-*`)...
+ * - `P-OLIGO` (Phòng Tổng hợp Oligo): Oligo, Primer, Probe (`OLG-*`, `OLI-*`, `PRI-*`, `PRB-*`)...
+ */
+export async function createQuarterlyForecastAndSplitToDepartments(tx: Tx, actor: AuthzActor, input: unknown) {
+  await authorizeAnywhere(tx, actor, "intake.order.view");
+  const d = parseInput(createForecastSchema, input);
+
+  const periodClean = d.forecast_period.trim();
+  const baseCode =
+    (d.forecast_code || "").trim().toUpperCase() ||
+    `FC-${periodClean
+      .toUpperCase()
+      .replace(/QUÝ\s*/i, "Q")
+      .replace(/[^A-Z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")}-${String(Date.now()).slice(-4)}`;
+
+  const reqDate =
+    d.requested_date && /^\d{4}-\d{2}-\d{2}$/.test(d.requested_date)
+      ? d.requested_date
+      : addDays(vnToday(), 30);
+
+  const created = await syncKdOrderOrPoToInternalOrder(tx, {
+    kd_po_code: baseCode,
+    kd_so_code: `FORECAST-${periodClean}`,
+    customer_name: `Phòng Kinh Doanh — Dự trù Forecast ${periodClean}`,
+    requested_date: reqDate,
+    ship_mode: "TO_KD",
+    notes: `[FORECAST QUÝ — ${periodClean}] ${d.notes || "Dự trù nguyên vật liệu & kế hoạch sản xuất quý từ Phòng Kinh doanh"}`,
+    items: d.items.map((it) => ({
+      product_code: it.product_code.trim().toUpperCase(),
+      product_name: it.product_name?.trim() || it.product_code.trim().toUpperCase(),
+      unit: it.unit?.trim() || (it.product_code.toUpperCase().startsWith("DD-") ? "Chai" : "Hộp"),
+      quantity: it.quantity,
+      category: it.category || undefined,
+      specification: it.specification || undefined,
+    })),
+  });
+
+  await writeAudit(tx, actor, {
+    entityType: "quarterly_forecast",
+    entityId: created[0]?.id ?? baseCode,
+    action: "create_quarterly_forecast",
+    changes: {
+      forecast_code: [null, baseCode],
+      period: [null, periodClean],
+      departments_routed: [null, created.map((c: any) => `${c.org_unit_name} (${c.routed_items?.length ?? 0} mã)`).join("; ")],
+    },
+  });
+
+  return {
+    forecast_code: baseCode,
+    forecast_period: periodClean,
+    created_orders: created,
+  };
+}
+
+export interface ForecastMrpComponentLine {
+  component_item_id: string | null;
+  component_code: string;
+  component_name: string;
+  uom: string;
+  source_type: "BUY" | "SUBCONTRACT" | "REAGENT" | "PACKAGING";
+  used_by_products: string[];
+  gross_required_qty: number;
+  dept_available_qty: number;
+  hub_available_qty: number;
+  total_available_qty: number;
+  open_pr_po_qty: number;
+  net_shortage_qty: number;
+  est_unit_price: number;
+}
+
+/**
+ * Nổ Định Mức BOM (BOM Explosion) & Đối chiếu Tồn kho (MRP Netting) cho một Đơn Nội Bộ / Forecast Quý
+ * theo đặc thù của từng Phòng Sản Xuất (`KIT`, `DEVICE`, `OLIGO`).
+ */
+export async function getInternalOrderForecastMrp(tx: Tx, actor: AuthzActor, orderId: string) {
+  await authorizeAnywhere(tx, actor, "intake.order.view");
+
+  const order = (
+    await tx.query(
+      `SELECT o.*, u.code AS org_unit_code, u.name AS org_unit_name, u.module_key
+         FROM intake.internal_order o
+         JOIN core.org_unit u ON u.id = o.org_unit_id
+        WHERE o.id = $1`,
+      [orderId]
+    )
+  ).rows[0];
+  if (!order) throw notFound("Đơn nội bộ / Forecast");
+
+  const deptWh = (
+    await tx.query(
+      "SELECT id, code, name FROM master.warehouse WHERE owner_org_unit_id = $1 AND status = 'ACTIVE' ORDER BY code LIMIT 1",
+      [order.org_unit_id]
+    )
+  ).rows[0];
+
+  const orderLines = (
+    await tx.query(
+      `SELECT l.*, i.code AS item_code, i.name AS item_name, i.base_uom, i.item_type
+         FROM intake.internal_order_line l
+         LEFT JOIN master.item i ON i.id = l.item_id
+        WHERE l.order_id = $1
+        ORDER BY l.line_no ASC`,
+      [orderId]
+    )
+  ).rows;
+
+  const aggMap = new Map<
+    string,
+    {
+      component_item_id: string | null;
+      component_code: string;
+      component_name: string;
+      uom: string;
+      source_type: "BUY" | "SUBCONTRACT" | "REAGENT" | "PACKAGING";
+      used_by_products: Set<string>;
+      gross_required_qty: number;
+      est_unit_price: number;
+    }
+  >();
+
+  const addRequirement = (entry: {
+    component_item_id: string | null;
+    component_code: string;
+    component_name: string;
+    uom: string;
+    source_type: "BUY" | "SUBCONTRACT" | "REAGENT" | "PACKAGING";
+    product_label: string;
+    required_qty: number;
+    est_unit_price?: number;
+  }) => {
+    const key = (entry.component_item_id || entry.component_code).toUpperCase();
+    const existing = aggMap.get(key);
+    if (existing) {
+      existing.gross_required_qty = Number((existing.gross_required_qty + entry.required_qty).toFixed(4));
+      existing.used_by_products.add(entry.product_label);
+    } else {
+      aggMap.set(key, {
+        component_item_id: entry.component_item_id,
+        component_code: entry.component_code,
+        component_name: entry.component_name,
+        uom: entry.uom,
+        source_type: entry.source_type,
+        used_by_products: new Set([entry.product_label]),
+        gross_required_qty: Number(entry.required_qty.toFixed(4)),
+        est_unit_price: entry.est_unit_price ?? 180000,
+      });
+    }
+  };
+
+  const moduleKey = String(order.module_key || "KIT");
+
+  if (moduleKey === "DEVICE") {
+    for (const ln of orderLines) {
+      const model = await ensureDeviceModelForPoLine(tx, SYSTEM_ACTOR, order, ln);
+      const lineQty = Math.max(1, Number(ln.qty) - Number(ln.qty_delivered || 0));
+      const prodLabel = `${ln.kd_item_code} (×${lineQty})`;
+      if (model?.current_revision_id) {
+        const bomRows = (
+          await tx.query(
+            `SELECT bl.*, ci.code AS comp_code, ci.name AS comp_name, ci.base_uom AS comp_uom
+               FROM device.model_bom_line bl
+               JOIN master.item ci ON ci.id = bl.component_item_id
+              WHERE bl.revision_id = $1
+              ORDER BY bl.line_no ASC`,
+            [model.current_revision_id]
+          )
+        ).rows;
+        for (const b of bomRows) {
+          addRequirement({
+            component_item_id: b.component_item_id,
+            component_code: b.comp_code,
+            component_name: b.comp_name,
+            uom: b.uom || b.comp_uom || "pcs",
+            source_type: b.source_type === "SUBCONTRACT" ? "SUBCONTRACT" : "BUY",
+            product_label: prodLabel,
+            required_qty: lineQty * Number(b.qty_per_unit || 1),
+            est_unit_price: b.source_type === "SUBCONTRACT" ? 850000 : 650000,
+          });
+        }
+      }
+    }
+  } else if (moduleKey === "OLIGO") {
+    const totalUnits = orderLines.reduce((s, l) => s + Math.max(1, Number(l.qty) - Number(l.qty_delivered || 0)), 0);
+    const prodLabel = orderLines.map((l) => `${l.kd_item_code} (×${Number(l.qty)})`).join(", ") || "Forecast Oligo";
+    const rules = (
+      await tx.query(
+        `SELECT r.role, r.name, r.basis, r.qty::float AS qty, r.uom, r.item_id,
+                i.code AS item_code, i.name AS item_name, i.base_uom
+           FROM oligo.reagent_rule r
+           LEFT JOIN master.item i ON i.id = r.item_id
+          WHERE r.status = 'ACTIVE'
+          ORDER BY r.role ASC`
+      )
+    ).rows;
+
+    // Giả định trung bình 1 đơn vị/bộ Oligo Forecast gồm ~3 chuỗi × 22 chu kỳ (cycles) = 66 coupling cycles
+    const estCyclesPerUnit = 22;
+    for (const r of rules) {
+      const compCode = r.item_code || `CHEM-OLG-${r.role}`;
+      const compName = r.item_name || r.name;
+      const factor = r.basis === "PER_CYCLE" ? estCyclesPerUnit : r.basis === "PER_COUPLING" ? 6 : 1;
+      addRequirement({
+        component_item_id: r.item_id ?? null,
+        component_code: compCode,
+        component_name: compName,
+        uom: r.uom || r.base_uom || "mL",
+        source_type: "REAGENT",
+        product_label: prodLabel,
+        required_qty: totalUnits * factor * Number(r.qty || 0.1),
+        est_unit_price: 450000,
+      });
+    }
+  } else {
+    // MODULE = KIT (Phòng Sản xuất Kit: Kit PCR, Kit tách chiết, LBC-*, DD-*, Giải pháp tự pha...)
+    for (const ln of orderLines) {
+      const lineQty = Math.max(1, Number(ln.qty) - Number(ln.qty_delivered || 0));
+      const sku = String(ln.item_code || ln.kd_item_code || "").trim().toUpperCase();
+      const prodLabel = `${sku} (×${lineQty})`;
+
+      // 1. Kiểm tra định mức BOM trong DB (`kit.bom` + `kit.bom_line`)
+      let dbBomLines: any[] = [];
+      if (ln.item_id) {
+        const bom = (
+          await tx.query(
+            `SELECT id, base_qty FROM kit.bom
+              WHERE product_item_id = $1 AND status IN ('EFFECTIVE', 'IN_REVIEW', 'DRAFT')
+              ORDER BY CASE status WHEN 'EFFECTIVE' THEN 0 WHEN 'IN_REVIEW' THEN 1 ELSE 2 END, bom_version DESC
+              LIMIT 1`,
+            [ln.item_id]
+          )
+        ).rows[0];
+        if (bom) {
+          const baseQty = Math.max(1, Number(bom.base_qty || 1));
+          dbBomLines = (
+            await tx.query(
+              `SELECT bl.component_item_id, bl.qty_per_base::float AS qty_per_base, bl.uom,
+                      bl.scrap_factor::float AS scrap_factor, bl.stage_type,
+                      ci.code AS comp_code, ci.name AS comp_name, ci.base_uom AS comp_uom, ci.item_type AS comp_type
+                 FROM kit.bom_line bl
+                 JOIN master.item ci ON ci.id = bl.component_item_id
+                WHERE bl.bom_id = $1
+                ORDER BY bl.line_no ASC`,
+              [bom.id]
+            )
+          ).rows.map((r) => ({ ...r, base_qty: baseQty }));
+        }
+      }
+
+      if (dbBomLines.length > 0) {
+        for (const b of dbBomLines) {
+          const reqQty =
+            (lineQty / Number(b.base_qty || 1)) *
+            Number(b.qty_per_base || 1) *
+            (1 + Number(b.scrap_factor || 0));
+          addRequirement({
+            component_item_id: b.component_item_id,
+            component_code: b.comp_code,
+            component_name: b.comp_name,
+            uom: b.uom || b.comp_uom || "ĐV",
+            source_type: b.comp_type === "PACKAGING" ? "PACKAGING" : "REAGENT",
+            product_label: prodLabel,
+            required_qty: reqQty,
+            est_unit_price: b.comp_type === "PACKAGING" ? 15000 : 240000,
+          });
+        }
+        continue;
+      }
+
+      // 2. Kiểm tra danh mục BOM mẫu chuẩn (`DEFAULT_ABT_KIT_BOM_COMPONENTS`)
+      const seedMatches = DEFAULT_ABT_KIT_BOM_COMPONENTS.filter(
+        (s) => s.parent_product_code.toUpperCase() === sku
+      );
+      if (seedMatches.length > 0) {
+        for (const s of seedMatches) {
+          const matchedComp = (
+            await tx.query(
+              "SELECT id, code, name, base_uom, item_type FROM master.item WHERE upper(code) = upper($1) OR upper(COALESCE(kd_item_code, '')) = upper($1) LIMIT 1",
+              [s.component_code]
+            )
+          ).rows[0];
+          addRequirement({
+            component_item_id: matchedComp?.id ?? null,
+            component_code: matchedComp?.code ?? s.component_code,
+            component_name: matchedComp?.name ?? s.component_name,
+            uom: matchedComp?.base_uom ?? s.unit ?? "Hộp",
+            source_type: matchedComp?.item_type === "PACKAGING" ? "PACKAGING" : "REAGENT",
+            product_label: prodLabel,
+            required_qty: lineQty * Number(s.quantity_per_kit || 1),
+            est_unit_price: 165000,
+          });
+        }
+        continue;
+      }
+
+      // 3. Định mức chuẩn cho nhóm Hóa chất / Dung dịch (`DD-*`), Tế bào học (`LBC-*`) hoặc Kit mới chưa cấu hình chi tiết dòng BOM:
+      // Tự động ánh xạ sang Hóa chất cơ sở + Chai/Hộp bao bì chuẩn trong `master.item` để phục vụ dự trù NVL Quý
+      const fallbackRawItems = (
+        await tx.query(
+          `SELECT id, code, name, base_uom, item_type
+             FROM master.item
+            WHERE status = 'ACTIVE'
+              AND item_type IN ('RAW_CHEMICAL', 'PACKAGING')
+            ORDER BY CASE item_type WHEN 'RAW_CHEMICAL' THEN 0 ELSE 1 END, code ASC
+            LIMIT 4`
+        )
+      ).rows;
+
+      if (sku.startsWith("DD-") || sku.startsWith("LBC-")) {
+        // Mỗi chai/bộ dung dịch (`DD-*` / `LBC-*`) cần Hóa chất gốc pha đệm + Chai HDPE/PP + Tem nhãn & Hộp ngoài
+        const rawChem = fallbackRawItems.find((x) => x.item_type === "RAW_CHEMICAL");
+        const pkgItem = fallbackRawItems.find((x) => x.item_type === "PACKAGING");
+        if (rawChem) {
+          addRequirement({
+            component_item_id: rawChem.id,
+            component_code: rawChem.code,
+            component_name: `${rawChem.name} (Hóa chất gốc pha chế ${sku})`,
+            uom: rawChem.base_uom || "mL",
+            source_type: "REAGENT",
+            product_label: prodLabel,
+            required_qty: lineQty * (sku.startsWith("LBC-") ? 250 : 100),
+            est_unit_price: 185000,
+          });
+        }
+        if (pkgItem) {
+          addRequirement({
+            component_item_id: pkgItem.id,
+            component_code: pkgItem.code,
+            component_name: `${pkgItem.name} (Bao bì đóng gói ${sku})`,
+            uom: pkgItem.base_uom || "Cái",
+            source_type: "PACKAGING",
+            product_label: prodLabel,
+            required_qty: lineQty * (sku.startsWith("LBC-") ? 4 : 1),
+            est_unit_price: 12000,
+          });
+        }
+      } else {
+        for (const fb of fallbackRawItems.slice(0, 2)) {
+          addRequirement({
+            component_item_id: fb.id,
+            component_code: fb.code,
+            component_name: fb.name,
+            uom: fb.base_uom || "ĐV",
+            source_type: fb.item_type === "PACKAGING" ? "PACKAGING" : "REAGENT",
+            product_label: prodLabel,
+            required_qty: lineQty * (fb.item_type === "PACKAGING" ? 1 : 5),
+            est_unit_price: fb.item_type === "PACKAGING" ? 18000 : 210000,
+          });
+        }
+      }
+    }
+  }
+
+  // Đối chiếu Tồn kho khả dụng (Kho Phòng + Kho Tổng) & PR/PO đang mở cho toàn bộ danh sách NVL sau nổ BOM
+  const components: ForecastMrpComponentLine[] = [];
+  for (const entry of aggMap.values()) {
+    let itemId = entry.component_item_id;
+    if (!itemId) {
+      const found = (
+        await tx.query(
+          "SELECT id FROM master.item WHERE upper(code) = upper($1) OR upper(COALESCE(kd_item_code, '')) = upper($1) LIMIT 1",
+          [entry.component_code]
+        )
+      ).rows[0];
+      itemId = found?.id ?? null;
+    }
+
+    let deptAvail = 0;
+    let hubAvail = 0;
+    let openPrPo = 0;
+
+    if (itemId) {
+      const stockRow = (
+        await tx.query(
+          `SELECT
+             COALESCE(sum(b.qty_on_hand - b.qty_reserved) FILTER (
+               WHERE ($2::uuid IS NOT NULL AND loc.warehouse_id = $2)
+                 AND loc.is_quarantine = false
+                 AND COALESCE(lot.status, 'RELEASED') = 'RELEASED'
+                 AND (b.qty_on_hand - b.qty_reserved) > 0
+             ), 0)::float AS dept_avail,
+             COALESCE(sum(b.qty_on_hand - b.qty_reserved) FILTER (
+               WHERE wh.code = 'KHO-TONG'
+                 AND loc.is_quarantine = false
+                 AND COALESCE(lot.status, 'RELEASED') = 'RELEASED'
+                 AND (b.qty_on_hand - b.qty_reserved) > 0
+             ), 0)::float AS hub_avail
+           FROM inv.stock_balance b
+           JOIN master.location loc ON loc.id = b.location_id
+           JOIN master.warehouse wh ON wh.id = loc.warehouse_id
+           LEFT JOIN inv.lot lot ON lot.id = b.lot_id
+          WHERE b.item_id = $1 AND b.qty_on_hand > 0`,
+          [itemId, deptWh?.id ?? null]
+        )
+      ).rows[0];
+
+      deptAvail = Number(stockRow?.dept_avail ?? 0);
+      hubAvail = Number(stockRow?.hub_avail ?? 0);
+
+      const prRow = (
+        await tx.query(
+          `SELECT COALESCE(sum(prl.qty - prl.qty_ordered), 0)::float AS open_pr
+             FROM purchase.purchase_request_line prl
+             JOIN purchase.purchase_request pr ON pr.id = prl.pr_id
+            WHERE prl.item_id = $1
+              AND pr.status IN ('DRAFT', 'SUBMITTED', 'PENDING_BOD', 'APPROVED')
+              AND prl.qty > prl.qty_ordered`,
+          [itemId]
+        )
+      ).rows[0];
+
+      const poRow = (
+        await tx.query(
+          `SELECT COALESCE(sum(pol.qty_ordered - pol.qty_received), 0)::float AS open_po
+             FROM purchase.purchase_order_line pol
+             JOIN purchase.purchase_order po ON po.id = pol.po_id
+            WHERE pol.item_id = $1
+              AND po.status IN ('DRAFT', 'ISSUED', 'PARTIALLY_RECEIVED')
+              AND pol.qty_ordered > pol.qty_received`,
+          [itemId]
+        )
+      ).rows[0];
+
+      openPrPo = Number(prRow?.open_pr ?? 0) + Number(poRow?.open_po ?? 0);
+    }
+
+    const totalAvail = Number((deptAvail + hubAvail).toFixed(4));
+    const netShortage = Math.max(0, Number((entry.gross_required_qty - totalAvail - openPrPo).toFixed(4)));
+
+    components.push({
+      component_item_id: itemId,
+      component_code: entry.component_code,
+      component_name: entry.component_name,
+      uom: entry.uom,
+      source_type: entry.source_type,
+      used_by_products: Array.from(entry.used_by_products),
+      gross_required_qty: entry.gross_required_qty,
+      dept_available_qty: deptAvail,
+      hub_available_qty: hubAvail,
+      total_available_qty: totalAvail,
+      open_pr_po_qty: Number(openPrPo.toFixed(4)),
+      net_shortage_qty: netShortage,
+      est_unit_price: entry.est_unit_price,
+    });
+  }
+
+  // Sắp xếp: Ưu tiên hiển thị các vật tư đang THIẾU (`net_shortage_qty > 0`) lên đầu
+  components.sort((a, b) => b.net_shortage_qty - a.net_shortage_qty || a.component_code.localeCompare(b.component_code));
+
+  const linkedPrs = (
+    await tx.query(
+      `SELECT id, code, status, priority, needed_by::text AS needed_by, reason, created_at
+         FROM purchase.purchase_request
+        WHERE (purpose_entity_type = 'INTERNAL_ORDER' AND purpose_entity_id = $1)
+           OR reason ILIKE '%' || $2 || '%'
+        ORDER BY created_at DESC`,
+      [order.id, order.kd_po_code]
+    )
+  ).rows;
+
+  return {
+    order_id: order.id,
+    order_code: order.code,
+    kd_po_code: order.kd_po_code,
+    org_unit_code: order.org_unit_code,
+    org_unit_name: order.org_unit_name,
+    module_key: moduleKey,
+    department_warehouse_code: deptWh?.code ?? "KHO-TONG",
+    components,
+    shortage_count: components.filter((c) => c.net_shortage_qty > 0).length,
+    linked_prs: linkedPrs,
+  };
+}
+
+const createPrFromOrderMrpSchema = z.object({
+  order_id: z.string().uuid(),
+  mode: z.enum(["SHORTAGE_ONLY", "FULL_GROSS"]).default("SHORTAGE_ONLY"),
+  safety_buffer_pct: z.coerce.number().min(0).max(100).default(0),
+});
+
+/**
+ * 1-Click Phát hành Phiếu Đề nghị Mua hàng (`purchase.purchase_request` / `PR...`)
+ * từ Bảng Nổ BOM & Dự trù Nguyên liệu (MRP) của Đơn Nội Bộ / Forecast Quý chuyển thẳng sang `Cung Ứng NVL`.
+ */
+export async function createPrFromOrderMrp(tx: Tx, actor: AuthzActor, input: unknown) {
+  await authorizeAnywhere(tx, actor, "intake.order.view");
+  const d = parseInput(createPrFromOrderMrpSchema, input);
+
+  const mrp = await getInternalOrderForecastMrp(tx, actor, d.order_id);
+  const order = (await tx.query("SELECT * FROM intake.internal_order WHERE id = $1", [d.order_id])).rows[0];
+  if (!order) throw notFound("Đơn nội bộ / Forecast");
+
+  const targetWh =
+    (
+      await tx.query(
+        "SELECT id, code FROM master.warehouse WHERE owner_org_unit_id = $1 AND status = 'ACTIVE' ORDER BY code LIMIT 1",
+        [order.org_unit_id]
+      )
+    ).rows[0] ??
+    (await tx.query("SELECT id, code FROM master.warehouse WHERE code = 'KHO-TONG' AND status = 'ACTIVE' LIMIT 1")).rows[0];
+  if (!targetWh) throw invalid("Không tìm thấy kho nhận để lập PR dự trù nguyên liệu.");
+
+  const bufferMultiplier = 1 + d.safety_buffer_pct / 100;
+  const targetLines = mrp.components
+    .map((c) => {
+      const baseQty = d.mode === "SHORTAGE_ONLY" ? c.net_shortage_qty : c.gross_required_qty;
+      return {
+        ...c,
+        request_qty: Number((baseQty * bufferMultiplier).toFixed(4)),
+      };
+    })
+    .filter((c) => c.request_qty > 0);
+
+  // Nếu chọn SHORTAGE_ONLY nhưng tất cả vật tư đều đủ tồn kho, fallback lấy toàn bộ nhu cầu Gross để dự trù bù tồn kho Quý
+  const finalLines =
+    targetLines.length > 0
+      ? targetLines
+      : mrp.components.map((c) => ({
+          ...c,
+          request_qty: Number((c.gross_required_qty * bufferMultiplier).toFixed(4)),
+        })).filter((c) => c.request_qty > 0);
+
+  if (finalLines.length === 0) {
+    throw invalid("Chưa có dòng nguyên vật liệu nào sau khi nổ BOM để tạo PR dự trù mua hàng.");
+  }
+
+  const resolvedPrLines: Array<{ item_id: string; qty: number; uom: string; est_price: number; notes: string }> = [];
+
+  for (const ln of finalLines) {
+    let itemId = ln.component_item_id;
+    if (!itemId) {
+      const itemType = ln.source_type === "PACKAGING" ? "PACKAGING" : "RAW_CHEMICAL";
+      const createdItem = (
+        await tx.query(
+          `INSERT INTO master.item (code, name, item_type, base_uom, is_purchasable, status)
+           VALUES ($1, $2, $3, $4, true, 'ACTIVE')
+           ON CONFLICT (code) DO UPDATE SET is_purchasable = true, status = 'ACTIVE'
+           RETURNING id`,
+          [ln.component_code, ln.component_name, itemType, ln.uom || "Hộp"]
+        )
+      ).rows[0];
+      itemId = createdItem.id;
+    } else {
+      await tx.query("UPDATE master.item SET is_purchasable = true WHERE id = $1", [itemId]);
+    }
+
+    resolvedPrLines.push({
+      item_id: itemId!,
+      qty: ln.request_qty,
+      uom: ln.uom || "Hộp",
+      est_price: ln.est_unit_price || 180000,
+      notes: `Dự trù NVL theo ${order.kd_po_code} (Phục vụ: ${ln.used_by_products.join(", ")})`,
+    });
+  }
+
+  const pr = await createRequest(tx, actor, {
+    org_unit_id: order.org_unit_id,
+    target_warehouse_id: targetWh.id,
+    needed_by: order.committed_date || order.requested_date || addDays(vnToday(), 14),
+    reason: `[Dự trù NVL Forecast / Đơn ${order.kd_po_code}] Nổ BOM tại ${mrp.org_unit_name} (${resolvedPrLines.length} mã vật tư)`,
+    purpose_entity_type: "INTERNAL_ORDER",
+    purpose_entity_id: order.id,
+    lines: resolvedPrLines,
+  });
+
+  await tx.query("UPDATE purchase.purchase_request SET status = 'SUBMITTED', priority = 'HIGH', version = version + 1 WHERE id = $1", [
+    pr.id,
+  ]);
+
+  return {
+    pr_id: pr.id,
+    pr_code: pr.code,
+    line_count: resolvedPrLines.length,
+    warehouse_code: targetWh.code,
+    message: `Đã phát hành Phiếu Đề nghị Mua hàng ${pr.code} (${resolvedPrLines.length} dòng vật tư) từ ${mrp.org_unit_name} sang Phòng Cung ứng NVL.`,
+  };
 }
