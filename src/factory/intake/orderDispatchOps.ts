@@ -179,9 +179,9 @@ export async function createInternalOrderManual(tx: Tx, actor: AuthzActor, input
     const oligoOrder = await createOligoOrder(tx, dispatchActor, {
       org_unit_id: unit.id,
       internal_order_id: order.id,
-      customer_label: d.customer_name || `${kdPoCode} — ${firstLine?.kd_item_name || "Bộ Primer/Probe & Amplicon"}`,
+      customer_label: d.customer_name?.trim() || unit.name,
       due_date: dueDate,
-      notes: d.notes || `Đơn Tổng hợp Oligo liên kết từ Đơn nội bộ ${order.code} (PO ${kdPoCode})`,
+      notes: d.notes || `Đơn Tổng hợp Oligo nội bộ (${unit.name})`,
     });
     const prefix = firstLine?.kd_item_code || "OLI-SET";
     const userSeqs = d.oligo_sequences_text?.trim();
@@ -522,10 +522,11 @@ export async function dispatchInternalOrderLineToProduction(tx: Tx, actor: Authz
     }
 
     const dueDate = order.committed_date ? String(order.committed_date).slice(0, 10) : addDays(vnToday(), 7);
+    const shipToLabel = order.ship_to?.name ? String(order.ship_to.name).trim() : "";
     const oligoOrder = await createOligoOrder(tx, dispatchActor, {
       org_unit_id: order.org_unit_id,
       internal_order_id: order.id,
-      customer_label: `${order.kd_po_code} — ${line.kd_item_name || line.kd_item_code}`,
+      customer_label: shipToLabel || order.unit_name || "Phòng Tổng hợp Oligo",
       due_date: dueDate >= vnToday() ? dueDate : addDays(vnToday(), 5),
       notes: order.notes || `Tổng hợp Oligo theo Đơn nội bộ ${order.code} (${qtyToProduce} ${line.kd_unit || "Ống"})`,
     });
@@ -624,10 +625,11 @@ export async function addOligoSequencesToInternalOrder(tx: Tx, actor: AuthzActor
 
   if (!oligoOrder) {
     const dueDate = order.committed_date ? String(order.committed_date).slice(0, 10) : addDays(vnToday(), 7);
+    const shipToLabel = order.ship_to?.name ? String(order.ship_to.name).trim() : "";
     oligoOrder = await createOligoOrder(tx, dispatchActor, {
       org_unit_id: order.org_unit_id,
       internal_order_id: order.id,
-      customer_label: `${order.kd_po_code} — ${firstLine?.kd_item_name || firstLine?.kd_item_code || "Bộ Primer/Probe"}`,
+      customer_label: shipToLabel || "Phòng Tổng hợp Oligo",
       due_date: dueDate >= vnToday() ? dueDate : addDays(vnToday(), 5),
       notes: order.notes || `Đơn Tổng hợp Oligo liên kết từ Đơn nội bộ ${order.code}`,
     });

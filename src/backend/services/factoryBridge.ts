@@ -561,8 +561,34 @@ export async function syncPoWithFactoryIfInternal(
 
     const shipMode: "TO_KD" | "DROP_SHIP" =
       opts?.ship_mode || (existingBridgePo?.ship_mode === "DROP_SHIP" ? "DROP_SHIP" : "TO_KD");
-    const shipTo =
-      shipMode === "DROP_SHIP" ? opts?.ship_to || existingBridgePo?.ship_to || null : null;
+    let shipTo: Record<string, any> | null = opts?.ship_to || existingBridgePo?.ship_to || null;
+    if (!shipTo?.name) {
+      const itemCust = rawItems.find((it: any) => it?.customer_name)?.customer_name;
+      if (itemCust) {
+        shipTo = { ...(shipTo || {}), name: String(itemCust).trim() };
+      } else if (kdSoCode) {
+        const soCodes = String(kdSoCode)
+          .split(/[,;\s]+/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        if (soCodes.length > 0) {
+          const soRows = (
+            await c.query(
+              "SELECT customer_name, delivery_address FROM sales_orders WHERE order_code = ANY($1::text[])",
+              [soCodes]
+            ).catch(() => ({ rows: [] as any[] }))
+          ).rows;
+          const custNames = Array.from(new Set(soRows.map((r: any) => String(r.customer_name || "").trim()).filter(Boolean)));
+          if (custNames.length > 0) {
+            shipTo = {
+              ...(shipTo || {}),
+              name: custNames.join(" + "),
+              address: shipTo?.address || soRows[0]?.delivery_address || "",
+            };
+          }
+        }
+      }
+    }
     const requestedDate =
       po.expected_delivery_date && /^\d{4}-\d{2}-\d{2}/.test(String(po.expected_delivery_date))
         ? String(po.expected_delivery_date).slice(0, 10)
@@ -674,7 +700,29 @@ export async function sendPoToFactory(me: AuthorizedUser, poId: number, input: S
       };
     });
     if (!lines.length || lines.some((l) => !l.product_code || !(l.quantity > 0))) throw new HttpError(400, "Mỗi dòng PO cần mã hàng và số lượng > 0.");
-    const shipTo = input.ship_mode === "DROP_SHIP" ? input.ship_to : null;
+    let shipTo: Record<string, any> | null = input.ship_to || null;
+    if (!shipTo?.name && input.kd_so_code) {
+      const soCodes = String(input.kd_so_code)
+        .split(/[,;\s]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (soCodes.length > 0) {
+        const soRows = (
+          await c.query(
+            "SELECT customer_name, delivery_address FROM sales_orders WHERE order_code = ANY($1::text[])",
+            [soCodes]
+          ).catch(() => ({ rows: [] as any[] }))
+        ).rows;
+        const custNames = Array.from(new Set(soRows.map((r: any) => String(r.customer_name || "").trim()).filter(Boolean)));
+        if (custNames.length > 0) {
+          shipTo = {
+            ...(shipTo || {}),
+            name: custNames.join(" + "),
+            address: shipTo?.address || soRows[0]?.delivery_address || "",
+          };
+        }
+      }
+    }
     await c.query(
       "INSERT INTO factory_bridge_po (po_id, po_code, factory_unit, ship_mode, ship_to, kd_so_code, sent_by) VALUES ($1, $2, $3, $4, $5, $6, $7)",
       [poId, po.po_code, sup.factory_unit, input.ship_mode, shipTo ? JSON.stringify(shipTo) : null, input.kd_so_code || null, me.full_name || me.username]

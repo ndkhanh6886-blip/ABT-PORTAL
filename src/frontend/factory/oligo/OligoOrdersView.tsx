@@ -136,13 +136,21 @@ function NewOrder({ onCreated, onCancel }: { onCreated: (id: string) => void; on
             ))}
           </select>
         </Field>
-        <Field label="Khách hàng / Yêu cầu">
+        <Field label="Khách hàng / Phòng ban đặt hàng (Hiển thị trên COA)">
           <input
+            list="oligo-order-unit-presets"
             className={inputClass}
-            placeholder="Tên khách hàng / Bộ Kit..."
+            placeholder="Chọn Phòng R&D / SX Kit / QA/QC hoặc tên Khách hàng..."
             value={f.customer_label}
             onChange={(e) => setF({ ...f, customer_label: e.target.value })}
           />
+          <datalist id="oligo-order-unit-presets">
+            <option value="Phòng Nghiên cứu & Phát triển (R&D)" />
+            <option value="Phòng Sản xuất Kit" />
+            <option value="Phòng Đảm bảo & Kiểm soát Chất lượng (QA/QC)" />
+            <option value="Phòng Tổng hợp Oligo" />
+            <option value="Phòng Kỹ thuật – Thiết bị" />
+          </datalist>
         </Field>
         <Field label="Hạn giao" hint="Để trống: lấy ngày cam kết của đơn nội bộ">
           <input

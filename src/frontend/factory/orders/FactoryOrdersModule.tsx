@@ -243,7 +243,7 @@ function NewInternalOrderForm({ onDone }: { onDone: (createdId: string) => void 
   const [kdPoCode, setKdPoCode] = useState("");
   const [kdSoCode, setKdSoCode] = useState("");
   const [shipMode, setShipMode] = useState<"TO_KD" | "DROP_SHIP">("TO_KD");
-  const [customerName, setCustomerName] = useState("Kho Thương Mại Kinh Doanh ABT");
+  const [customerName, setCustomerName] = useState("Phòng Nghiên cứu & Phát triển (R&D)");
   const [requestedDate, setRequestedDate] = useState(() =>
     new Date(Date.now() + 7 * 86400 * 1000).toISOString().slice(0, 10)
   );
@@ -546,14 +546,30 @@ function NewInternalOrderForm({ onDone }: { onDone: (createdId: string) => void 
             />
           </Field>
 
-          <Field label="Đơn vị nhận / Ghi chú">
+          <Field label="Phòng ban đặt nội bộ / Khách hàng (Hiển thị trên COA) *">
+            <input
+              list="internal-order-dept-or-customer-list"
+              className={inputClass}
+              placeholder="Chọn phòng ban nội bộ (R&D, SX Kit, QA/QC...) hoặc tên Khách hàng..."
+              value={customerName}
+              onChange={(e) => setCustomerName(e.target.value)}
+              required
+            />
+            <datalist id="internal-order-dept-or-customer-list">
+              <option value="Phòng Nghiên cứu & Phát triển (R&D)" />
+              <option value="Phòng Sản xuất Kit" />
+              <option value="Phòng Đảm bảo & Kiểm soát Chất lượng (QA/QC)" />
+              <option value="Phòng Tổng hợp Oligo" />
+              <option value="Phòng Kỹ thuật – Thiết bị" />
+            </datalist>
+          </Field>
+
+          <Field label="Ghi chú đơn hàng">
             <input
               className={inputClass}
-              value={notes || customerName}
-              onChange={(e) => {
-                setCustomerName(e.target.value);
-                setNotes(e.target.value);
-              }}
+              placeholder="Ghi chú yêu cầu kỹ thuật, mục đích sử dụng..."
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
             />
           </Field>
         </div>

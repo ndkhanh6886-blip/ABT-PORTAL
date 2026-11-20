@@ -198,9 +198,10 @@ async function ensureDownstreamDepartmentOrder(
 ) {
   if (factoryUnit === "OLIGO") {
     const existingOligo = (
-      await tx.query("SELECT id FROM oligo.oligo_order WHERE internal_order_id = $1 LIMIT 1", [order.id])
+      await tx.query("SELECT id, customer_label FROM oligo.oligo_order WHERE internal_order_id = $1 LIMIT 1", [order.id])
     ).rows[0];
     let oligoOrderId: string | undefined = existingOligo?.id;
+    const shipToName = order.ship_to?.name ? String(order.ship_to.name).trim() : "";
     if (!oligoOrderId) {
       const firstLine = (
         await tx.query("SELECT * FROM intake.internal_order_line WHERE order_id = $1 ORDER BY line_no LIMIT 1", [order.id])
@@ -213,13 +214,18 @@ async function ensureDownstreamDepartmentOrder(
         {
           org_unit_id: unit.id,
           internal_order_id: order.id,
-          customer_label: `${order.kd_po_code} — ${firstLine?.kd_item_name || "Đơn tổng hợp Oligo"}`,
+          customer_label: shipToName || firstLine?.kd_item_name || "Khách hàng Kinh doanh",
           due_date: dueDate,
-          notes: order.notes || `Đơn Tổng hợp Oligo tự động chuyển từ PO Kinh doanh ${order.kd_po_code} (Đơn nội bộ ${order.code})`,
+          notes: order.notes || `Đơn Tổng hợp Oligo tự động chuyển từ Phòng Kinh doanh`,
         },
         { trustedSystem: true }
       );
       oligoOrderId = createdOligo.id;
+    } else if (shipToName && (!existingOligo.customer_label || /^PO\b/i.test(String(existingOligo.customer_label)))) {
+      await tx.query("UPDATE oligo.oligo_order SET customer_label = $2, updated_at = now() WHERE id = $1", [
+        oligoOrderId,
+        shipToName,
+      ]);
     }
 
     const existingSeqCount = Number(

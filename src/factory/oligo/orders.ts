@@ -89,10 +89,30 @@ export async function createOligoOrder(
     }
     const ioDate = io.committed_date ? String(io.committed_date).slice(0, 10) : io.requested_date ? String(io.requested_date).slice(0, 10) : null;
     due ??= ioDate;
-    customerLabel ??= io.ship_to?.name ? `${io.kd_po_code} — ${io.ship_to.name}` : `PO ${io.kd_po_code} (${io.code})`;
-    orderNotes ??= io.notes || `Triển khai tổng hợp Oligo theo Đơn nội bộ ${io.code} (PO ${io.kd_po_code})`;
+    const shipName = io.ship_to?.name ? String(io.ship_to.name).trim() : "";
+    if (!customerLabel && shipName) {
+      customerLabel = shipName;
+    }
+    orderNotes ??= io.notes || `Triển khai tổng hợp Oligo theo Đơn nội bộ ${io.code}`;
   } else if (data.auto_internal_order !== false) {
     // Tự động tạo và liên kết Đơn Nội Bộ tương ứng nếu người dùng tạo trực tiếp từ phân hệ Tổng hợp Oligo
+    const creatorDept = (
+      await tx.query(
+        `SELECT COALESCE(ou_p.name, ou_r.name) AS name
+           FROM core.user_profile up
+           LEFT JOIN core.org_unit ou_p ON ou_p.id = up.org_unit_id
+           LEFT JOIN core.user_role ur ON ur.user_id = up.user_id AND ur.revoked_at IS NULL
+           LEFT JOIN core.org_unit ou_r ON ou_r.id = ur.scope_org_unit_id AND ou_r.unit_type = 'DEPARTMENT'
+          WHERE up.user_id = $1
+          LIMIT 1`,
+        [actor.userId]
+      )
+    ).rows[0]?.name as string | undefined;
+    const targetDeptName = (
+      await tx.query("SELECT name FROM core.org_unit WHERE id = $1", [data.org_unit_id])
+    ).rows[0]?.name as string | undefined;
+    customerLabel ??= creatorDept || targetDeptName || "Phòng Tổng hợp Oligo";
+
     const ioCode = await nextNumber(tx, "INTERNAL_ORDER");
     const kdPoCode = await nextNumber(tx, "KD_PO_OLIGO");
     const autoDue = due && due >= vnToday() ? due : addDays(vnToday(), 7);
@@ -100,16 +120,17 @@ export async function createOligoOrder(
     const newIo = (
       await tx.query(
         `INSERT INTO intake.internal_order
-           (code, kd_po_id, kd_po_code, org_unit_id, ship_mode, requested_date, committed_date, initial_committed_date, status, notes, created_by, updated_by)
-         VALUES ($1, $2, $3, $4, 'TO_KD', $5, $5, $5, 'IN_PRODUCTION', $6, $7, $7)
+           (code, kd_po_id, kd_po_code, org_unit_id, ship_mode, ship_to, requested_date, committed_date, initial_committed_date, status, notes, created_by, updated_by)
+         VALUES ($1, $2, $3, $4, 'TO_KD', $5, $6, $6, $6, 'IN_PRODUCTION', $7, $8, $8)
          RETURNING id, code, kd_po_code`,
         [
           ioCode,
           Math.floor(Date.now() / 1000) % 1000000,
           kdPoCode,
           data.org_unit_id,
+          JSON.stringify({ name: customerLabel }),
           autoDue,
-          orderNotes || `Đơn nội bộ tự động đồng bộ từ Phòng Tổng hợp Oligo (${customerLabel || "Khách hàng / Dự án nội bộ"})`,
+          orderNotes || `Đơn nội bộ đồng bộ từ ${customerLabel}`,
           actor.userId,
         ]
       )
@@ -132,8 +153,7 @@ export async function createOligoOrder(
       ]
     );
     internalOrderId = newIo.id;
-    customerLabel ??= `PO ${newIo.kd_po_code} — Bộ Primer/Probe & Amplicon`;
-    orderNotes ??= `Liên kết tự động với Đơn nội bộ ${newIo.code} (${newIo.kd_po_code})`;
+    orderNotes ??= `Đơn nội bộ ${customerLabel}`;
   }
 
   if (due && due < vnToday()) throw invalid("Hạn giao không được trước hôm nay.");

@@ -1270,6 +1270,10 @@ export async function printOrderCoa(
     .filter((s) => !singleAmpliconId || s.id === singleAmpliconId);
 
   const issueDateStr = new Date().toLocaleDateString("vi-VN");
+  const cleanUnitOrCustomer = String(o.customer_label || "")
+    .replace(/^(?:PO\s+)?PO-[A-Z0-9-]+\s*[—–-]\s*(?:Bộ Primer\/Probe(?:\s*&\s*Amplicon)?|Đơn tổng hợp Oligo)$/i, "Phòng Tổng hợp Oligo")
+    .replace(/^(?:PO\s+)?PO-[A-Z0-9-]+\s*[—–-]\s*/i, "")
+    .trim() || "Phòng Tổng hợp Oligo";
   const quarantineBanner = c.quarantine_watermark
     ? `<div style="border:2px solid #d97706;background:#fffbeb;color:#b45309;padding:5pt 10pt;margin-bottom:8pt;text-align:center;font-weight:bold;">⛔ BẢN NHÁP / BIỆT TRỮ — CHƯA HOÀN TẤT PHÊ DUYỆT QC ĐẦY ĐỦ</div>`
     : "";
@@ -1282,14 +1286,12 @@ export async function printOrderCoa(
           <div>${esc(o.code)}</div>
           <div style="margin-top:2pt;">${barcode128SvgMarkup(String(o.code ?? ""), 24)}</div>
         </td>
-        <td style="width:18%;font-weight:bold;">Đơn nội bộ / PO KD:</td>
-        <td style="width:32%;">${esc(o.internal_order_code || "—")} / <b>${esc(o.kd_po_code || "—")}</b></td>
+        <td style="width:18%;font-weight:bold;">Hạn giao / Ngày cấp:</td>
+        <td style="width:32%;">${d(o.due_date) || "—"} (Cấp ngày: ${esc(issueDateStr)})</td>
       </tr>
       <tr>
-        <td style="font-weight:bold;">Khách hàng / Dự án:</td>
-        <td>${esc(o.customer_label || "—")}</td>
-        <td style="font-weight:bold;">Hạn giao / Ngày cấp:</td>
-        <td>${d(o.due_date) || "—"} (Cấp ngày: ${esc(issueDateStr)})</td>
+        <td style="font-weight:bold;">Khách hàng / Đơn vị:</td>
+        <td colspan="3"><b>${esc(cleanUnitOrCustomer)}</b></td>
       </tr>
       ${
         o.notes
