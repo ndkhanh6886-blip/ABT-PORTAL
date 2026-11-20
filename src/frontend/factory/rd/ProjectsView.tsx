@@ -3764,7 +3764,6 @@ export function ProjectsView({
           <Table
             head={[
               "Mã dự án",
-              "Tên dự án",
               "Loại đề tài",
               "Lĩnh vực",
               "Giai đoạn (Stage)",
@@ -3777,61 +3776,87 @@ export function ProjectsView({
           >
             {filteredProjects.map((r) => {
               const assignees: string[] = Array.isArray(r.assignees) ? r.assignees : [];
+              const colCount = canEdit || canDelete ? 9 : 8;
               return (
-                <tr key={r.id} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setSelected(r.id)}>
-                  <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">{r.code}</td>
-                  <td className="py-2 pr-3 font-semibold">{r.name}</td>
-                  <td className="py-2 pr-3 text-xs">{PROJ_TYPE_LABEL[r.project_type] ?? r.project_type}</td>
-                  <td className="py-2 pr-3">
-                    {DOMAIN_LABEL[r.target_domain] ?? r.target_domain}
-                    {r.ivd_class ? <span className="ml-1 text-[10px] font-mono text-slate-500">({r.ivd_class})</span> : null}
-                  </td>
-                  <td className="py-2 pr-3 font-mono font-semibold">{r.current_stage}</td>
-                  <td className="py-2 pr-3 font-mono">{r.passed_gates}/{r.total_gates} cổng</td>
-                  <td className="py-2 pr-3 font-mono">{r.experiment_count}</td>
-                  <td className="py-2 pr-3">
-                    <div className="font-semibold text-slate-800 dark:text-slate-100">👤 Chủ nhiệm: {r.leader_name}</div>
-                    {assignees.length > 0 && (
-                      <div className="text-[11px] text-slate-500 mt-0.5">
-                        NCV tham gia WBS: {assignees.slice(0, 3).join(", ")}
-                        {assignees.length > 3 ? ` (+${assignees.length - 3})` : ""}
-                      </div>
-                    )}
-                  </td>
-                  <td className="py-2 pr-3">
-                    <StatusBadge status={PROJ_STATUS[r.status]?.[0] ?? "QUARANTINE"} label={PROJ_STATUS[r.status]?.[1] ?? r.status} />
-                  </td>
-                  {(canEdit || canDelete) && (
-                    <td className="py-2 pr-2" onClick={(ev) => ev.stopPropagation()}>
-                      <div className="flex items-center gap-1 whitespace-nowrap">
-                        {canEdit && (
-                          <Button
-                            variant="ghost"
-                            className="!px-2 !py-1 !text-[11px]"
-                            onClick={() => openEditProj(r)}
-                          >
-                            ✏️ Sửa
-                          </Button>
-                        )}
-                        {canDelete && (
-                          <Button
-                            variant="ghost"
-                            disabled={Boolean(r.has_immutable_handoff)}
-                            title={
-                              r.has_immutable_handoff
-                                ? "Không thể xóa dự án đã có hồ sơ chuyển giao công nghệ / phát hành phần mềm / dòng máy thương mại"
-                                : "Xóa dự án R&D"
-                            }
-                            className="!px-2 !py-1 !text-[11px] text-rose-600 dark:text-rose-400"
-                            onClick={() => openDeleteProj(r)}
-                          >
-                            🗑️ Xóa
-                          </Button>
-                        )}
+                <React.Fragment key={r.id}>
+                  <tr
+                    className="cursor-pointer bg-slate-50/70 dark:bg-slate-900/50 hover:bg-sky-50/60 dark:hover:bg-slate-800/70 border-t-2 border-slate-200/80 dark:border-slate-800"
+                    onClick={() => setSelected(r.id)}
+                  >
+                    <td colSpan={colCount} className="pt-2.5 pb-1 px-2">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded-md bg-sky-100 dark:bg-sky-950/80 text-sky-800 dark:text-sky-300 font-mono font-bold text-xs shrink-0">
+                          {r.code}
+                        </span>
+                        <span className="font-bold text-sm text-slate-900 dark:text-white">
+                          {r.name}
+                        </span>
                       </div>
                     </td>
-                  )}
-                </tr>
+                  </tr>
+                  <tr
+                    className="cursor-pointer hover:bg-sky-50/40 dark:hover:bg-slate-800/50"
+                    onClick={() => setSelected(r.id)}
+                  >
+                    <td className="pb-2.5 pt-1 pl-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400 whitespace-nowrap">
+                      {r.code}
+                    </td>
+                    <td className="pb-2.5 pt-1 pr-3 text-xs whitespace-nowrap">
+                      {PROJ_TYPE_LABEL[r.project_type] ?? r.project_type}
+                    </td>
+                    <td className="pb-2.5 pt-1 pr-3 whitespace-nowrap">
+                      {DOMAIN_LABEL[r.target_domain] ?? r.target_domain}
+                      {r.ivd_class ? <span className="ml-1 text-[10px] font-mono text-slate-500">({r.ivd_class})</span> : null}
+                    </td>
+                    <td className="pb-2.5 pt-1 pr-3 font-mono font-semibold whitespace-nowrap">{r.current_stage}</td>
+                    <td className="pb-2.5 pt-1 pr-3 font-mono whitespace-nowrap">{r.passed_gates}/{r.total_gates} cổng</td>
+                    <td className="pb-2.5 pt-1 pr-3 font-mono whitespace-nowrap">{r.experiment_count}</td>
+                    <td className="pb-2.5 pt-1 pr-3">
+                      <div className="font-semibold text-slate-800 dark:text-slate-100 whitespace-nowrap">
+                        👤 Chủ nhiệm: {r.leader_name}
+                      </div>
+                      {assignees.length > 0 && (
+                        <div className="text-[11px] text-slate-500 mt-0.5">
+                          NCV tham gia WBS: {assignees.slice(0, 3).join(", ")}
+                          {assignees.length > 3 ? ` (+${assignees.length - 3})` : ""}
+                        </div>
+                      )}
+                    </td>
+                    <td className="pb-2.5 pt-1 pr-3 whitespace-nowrap">
+                      <StatusBadge status={PROJ_STATUS[r.status]?.[0] ?? "QUARANTINE"} label={PROJ_STATUS[r.status]?.[1] ?? r.status} />
+                    </td>
+                    {(canEdit || canDelete) && (
+                      <td className="pb-2.5 pt-1 pr-2 whitespace-nowrap" onClick={(ev) => ev.stopPropagation()}>
+                        <div className="flex items-center gap-1 whitespace-nowrap">
+                          {canEdit && (
+                            <Button
+                              variant="ghost"
+                              className="!px-2 !py-1 !text-[11px]"
+                              onClick={() => openEditProj(r)}
+                            >
+                              ✏️ Sửa
+                            </Button>
+                          )}
+                          {canDelete && (
+                            <Button
+                              variant="ghost"
+                              disabled={Boolean(r.has_immutable_handoff)}
+                              title={
+                                r.has_immutable_handoff
+                                  ? "Không thể xóa dự án đã có hồ sơ chuyển giao công nghệ / phát hành phần mềm / dòng máy thương mại"
+                                  : "Xóa dự án R&D"
+                              }
+                              className="!px-2 !py-1 !text-[11px] text-rose-600 dark:text-rose-400"
+                              onClick={() => openDeleteProj(r)}
+                            >
+                              🗑️ Xóa
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                </React.Fragment>
               );
             })}
           </Table>
