@@ -187,7 +187,7 @@ describe("org structure, commercial vs factory separation & migration", () => {
     };
     const v2Merged = mergeStoredDepartmentPositions(DEPARTMENT_POSITIONS, v2Stored);
     expect("_abtSchemaVersion" in v2Merged).toBe(false);
-    expect(v2Merged["R&D"].positions).toHaveLength(1);
     expect(v2Merged["R&D"].positions[0].title).toBe("R&D Custom Lead");
+    expect(v2Merged["R&D"].positions.some((p) => p.title === "Phó Trưởng phòng R&D")).toBe(true);
   });
 });
