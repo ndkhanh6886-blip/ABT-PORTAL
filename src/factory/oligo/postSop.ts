@@ -11,6 +11,7 @@ import { recordColumnRun } from "../asset/columns";
 import { allocate, findCandidates } from "../inv/allocation";
 import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import { getItem, toBaseQty } from "../master/service";
+import { autoReleaseNonQcPreparations, confirmPreparationQc } from "../prep/service";
 import { ensureLegacyOligoDataSeeded } from "./legacySync";
 
 registerPermissions([
@@ -516,8 +517,14 @@ export async function logStep(tx: Tx, actor: AuthzActor, input: unknown) {
 }
 
 async function issueStepReagents(tx: Tx, actor: AuthzActor, s: any, recId: string, step: FrozenStep, values: Record<string, unknown>): Promise<string | null> {
+  await autoReleaseNonQcPreparations(tx, actor, "OLIGO").catch(() => {});
   const lines = [];
-  const warehouses = (await tx.query("SELECT id FROM master.warehouse WHERE owner_org_unit_id = $1 AND status = 'ACTIVE'", [s.org_unit_id])).rows.map((r) => r.id);
+  const warehouses = (
+    await tx.query(
+      "SELECT id FROM master.warehouse WHERE (owner_org_unit_id = $1 OR code IN ('KHO-OLIGO', 'KHO-TONG')) AND status = 'ACTIVE' ORDER BY CASE WHEN owner_org_unit_id = $1 THEN 0 WHEN code = 'KHO-OLIGO' THEN 1 ELSE 2 END",
+      [s.org_unit_id]
+    )
+  ).rows.map((r) => r.id);
   // instruments used in this step (e.g. the HPLC): their installed bottles feed the step's reagents first
   const instruments = step.fields.filter((f) => f.type === "EQUIPMENT" && values[f.key]).map((f) => String(values[f.key]));
   let firstDoc: string | null = null;
@@ -532,9 +539,96 @@ async function issueStepReagents(tx: Tx, actor: AuthzActor, s: any, recId: strin
       qty = drawn.left;
       if (qty <= 1e-9) continue;
     }
-    const plan = allocate(await findCandidates(tx, item.id, warehouses, { lock: true }), qty);
-    if (plan.shortfall > 1e-9) throw invalid(`${s.code}: không đủ tồn ${item.code} cho bước "${step.name}" (${qtyIn} ${f.uom}).`, undefined, "INSUFFICIENT_STOCK");
-    for (const p of plan.picks) lines.push({ item_id: item.id, lot_id: p.candidate.lot_id, from_location_id: p.candidate.location_id, qty: p.qty, uom: item.base_uom });
+
+    // Tập hợp ID vật tư tương đương (bao gồm cả output_item_id của công thức pha chế trùng mã hoặc tên như STO013 / STO013-OUT / PREP-STO013)
+    const cleanCode = String(item.code || "").trim().toUpperCase().replace(/-OUT$|^PREP-/i, "");
+    const equivItemIds = (
+      await tx.query(
+        `SELECT DISTINCT id FROM (
+           SELECT $1::uuid AS id
+           UNION
+           SELECT i.id FROM master.item i
+            WHERE upper(i.code) IN ($2, $2 || '-OUT', 'PREP-' || $2)
+               OR upper(trim(i.name)) = upper(trim($3))
+           UNION
+           SELECT pf.output_item_id FROM prep.formula pf
+            WHERE pf.output_item_id IS NOT NULL
+              AND (upper(pf.code) = $2 OR upper(trim(pf.name)) = upper(trim($3)))
+         ) t WHERE id IS NOT NULL`,
+        [item.id, cleanCode, item.name || ""]
+      )
+    ).rows.map((r) => String(r.id));
+
+    let cands = [];
+    for (const candItemId of equivItemIds) {
+      const found = await findCandidates(tx, candItemId, warehouses, { lock: true });
+      cands.push(...found);
+    }
+
+    // Nếu chưa đủ tồn RELEASED trên kệ thường, kiểm tra xem có lô pha chế nội bộ (PREPARATION) nào của dung dịch này đang nằm ở Biệt trữ (QUARANTINE / PENDING_QC) chưa bấm Giải phóng lô không -> Tự động giải phóng & cất lên kệ A1
+    let plan = allocate(cands, qty);
+    if (plan.shortfall > 1e-9) {
+      const pendingPreps = (
+        await tx.query(
+          `SELECT p.id
+             FROM prep.preparation p
+             JOIN inv.lot l ON l.id = p.lot_id
+            WHERE p.status = 'DONE'
+              AND l.item_id = ANY($1::uuid[])
+              AND l.status IN ('QUARANTINE', 'PENDING_QC')
+            ORDER BY p.prepared_at ASC`,
+          [equivItemIds]
+        )
+      ).rows;
+      for (const pp of pendingPreps) {
+        await confirmPreparationQc(tx, actor, pp.id, {
+          result: "PASS",
+          notes: `Tự động giải phóng lô pha chế nội bộ phục vụ bước "${step.name}" (${s.code})`,
+        }).catch(() => {});
+      }
+      if (pendingPreps.length > 0) {
+        cands = [];
+        for (const candItemId of equivItemIds) {
+          const found = await findCandidates(tx, candItemId, warehouses, { lock: true });
+          cands.push(...found);
+        }
+        plan = allocate(cands, qty);
+      }
+    }
+
+    if (plan.shortfall > 1e-9) {
+      const plannedOrdersCount = Number(
+        (
+          await tx.query(
+            `SELECT count(*)::int AS c
+               FROM prep.prep_order po
+               JOIN prep.formula pf ON pf.id = po.formula_id
+              WHERE po.status = 'PLANNED'
+                AND (pf.output_item_id = ANY($1::uuid[]) OR upper(pf.code) = $2)`,
+            [equivItemIds, cleanCode]
+          )
+        ).rows[0]?.c ?? 0
+      );
+      const hint =
+        plannedOrdersCount > 0
+          ? ` (Lưu ý: Đang có ${plannedOrdersCount} "Lệnh pha chế chờ thực hiện" của ${item.code} ở tab Pha chế nhưng chưa bấm "Thực hiện pha" để nhập kho lô thành phẩm).`
+          : " (Hãy kiểm tra tab Pha chế xem lô dung dịch đã được bấm Thực hiện pha và nhập vào KHO-OLIGO chưa).";
+      throw invalid(
+        `${s.code}: không đủ tồn ${item.code} (${item.name}) cho bước "${step.name}" (cần ${qtyIn} ${f.uom})${hint}`,
+        undefined,
+        "INSUFFICIENT_STOCK"
+      );
+    }
+    for (const p of plan.picks) {
+      const pickedItem = p.candidate.item_id === item.id ? item : await getItem(tx, p.candidate.item_id);
+      lines.push({
+        item_id: p.candidate.item_id,
+        lot_id: p.candidate.lot_id,
+        from_location_id: p.candidate.location_id,
+        qty: p.qty,
+        uom: pickedItem.base_uom,
+      });
+    }
   }
   if (!lines.length) return firstDoc;
   // one issue document per warehouse; the log keeps the first (all carry the record as source)

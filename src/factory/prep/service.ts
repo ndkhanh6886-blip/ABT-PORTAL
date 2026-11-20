@@ -299,7 +299,7 @@ export async function normalizeFormulaOutputItems(tx: Tx): Promise<void> {
         await tx.query("UPDATE inv.stock_document_line SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
         await tx.query("UPDATE inv.stock_ledger SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
 
-        // Also update any JSONB REAGENT fields in oligo.ps_method pointing to outItemId
+        // Also update any JSONB REAGENT fields in oligo.ps_method and frozen oligo.post_process.workflow_steps pointing to outItemId
         await tx.query(
           `UPDATE oligo.ps_method
               SET fields = (
@@ -315,6 +315,12 @@ export async function normalizeFormulaOutputItems(tx: Tx): Promise<void> {
                 FROM jsonb_array_elements(fields) AS elem
               )
             WHERE fields::text LIKE '%' || $1 || '%'`,
+          [outItemId, targetId]
+        );
+        await tx.query(
+          `UPDATE oligo.post_process
+              SET workflow_steps = replace(workflow_steps::text, $1, $2)::jsonb
+            WHERE workflow_steps IS NOT NULL AND workflow_steps::text LIKE '%' || $1 || '%'`,
           [outItemId, targetId]
         );
 
