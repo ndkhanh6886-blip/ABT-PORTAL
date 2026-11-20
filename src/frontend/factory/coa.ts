@@ -1321,32 +1321,32 @@ export async function printOrderCoa(
         const tubeCount = s.measured?.tube_count || 1;
         const formatLabel = s.format === "LIQUID" ? "Dung dịch" : "Đông khô";
         const yieldHtml = s.measured
-          ? `<b>${num(s.measured.nmol)} nmol</b> (${num(s.measured.od_total)} OD)<br><span style="font-size:8pt;color:#334155;">${num(s.measured.ug)} µg</span>`
-          : `<span style="color:#64748b;">Chưa đo</span>`;
+          ? `<div>${num(s.measured.nmol)} nmol (${num(s.measured.od_total)} OD)</div><div>${num(s.measured.ug)} µg</div>`
+          : `Chưa đo`;
         const vol100umText =
           s.measured && Number(s.measured.nmol) > 0
-            ? `<b>${num(Math.round(Number(s.measured.nmol) * 10 * 10) / 10)} µL</b>`
+            ? `${num(Math.round(Number(s.measured.nmol) * 10 * 10) / 10)} µL`
             : "—";
 
         return `<tr>
           <td style="text-align:center;">${idx + 1}</td>
           <td>
-            <b>${esc(s.code)}</b> <span style="font-size:7.5pt;padding:0.5pt 3pt;border:0.5pt solid #cbd5e1;border-radius:2pt;">${esc(roleLabel)}</span><br>
-            <span style="font-size:8.5pt;color:#0f172a;font-weight:bold;">${esc(s.name)}</span>
+            <div>${esc(s.code)} (${esc(roleLabel)})</div>
+            <div>${esc(s.name)}</div>
           </td>
-          <td class="seq">
+          <td class="seq" style="font-size:9pt;">
             <div>${esc(s.normalized_sequence)}</div>
-            <div style="font-family:Arial,sans-serif;font-size:7.5pt;color:#475569;margin-top:1.5pt;">
-              Dài: <b>${esc(s.base_count)} nt</b>${modsText ? ` · Mod: <b>${esc(modsText)}</b>` : ""}
+            <div style="font-family:Arial,sans-serif;margin-top:1.5pt;">
+              Dài: ${esc(s.base_count)} nt${modsText ? ` · Mod: ${esc(modsText)}` : ""}
             </div>
           </td>
           <td>
-            <div>MW: <b>${num(s.mw)} Da</b></div>
-            <div style="font-size:8pt;color:#334155;">Tm: <b>${num(s.tm)} °C</b> · GC: <b>${num(s.gc_percent)}%</b></div>
+            <div>MW: ${num(s.mw)} Da</div>
+            <div>Tm: ${num(s.tm)} °C · GC: ${num(s.gc_percent)}%</div>
           </td>
           <td>
-            <div><b>${esc(s.scale_code)} · ${esc(s.purification)}</b></div>
-            <div style="font-size:8pt;color:#334155;">${formatLabel} (${tubeCount} ống)</div>
+            <div>${esc(s.scale_code)} · ${esc(s.purification)}</div>
+            <div>${formatLabel} (${tubeCount} ống)</div>
           </td>
           <td>${yieldHtml}</td>
           <td class="r">${vol100umText}</td>
