@@ -25,6 +25,16 @@ describe("UOM normalization, base_uom repair/rebase, and conversion rules", () =
       expect(await toBaseQty(tx, itemUl, 60, "uL")).toBeCloseTo(60, 6);
       expect(await toBaseQty(tx, itemUl, 60, "\u03bcL")).toBeCloseTo(60, 6);
       expect(await toBaseQty(tx, itemUl, 0.06, "ml")).toBeCloseTo(60, 6);
+
+      // Unicode NFC ("c\u00e1i") vs NFD ("ca\u0301i") vs "pcs" vs "cai" must all resolve 1:1 without error
+      const dgmNfd = { id: itemUl.id, code: "DGM", base_uom: "ca\u0301i" };
+      const dgmNfc = { id: itemUl.id, code: "DGM", base_uom: "c\u00e1i" };
+      const dgmPcs = { id: itemUl.id, code: "DGM", base_uom: "pcs" };
+      expect(await toBaseQty(tx, dgmNfd, 1, "c\u00e1i")).toBe(1);
+      expect(await toBaseQty(tx, dgmNfc, 1, "ca\u0301i")).toBe(1);
+      expect(await toBaseQty(tx, dgmNfd, 1, "pcs")).toBe(1);
+      expect(await toBaseQty(tx, dgmPcs, 1, "ca\u0301i")).toBe(1);
+      expect(await toBaseQty(tx, dgmNfd, 1, "cai")).toBe(1);
     });
   });
 

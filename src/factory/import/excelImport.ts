@@ -32,7 +32,10 @@ export async function ensureExcelImportSchema(_tx: Tx): Promise<void> {
 
 function normStr(v: unknown, fallback = ""): string {
   if (v === null || v === undefined) return fallback;
-  return String(v).trim();
+  return String(v)
+    .replace(/[\u00A0\u200B-\u200D\uFEFF]/g, " ")
+    .trim()
+    .normalize("NFC");
 }
 
 function normCode(v: unknown, fallback = ""): string {

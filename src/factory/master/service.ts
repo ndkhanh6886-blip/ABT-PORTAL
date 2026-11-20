@@ -41,10 +41,28 @@ const DISCRETE_UOM_CODES = new Set([
   "SHEET", "TO", "TỜ", "STRIP", "CAP", "NAP", "NẮP", "RACK", "COL", "COT", "CỘT", "CUON", "CUỘN",
 ]);
 
+function cleanUomString(raw: string | null | undefined): string {
+  return String(raw ?? "")
+    .replace(/[\u00A0\u200B-\u200D\uFEFF]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .normalize("NFC");
+}
+
+function stripUomDiacritics(raw: string): string {
+  return raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\u0111/g, "d")
+    .replace(/\u0110/g, "D")
+    .normalize("NFC");
+}
+
 /** Returns true when a unit of measure represents discrete countable pieces requiring whole-integer warehouse quantities. */
 export function isDiscreteUomCode(uom: string | null | undefined): boolean {
-  const key = String(uom ?? "").trim().toUpperCase();
-  return key.length > 0 && DISCRETE_UOM_CODES.has(key);
+  const cleaned = cleanUomString(uom).toUpperCase();
+  const ascii = stripUomDiacritics(cleaned).toUpperCase();
+  return (cleaned.length > 0 && DISCRETE_UOM_CODES.has(cleaned)) || (ascii.length > 0 && DISCRETE_UOM_CODES.has(ascii));
 }
 
 const BUILTIN_METRIC_UOMS = new Set(["kg", "g", "mg", "\u00b5g", "L", "mL", "\u00b5L", "mol", "\u00b5mol", "nmol"]);
@@ -79,31 +97,74 @@ const UOM_ALIAS_MAP: Record<string, string> = {
   od260: "OD",
   "\u1ed1ng": "tube",
   ong: "tube",
+  tubes: "tube",
   "l\u1ecd": "vial",
   lo: "vial",
+  vials: "vial",
   chai: "bottle",
+  bottles: "bottle",
   "c\u00e1i": "pcs",
   cai: "pcs",
+  "chi\u1ebfc": "pcs",
+  chiec: "pcs",
+  ea: "pcs",
+  each: "pcs",
+  pc: "pcs",
+  piece: "pcs",
+  pieces: "pcs",
   "h\u1ed9p": "box",
   hop: "box",
+  boxes: "box",
   "b\u1ed9": "set",
   bo: "set",
+  sets: "set",
   "\u0111\u0129a": "plate",
   dia: "plate",
+  plates: "plate",
+  "t\u00fai": "bag",
+  tui: "bag",
+  bags: "bag",
+  "g\u00f3i": "pack",
+  goi: "pack",
+  packs: "pack",
+  "t\u1edd": "sheet",
+  to: "sheet",
+  sheets: "sheet",
+  "nh\u00e3n": "label",
+  nhan: "label",
+  tem: "label",
+  labels: "label",
+  "cu\u1ed9n": "roll",
+  cuon: "roll",
+  rolls: "roll",
+  "n\u1eafp": "cap",
+  nap: "cap",
+  caps: "cap",
+  "d\u1ea3i": "strip",
+  dai: "strip",
+  strips: "strip",
+  tests: "test",
+  rxn: "test",
+  reaction: "test",
+  reactions: "test",
+  "ph\u1ea3n \u1ee9ng": "test",
+  "phan ung": "test",
 };
 
 /** Returns true when a raw unit string is empty or a placeholder dash/N/A imported from Excel. */
 export function isPlaceholderUom(raw: string | null | undefined): boolean {
-  const s = String(raw ?? "").trim();
+  const s = cleanUomString(raw);
   if (!s) return true;
   return /^([-\u2013\u2014]+|n\/?a|none|null|\?)$/i.test(s);
 }
 
-/** Normalizes ASCII/Greek-mu/Vietnamese unit aliases (e.g. uL, μL -> µL) to canonical codes. */
+/** Normalizes ASCII/Greek-mu/Vietnamese unit aliases (including NFD/NFC Unicode variants) to canonical codes. */
 export function normalizeUomAlias(raw: string): string {
-  const trimmed = String(raw ?? "").trim();
+  const trimmed = cleanUomString(raw);
   if (!trimmed) return "";
-  return UOM_ALIAS_MAP[trimmed.toLowerCase()] ?? trimmed;
+  const lower = trimmed.toLowerCase();
+  const ascii = stripUomDiacritics(lower);
+  return UOM_ALIAS_MAP[lower] ?? UOM_ALIAS_MAP[ascii] ?? trimmed;
 }
 
 async function assertUom(tx: Tx, code: string): Promise<string> {
@@ -596,9 +657,16 @@ export async function toBaseQty(tx: Tx, item: Pick<Item, "id" | "base_uom" | "co
       "NO_UOM_CONVERSION"
     );
   }
-  const uNorm = normalizeUomAlias(uom);
-  const bNorm = normalizeUomAlias(item.base_uom);
-  if (uNorm.toLowerCase() === bNorm.toLowerCase() || uom.trim().toLowerCase() === item.base_uom.trim().toLowerCase()) {
+  const rawU = cleanUomString(uom);
+  const rawB = cleanUomString(item.base_uom);
+  const uNorm = normalizeUomAlias(rawU);
+  const bNorm = normalizeUomAlias(rawB);
+  if (
+    uNorm.toLowerCase() === bNorm.toLowerCase() ||
+    rawU.toLowerCase() === rawB.toLowerCase() ||
+    stripUomDiacritics(uNorm).toLowerCase() === stripUomDiacritics(bNorm).toLowerCase() ||
+    stripUomDiacritics(rawU).toLowerCase() === stripUomDiacritics(rawB).toLowerCase()
+  ) {
     return qty;
   }
 
@@ -611,12 +679,15 @@ export async function toBaseQty(tx: Tx, item: Pick<Item, "id" | "base_uom" | "co
       )
         AND (item_id = $3 OR item_id IS NULL)
       ORDER BY (item_id IS NULL), (lower(from_uom) = lower($1) OR lower(from_uom) = lower($4)) DESC LIMIT 1`,
-    [uNorm, bNorm, item.id, uom.trim(), item.base_uom.trim()]
+    [uNorm, bNorm, item.id, rawU, rawB]
   );
   const conv = res.rows[0];
   if (conv) {
     const factor = Number(conv.factor);
-    const matchesFrom = conv.from_uom.toLowerCase() === uNorm.toLowerCase() || conv.from_uom.toLowerCase() === uom.trim().toLowerCase();
+    const convFromNorm = normalizeUomAlias(conv.from_uom).toLowerCase();
+    const matchesFrom =
+      convFromNorm === uNorm.toLowerCase() ||
+      cleanUomString(conv.from_uom).toLowerCase() === rawU.toLowerCase();
     return matchesFrom ? qty * factor : qty / factor;
   }
 
