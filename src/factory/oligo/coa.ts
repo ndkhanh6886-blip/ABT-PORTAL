@@ -55,13 +55,15 @@ export async function orderCoa(tx: Tx, actor: AuthzActor, orderId: string) {
       : [];
     const scaleRaw = String(s.scale_code ?? "").trim().toUpperCase();
     const scaleNmolMatch = /1\s*U(MOL)?/i.test(scaleRaw) ? 1000 : Number((scaleRaw.match(/(\d+)\s*NMOL/i) ?? [])[1] || 100);
-    const minNmolForScale = Math.round(scaleNmolMatch * 0.3 * 100) / 100;
+    const isProbeSeq = s.product_type === "PROBE" || (Array.isArray(s.modifications) && s.modifications.length > 0);
+    const yieldRatio = isProbeSeq ? 0.15 : 0.3;
+    const minNmolForScale = Math.round(scaleNmolMatch * yieldRatio * 100) / 100;
     const results = rawResults.map((r: any) => {
       if (r.derived_metric === "YIELD_NMOL" && (r.lower_limit == null || Number(r.lower_limit) <= 0.1)) {
         return {
           ...r,
           lower_limit: minNmolForScale,
-          target: `≥ ${minNmolForScale} nmol`,
+          target: `> ${minNmolForScale} nmol`,
         };
       }
       return r;

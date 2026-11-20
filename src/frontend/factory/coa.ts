@@ -1381,7 +1381,8 @@ export async function printOrderCoa(
         </table>
 
         <div style="font-size:8.5pt;color:#334155;margin-top:6pt;line-height:1.45;">
-          <div>• <b>Cam kết hiệu suất thu hồi theo thang tổng hợp (Scale):</b> Thang 50 nmol (<b>≥ 15 nmol</b>) · Thang 100 nmol (<b>≥ 30 nmol</b>) · Thang 200 nmol (<b>≥ 60 nmol</b>) · Thang 500 nmol (<b>≥ 150 nmol</b>) · Thang 1000 nmol (<b>≥ 300 nmol</b>).</div>
+          <div>• <b>Cam kết hiệu suất thu hồi đối với Primer (&gt; 30% thang tổng hợp):</b> Thang 50 nmol (<b>&gt; 15 nmol</b>) · Thang 100 nmol (<b>&gt; 30 nmol</b>) · Thang 200 nmol (<b>&gt; 60 nmol</b>) · Thang 500 nmol (<b>&gt; 150 nmol</b>) · Thang 1000 nmol (<b>&gt; 300 nmol</b>).</div>
+          <div>• <b>Cam kết hiệu suất thu hồi đối với Probe (&gt; 15% thang tổng hợp):</b> Thang 50 nmol (<b>&gt; 7,5 nmol</b>) · Thang 100 nmol (<b>&gt; 15 nmol</b>) · Thang 200 nmol (<b>&gt; 30 nmol</b>) · Thang 500 nmol (<b>&gt; 75 nmol</b>) · Thang 1000 nmol (<b>&gt; 150 nmol</b>).</div>
           <div>• <b>Hướng dẫn bảo quản &amp; hoàn nguyên:</b> Bảo quản ở -20°C. Ly tâm nhẹ (spin-down) ống trước khi mở nắp; thêm thể tích đệm TE (pH 8.0) hoặc nước Nuclease-free theo cột <b>&ldquo;Pha 100 µM&rdquo;</b> để thu được dung dịch gốc <b>100 µM (100 pmol/µL)</b>.</div>
         </div>
 

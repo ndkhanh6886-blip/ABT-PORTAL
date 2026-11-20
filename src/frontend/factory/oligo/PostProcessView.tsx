@@ -22,6 +22,8 @@ interface Row {
   format: string;
   base_count: number;
   mw: number;
+  product_type?: string | null;
+  modifications?: string[] | null;
   raw_sequence?: string | null;
   normalized_sequence?: string | null;
   relation?: string | null;
@@ -110,6 +112,8 @@ interface Detail {
     ug_per_od: string;
     scale_code: string;
     order_code: string | null;
+    product_type?: string | null;
+    modifications?: string[] | null;
   };
   record: Rec | null;
   steps: StepLog[];
@@ -118,15 +122,22 @@ interface Detail {
 
 const refreshKeys = ["oligo-post", "oligo-post-detail", "oligo-orders", "oligo-order", "qc-tests"];
 
-/** Returns the minimum guaranteed recovery yield (nmol) for a synthesis scale (30% of scale, e.g. 100NMOL -> 30 nmol). */
-export function getMinGuaranteedNmolForScale(scaleCode: string | null | undefined): number {
+/** Returns true when a sequence is a Probe (product_type === "PROBE" or has fluorophore/quencher modifications). */
+export function isOligoProbeSequence(seq: { product_type?: string | null; modifications?: string[] | null } | null | undefined): boolean {
+  if (!seq) return false;
+  return seq.product_type === "PROBE" || (Array.isArray(seq.modifications) && seq.modifications.length > 0);
+}
+
+/** Returns the minimum guaranteed recovery yield (nmol) for a synthesis scale (> 30% of scale for Primer, > 15% for Probe). */
+export function getMinGuaranteedNmolForScale(scaleCode: string | null | undefined, isProbe = false): number {
   const raw = String(scaleCode ?? "").trim().toUpperCase();
-  if (/1\s*U(MOL)?/i.test(raw) || raw === "1000NMOL") return 300;
+  const ratio = isProbe ? 0.15 : 0.3;
+  if (/1\s*U(MOL)?/i.test(raw) || raw === "1000NMOL") return Math.round(1000 * ratio * 100) / 100;
   const m = raw.match(/(\d+)\s*NMOL/i) ?? raw.match(/^(\d+)$/);
   if (m && Number(m[1]) > 0) {
-    return Math.round(Number(m[1]) * 0.3 * 100) / 100;
+    return Math.round(Number(m[1]) * ratio * 100) / 100;
   }
-  return 30;
+  return Math.round(100 * ratio * 100) / 100;
 }
 
 /** Format a compact summary of the last logged step values for the table column "Ghi nhận bước gần nhất". */
@@ -524,8 +535,10 @@ function StepExecutionModal({
                     </div>
 
                     {liveOdPreview && (() => {
-                      const minNmol = getMinGuaranteedNmolForScale(s?.scale_code ?? row.scale_code);
-                      const meetsMin = liveOdPreview.nmol >= minNmol;
+                      const isProbe = isOligoProbeSequence(s ?? row);
+                      const roleLabel = isProbe ? "Probe (> 15%)" : "Primer (> 30%)";
+                      const minNmol = getMinGuaranteedNmolForScale(s?.scale_code ?? row.scale_code, isProbe);
+                      const meetsMin = liveOdPreview.nmol > minNmol;
                       return (
                         <div className="space-y-1.5">
                           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 rounded-xl bg-white dark:bg-slate-900 p-2.5 border border-sky-200 dark:border-sky-900 text-xs">
@@ -558,8 +571,8 @@ function StepExecutionModal({
                               : "bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 border-rose-200 dark:border-rose-800"
                           }`}>
                             {meetsMin
-                              ? `✓ Đạt ngưỡng cam kết thang ${s?.scale_code ?? row.scale_code} (≥ ${fmtQty(minNmol)} nmol)`
-                              : `⚠️ Hiệu suất thu hồi (${fmtQty(liveOdPreview.nmol)} nmol) thấp hơn ngưỡng cam kết thang ${s?.scale_code ?? row.scale_code} (≥ ${fmtQty(minNmol)} nmol)`}
+                              ? `✓ Đạt ngưỡng cam kết ${roleLabel} thang ${s?.scale_code ?? row.scale_code} (> ${fmtQty(minNmol)} nmol)`
+                              : `⚠️ Hiệu suất thu hồi (${fmtQty(liveOdPreview.nmol)} nmol) chưa đạt ngưỡng cam kết ${roleLabel} thang ${s?.scale_code ?? row.scale_code} (> ${fmtQty(minNmol)} nmol)`}
                           </div>
                         </div>
                       );
@@ -1351,11 +1364,12 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                             </div>
                           )}
                           {Number(r.od_total) > 0 && (() => {
-                            const minNmol = getMinGuaranteedNmolForScale(r.scale_code);
-                            const meetsMin = Number(r.nmol ?? 0) >= minNmol;
+                            const isProbe = isOligoProbeSequence(r);
+                            const minNmol = getMinGuaranteedNmolForScale(r.scale_code, isProbe);
+                            const meetsMin = Number(r.nmol ?? 0) > minNmol;
                             return (
                               <div className={`text-[11px] font-semibold ${meetsMin ? "text-emerald-700 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
-                                • Đo OD: {fmtQty(r.od_total)} OD · {fmtQty(r.nmol)} nmol ({meetsMin ? `≥ ${fmtQty(minNmol)} nmol` : `< ${fmtQty(minNmol)} nmol`})
+                                • Đo OD: {fmtQty(r.od_total)} OD · {fmtQty(r.nmol)} nmol ({meetsMin ? `> ${fmtQty(minNmol)} nmol` : `≤ ${fmtQty(minNmol)} nmol`})
                               </div>
                             );
                           })()}

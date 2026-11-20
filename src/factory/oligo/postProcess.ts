@@ -356,6 +356,7 @@ export async function listPostQueue(tx: Tx, actor: AuthzActor, status?: string) 
   return (
     await tx.query(
       `SELECT s.id, s.code, s.name, s.status, s.version, s.scale_code, s.purification, s.format, s.base_count, s.mw::float AS mw,
+              s.product_type, s.modifications,
               s.raw_sequence, s.normalized_sequence, s.relation,
               s.nmol_per_od::float AS nmol_per_od, s.ug_per_od::float AS ug_per_od,
               o.code AS order_code, o.due_date,
