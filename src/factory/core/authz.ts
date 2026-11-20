@@ -103,11 +103,20 @@ export const WH_CROSS_DEPT_PERMS = new Set([
   "master.data.view",
   "master.item.manage",
   "master.partner.manage",
+  "master.warehouse.manage",
   "purchase.po.view",
   "purchase.po.manage",
   "purchase.pr.view",
   "purchase.receipt.post",
   "inv.stock.view",
+  "inv.document.create",
+  "inv.document.post",
+  "inv.document.reverse",
+  "inv.reservation.manage",
+  "inv.lot.sample",
+  "inv.lot.release",
+  "inv.lot.hold",
+  "inv.lot.reject",
   "intake.order.view",
   "intake.shipment.post",
 ]);
@@ -117,7 +126,7 @@ export function isQaCrossDeptPermission(permission: string): boolean {
 }
 
 export function isWhCrossDeptPermission(permission: string): boolean {
-  return WH_CROSS_DEPT_PERMS.has(permission);
+  return permission.startsWith("inv.") || permission.startsWith("master.") || WH_CROSS_DEPT_PERMS.has(permission);
 }
 
 /**
@@ -222,8 +231,8 @@ export async function hasFactoryPermission(tx: Tx, actor: AuthzActor, permission
       WHERE (
         g.scope_org_unit_id IS NULL
         OR g.scope_org_unit_id IN (SELECT id FROM ancestors)
-        OR ($4::boolean AND g_ou.module_key = 'QA')
-        OR ($5::boolean AND g_ou.module_key IN ('WH', 'PURCHASE'))
+        OR ($4::boolean AND (g_ou.module_key = 'QA' OR r.code IN ('QA_HEAD', 'QA_STAFF')))
+        OR ($5::boolean AND (g_ou.module_key IN ('WH', 'PURCHASE') OR r.code IN ('WH_HEAD', 'WH_STAFF')))
       )
         AND NOT EXISTS (
           SELECT 1 FROM core.user_permission_exclusion upe

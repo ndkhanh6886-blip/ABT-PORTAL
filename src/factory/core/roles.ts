@@ -217,6 +217,7 @@ const STRICT_DEPT_MODULE_MAP: Record<string, string> = {
   rd: "RD",
   qms: "QA",
   inv: "WH",
+  master: "WH",
 };
 
 /**
@@ -354,11 +355,15 @@ export async function setUserCustomPermission(
 
   let nextPerms: string[];
   if (data.enabled) {
+    const hasWarehouseGrant = targetCodes.some((c) => c.startsWith("inv.") || c.startsWith("master."));
+    const effectiveEnableCodes = hasWarehouseGrant
+      ? Array.from(new Set([...targetCodes, "inv.stock.view", "master.data.view"]))
+      : targetCodes;
     await tx.query(
       "DELETE FROM core.user_permission_exclusion WHERE user_id = $1 AND permission_code = ANY($2::text[])",
-      [targetUserId, targetCodes]
+      [targetUserId, effectiveEnableCodes]
     );
-    const additions = targetCodes.filter((c) => !isEffectivelyInheritedEverywhere(c));
+    const additions = effectiveEnableCodes.filter((c) => !isEffectivelyInheritedEverywhere(c));
     nextPerms = [...new Set([...oldPerms, ...additions])].sort();
   } else {
     const targetSet = new Set(targetCodes);

@@ -82,6 +82,10 @@ export async function heldPermissions(tx: Tx, actor: AuthzActor): Promise<string
   for (const code of ["core.org.manage", "core.role.manage", "core.sequence.manage", "core.setting.manage", "core.audit.view", "master.warehouse.manage"]) {
     if (getPermission(code)?.bootstrapAdmin && (await hasFactoryPermission(tx, actor, code))) codes.add(code);
   }
+  if ([...codes].some((c) => c.startsWith("inv.") || c === "master.item.manage" || c === "master.warehouse.manage")) {
+    codes.add("inv.stock.view");
+    codes.add("master.data.view");
+  }
   const excluded = await tx.query("SELECT permission_code FROM core.user_permission_exclusion WHERE user_id = $1", [actor.userId]);
   for (const row of excluded.rows) {
     codes.delete(row.permission_code as string);

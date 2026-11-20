@@ -167,24 +167,32 @@ export async function viewableWarehouses(tx: Tx, actor: AuthzActor) {
   // Single-query permission lookup across all org units (using ur.scope_org_unit_id and active delegations)
   const grants = (
     await tx.query(
-      `SELECT ur.scope_org_unit_id, o.unit_type, o.module_key
+      `SELECT ur.scope_org_unit_id, o.unit_type, o.module_key, r.code AS role_code
          FROM core.user_role ur
          JOIN core.role r ON r.id = ur.role_id AND r.status = 'ACTIVE'
          JOIN core.role_permission rp ON rp.role_id = r.id
          LEFT JOIN core.org_unit o ON o.id = ur.scope_org_unit_id
         WHERE ur.user_id = $1
-          AND rp.permission_code = 'inv.stock.view'
+          AND (rp.permission_code LIKE 'inv.%' OR rp.permission_code IN ('master.warehouse.manage', 'master.item.manage'))
+          AND NOT EXISTS (
+            SELECT 1 FROM core.user_permission_exclusion upe
+             WHERE upe.user_id = $1 AND upe.permission_code IN (rp.permission_code, 'inv.stock.view')
+          )
           AND ur.revoked_at IS NULL
           AND ur.valid_from <= now() AND (ur.valid_to IS NULL OR ur.valid_to > now())
        UNION ALL
-       SELECT ur.scope_org_unit_id, o.unit_type, o.module_key
+       SELECT ur.scope_org_unit_id, o.unit_type, o.module_key, r.code AS role_code
          FROM core.delegation d
          JOIN core.user_role ur ON ur.user_id = d.from_user_id AND ur.role_id = d.role_id AND ur.revoked_at IS NULL
          JOIN core.role r ON r.id = ur.role_id AND r.status = 'ACTIVE'
          JOIN core.role_permission rp ON rp.role_id = r.id
          LEFT JOIN core.org_unit o ON o.id = ur.scope_org_unit_id
         WHERE d.to_user_id = $1
-          AND rp.permission_code = 'inv.stock.view'
+          AND (rp.permission_code LIKE 'inv.%' OR rp.permission_code IN ('master.warehouse.manage', 'master.item.manage'))
+          AND NOT EXISTS (
+            SELECT 1 FROM core.user_permission_exclusion upe
+             WHERE upe.user_id = $1 AND upe.permission_code IN (rp.permission_code, 'inv.stock.view')
+          )
           AND d.revoked_at IS NULL
           AND d.valid_from <= now() AND d.valid_to > now()`,
       [actor.userId]
@@ -193,7 +201,11 @@ export async function viewableWarehouses(tx: Tx, actor: AuthzActor) {
 
   if (grants.length === 0) return [];
   const hasCompanyScope = grants.some(
-    (g) => g.scope_org_unit_id === null || g.unit_type === "COMPANY" || ["QA", "WH", "PURCHASE"].includes(g.module_key)
+    (g) =>
+      g.scope_org_unit_id === null ||
+      g.unit_type === "COMPANY" ||
+      ["QA", "WH", "PURCHASE"].includes(g.module_key) ||
+      ["WH_HEAD", "WH_STAFF", "QA_HEAD", "QA_STAFF"].includes(g.role_code)
   );
   if (hasCompanyScope) return all;
 

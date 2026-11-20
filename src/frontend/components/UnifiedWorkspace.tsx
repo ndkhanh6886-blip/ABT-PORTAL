@@ -8770,64 +8770,64 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
         <div className="fixed top-0 inset-x-0 h-0.5 z-[60] bg-indigo-500/80 animate-pulse pointer-events-none" role="progressbar" aria-label="Đang cập nhật dữ liệu" />
       )}
       {/* ==================== LEVEL 1: MASTER HEADER & FEATURE TABS ==================== */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
+      <div className="bg-gradient-to-r from-indigo-50/90 via-white to-purple-50/80 dark:from-slate-900 dark:via-slate-900 dark:to-indigo-950/40 border-2 border-indigo-200/80 dark:border-indigo-800/70 rounded-2xl p-4 sm:p-5 shadow-sm">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-3.5 border-b border-indigo-200/70 dark:border-slate-800">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white shadow-md shadow-indigo-500/20">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-600 to-purple-600 flex items-center justify-center text-white shadow-md shadow-indigo-500/25">
               <LayoutDashboard className="w-5 h-5" />
             </div>
             <div>
-              <h1 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
+              <h1 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white tracking-tight">
                 ĐIỀU HÀNH TOÀN CÔNG TY &amp; PHỐI HỢP LIÊN PHÒNG BAN
               </h1>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
                 Trung tâm Điều hành Toàn Công Ty (Khối Kinh Doanh – Vận Hành &amp; Khối Kỹ Thuật – Nhà Máy) • Công việc, Dự án, Phối hợp, Lịch tuần &amp; KPI
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2 self-start md:self-auto">
-            <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+            <span className="text-xs font-bold px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300/80 dark:border-slate-700 shadow-2xs">
               Tổng việc: <strong className="text-slate-900 dark:text-white">{stats.totalTasks}</strong>
             </span>
-            <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300">
-              Đang làm: <strong className="text-blue-900 dark:text-blue-200">{stats.inProgressTasks}</strong>
+            <span className="text-xs font-bold px-2.5 py-1 rounded-lg bg-blue-100/80 dark:bg-blue-950/70 text-blue-800 dark:text-blue-200 border border-blue-300/80 dark:border-blue-800 shadow-2xs">
+              Đang làm: <strong className="text-blue-950 dark:text-blue-100">{stats.inProgressTasks}</strong>
             </span>
-            <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300">
-              Liên phòng: <strong className="text-purple-900 dark:text-purple-200">{stats.pendingWf}</strong>
+            <span className="text-xs font-bold px-2.5 py-1 rounded-lg bg-purple-100/80 dark:bg-purple-950/70 text-purple-800 dark:text-purple-200 border border-purple-300/80 dark:border-purple-800 shadow-2xs">
+              Liên phòng: <strong className="text-purple-950 dark:text-purple-100">{stats.pendingWf}</strong>
             </span>
           </div>
         </div>
 
         {/* Clean Primary Navigation Tabs */}
-        <div className="flex items-center gap-1.5 pt-3 overflow-x-auto no-scrollbar">
+        <div className="mt-3 p-1.5 rounded-2xl bg-slate-200/75 dark:bg-slate-800/90 border border-slate-300/80 dark:border-slate-700 flex items-center gap-1.5 overflow-x-auto no-scrollbar shadow-inner">
           <button
             onClick={() => setActiveSubTab("tasks")}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-extrabold transition-all shrink-0 cursor-pointer border ${
               activeSubTab === "tasks"
-                ? "bg-indigo-600 text-white shadow-sm shadow-indigo-600/20"
-                : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
+                ? "bg-indigo-600 text-white border-indigo-700 shadow-md shadow-indigo-600/25 ring-2 ring-indigo-400/40"
+                : "bg-white dark:bg-slate-900/80 text-slate-700 dark:text-slate-200 border-slate-300/80 dark:border-slate-700 hover:bg-indigo-50 dark:hover:bg-slate-800 hover:border-indigo-300 hover:text-indigo-700 dark:hover:text-white shadow-2xs"
             }`}
           >
             <ListTodo className="w-4 h-4" />
             <span>Bảng Công Việc</span>
-            <span className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] ${activeSubTab === "tasks" ? "bg-white/20 text-white" : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300"}`}>
+            <span className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold ${activeSubTab === "tasks" ? "bg-white/25 text-white" : "bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200"}`}>
               {stats.totalTasks}
             </span>
           </button>
 
           <button
             onClick={() => setActiveSubTab("workflows")}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-extrabold transition-all shrink-0 cursor-pointer border ${
               activeSubTab === "workflows"
-                ? "bg-indigo-600 text-white shadow-sm shadow-indigo-600/20"
-                : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
+                ? "bg-indigo-600 text-white border-indigo-700 shadow-md shadow-indigo-600/25 ring-2 ring-indigo-400/40"
+                : "bg-white dark:bg-slate-900/80 text-slate-700 dark:text-slate-200 border-slate-300/80 dark:border-slate-700 hover:bg-indigo-50 dark:hover:bg-slate-800 hover:border-indigo-300 hover:text-indigo-700 dark:hover:text-white shadow-2xs"
             }`}
           >
             <Sparkles className="w-4 h-4" />
             <span>Quy Trình Phối Hợp</span>
             {stats.pendingWf > 0 && (
-              <span className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold ${activeSubTab === "workflows" ? "bg-white/20 text-white" : "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300"}`}>
+              <span className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold ${activeSubTab === "workflows" ? "bg-white/25 text-white" : "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200"}`}>
                 {stats.pendingWf}
               </span>
             )}
@@ -8841,10 +8841,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               setProposalTemplateTrigger(0);
               setActiveSubTab("proposals");
             }}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-extrabold transition-all shrink-0 cursor-pointer border ${
               activeSubTab === "proposals"
-                ? "bg-emerald-600 text-white shadow-sm shadow-emerald-600/25"
-                : "text-slate-600 dark:text-slate-400 hover:bg-emerald-50 dark:hover:bg-slate-800 hover:text-emerald-700 dark:hover:text-white"
+                ? "bg-emerald-600 text-white border-emerald-700 shadow-md shadow-emerald-600/25 ring-2 ring-emerald-400/40"
+                : "bg-white dark:bg-slate-900/80 text-slate-700 dark:text-slate-200 border-slate-300/80 dark:border-slate-700 hover:bg-emerald-50 dark:hover:bg-slate-800 hover:border-emerald-300 hover:text-emerald-700 dark:hover:text-white shadow-2xs"
             }`}
           >
             <FileText className="w-4 h-4" />
@@ -8862,10 +8862,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               </span>
             ) : proposals.length > 0 ? (
               <span
-                className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] ${
+                className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
                   activeSubTab === "proposals"
-                    ? "bg-white/20 text-white"
-                    : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300"
+                    ? "bg-white/25 text-white"
+                    : "bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200"
                 }`}
               >
                 {proposals.length}
@@ -8875,10 +8875,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
           <button
             onClick={() => setActiveSubTab("planner")}
-            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all shrink-0 cursor-pointer border ${
               activeSubTab === "planner"
-                ? "bg-indigo-600 text-white shadow-sm shadow-indigo-600/20"
-                : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
+                ? "bg-indigo-600 text-white border-indigo-700 shadow-md shadow-indigo-600/25 ring-2 ring-indigo-400/40"
+                : "bg-white dark:bg-slate-900/80 text-slate-700 dark:text-slate-200 border-slate-300/80 dark:border-slate-700 hover:bg-indigo-50 dark:hover:bg-slate-800 hover:border-indigo-300 hover:text-indigo-700 dark:hover:text-white shadow-2xs"
             }`}
           >
             <Calendar className="w-4 h-4" />
@@ -8887,18 +8887,18 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
           <button
             onClick={() => setActiveSubTab("projects")}
-            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all shrink-0 cursor-pointer border ${
               activeSubTab === "projects"
-                ? "bg-purple-600 text-white shadow-sm shadow-purple-600/25"
-                : "text-slate-600 dark:text-slate-400 hover:bg-purple-50 dark:hover:bg-slate-800 hover:text-purple-700 dark:hover:text-white"
+                ? "bg-purple-600 text-white border-purple-700 shadow-md shadow-purple-600/25 ring-2 ring-purple-400/40"
+                : "bg-white dark:bg-slate-900/80 text-slate-700 dark:text-slate-200 border-slate-300/80 dark:border-slate-700 hover:bg-purple-50 dark:hover:bg-slate-800 hover:border-purple-300 hover:text-purple-700 dark:hover:text-white shadow-2xs"
             }`}
           >
             <Layers className="w-4 h-4" />
             <span>Dự Án</span>
             <span className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
               activeSubTab === "projects"
-                ? "bg-white/20 text-white"
-                : "bg-purple-100 text-purple-700 dark:bg-purple-900/70 dark:text-purple-300"
+                ? "bg-white/25 text-white"
+                : "bg-purple-100 text-purple-800 dark:bg-purple-900/70 dark:text-purple-200"
             }`}>
               {filteredLabProjects.length}
             </span>
@@ -8906,10 +8906,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
           <button
             onClick={() => setActiveSubTab("daily")}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-extrabold transition-all shrink-0 cursor-pointer border ${
               activeSubTab === "daily"
-                ? "bg-indigo-600 text-white shadow-sm shadow-indigo-600/20"
-                : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
+                ? "bg-indigo-600 text-white border-indigo-700 shadow-md shadow-indigo-600/25 ring-2 ring-indigo-400/40"
+                : "bg-white dark:bg-slate-900/80 text-slate-700 dark:text-slate-200 border-slate-300/80 dark:border-slate-700 hover:bg-indigo-50 dark:hover:bg-slate-800 hover:border-indigo-300 hover:text-indigo-700 dark:hover:text-white shadow-2xs"
             }`}
           >
             <CalendarDays className="w-4 h-4" />
@@ -8918,10 +8918,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
           <button
             onClick={() => setActiveSubTab("announcements")}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-extrabold transition-all shrink-0 cursor-pointer border ${
               activeSubTab === "announcements"
-                ? "bg-rose-600 text-white shadow-sm shadow-rose-600/25"
-                : "text-slate-600 dark:text-slate-400 hover:bg-rose-50 dark:hover:bg-slate-800 hover:text-rose-700 dark:hover:text-white"
+                ? "bg-rose-600 text-white border-rose-700 shadow-md shadow-rose-600/25 ring-2 ring-rose-400/40"
+                : "bg-white dark:bg-slate-900/80 text-slate-700 dark:text-slate-200 border-slate-300/80 dark:border-slate-700 hover:bg-rose-50 dark:hover:bg-slate-800 hover:border-rose-300 hover:text-rose-700 dark:hover:text-white shadow-2xs"
             }`}
           >
             <Bell className="w-4 h-4" />
@@ -8939,10 +8939,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               </span>
             ) : announcements.length > 0 ? (
               <span
-                className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] ${
+                className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
                   activeSubTab === "announcements"
-                    ? "bg-white/20 text-white"
-                    : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300"
+                    ? "bg-white/25 text-white"
+                    : "bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200"
                 }`}
               >
                 {announcements.length}
@@ -8952,10 +8952,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
           <button
             onClick={() => setActiveSubTab("analytics")}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-extrabold transition-all shrink-0 cursor-pointer border ${
               activeSubTab === "analytics"
-                ? "bg-indigo-600 text-white shadow-sm shadow-indigo-600/20"
-                : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
+                ? "bg-indigo-600 text-white border-indigo-700 shadow-md shadow-indigo-600/25 ring-2 ring-indigo-400/40"
+                : "bg-white dark:bg-slate-900/80 text-slate-700 dark:text-slate-200 border-slate-300/80 dark:border-slate-700 hover:bg-indigo-50 dark:hover:bg-slate-800 hover:border-indigo-300 hover:text-indigo-700 dark:hover:text-white shadow-2xs"
             }`}
           >
             <BarChart3 className="w-4 h-4" />
@@ -9160,7 +9160,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       })()}
 
       {/* ==================== LEVEL 2: UNIFIED FILTER & ACTION BAR ==================== */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+      <div className="bg-gradient-to-r from-slate-100/95 via-indigo-50/70 to-slate-100/95 dark:from-slate-900 dark:via-indigo-950/35 dark:to-slate-900 border-2 border-indigo-200/80 dark:border-indigo-800/70 rounded-2xl p-3.5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
         {/* Left: Department Dropdown + Search + Status */}
         <div className="flex flex-wrap items-center gap-2.5 flex-1">
           {/* Department Selector with Staff Personal Locking & Manager Department Locking */}
@@ -10238,23 +10238,23 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           )}
 
           {/* Workflow List */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs">
-            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+          <div className="bg-white dark:bg-slate-900 border-2 border-indigo-200/80 dark:border-slate-800 rounded-2xl overflow-hidden shadow-sm">
+            <div className="p-4 border-b-2 border-indigo-200/70 dark:border-slate-800 bg-gradient-to-r from-indigo-50/90 via-purple-50/50 to-white dark:from-slate-900 dark:to-indigo-950/35 flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
                   Danh Sách Phiếu Phối Hợp Đang Luân Chuyển
                 </h3>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
                   Theo dõi tiến độ, trao đổi liên bộ phận và bàn giao biên bản kết quả kỹ thuật
                 </p>
               </div>
-              <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+              <span className="text-xs font-extrabold px-2.5 py-1 rounded-full bg-purple-100 dark:bg-purple-950/70 text-purple-800 dark:text-purple-200 border border-purple-300 dark:border-purple-800 shadow-2xs">
                 {listWorkflows.length} / {filteredWorkflows.length} phiếu
               </span>
             </div>
 
             {/* Bộ lọc danh sách phiếu: Trạng thái + Phân loại nghiệp vụ + Chế độ hiển thị */}
-            <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 space-y-2.5 text-xs bg-slate-50/60 dark:bg-slate-950/30">
+            <div className="px-4 py-3 border-b-2 border-slate-200 dark:border-slate-800 space-y-2.5 text-xs bg-slate-100/85 dark:bg-slate-800/60">
               {/* Hàng 1: Lọc theo Loại Quy Trình / Nghiệp Vụ (Giúp phân biệt tức thì các nhóm công việc) */}
               <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200/70 dark:border-slate-800/70">
                 <div className="flex flex-wrap items-center gap-1.5">

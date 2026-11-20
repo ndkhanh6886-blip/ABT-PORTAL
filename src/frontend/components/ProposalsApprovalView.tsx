@@ -3363,16 +3363,16 @@ export function ProposalsApprovalView({
       </div>
 
       {/* 2. THANH ĐIỀU HƯỚNG PHÂN KHU & BỘ LỌC ĐA CHIỀU (KHÔNG LẶP LẠI NÚT TRÊN CÙNG KHUNG HÌNH) */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 shadow-2xs space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-2.5">
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+      <div className="bg-gradient-to-r from-indigo-50/85 via-slate-100/90 to-emerald-50/75 dark:from-slate-900 dark:via-indigo-950/35 dark:to-slate-900 border-2 border-indigo-200/85 dark:border-indigo-800/70 rounded-2xl p-3.5 shadow-sm space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-200/70 dark:border-slate-800 pb-3">
+          <div className="p-1 rounded-xl bg-slate-200/70 dark:bg-slate-800/90 border border-slate-300/70 dark:border-slate-700 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
             <button
               type="button"
               onClick={() => setSubView("all")}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer shrink-0 border ${
                 subView === "all"
-                  ? "bg-indigo-600 text-white shadow-xs"
-                  : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200"
+                  ? "bg-indigo-600 text-white border-indigo-700 shadow-sm shadow-indigo-600/25 ring-2 ring-indigo-400/40"
+                  : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 shadow-2xs"
               }`}
             >
               📚 Tất cả đề xuất ({proposals.length})
@@ -3380,10 +3380,10 @@ export function ProposalsApprovalView({
             <button
               type="button"
               onClick={() => setSubView("to_approve")}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 border ${
                 subView === "to_approve"
-                  ? "bg-amber-600 text-white shadow-xs"
-                  : "bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800"
+                  ? "bg-amber-600 text-white border-amber-700 shadow-sm shadow-amber-600/25 ring-2 ring-amber-400/40"
+                  : "bg-amber-50 dark:bg-amber-950/70 text-amber-900 dark:text-amber-200 border-amber-300 dark:border-amber-700 hover:bg-amber-100 shadow-2xs"
               }`}
             >
               <span>📥 Cần tôi duyệt</span>
@@ -3396,10 +3396,10 @@ export function ProposalsApprovalView({
             <button
               type="button"
               onClick={() => setSubView("my_proposals")}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer shrink-0 border ${
                 subView === "my_proposals"
-                  ? "bg-indigo-600 text-white shadow-xs"
-                  : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200"
+                  ? "bg-indigo-600 text-white border-indigo-700 shadow-sm shadow-indigo-600/25 ring-2 ring-indigo-400/40"
+                  : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 shadow-2xs"
               }`}
             >
               📤 Đề xuất của tôi ({myProposalsList.length})
@@ -3407,10 +3407,10 @@ export function ProposalsApprovalView({
             <button
               type="button"
               onClick={() => setSubView("following")}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer shrink-0 border ${
                 subView === "following"
-                  ? "bg-indigo-600 text-white shadow-xs"
-                  : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200"
+                  ? "bg-indigo-600 text-white border-indigo-700 shadow-sm shadow-indigo-600/25 ring-2 ring-indigo-400/40"
+                  : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 shadow-2xs"
               }`}
               title="Các đề xuất bạn được gắn làm Người theo dõi (chỉ xem, không duyệt) hoặc có liên quan"
             >
@@ -3419,10 +3419,10 @@ export function ProposalsApprovalView({
             <button
               type="button"
               onClick={() => setSubView("leave_tracker")}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 border ${
                 subView === "leave_tracker"
-                  ? "bg-teal-600 text-white shadow-xs"
-                  : "bg-teal-50 dark:bg-teal-950/60 text-teal-800 dark:text-teal-300 border border-teal-200 dark:border-teal-800 hover:bg-teal-100"
+                  ? "bg-teal-600 text-white border-teal-700 shadow-sm shadow-teal-600/25 ring-2 ring-teal-400/40"
+                  : "bg-teal-50 dark:bg-teal-950/70 text-teal-900 dark:text-teal-200 border-teal-300 dark:border-teal-700 hover:bg-teal-100 shadow-2xs"
               }`}
               title="Xem lịch nghỉ phép toàn công ty và bảng tổng hợp chấm công nghỉ phép tháng cho Kế toán"
             >
@@ -3436,10 +3436,10 @@ export function ProposalsApprovalView({
             <button
               type="button"
               onClick={() => setSubView("templates")}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer shrink-0 border ${
                 subView === "templates"
-                  ? "bg-purple-600 text-white shadow-xs"
-                  : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200"
+                  ? "bg-purple-600 text-white border-purple-700 shadow-sm shadow-purple-600/25 ring-2 ring-purple-400/40"
+                  : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700 hover:bg-purple-50 hover:border-purple-300 hover:text-purple-700 shadow-2xs"
               }`}
             >
               📂 Danh mục Mẫu &amp; Luồng duyệt ({templates.length})
@@ -3475,7 +3475,7 @@ export function ProposalsApprovalView({
             <select
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value as any)}
-              className="text-xs px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 font-bold"
+              className="text-xs px-2.5 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-bold shadow-2xs"
             >
               <option value="all">📂 Tất cả nhóm đề xuất</option>
               <option value="FINANCE">💰 Tài chính - Thanh toán - Tạm ứng</option>
@@ -3488,7 +3488,7 @@ export function ProposalsApprovalView({
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as any)}
-              className="text-xs px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 font-bold"
+              className="text-xs px-2.5 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-bold shadow-2xs"
             >
               <option value="all">🔖 Tất cả trạng thái</option>
               <option value="PENDING">⏳ Đang chờ phê duyệt</option>
@@ -3502,7 +3502,7 @@ export function ProposalsApprovalView({
             <select
               value={priorityFilter}
               onChange={(e) => setPriorityFilter(e.target.value as any)}
-              className="text-xs px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 font-bold"
+              className="text-xs px-2.5 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-bold shadow-2xs"
             >
               <option value="all">⚡ Mọi mức ưu tiên</option>
               <option value="URGENT">🚨 Khẩn cấp (Duyệt ngay)</option>
@@ -3510,7 +3510,7 @@ export function ProposalsApprovalView({
               <option value="NORMAL">🟢 Bình thường</option>
             </select>
 
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs shadow-2xs">
               <Calendar className="w-3.5 h-3.5 text-indigo-500" />
               <span className="text-[11px] text-slate-500 font-semibold">Từ:</span>
               <DateInputVN

@@ -95,34 +95,32 @@ export function classifyEditDeletePermission(code: string, text: string): { isEd
 
 function grantAppliesToDept(grant: Grant, permCode: string, deptUnitKey: string | null, allUnits: OrgUnit[]): boolean {
   if (!grant.scope_org_unit_id || grant.scope_unit_type === "COMPANY") return true;
-  if (grant.scope_module_key === "QA" && (permCode.startsWith("qms.") || QA_CROSS_DEPT_SET.has(permCode))) {
+  const isQaGrant = grant.scope_module_key === "QA" || grant.role_code === "QA_HEAD" || grant.role_code === "QA_STAFF";
+  const isWhGrant =
+    grant.scope_module_key === "WH" ||
+    grant.scope_module_key === "PURCHASE" ||
+    grant.role_code === "WH_HEAD" ||
+    grant.role_code === "WH_STAFF";
+  if (isQaGrant && (permCode.startsWith("qms.") || QA_CROSS_DEPT_SET.has(permCode))) {
     return true;
   }
-  if ((grant.scope_module_key === "WH" || grant.scope_module_key === "PURCHASE") && WH_CROSS_DEPT_SET.has(permCode)) {
+  if (isWhGrant && (permCode.startsWith("inv.") || permCode.startsWith("master.") || WH_CROSS_DEPT_SET.has(permCode))) {
     return true;
   }
   // KTCN works on R&D projects; Phòng IT (Khối Kinh doanh) uses its own it.* permissions, never rd.*
   if (grant.scope_module_key === "DEVICE" && permCode.startsWith("rd.")) {
     return true;
   }
-  if (
-    grant.scope_module_key &&
-    ["RD", "KIT", "OLIGO", "DEVICE", "IT", "QA", "WH", "PURCHASE"].includes(grant.scope_module_key) &&
-    (permCode.startsWith("prep.") ||
-      permCode.startsWith("plan.") ||
-      permCode.startsWith("asset.") ||
-      permCode.startsWith("purchase.pr.") ||
-      permCode === "qms.qc.view" ||
-      permCode === "qms.deviation.report" ||
-      permCode === "qms.ncr.propose" ||
-      permCode === "inv.stock.view" ||
-      permCode === "master.data.view")
-  ) {
-    return true;
-  }
   if (!deptUnitKey) {
     if (permCode.startsWith("core.")) return false;
-    if (permCode.startsWith("purchase.po.") || permCode === "purchase.receipt.post") return false;
+    if (permCode.startsWith("purchase.po.") || permCode === "purchase.receipt.post") return isWhGrant;
+    if (
+      grant.scope_module_key &&
+      ["RD", "KIT", "OLIGO", "DEVICE", "QA", "WH", "PURCHASE"].includes(grant.scope_module_key) &&
+      (permCode.startsWith("purchase.pr.") || permCode.startsWith("intake."))
+    ) {
+      return true;
+    }
     return true;
   }
   const target = allUnits.find((u) => u.module_key === deptUnitKey);
