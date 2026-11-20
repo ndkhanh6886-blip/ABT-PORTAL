@@ -3664,7 +3664,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return "Vật tư tiêu hao SHPT";
         }
         if (catLow.includes("thiết bị") || subLow.includes("thiết bị")) {
-            return String(item as any)?.brand === "ABT" ? "Thiết bị cơ bản ABT" : "Thiết bị cơ bản";
+            return String((item as any)?.brand || "").toUpperCase() === "ABT" ? "Thiết bị cơ bản ABT" : "Thiết bị cơ bản";
         }
 
         return rawSub || rawCat || "Vật tư tiêu hao SHPT";
