@@ -1792,19 +1792,19 @@ function OrderMrpForecastSection({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <div className="text-xs font-extrabold text-amber-950 dark:text-amber-200 flex items-center gap-1.5">
-            <span>📊 Bảng Nổ Định Mức BOM &amp; Dự Trù Nguyên Liệu (MRP) — {kdPoCode}</span>
+            <span>📊 Bảng Tính Định Mức (BOM) &amp; Dự Trù Nguyên Vật Liệu — {kdPoCode}</span>
             {isForecast && (
               <span className="px-2 py-0.5 rounded-full bg-amber-600 text-white text-[10px] font-extrabold">
-                FORECAST QUÝ
+                FORECAST QUÝ (CHỈ DỰ TRÙ)
               </span>
             )}
           </div>
           <div className="text-[11px] text-slate-600 dark:text-slate-400">
-            Tự động nổ định mức BOM của các mã hàng trong đơn/Forecast, đối chiếu tồn kho khả dụng (Kho Phòng + Kho Tổng) &amp; PR/PO mở để phát hành Phiếu Đề nghị Mua hàng (PR) sang Cung ứng NVL.
+            Hệ thống chỉ <b>tính toán nhu cầu nguyên liệu lý thuyết</b> theo công thức định mức (BOM) và đối chiếu tồn kho hiện tại để tham khảo dự trù (<b>không trừ tồn kho, không khóa hàng và không tự động đặt mua</b>). Khi nào thực sự cần mua bổ sung, Trưởng phòng mới chủ động bấm tạo PR.
           </div>
         </div>
         <Button variant={open ? "ghost" : "primary"} onClick={() => setOpen((v) => !v)}>
-          {open ? "Ẩn bảng Nổ BOM & Dự trù ▲" : "📊 Mở Bảng Nổ BOM & Dự Trù Nguyên Liệu (MRP) ▼"}
+          {open ? "Ẩn bảng Tính định mức & Dự trù ▲" : "📊 Xem Bảng Tính Định Mức & Dự Trù Nguyên Liệu ▼"}
         </Button>
       </div>
 
