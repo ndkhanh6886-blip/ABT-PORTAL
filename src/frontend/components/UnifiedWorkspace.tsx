@@ -10552,95 +10552,97 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       </div>
                     </div>
 
-                    <div className="p-4 space-y-3">
-                      {/* Ticket Title, Metadata & Action Buttons */}
-                      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-                        <div className="space-y-1.5 flex-1">
-                          <h4 className="text-base font-extrabold text-slate-900 dark:text-white leading-snug">
-                            {wf.title}
-                          </h4>
+                    <div className="px-4 py-2.5 space-y-2">
+                      {/* Dòng 1: Tiêu đề phiếu + Thông tin Khách hàng / Người yêu cầu / Hạn chót dàn ngang trên cùng 1 hàng */}
+                      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                        <h4 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white leading-snug">
+                          {wf.title}
+                        </h4>
 
-                          <div className="flex items-center gap-x-4 gap-y-1.5 text-xs text-slate-600 dark:text-slate-400 flex-wrap">
-                            <span className="inline-flex items-center gap-1">
-                              <strong className="text-slate-700 dark:text-slate-300">Khách hàng / Đơn vị:</strong> {wf.customer_name || "Nội bộ ABT"}
+                        <div className="flex items-center gap-x-3 gap-y-1 text-xs text-slate-600 dark:text-slate-400 flex-wrap">
+                          <span className="inline-flex items-center gap-1">
+                            <strong className="text-slate-700 dark:text-slate-300">Khách hàng / Đơn vị:</strong> {wf.customer_name || "Nội bộ ABT"}
+                          </span>
+                          {wf.product_info && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800/90 text-slate-800 dark:text-slate-200 font-medium">
+                              <strong>Sản phẩm / TB:</strong> {wf.product_info}
                             </span>
-                            {wf.product_info && (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800/90 text-slate-800 dark:text-slate-200 font-medium">
-                                <strong>Sản phẩm / TB:</strong> {wf.product_info}
+                          )}
+                          <span className="text-slate-300 dark:text-slate-700">•</span>
+                          <span>
+                            <strong className="text-slate-700 dark:text-slate-300">Người yêu cầu:</strong> {wf.requester_name}
+                          </span>
+                          <span className="text-slate-300 dark:text-slate-700">•</span>
+                          <span className={`inline-flex items-center gap-1 font-semibold ${dlMeta.isTicketOverdue ? "text-rose-600 dark:text-rose-400 font-bold" : dlMeta.isTicketDueSoon ? "text-amber-600 dark:text-amber-400 font-bold" : ""}`}>
+                            <strong className="text-slate-700 dark:text-slate-300">Hạn chót:</strong> {wf.due_date ? formatDayVN(wf.due_date) : "—"}
+                            {!dlMeta.isClosed && dlMeta.diffDays !== null && (
+                              <span className="text-[11px]">
+                                {dlMeta.diffDays < 0
+                                  ? `(Trễ ${Math.abs(dlMeta.diffDays)} ngày)`
+                                  : dlMeta.diffDays === 0
+                                  ? "(Hôm nay)"
+                                  : `(Còn ${dlMeta.diffDays} ngày)`}
                               </span>
                             )}
-                            <span>
-                              <strong className="text-slate-700 dark:text-slate-300">Người yêu cầu:</strong> {wf.requester_name}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Dòng 2: Đầu mối xử lý hiện tại bên trái + Nhóm nút thao tác bên phải trên cùng 1 hàng */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+                        <div className="flex items-center gap-1.5 text-xs flex-wrap">
+                          <span className="font-bold text-slate-700 dark:text-slate-300">
+                            👉 Đầu mối ({currentStepDept}):
+                          </span>
+                          {currentAssignee ? (
+                            <span className="px-2 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-bold border border-indigo-200 dark:border-indigo-800">
+                              👤 {currentAssignee}
                             </span>
-                            <span className={`inline-flex items-center gap-1 font-semibold ${dlMeta.isTicketOverdue ? "text-rose-600 dark:text-rose-400 font-bold" : dlMeta.isTicketDueSoon ? "text-amber-600 dark:text-amber-400 font-bold" : ""}`}>
-                              <strong className="text-slate-700 dark:text-slate-300">Hạn chót:</strong> {wf.due_date ? formatDayVN(wf.due_date) : "—"}
-                              {!dlMeta.isClosed && dlMeta.diffDays !== null && (
-                                <span className="text-[11px]">
-                                  {dlMeta.diffDays < 0
-                                    ? `(Trễ ${Math.abs(dlMeta.diffDays)} ngày)`
-                                    : dlMeta.diffDays === 0
-                                    ? "(Hôm nay)"
-                                    : `(Còn ${dlMeta.diffDays} ngày)`}
-                                </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-lg bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold border border-amber-200 dark:border-amber-800">
+                              ⏳ Chờ {currentStepDept} phân công
+                            </span>
+                          )}
+                          {wf.status !== "COMPLETED" && canAssignThisWf && (
+                            <span className="inline-flex items-center gap-1.5">
+                              <select
+                                value={currentAssignee || ""}
+                                onChange={(e) => {
+                                  if (e.target.value) {
+                                    handleAssignWorkflowStep(wf, e.target.value, currentIdx);
+                                  }
+                                }}
+                                className="px-2 py-0.5 rounded-lg text-[11px] font-bold border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-300 cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500/30 max-w-[210px]"
+                                title={`Phân công nhân sự bộ phận ${currentStepDept} phụ trách`}
+                              >
+                                <option value="">-- {currentAssignee ? "Đổi người phụ trách" : `Phân công ${currentStepDept}`} --</option>
+                                {(targetDeptStaff.length > 0 ? targetDeptStaff : personnelList).map((p: any) => (
+                                  <option key={p.id || p.employee_code || p.full_name} value={p.full_name}>
+                                    {p.full_name} {p.position ? `(${p.position})` : ""}
+                                  </option>
+                                ))}
+                              </select>
+                              {currentAssignee !== currentStaffName && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleAssignWorkflowStep(wf, currentStaffName, currentIdx)}
+                                  className="px-2 py-0.5 rounded-lg text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs cursor-pointer transition-colors"
+                                  title="Nhận phụ trách bước này"
+                                >
+                                  Nhận việc
+                                </button>
                               )}
                             </span>
-                          </div>
-
-                          {/* Dòng thông tin Người tiếp nhận hiện tại tách riêng rõ ràng */}
-                          <div className="pt-1 flex items-center gap-2 text-xs flex-wrap">
-                            <span className="font-bold text-slate-700 dark:text-slate-300">
-                              👉 Đầu mối xử lý hiện tại ({currentStepDept}):
+                          )}
+                          {lastRemindedAt && (
+                            <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">
+                              🔔 Đã nhắc {lastRemindedAt.slice(11, 16)} ({lastRemindedAt.slice(8, 10)}/{lastRemindedAt.slice(5, 7)})
                             </span>
-                            {currentAssignee ? (
-                              <span className="px-2.5 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-bold border border-indigo-200 dark:border-indigo-800">
-                                👤 {currentAssignee}
-                              </span>
-                            ) : (
-                              <span className="px-2.5 py-0.5 rounded-lg bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold border border-amber-200 dark:border-amber-800">
-                                ⏳ Chờ {currentStepDept} phân công
-                              </span>
-                            )}
-                            {wf.status !== "COMPLETED" && canAssignThisWf && (
-                              <span className="inline-flex items-center gap-1.5">
-                                <select
-                                  value={currentAssignee || ""}
-                                  onChange={(e) => {
-                                    if (e.target.value) {
-                                      handleAssignWorkflowStep(wf, e.target.value, currentIdx);
-                                    }
-                                  }}
-                                  className="px-2 py-1 rounded-lg text-[11px] font-bold border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-300 cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
-                                  title={`Phân công nhân sự bộ phận ${currentStepDept} phụ trách`}
-                                >
-                                  <option value="">-- {currentAssignee ? "Đổi người phụ trách" : `Phân công nhân sự ${currentStepDept}`} --</option>
-                                  {(targetDeptStaff.length > 0 ? targetDeptStaff : personnelList).map((p: any) => (
-                                    <option key={p.id || p.employee_code || p.full_name} value={p.full_name}>
-                                      {p.full_name} {p.position ? `(${p.position})` : ""}
-                                    </option>
-                                  ))}
-                                </select>
-                                {currentAssignee !== currentStaffName && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleAssignWorkflowStep(wf, currentStaffName, currentIdx)}
-                                    className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs cursor-pointer transition-colors"
-                                    title="Nhận phụ trách bước này"
-                                  >
-                                    Nhận việc
-                                  </button>
-                                )}
-                              </span>
-                            )}
-                            {lastRemindedAt && (
-                              <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">
-                                🔔 Đã nhắc lúc {lastRemindedAt.slice(11, 16)} ({lastRemindedAt.slice(8, 10)}/{lastRemindedAt.slice(5, 7)})
-                              </span>
-                            )}
-                          </div>
+                          )}
                         </div>
 
-                        {/* Top Action buttons */}
-                        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                        {/* Action buttons dàn ngang gọn phía bên phải */}
+                        <div className="flex items-center gap-1.5 flex-wrap ml-auto">
                           {hasSteps && wf.status !== "COMPLETED" && (() => {
                             const curSt = wfSteps[currentIdx];
                             const isApprovalGate = isWorkflowApprovalGateStep(curSt);
@@ -10657,17 +10659,17 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                         "info"
                                       );
                                     }}
-                                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 shadow-2xs flex items-center gap-1 transition-all cursor-pointer"
+                                    className="px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 shadow-2xs flex items-center gap-1 transition-all cursor-pointer"
                                     title="Mở biểu mẫu Tờ trình & Đề xuất phê duyệt đa cấp cho bước cổng phê duyệt xen kẽ này"
                                   >
                                     <FileText className="w-3.5 h-3.5" />
-                                    <span>📝 Lập Tờ Trình Đề Xuất{curSt?.proposal_template_code ? ` (${curSt.proposal_template_code})` : ""}</span>
+                                    <span>📝 Lập Tờ Trình{curSt?.proposal_template_code ? ` (${curSt.proposal_template_code})` : ""}</span>
                                   </button>
                                 )}
                                 <button
                                   type="button"
                                   onClick={() => handleOpenAdvanceStep(wf)}
-                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold text-white shadow-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+                                  className={`px-2.5 py-1 rounded-lg text-xs font-bold text-white shadow-xs flex items-center gap-1 transition-all cursor-pointer ${
                                     isApprovalGate
                                       ? "bg-emerald-600 hover:bg-emerald-700"
                                       : "bg-indigo-600 hover:bg-indigo-700"
@@ -10676,7 +10678,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                   <CheckCircle2 className="w-3.5 h-3.5" />
                                   <span>
                                     {isApprovalGate
-                                      ? `✅ Phê Duyệt Bước ${currentIdx + 1} & Mở Khóa Bước Tiếp`
+                                      ? `✅ Phê Duyệt B${currentIdx + 1}`
                                       : `Nghiệm Thu Bước ${currentIdx + 1} & Bàn Giao`}
                                   </span>
                                 </button>
@@ -10684,10 +10686,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                   <button
                                     type="button"
                                     onClick={() => handleRollbackWorkflowStep(wf)}
-                                    className="px-2.5 py-1.5 rounded-lg text-xs font-bold border border-rose-300 dark:border-rose-800 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 shadow-2xs flex items-center gap-1 transition-all cursor-pointer"
+                                    className="px-2 py-1 rounded-lg text-xs font-bold border border-rose-300 dark:border-rose-800 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 shadow-2xs flex items-center gap-1 transition-all cursor-pointer"
                                     title={`Từ chối / Trả hồ sơ về Bước ${currentIdx} để bổ sung`}
                                   >
-                                    <span>↩️ Trả Về Bước {currentIdx}</span>
+                                    <span>↩️ Trả Về B{currentIdx}</span>
                                   </button>
                                 )}
                               </>
@@ -10697,7 +10699,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           {!hasSteps && wf.status === "PENDING" && (
                             <button
                               onClick={() => handleWorkflowStatusTransition(wf.id, "ACCEPTED", "Tiếp nhận phiếu")}
-                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-xs cursor-pointer"
+                              className="px-2.5 py-1 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-xs cursor-pointer"
                             >
                               Tiếp Nhận
                             </button>
@@ -10705,7 +10707,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           {!hasSteps && wf.status === "ACCEPTED" && (
                             <button
                               onClick={() => handleWorkflowStatusTransition(wf.id, "IN_PROGRESS", "Bắt đầu triển khai")}
-                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white shadow-xs cursor-pointer"
+                              className="px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white shadow-xs cursor-pointer"
                             >
                               Triển Khai
                             </button>
@@ -10714,7 +10716,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           {wf.status !== "COMPLETED" && (
                             <button
                               onClick={() => handleOpenRecordResult(wf)}
-                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white shadow-xs flex items-center gap-1 cursor-pointer"
+                              className="px-2.5 py-1 rounded-lg text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white shadow-xs flex items-center gap-1 cursor-pointer"
                             >
                               <FileText className="w-3.5 h-3.5" />
                               <span>Báo Cáo / Đính Kèm</span>
@@ -10724,7 +10726,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           {wf.status === "REVIEW" && (
                             <button
                               onClick={() => handleWorkflowStatusTransition(wf.id, "COMPLETED", "Nghiệm thu hoàn tất")}
-                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs flex items-center gap-1 cursor-pointer"
+                              className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs flex items-center gap-1 cursor-pointer"
                             >
                               <CheckCircle2 className="w-3.5 h-3.5" />
                               <span>Nghiệm Thu &amp; Đóng</span>
@@ -10734,7 +10736,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           {wf.status === "COMPLETED" && (
                             <button
                               onClick={() => handleOpenRecordResult(wf)}
-                              className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 cursor-pointer"
+                              className="px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 cursor-pointer"
                             >
                               Xem / Sửa Hồ Sơ
                             </button>
@@ -10745,7 +10747,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               type="button"
                               disabled={remindingWfId === wf.id}
                               onClick={() => handleRemindWorkflowStep(wf)}
-                              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold border cursor-pointer shadow-2xs transition-colors ${
+                              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border cursor-pointer shadow-2xs transition-colors ${
                                 dlMeta.isAnyOverdue
                                   ? "border-rose-600 bg-rose-600 hover:bg-rose-700 text-white"
                                   : dlMeta.isAnyDueSoon || dlMeta.isUnassigned
@@ -10763,7 +10765,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                 {remindingWfId === wf.id
                                   ? "Đang nhắc..."
                                   : remindCount > 0
-                                  ? `🔔 Nhắc việc (${remindCount})`
+                                  ? `🔔 Nhắc (${remindCount})`
                                   : "🔔 Nhắc việc"}
                               </span>
                             </button>
@@ -10772,10 +10774,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           <button
                             type="button"
                             onClick={() => handleEditWorkflowTicket(wf)}
-                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold border border-amber-300 dark:border-amber-700 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 text-amber-800 dark:text-amber-300 cursor-pointer shadow-2xs"
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border border-amber-300 dark:border-amber-700 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 text-amber-800 dark:text-amber-300 cursor-pointer shadow-2xs"
                             title="Chỉnh sửa toàn bộ thông tin phiếu đã khởi tạo: Tiêu đề, Khách hàng, Sản phẩm, Hạn chót, Người thực hiện, Các bước & Thời gian SLA"
                           >
-                            <span>✏️ Sửa Thông Tin / SLA</span>
+                            <span>✏️ Sửa / SLA</span>
                           </button>
 
                           <button
@@ -10783,7 +10785,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               setSelectedWorkflowDetail(wf);
                               setIsWorkflowDetailModalOpen(true);
                             }}
-                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
                           >
                             <Eye className="w-3.5 h-3.5" />
                             <span>Xem &amp; Trao Đổi</span>
@@ -10811,11 +10813,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                   showToast("Lỗi kết nối máy chủ", "error");
                                 }
                               }}
-                              className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold border border-rose-200 dark:border-rose-900/80 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 cursor-pointer"
+                              className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold border border-rose-200 dark:border-rose-900/80 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 cursor-pointer"
                               title="Xóa phiếu phối hợp này (kèm các bước và công việc liên quan)"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
-                              <span>Xóa phiếu</span>
                             </button>
                           )}
                         </div>
