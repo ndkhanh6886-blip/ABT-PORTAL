@@ -1281,26 +1281,26 @@ export async function printOrderCoa(
     ${quarantineBanner}
     <table class="meta" style="width:100%;border:0.5pt solid #94a3b8;background:#f8fafc;margin-bottom:8pt;">
       <tr>
-        <td style="width:18%;font-weight:bold;">Mã Đơn Oligo:</td>
-        <td style="width:32%;font-weight:bold;color:#0f172a;">
-          <div>${esc(o.code)}</div>
-          <div style="margin-top:2pt;">${barcode128SvgMarkup(String(o.code ?? ""), 24)}</div>
+        <td style="width:1%;white-space:nowrap;font-weight:bold;padding-right:6pt;vertical-align:middle;">Mã Đơn Oligo:</td>
+        <td style="width:49%;font-weight:bold;color:#0f172a;vertical-align:middle;">
+          <div style="display:flex;align-items:center;gap:8pt;flex-wrap:nowrap;">
+            <span style="white-space:nowrap;">${esc(o.code)}</span>
+            <span>${barcode128SvgMarkup(String(o.code ?? ""), 22)}</span>
+          </div>
         </td>
-        <td style="width:18%;font-weight:bold;">Hạn giao / Ngày cấp:</td>
-        <td style="width:32%;">${d(o.due_date) || "—"} (Cấp ngày: ${esc(issueDateStr)})</td>
+        <td style="width:1%;white-space:nowrap;font-weight:bold;padding-right:6pt;vertical-align:middle;">Hạn giao / Ngày cấp:</td>
+        <td style="width:49%;white-space:nowrap;vertical-align:middle;">${d(o.due_date) || "—"} (Cấp ngày: ${esc(issueDateStr)})</td>
       </tr>
       <tr>
-        <td style="font-weight:bold;">Khách hàng / Đơn vị:</td>
-        <td colspan="3"><b>${esc(cleanUnitOrCustomer)}</b></td>
+        <td style="width:1%;white-space:nowrap;font-weight:bold;padding-right:6pt;vertical-align:middle;">Khách hàng / Đơn vị:</td>
+        <td ${o.notes ? 'style="width:49%;vertical-align:middle;"' : 'colspan="3" style="vertical-align:middle;"'}><b>${esc(cleanUnitOrCustomer)}</b></td>
+        ${
+          o.notes
+            ? `<td style="width:1%;white-space:nowrap;font-weight:bold;padding-right:6pt;vertical-align:middle;">Ghi chú đơn hàng:</td>
+               <td style="width:49%;vertical-align:middle;">${esc(o.notes)}</td>`
+            : ""
+        }
       </tr>
-      ${
-        o.notes
-          ? `<tr>
-              <td style="font-weight:bold;">Ghi chú đơn hàng:</td>
-              <td colspan="3">${esc(o.notes)}</td>
-            </tr>`
-          : ""
-      }
     </table>
   `;
 
