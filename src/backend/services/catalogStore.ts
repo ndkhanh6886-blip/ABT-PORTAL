@@ -39,11 +39,42 @@ const cleanCode = (v: any) => String(v ?? "").trim();
  * ("Hàng Thương Mại", "Vật tư y tế", "Sinh Phẩm & Nguyên Liệu"...) hoặc bị rơi vào mặc định "Thiết bị"
  * khi import file Excel không có cột phân loại ngành hàng.
  */
+export const ABT_REVENUE_CATEGORIES_20 = [
+  "Kit tách chiết",
+  "Kit trên người",
+  "Kit thú y",
+  "Kit thủy sản",
+  "Vật tư tiêu hao SHPT",
+  "Tự pha",
+  "Reagent",
+  "Hóa chất SHPT",
+  "Thiết bị SHPT",
+  "Oligo",
+  "PCR",
+  "Hóa chất cơ bản",
+  "Thiết bị cơ bản ABT",
+  "Thiết bị cơ bản",
+  "Kits vi sinh",
+  "Kits định danh loài",
+  "Tế bào học",
+  "Linh kiện KT",
+  "Nội thất PTN ABT",
+  "Nhóm Sản Phẩm PAP-GPB",
+] as const;
+
+const OFFICIAL_20_LOWER = new Map<string, string>(
+  ABT_REVENUE_CATEGORIES_20.map((name) => [normalizeVnCategoryText(name).toLowerCase(), name])
+);
+
 export function resolveActualProductCategory(item: { code?: string; name?: string; category?: string }): string {
   const cat = normalizeVnCategoryText(item?.category);
   const cUp = String(item?.code || "").trim().toUpperCase();
   const nLow = normalizeVnCategoryText(item?.name || "").toLowerCase();
   const catLow = cat.toLowerCase();
+
+  if (OFFICIAL_20_LOWER.has(catLow)) {
+    return OFFICIAL_20_LOWER.get(catLow)!;
+  }
 
   if (isServiceProduct(item)) {
     return "Dịch vụ & Khác";
@@ -52,8 +83,8 @@ export function resolveActualProductCategory(item: { code?: string; name?: strin
   if (catLow === "oligo" || isDetailedOligoSkuCode(cUp)) {
     return "Oligo";
   }
-  if (catLow === "giải pháp tự pha" || /^(PIP|POP|AMP|PPP)-\d+/i.test(cUp)) {
-    return "Giải pháp tự pha";
+  if (catLow === "giải pháp tự pha" || catLow === "tự pha" || /^(PIP|POP|AMP|PPP)-\d+/i.test(cUp)) {
+    return "Tự pha";
   }
 
   const isGeneric =

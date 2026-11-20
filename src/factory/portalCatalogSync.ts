@@ -86,19 +86,41 @@ function mapPortalStorage(raw: unknown): "RT" | "2-8" | "-20" | "-80" {
 function mapPortalCategoryToItemType(cat: string, fallbackType: string): string {
   switch (cat) {
     case "PCR Kit":
+    case "PCR":
     case "Kit Tách chiết":
+    case "Kit tách chiết":
+    case "Kit trên người":
+    case "Kit thú y":
+    case "Kit thủy sản":
+    case "Kits vi sinh":
+    case "Kits định danh loài":
+    case "Kit Xét nghiệm":
       return "FINISHED_KIT";
     case "Giải pháp tự pha":
+    case "Tự pha":
       return "SEMI_FINISHED";
     case "Hóa chất & Sinh phẩm":
+    case "Reagent":
+    case "Hóa chất SHPT":
+    case "Hóa chất cơ bản":
+    case "Tế bào học":
+    case "Nhóm Sản Phẩm PAP-GPB":
     case "Oligo":
       return "REAGENT";
     case "Thiết bị":
+    case "Thiết bị Phòng Lab":
+    case "Thiết bị SHPT":
+    case "Thiết bị cơ bản ABT":
     case "Thiết bị cơ bản":
+    case "Thiết bị chuyên sâu":
+    case "Thiết bị TM":
+    case "Nội thất PTN ABT":
       return "DEVICE";
     case "Linh kiện":
+    case "Linh kiện KT":
       return "COMPONENT";
     case "Vật tư tiêu hao":
+    case "Vật tư tiêu hao SHPT":
     case "Dụng cụ":
       return "CONSUMABLE";
     default:
