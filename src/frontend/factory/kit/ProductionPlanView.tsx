@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { api, fmtDate, fmtQty, vnToday } from "../api";
 import { Button, Card, Empty, ErrorNote, inputClass, StatusBadge, Table } from "../ui";
 
@@ -157,10 +158,11 @@ export function ProductionPlanView({
   onCreateOrder?: () => void;
   onOrderDeleted?: (orderId: string) => void;
 }) {
+  const qc = useQueryClient();
   const [data, setData] = useState<PlanResponse | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<"ALL" | "LATE" | "NO_QA" | "ACTIVE">(mode === "QA" ? "NO_QA" : "ACTIVE");
+  const [filter, setFilter] = useState<"ALL" | "LATE" | "NO_QA" | "ACTIVE">("ACTIVE");
   const [editingId, setEditingId] = useState<string>("");
   const [form, setForm] = useState({ planned_start_date: "", planned_end_date: "", team_lead_name: "", plan_note: "", qa_assignee_name: "" });
   const [qaDraft, setQaDraft] = useState<Record<string, string>>({});
@@ -177,15 +179,19 @@ export function ProductionPlanView({
   const load = useCallback(async () => {
     setError(null);
     try {
-      setData(await api<PlanResponse>("/api/factory/kit/plan"));
+      const fresh = await api<PlanResponse>("/api/factory/kit/plan");
+      setData(fresh);
+      qc.setQueryData(["factory", "kit-plan"], fresh);
     } catch (e) {
       setError(e);
     }
-  }, []);
+  }, [qc]);
 
   useEffect(() => {
+    const cached = qc.getQueryData<PlanResponse>(["factory", "kit-plan"]);
+    if (cached) setData(cached);
     load();
-  }, [load]);
+  }, [load, qc]);
 
   const today = todayStr();
   const orders = data?.orders ?? [];
@@ -220,11 +226,12 @@ export function ProductionPlanView({
   const lateCount = activeOrders.filter(isLate).length;
   const noQaCount = activeOrders.filter((o) => !o.qa_assignee_name).length;
 
-  // Tổng hợp tiến độ theo công đoạn của quy trình (gộp theo tên công đoạn trên các lệnh đang chạy)
+  // Tổng hợp tiến độ theo công đoạn của quy trình (gộp theo tên công đoạn trên các lệnh đang hoạt động)
   const stageSummary = useMemo(() => {
     const map = new Map<string, { seq: number; name: string; is_qc: boolean; total: number; done: number; running: number; waitingQc: number; failed: number; pending: number; orders: string[] }>();
     for (const o of activeOrders) {
-      if (o.status === "DRAFT") continue;
+      if (!o.steps || o.steps.length === 0) continue;
+      const currentStep = o.steps.find((st) => !isDoneStatus(st.status));
       for (const s of o.steps) {
         const key = s.step_code || s.step_name;
         const cur = map.get(key) ?? { seq: s.seq, name: s.step_name, is_qc: s.is_qc, total: 0, done: 0, running: 0, waitingQc: 0, failed: 0, pending: 0, orders: [] };
@@ -233,14 +240,19 @@ export function ProductionPlanView({
         if (v === "DONE") cur.done += 1;
         else if (v === "RUNNING") {
           cur.running += 1;
-          cur.orders.push(o.code);
+          if (!cur.orders.includes(o.code)) cur.orders.push(o.code);
         } else if (v === "WAITING_QC") {
           cur.waitingQc += 1;
-          cur.orders.push(o.code);
+          if (!cur.orders.includes(o.code)) cur.orders.push(o.code);
         } else if (v === "FAILED") {
           cur.failed += 1;
-          cur.orders.push(o.code);
-        } else cur.pending += 1;
+          if (!cur.orders.includes(o.code)) cur.orders.push(o.code);
+        } else {
+          cur.pending += 1;
+          if (currentStep?.id === s.id && !cur.orders.includes(o.code)) {
+            cur.orders.push(o.code);
+          }
+        }
         map.set(key, cur);
       }
     }
@@ -476,28 +488,26 @@ export function ProductionPlanView({
                     <td className="px-3 py-2 text-xs align-top">
                       {canAssignQa && o.status !== "COMPLETED" ? (
                         <div className="space-y-1">
-                          <input
-                            list={`qa-staff-${o.id}`}
+                          <select
                             className={`${inputClass} !py-1 text-xs ${!o.qa_assignee_name ? "border-amber-400" : ""}`}
-                            placeholder="Chọn nhân viên QA..."
                             value={qaDraft[o.id] ?? o.qa_assignee_name ?? ""}
-                            onChange={(e) => setQaDraft((p) => ({ ...p, [o.id]: e.target.value }))}
-                          />
-                          <datalist id={`qa-staff-${o.id}`}>
+                            disabled={saving}
+                            onChange={(e) => {
+                              const nextQa = e.target.value;
+                              setQaDraft((p) => ({ ...p, [o.id]: nextQa }));
+                              savePlan(o.id, { qa_assignee_name: nextQa });
+                            }}
+                          >
+                            <option value="">-- Chọn nhân viên QA... --</option>
+                            {o.qa_assignee_name && !qaStaffOptions.includes(o.qa_assignee_name) && (
+                              <option value={o.qa_assignee_name}>{o.qa_assignee_name}</option>
+                            )}
                             {qaStaffOptions.map((n) => (
-                              <option key={n} value={n} />
+                              <option key={n} value={n}>
+                                {n}
+                              </option>
                             ))}
-                          </datalist>
-                          {(qaDraft[o.id] ?? o.qa_assignee_name ?? "") !== (o.qa_assignee_name ?? "") && (
-                            <Button
-                              variant="secondary"
-                              disabled={saving}
-                              title="Lưu phân công nhân viên QA giám sát lệnh này; nhân viên QA sẽ được gán vào mọi bước QC xen kẽ (IPQC) và nhận thông báo"
-                              onClick={() => savePlan(o.id, { qa_assignee_name: qaDraft[o.id] ?? "" })}
-                            >
-                              🛡️ Lưu phân công QA
-                            </Button>
-                          )}
+                          </select>
                         </div>
                       ) : o.qa_assignee_name ? (
                         <div className="font-semibold text-emerald-800 dark:text-emerald-300">🛡️ {o.qa_assignee_name}</div>
