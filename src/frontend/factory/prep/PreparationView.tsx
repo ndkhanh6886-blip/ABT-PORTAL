@@ -193,7 +193,7 @@ function FormulaEditor({ base, isClone, deptScope, onClose }: { base?: Formula; 
       <div className="text-xs font-bold">Nguyên liệu (cho một mẻ chuẩn)</div>
       {lines.map((l, i) => (
         <div key={i} className="flex flex-wrap gap-2 items-center text-xs">
-          <ItemPicker value={l.item_id} current={l.label} onChange={(id) => setLines(lines.map((x, j) => (j === i ? { ...x, item_id: id } : x)))} />
+          <ItemPicker deptScope={deptScope} value={l.item_id} current={l.label} onChange={(id) => setLines(lines.map((x, j) => (j === i ? { ...x, item_id: id } : x)))} />
           <input className={`${inputClass} w-28`} type="number" step="any" min="0" placeholder="Định lượng" value={l.qty || ""} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, qty: Number(e.target.value) } : x)))} required aria-label="Lượng" />
           <input className={`${inputClass} w-20`} placeholder="Đơn vị" value={l.uom} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, uom: e.target.value } : x)))} required aria-label="Đơn vị" />
           {lines.length > 1 && <button type="button" className="text-rose-600 cursor-pointer font-semibold px-2 py-1" onClick={() => setLines(lines.filter((_, j) => j !== i))}>✕ Xóa</button>}

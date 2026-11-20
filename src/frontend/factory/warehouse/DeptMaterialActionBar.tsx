@@ -224,10 +224,11 @@ export function DeptMaterialActionBar({
     queryFn: () => api<{ code: string }[]>("/api/factory/master/uoms"),
     enabled: panel === "pr",
   });
+  const deptScopeParam = moduleKey === "QMS" ? "QA" : moduleKey;
   const allCatalogItems = useQuery({
-    queryKey: ["factory", "items", "pr-catalog-all"],
+    queryKey: ["factory", "items", "pr-catalog-dept", deptScopeParam],
     queryFn: () =>
-      api<{ rows: CatalogMasterItem[]; total: number }>("/api/factory/master/items?page_size=2000&status=ACTIVE"),
+      api<{ rows: CatalogMasterItem[]; total: number }>(`/api/factory/master/items?page_size=2000&status=ACTIVE&dept_scope=${deptScopeParam}`),
     enabled: panel === "pr",
   });
   const [prOrgUnitId, setPrOrgUnitId] = useState("");

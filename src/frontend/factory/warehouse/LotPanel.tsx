@@ -33,8 +33,11 @@ const LOT_MOVEMENT_REASON_LABEL: Record<string, string> = {
 interface LotDetail {
   id: string;
   code: string;
+  item_id: string;
   item_code: string;
   item_name: string;
+  item_type?: string;
+  base_uom: string;
   mfr_lot_no: string | null;
   status: string;
   expiry_date: string | null;
@@ -63,6 +66,8 @@ interface LotDetail {
   actions: AllowedAction[];
 }
 
+export type LotPanelMode = "VIEW" | "EDIT" | "ISSUE" | "ADJUST";
+
 export const LOT_ACTION_LABEL: Record<string, string> = {
   sample: "Lấy mẫu QC",
   release: "Giải phóng lô",
@@ -78,19 +83,162 @@ const QC_STATUS: Record<string, string> = {
   CANCELLED: "Đã hủy",
 };
 
-/** Lot detail: quality status, QC history and the quality actions the user may run (signed where required). */
-export function LotPanel({ lotId, onClose }: { lotId: string; onClose: () => void }) {
+/** Lot detail: quality status, QC history, basic info editing, direct stock issue, and stock balance adjustment. */
+export function LotPanel({
+  lotId,
+  initialMode = "VIEW",
+  defaultLocationId,
+  onClose,
+}: {
+  lotId: string;
+  initialMode?: LotPanelMode;
+  defaultLocationId?: string;
+  onClose: () => void;
+}) {
   const qc = useQueryClient();
   const me = useFactoryMe();
+  const [mode, setMode] = useState<LotPanelMode>(initialMode);
+  const [opSuccessMsg, setOpSuccessMsg] = useState<string | null>(null);
   const [prepQcNote, setPrepQcNote] = useState("");
   const lot = useQuery({ queryKey: ["factory", "lot", lotId], queryFn: () => api<LotDetail>(`/api/factory/inv/lots/${lotId}`) });
+
+  React.useEffect(() => {
+    setMode(initialMode);
+  }, [initialMode]);
+
+  const l = lot.data;
+
+  // State for EDIT basic info
+  const [editForm, setEditForm] = useState({
+    code: "",
+    mfr_lot_no: "",
+    mfg_date: "",
+    expiry_date: "",
+    received_date: "",
+    item_name: "",
+    item_type: "REAGENT",
+    base_uom: "",
+  });
+
+  // State for ISSUE
+  const [issueLocId, setIssueLocId] = useState("");
+  const [issueQty, setIssueQty] = useState("");
+  const [issueReason, setIssueReason] = useState("PRODUCTION");
+  const [issueNotes, setIssueNotes] = useState("");
+
+  // State for ADJUST
+  const [adjustLocId, setAdjustLocId] = useState("");
+  const [adjustNewQty, setAdjustNewQty] = useState("");
+  const [adjustReason, setAdjustReason] = useState("COUNT_DIFF");
+  const [adjustNotes, setAdjustNotes] = useState("");
+
+  React.useEffect(() => {
+    if (!l) return;
+    setEditForm({
+      code: l.code || "",
+      mfr_lot_no: l.mfr_lot_no || "",
+      mfg_date: l.mfg_date ? l.mfg_date.slice(0, 10) : "",
+      expiry_date: l.expiry_date ? l.expiry_date.slice(0, 10) : "",
+      received_date: l.received_date ? l.received_date.slice(0, 10) : "",
+      item_name: l.item_name || "",
+      item_type: l.item_type || "REAGENT",
+      base_uom: l.base_uom || "g",
+    });
+    const preferredBal =
+      (defaultLocationId ? l.balances.find((b) => b.location_id === defaultLocationId) : undefined) ??
+      l.balances.find((b) => Number(b.qty_on_hand) > 0) ??
+      l.balances[0];
+    if (preferredBal) {
+      setIssueLocId(preferredBal.location_id);
+      setAdjustLocId(preferredBal.location_id);
+      setAdjustNewQty(String(Number(preferredBal.qty_on_hand)));
+    }
+  }, [l, defaultLocationId]);
+
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["factory", "lot", lotId] });
     qc.invalidateQueries({ queryKey: ["factory", "stock"] });
+    qc.invalidateQueries({ queryKey: ["factory", "items"] });
+    qc.invalidateQueries({ queryKey: ["factory", "documents"] });
     qc.invalidateQueries({ queryKey: ["factory", "qc-tests"] });
     qc.invalidateQueries({ queryKey: ["factory", "prep-log"] });
     qc.invalidateQueries({ queryKey: ["factory", "warehouse-hub-ops"] });
   };
+
+  const editBasicMut = useMutation({
+    mutationFn: () =>
+      api<{ ok: boolean; code: string }>(`/api/factory/inv/lots/${lotId}`, {
+        method: "PATCH",
+        json: {
+          code: editForm.code.trim(),
+          mfr_lot_no: editForm.mfr_lot_no.trim() || null,
+          mfg_date: editForm.mfg_date || null,
+          expiry_date: editForm.expiry_date || null,
+          received_date: editForm.received_date || null,
+          item_name: editForm.item_name.trim(),
+          item_type: editForm.item_type,
+          base_uom: editForm.base_uom.trim(),
+        },
+      }),
+    onSuccess: (res) => {
+      setOpSuccessMsg(`✅ Đã lưu cập nhật thông tin lô ${res.code}.`);
+      setMode("VIEW");
+      refresh();
+    },
+  });
+
+  const quickIssueMut = useMutation({
+    mutationFn: () =>
+      api<{ ok: boolean; document_code: string; issued_qty: number; remaining_qty: number; uom: string }>(
+        `/api/factory/inv/lots/${lotId}`,
+        {
+          method: "POST",
+          json: {
+            op: "quick_issue",
+            location_id: issueLocId,
+            qty: Number(issueQty.replace(",", ".")),
+            reason_code: issueReason,
+            notes: issueNotes.trim() || undefined,
+          },
+        }
+      ),
+    onSuccess: (res) => {
+      setOpSuccessMsg(
+        `✅ Đã lập & ghi sổ Phiếu Xuất ${res.document_code}: xuất ${fmtQty(res.issued_qty)} ${res.uom} (Tồn còn lại: ${fmtQty(res.remaining_qty)} ${res.uom}).`
+      );
+      setIssueQty("");
+      setIssueNotes("");
+      setMode("VIEW");
+      refresh();
+    },
+  });
+
+  const quickAdjustMut = useMutation({
+    mutationFn: () =>
+      api<{ ok: boolean; document_code: string; previous_qty: number; new_qty: number; delta: number; uom: string }>(
+        `/api/factory/inv/lots/${lotId}`,
+        {
+          method: "POST",
+          json: {
+            op: "quick_adjust",
+            location_id: adjustLocId,
+            new_qty_on_hand: Number(adjustNewQty.replace(",", ".")),
+            reason_code: adjustReason,
+            notes: adjustNotes.trim() || undefined,
+          },
+        }
+      ),
+    onSuccess: (res) => {
+      const sign = res.delta > 0 ? `+${fmtQty(res.delta)}` : fmtQty(res.delta);
+      setOpSuccessMsg(
+        `✅ Đã ghi sổ Phiếu Cân đối tồn kho ${res.document_code}: ${fmtQty(res.previous_qty)} → ${fmtQty(res.new_qty)} ${res.uom} (Chênh lệch: ${sign} ${res.uom}).`
+      );
+      setAdjustNotes("");
+      setMode("VIEW");
+      refresh();
+    },
+  });
+
   const prepQcMut = useMutation({
     mutationFn: ({ result, notes }: { result: "PASS" | "FAIL"; notes?: string }) =>
       api(`/api/factory/prep/preparations/${lotId}/qc`, {
@@ -102,7 +250,7 @@ export function LotPanel({ lotId, onClose }: { lotId: string; onClose: () => voi
       refresh();
     },
   });
-  const l = lot.data;
+
   const canConfirmPrepQc = Boolean(
     me.data?.is_root ||
       me.data?.is_admin ||
@@ -111,11 +259,390 @@ export function LotPanel({ lotId, onClose }: { lotId: string; onClose: () => voi
       )
   );
 
+  const selectedIssueBal = l?.balances.find((b) => b.location_id === issueLocId) ?? l?.balances[0];
+  const selectedIssueAvail = selectedIssueBal
+    ? Math.max(0, Number(selectedIssueBal.qty_on_hand) - Number(selectedIssueBal.qty_reserved))
+    : 0;
+
+  const selectedAdjustBal = l?.balances.find((b) => b.location_id === adjustLocId) ?? l?.balances[0];
+  const currentAdjustOnHand = selectedAdjustBal ? Number(selectedAdjustBal.qty_on_hand) : 0;
+  const parsedNewAdjustQty = Number(String(adjustNewQty).replace(",", "."));
+  const adjustDelta = Number.isFinite(parsedNewAdjustQty)
+    ? Math.round((parsedNewAdjustQty - currentAdjustOnHand) * 1_000_000) / 1_000_000
+    : 0;
+
   return (
-    <Card title={l ? `Lô ${l.code} — ${l.item_code} ${l.item_name}` : "Lô"} actions={<Button variant="ghost" onClick={onClose}>Đóng</Button>}>
+    <Card
+      title={l ? `Lô ${l.code} — ${l.item_code} ${l.item_name}` : "Lô"}
+      actions={
+        <div className="flex flex-wrap items-center gap-1.5">
+          {l && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setOpSuccessMsg(null);
+                  setMode(mode === "EDIT" ? "VIEW" : "EDIT");
+                }}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                  mode === "EDIT"
+                    ? "bg-amber-600 text-white border-amber-600"
+                    : "bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-800 hover:bg-amber-100"
+                }`}
+              >
+                ✏️ Sửa thông tin
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOpSuccessMsg(null);
+                  setMode(mode === "ISSUE" ? "VIEW" : "ISSUE");
+                }}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                  mode === "ISSUE"
+                    ? "bg-rose-600 text-white border-rose-600"
+                    : "bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 border-rose-300 dark:border-rose-800 hover:bg-rose-100"
+                }`}
+              >
+                📤 Xuất kho lô này
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOpSuccessMsg(null);
+                  setMode(mode === "ADJUST" ? "VIEW" : "ADJUST");
+                }}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                  mode === "ADJUST"
+                    ? "bg-indigo-600 text-white border-indigo-600"
+                    : "bg-indigo-50 dark:bg-indigo-950/40 text-indigo-800 dark:text-indigo-300 border-indigo-300 dark:border-indigo-800 hover:bg-indigo-100"
+                }`}
+              >
+                ⚖️ Cân đối tồn kho
+              </button>
+            </>
+          )}
+          <Button variant="ghost" onClick={onClose}>
+            Đóng
+          </Button>
+        </div>
+      }
+    >
       <ErrorNote error={lot.error} />
+      {opSuccessMsg && (
+        <div className="mb-3 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50/80 dark:bg-emerald-950/40 px-3 py-2 text-xs font-semibold text-emerald-800 dark:text-emerald-200 flex items-center justify-between gap-2">
+          <span>{opSuccessMsg}</span>
+          <button type="button" onClick={() => setOpSuccessMsg(null)} className="text-emerald-600 hover:underline cursor-pointer">
+            ✕
+          </button>
+        </div>
+      )}
       {l && (
         <div className="flex flex-col gap-3">
+          {mode === "EDIT" && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                editBasicMut.mutate();
+              }}
+              className="rounded-xl border-2 border-amber-300 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20 p-3 space-y-3 text-xs"
+            >
+              <div className="flex items-center justify-between">
+                <b className="text-amber-900 dark:text-amber-200">
+                  ✏️ Chỉnh sửa thông tin cơ bản của Lô &amp; Vật tư ({l.item_code})
+                </b>
+                <button type="button" onClick={() => setMode("VIEW")} className="text-slate-500 hover:underline cursor-pointer">
+                  Đóng khung sửa
+                </button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
+                <label className="space-y-1">
+                  <span className="font-semibold text-slate-600 dark:text-slate-300">Tên vật tư / Hóa chất *</span>
+                  <input
+                    className={`${inputClass} w-full`}
+                    value={editForm.item_name}
+                    onChange={(e) => setEditForm({ ...editForm, item_name: e.target.value })}
+                    required
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="font-semibold text-slate-600 dark:text-slate-300">Phân loại vật tư</span>
+                  <select
+                    className={`${inputClass} w-full`}
+                    value={editForm.item_type}
+                    onChange={(e) => setEditForm({ ...editForm, item_type: e.target.value })}
+                  >
+                    <option value="REAGENT">🧪 Hóa chất / Thuốc thử / Mồi (REAGENT)</option>
+                    <option value="RAW_MATERIAL">🧪 Nguyên liệu gốc (RAW_MATERIAL)</option>
+                    <option value="CONSUMABLE">📦 Vật tư tiêu hao / Bao bì (CONSUMABLE)</option>
+                    <option value="COMPONENT">🔩 Linh kiện / Phụ kiện (COMPONENT)</option>
+                    <option value="SPARE_PART">⚙️ Phụ tùng thay thế (SPARE_PART)</option>
+                    <option value="SEMI_FINISHED">⚗️ Bán thành phẩm (SEMI_FINISHED)</option>
+                    <option value="FINISHED_KIT">📦 Thành phẩm / Bộ Kit (FINISHED_KIT)</option>
+                  </select>
+                </label>
+                <label className="space-y-1">
+                  <span className="font-semibold text-slate-600 dark:text-slate-300">Đơn vị tính (ĐVT) *</span>
+                  <input
+                    className={`${inputClass} w-full font-mono`}
+                    value={editForm.base_uom}
+                    onChange={(e) => setEditForm({ ...editForm, base_uom: e.target.value })}
+                    required
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="font-semibold text-slate-600 dark:text-slate-300">Mã lô nội bộ *</span>
+                  <input
+                    className={`${inputClass} w-full font-mono`}
+                    value={editForm.code}
+                    onChange={(e) => setEditForm({ ...editForm, code: e.target.value })}
+                    required
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="font-semibold text-slate-600 dark:text-slate-300">Số lô NSX (Mfr Lot)</span>
+                  <input
+                    className={`${inputClass} w-full font-mono`}
+                    value={editForm.mfr_lot_no}
+                    onChange={(e) => setEditForm({ ...editForm, mfr_lot_no: e.target.value })}
+                    placeholder="VD: 251209"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="font-semibold text-slate-600 dark:text-slate-300">Ngày sản xuất</span>
+                  <input
+                    type="date"
+                    className={`${inputClass} w-full`}
+                    value={editForm.mfg_date}
+                    onChange={(e) => setEditForm({ ...editForm, mfg_date: e.target.value })}
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="font-semibold text-slate-600 dark:text-slate-300">Hạn dùng (HSD)</span>
+                  <input
+                    type="date"
+                    className={`${inputClass} w-full`}
+                    value={editForm.expiry_date}
+                    onChange={(e) => setEditForm({ ...editForm, expiry_date: e.target.value })}
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="font-semibold text-slate-600 dark:text-slate-300">Ngày nhận kho</span>
+                  <input
+                    type="date"
+                    className={`${inputClass} w-full`}
+                    value={editForm.received_date}
+                    onChange={(e) => setEditForm({ ...editForm, received_date: e.target.value })}
+                  />
+                </label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button type="submit" disabled={editBasicMut.isPending}>
+                  💾 Lưu thay đổi thông tin
+                </Button>
+                <Button type="button" variant="ghost" onClick={() => setMode("VIEW")}>
+                  Hủy
+                </Button>
+              </div>
+              <ErrorNote error={editBasicMut.error} />
+            </form>
+          )}
+
+          {mode === "ISSUE" && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                quickIssueMut.mutate();
+              }}
+              className="rounded-xl border-2 border-rose-300 dark:border-rose-800 bg-rose-50/50 dark:bg-rose-950/20 p-3 space-y-3 text-xs"
+            >
+              <div className="flex items-center justify-between">
+                <b className="text-rose-900 dark:text-rose-200">
+                  📤 Xuất kho trực tiếp từ Lô {l.code} ({l.item_code} · {l.item_name})
+                </b>
+                <button type="button" onClick={() => setMode("VIEW")} className="text-slate-500 hover:underline cursor-pointer">
+                  Đóng khung xuất
+                </button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+                <label className="space-y-1">
+                  <span className="font-semibold text-slate-600 dark:text-slate-300">Kho · Vị trí xuất *</span>
+                  <select
+                    className={`${inputClass} w-full`}
+                    value={issueLocId}
+                    onChange={(e) => setIssueLocId(e.target.value)}
+                    required
+                  >
+                    {l.balances.map((b) => (
+                      <option key={b.location_id} value={b.location_id}>
+                        {b.warehouse_code} · {b.location_code} (Khả dụng:{" "}
+                        {fmtQty(Math.max(0, Number(b.qty_on_hand) - Number(b.qty_reserved)))} {l.base_uom})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-1">
+                  <span className="font-semibold text-slate-600 dark:text-slate-300 flex items-center justify-between">
+                    <span>Số lượng xuất ({l.base_uom}) *</span>
+                    {selectedIssueAvail > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setIssueQty(String(selectedIssueAvail))}
+                        className="text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:underline cursor-pointer"
+                      >
+                        Xuất hết ({fmtQty(selectedIssueAvail)})
+                      </button>
+                    )}
+                  </span>
+                  <input
+                    type="number"
+                    step="any"
+                    min="0.000001"
+                    max={selectedIssueAvail || undefined}
+                    className={`${inputClass} w-full font-mono font-bold`}
+                    placeholder={`Tối đa ${fmtQty(selectedIssueAvail)} ${l.base_uom}`}
+                    value={issueQty}
+                    onChange={(e) => setIssueQty(e.target.value)}
+                    required
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="font-semibold text-slate-600 dark:text-slate-300">Nghiệp vụ / Lý do xuất *</span>
+                  <select
+                    className={`${inputClass} w-full`}
+                    value={issueReason}
+                    onChange={(e) => setIssueReason(e.target.value)}
+                  >
+                    <option value="PRODUCTION">🏭 Xuất dùng Sản xuất / Pha chế (PRODUCTION)</option>
+                    <option value="RND">🔬 Xuất Nghiên cứu R&amp;D (RND)</option>
+                    <option value="QC_SAMPLE">🛡️ Xuất mẫu kiểm nghiệm QC (QC_SAMPLE)</option>
+                    <option value="SCRAP">🗑️ Xuất hủy vật tư / hết hạn (SCRAP)</option>
+                    <option value="RETURN_TO_SUPPLIER">↩️ Xuất trả nhà cung cấp (RETURN_TO_SUPPLIER)</option>
+                    <option value="OTHER">📝 Xuất khác (OTHER)</option>
+                  </select>
+                </label>
+                <label className="space-y-1">
+                  <span className="font-semibold text-slate-600 dark:text-slate-300">Ghi chú / Diễn giải</span>
+                  <input
+                    className={`${inputClass} w-full`}
+                    placeholder="VD: Xuất pha hóa chất / chạy mẻ..."
+                    value={issueNotes}
+                    onChange={(e) => setIssueNotes(e.target.value)}
+                  />
+                </label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button type="submit" disabled={quickIssueMut.isPending || !issueLocId}>
+                  📤 Xác nhận Xuất kho &amp; Ghi sổ
+                </Button>
+                <Button type="button" variant="ghost" onClick={() => setMode("VIEW")}>
+                  Hủy
+                </Button>
+              </div>
+              <ErrorNote error={quickIssueMut.error} />
+            </form>
+          )}
+
+          {mode === "ADJUST" && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                quickAdjustMut.mutate();
+              }}
+              className="rounded-xl border-2 border-indigo-300 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/20 p-3 space-y-3 text-xs"
+            >
+              <div className="flex items-center justify-between">
+                <b className="text-indigo-900 dark:text-indigo-200">
+                  ⚖️ Điều chỉnh / Cân đối tồn kho thực tế cho Lô {l.code} ({l.item_code} · {l.item_name})
+                </b>
+                <button type="button" onClick={() => setMode("VIEW")} className="text-slate-500 hover:underline cursor-pointer">
+                  Đóng khung cân đối
+                </button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+                <label className="space-y-1">
+                  <span className="font-semibold text-slate-600 dark:text-slate-300">Kho · Vị trí cần cân đối *</span>
+                  <select
+                    className={`${inputClass} w-full`}
+                    value={adjustLocId}
+                    onChange={(e) => {
+                      const nextLoc = e.target.value;
+                      setAdjustLocId(nextLoc);
+                      const b = l.balances.find((x) => x.location_id === nextLoc);
+                      if (b) setAdjustNewQty(String(Number(b.qty_on_hand)));
+                    }}
+                    required
+                  >
+                    {l.balances.map((b) => (
+                      <option key={b.location_id} value={b.location_id}>
+                        {b.warehouse_code} · {b.location_code} (Tồn sổ sách: {fmtQty(b.qty_on_hand)} {l.base_uom})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-1">
+                  <span className="font-semibold text-slate-600 dark:text-slate-300 flex items-center justify-between">
+                    <span>Tồn thực tế mới ({l.base_uom}) *</span>
+                    <span
+                      className={`font-mono font-bold ${
+                        adjustDelta > 0
+                          ? "text-emerald-700 dark:text-emerald-300"
+                          : adjustDelta < 0
+                            ? "text-rose-700 dark:text-rose-300"
+                            : "text-slate-400"
+                      }`}
+                    >
+                      {adjustDelta > 0
+                        ? `Tăng +${fmtQty(adjustDelta)} ${l.base_uom}`
+                        : adjustDelta < 0
+                          ? `Giảm ${fmtQty(adjustDelta)} ${l.base_uom}`
+                          : "Không đổi"}
+                    </span>
+                  </span>
+                  <input
+                    type="number"
+                    step="any"
+                    min="0"
+                    className={`${inputClass} w-full font-mono font-bold`}
+                    value={adjustNewQty}
+                    onChange={(e) => setAdjustNewQty(e.target.value)}
+                    required
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="font-semibold text-slate-600 dark:text-slate-300">Lý do cân đối tồn kho *</span>
+                  <select
+                    className={`${inputClass} w-full`}
+                    value={adjustReason}
+                    onChange={(e) => setAdjustReason(e.target.value)}
+                  >
+                    <option value="COUNT_DIFF">⚖️ Chênh lệch kiểm kê thực tế (COUNT_DIFF)</option>
+                    <option value="DAMAGE">⚠️ Hao hụt / Hư hỏng / Đổ vỡ (DAMAGE)</option>
+                    <option value="OTHER">📝 Điều chỉnh số liệu tồn kho (OTHER)</option>
+                  </select>
+                </label>
+                <label className="space-y-1">
+                  <span className="font-semibold text-slate-600 dark:text-slate-300">Diễn giải / Nguyên nhân *</span>
+                  <input
+                    className={`${inputClass} w-full`}
+                    placeholder="VD: Kiểm kê thực tế cuối tuần / điều chỉnh sai số..."
+                    value={adjustNotes}
+                    onChange={(e) => setAdjustNotes(e.target.value)}
+                  />
+                </label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button type="submit" disabled={quickAdjustMut.isPending || !adjustLocId || Math.abs(adjustDelta) < 1e-7}>
+                  ⚖️ Ghi sổ Cân đối tồn kho ({fmtQty(currentAdjustOnHand)} → {Number.isFinite(parsedNewAdjustQty) ? fmtQty(parsedNewAdjustQty) : "—"} {l.base_uom})
+                </Button>
+                <Button type="button" variant="ghost" onClick={() => setMode("VIEW")}>
+                  Hủy
+                </Button>
+              </div>
+              <ErrorNote error={quickAdjustMut.error} />
+            </form>
+          )}
+
           <dl className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
             <div><dt className="text-slate-400">Trạng thái</dt><dd><StatusBadge status={l.status} /></dd></div>
             <div><dt className="text-slate-400">Lô NSX</dt><dd className="font-mono">{l.mfr_lot_no ?? "—"}</dd></div>

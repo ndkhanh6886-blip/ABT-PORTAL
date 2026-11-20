@@ -179,24 +179,52 @@ function EditSynthesizerPanel({ asset, onClose }: { asset: Asset; onClose: () =>
   );
 }
 
-interface ItemOpt { id: string; code: string; name: string; base_uom: string }
+interface ItemOpt {
+  id: string;
+  code: string;
+  name: string;
+  base_uom: string;
+  dept_qty_on_hand?: number;
+}
+
+const DEPT_SCOPE_WAREHOUSE_LABEL: Record<string, string> = {
+  OLIGO: "Kho Oligo",
+  RD: "Kho R&D",
+  KIT: "Kho SX Kit",
+  DEVICE: "Kho Thiết Bị",
+  QA: "Kho QA/QC",
+};
 
 /**
  * Ô chọn Vật tư / Hóa chất tích hợp tìm kiếm trực tiếp bên trong danh sách xổ xuống (1 ô duy nhất).
- * Thay thế cho thiết kế cũ gồm 2 ô tách rời ("Tìm mã hàng" + ô chọn) gây khó hiểu.
+ * Mặc định chỉ hiển thị danh mục nguyên liệu thuộc Kho của phòng ban đang thao tác, kèm nút chuyển nhanh sang Toàn danh mục khi cần.
  */
-export function ItemPicker({ value, current, onChange }: { value: string; current?: string; onChange: (id: string) => void }) {
+export function ItemPicker({
+  value,
+  current,
+  onChange,
+  deptScope = "OLIGO",
+}: {
+  value: string;
+  current?: string;
+  onChange: (id: string) => void;
+  deptScope?: "OLIGO" | "RD" | "KIT" | "DEVICE" | "QA" | "ALL";
+}) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
+  const [scopeMode, setScopeMode] = useState<"DEPT" | "ALL">(deptScope === "ALL" ? "ALL" : "DEPT");
   const debouncedQ = useDebouncedValue(q, 220);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const effectiveScope = scopeMode === "DEPT" && deptScope !== "ALL" ? deptScope : "ALL";
+  const deptWhLabel = DEPT_SCOPE_WAREHOUSE_LABEL[deptScope] ?? `Kho ${deptScope}`;
+
   const items = useQuery({
-    queryKey: ["factory", "items-pick", open ? debouncedQ : ""],
+    queryKey: ["factory", "items-pick", effectiveScope, open ? debouncedQ : ""],
     queryFn: () =>
       api<{ rows: ItemOpt[] }>(
-        `/api/factory/master/items?page_size=60&q=${encodeURIComponent(open ? debouncedQ : "")}`
+        `/api/factory/master/items?page_size=80&dept_scope=${effectiveScope}&q=${encodeURIComponent(open ? debouncedQ : "")}`
       ),
   });
 
@@ -233,7 +261,7 @@ export function ItemPicker({ value, current, onChange }: { value: string; curren
             return !v;
           });
         }}
-        title={displayLabel || "Nhấn để tìm và chọn mã vật tư / hóa chất trong kho"}
+        title={displayLabel || `Nhấn để tìm và chọn mã vật tư / hóa chất trong ${deptWhLabel}`}
         className={`${inputClass} w-full flex items-center justify-between gap-2 text-left cursor-pointer ${
           open ? "ring-2 ring-sky-500 border-sky-500" : ""
         }`}
@@ -246,12 +274,38 @@ export function ItemPicker({ value, current, onChange }: { value: string; curren
 
       {open && (
         <div className="absolute left-0 z-50 mt-1 w-80 sm:w-96 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl p-2 space-y-1.5">
+          {deptScope !== "ALL" && (
+            <div className="flex items-center justify-between gap-1 rounded-lg bg-slate-100/80 dark:bg-slate-800/80 p-1 text-[11px]">
+              <button
+                type="button"
+                onClick={() => setScopeMode("DEPT")}
+                className={`flex-1 px-2 py-1 rounded-md font-bold transition cursor-pointer ${
+                  scopeMode === "DEPT"
+                    ? "bg-sky-600 text-white shadow-sm"
+                    : "text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-700"
+                }`}
+              >
+                🏦 {deptWhLabel}
+              </button>
+              <button
+                type="button"
+                onClick={() => setScopeMode("ALL")}
+                className={`flex-1 px-2 py-1 rounded-md font-bold transition cursor-pointer ${
+                  scopeMode === "ALL"
+                    ? "bg-slate-700 text-white shadow-sm"
+                    : "text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-700"
+                }`}
+              >
+                🌐 Toàn danh mục
+              </button>
+            </div>
+          )}
           <div className="relative">
             <input
               ref={inputRef}
               type="text"
               className={`${inputClass} w-full text-xs pr-7`}
-              placeholder="🔍 Gõ mã hoặc tên hóa chất / vật tư để tìm..."
+              placeholder={`🔍 Gõ mã hoặc tên vật tư trong ${effectiveScope === "ALL" ? "toàn danh mục" : deptWhLabel}...`}
               value={q}
               onChange={(e) => setQ(e.target.value)}
               onKeyDown={(e) => {
@@ -296,6 +350,7 @@ export function ItemPicker({ value, current, onChange }: { value: string; curren
             )}
             {rows.map((i) => {
               const active = i.id === value;
+              const qtyOnHand = Number(i.dept_qty_on_hand ?? 0);
               return (
                 <button
                   key={i.id}
@@ -311,15 +366,31 @@ export function ItemPicker({ value, current, onChange }: { value: string; curren
                   <span className="truncate">
                     <span className="font-mono font-bold text-sky-700 dark:text-sky-400">{i.code}</span> · {i.name}
                   </span>
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 shrink-0">
-                    {i.base_uom}
+                  <span className="flex items-center gap-1 shrink-0">
+                    {qtyOnHand > 0 && (
+                      <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300">
+                        Tồn: {qtyOnHand.toLocaleString("vi-VN", { maximumFractionDigits: 3 })}
+                      </span>
+                    )}
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                      {i.base_uom}
+                    </span>
                   </span>
                 </button>
               );
             })}
             {!items.isLoading && rows.length === 0 && (
-              <div className="px-2.5 py-3 text-center text-slate-400">
-                Không tìm thấy mã hàng phù hợp với &ldquo;{q}&rdquo;
+              <div className="px-2.5 py-3 text-center text-slate-400 space-y-1.5">
+                <div>Không tìm thấy mã hàng trong {effectiveScope === "ALL" ? "danh mục" : deptWhLabel} phù hợp với &ldquo;{q}&rdquo;</div>
+                {scopeMode === "DEPT" && deptScope !== "ALL" && (
+                  <button
+                    type="button"
+                    onClick={() => setScopeMode("ALL")}
+                    className="text-[11px] font-bold text-sky-600 hover:underline cursor-pointer"
+                  >
+                    🌐 Tìm mở rộng trong Toàn danh mục chung →
+                  </button>
+                )}
               </div>
             )}
           </div>

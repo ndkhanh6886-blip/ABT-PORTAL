@@ -94,6 +94,8 @@ export const listQuerySchema = z.object({
   q: z.string().trim().max(100).optional(),
   item_group: z.enum(["RAW", "SEMI_FINISHED", "FINISHED"]).optional(),
   item_type: z.string().trim().max(200).optional(),
+  dept_scope: z.enum(["OLIGO", "RD", "KIT", "DEVICE", "QA", "ALL"]).optional(),
+  warehouse_id: z.string().uuid().optional().or(z.literal("")),
   page: z.coerce.number().int().min(1).default(1),
   page_size: z.coerce.number().int().min(1).max(5000).default(50),
   status: z.enum(["ACTIVE", "INACTIVE", "ALL"]).default("ACTIVE"),

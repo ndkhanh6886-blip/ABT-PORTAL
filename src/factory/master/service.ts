@@ -377,6 +377,65 @@ export async function listItems(tx: Tx, actor: AuthzActor, query: unknown) {
   if (q.missing_uom === "1" || q.missing_uom === "true") {
     where.push(`(trim(i.base_uom) ~ '^[-\u2013\u2014]+$' OR upper(trim(i.base_uom)) IN ('N/A', 'NA', 'NONE', 'NULL', '?'))`);
   }
+
+  let scopedWhIds: string[] = [];
+  if (q.warehouse_id) {
+    scopedWhIds = [q.warehouse_id];
+  } else if (q.dept_scope && q.dept_scope !== "ALL") {
+    const whCodeExpected =
+      q.dept_scope === "OLIGO"
+        ? "KHO-OLIGO"
+        : q.dept_scope === "RD"
+          ? "KHO-RD"
+          : q.dept_scope === "KIT"
+            ? "KHO-KIT"
+            : q.dept_scope === "DEVICE"
+              ? "KHO-THIET-BI"
+              : "KHO-QAQC";
+    const whRows = (
+      await tx.query(
+        `SELECT w.id
+           FROM master.warehouse w
+           LEFT JOIN core.org_unit ou ON ou.id = w.owner_org_unit_id
+          WHERE w.status = 'ACTIVE'
+            AND (ou.module_key = $1 OR w.code = $2)`,
+        [q.dept_scope, whCodeExpected]
+      )
+    ).rows;
+    scopedWhIds = whRows.map((r) => String(r.id));
+  }
+
+  if (scopedWhIds.length > 0) {
+    params.push(scopedWhIds);
+    const whParamIdx = params.length;
+    const deptExtraClauses: string[] = [
+      `EXISTS (SELECT 1 FROM inv.stock_balance sb JOIN master.location loc ON loc.id = sb.location_id WHERE sb.item_id = i.id AND loc.warehouse_id = ANY($${whParamIdx}::uuid[]))`,
+      `EXISTS (SELECT 1 FROM inv.stock_ledger sl JOIN master.location loc ON loc.id = sl.location_id WHERE sl.item_id = i.id AND loc.warehouse_id = ANY($${whParamIdx}::uuid[]))`,
+    ];
+    if (q.dept_scope === "OLIGO") {
+      deptExtraClauses.push(
+        `EXISTS (SELECT 1 FROM prep.formula pf LEFT JOIN prep.formula_line pfl ON pfl.formula_id = pf.id WHERE pf.dept_scope = 'OLIGO' AND (pf.output_item_id = i.id OR pfl.item_id = i.id))`,
+        `EXISTS (SELECT 1 FROM oligo.reagent_rule rr WHERE rr.item_id = i.id)`,
+        `EXISTS (SELECT 1 FROM oligo.modification om WHERE om.amidite_item_id = i.id)`,
+        `EXISTS (SELECT 1 FROM oligo.synth_port sp WHERE sp.item_id = i.id)`
+      );
+    } else if (q.dept_scope === "RD") {
+      deptExtraClauses.push(
+        `EXISTS (SELECT 1 FROM prep.formula pf LEFT JOIN prep.formula_line pfl ON pfl.formula_id = pf.id WHERE pf.dept_scope = 'RD' AND (pf.output_item_id = i.id OR pfl.item_id = i.id))`
+      );
+    } else if (q.dept_scope === "KIT") {
+      deptExtraClauses.push(
+        `EXISTS (SELECT 1 FROM kit.bom b LEFT JOIN kit.bom_line bl ON bl.bom_id = b.id WHERE b.product_item_id = i.id OR bl.component_item_id = i.id)`,
+        `EXISTS (SELECT 1 FROM prep.formula pf LEFT JOIN prep.formula_line pfl ON pfl.formula_id = pf.id WHERE pf.dept_scope = 'KIT' AND (pf.output_item_id = i.id OR pfl.item_id = i.id))`
+      );
+    } else if (q.dept_scope === "DEVICE") {
+      deptExtraClauses.push(
+        `EXISTS (SELECT 1 FROM device.device_model dm LEFT JOIN device.model_revision mr ON mr.model_id = dm.id LEFT JOIN device.model_bom_line mbl ON mbl.revision_id = mr.id WHERE dm.item_id = i.id OR mbl.component_item_id = i.id)`
+      );
+    }
+    where.push(`(${deptExtraClauses.join(" OR ")})`);
+  }
+
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const total = Number((await tx.query(`SELECT count(*) FROM master.item i ${whereSql}`, params)).rows[0].count);
   const missingUomCount = Number(
@@ -388,7 +447,15 @@ export async function listItems(tx: Tx, actor: AuthzActor, query: unknown) {
       )
     ).rows[0]?.cnt ?? 0
   );
-  let orderBySql = "ORDER BY i.code";
+
+  let deptQtyExpr = "0::float";
+  if (scopedWhIds.length > 0) {
+    params.push(scopedWhIds);
+    const whQtyIdx = params.length;
+    deptQtyExpr = `COALESCE((SELECT sum(sb.qty_on_hand)::float FROM inv.stock_balance sb JOIN master.location loc ON loc.id = sb.location_id WHERE sb.item_id = i.id AND loc.warehouse_id = ANY($${whQtyIdx}::uuid[]) AND sb.qty_on_hand > 0), 0)`;
+  }
+
+  let orderBySql = scopedWhIds.length > 0 ? `ORDER BY (${deptQtyExpr} > 0) DESC, i.code` : "ORDER BY i.code";
   if (rawSearch) {
     params.push(rawSearch);
     const rawIdx = params.length;
@@ -399,13 +466,14 @@ export async function listItems(tx: Tx, actor: AuthzActor, query: unknown) {
       const alnumExactIdx = params.length;
       alnumCase = ` WHEN regexp_replace(lower(i.code), '[^a-z0-9]', '', 'g') = $${alnumExactIdx} THEN 1`;
     }
-    orderBySql = `ORDER BY CASE WHEN lower(i.code) = lower($${rawIdx}) THEN 0 WHEN lower(i.code) LIKE lower($${rawIdx}) || '%' THEN 1${alnumCase} ELSE 2 END, i.code`;
+    orderBySql = `ORDER BY CASE WHEN lower(i.code) = lower($${rawIdx}) THEN 0 WHEN lower(i.code) LIKE lower($${rawIdx}) || '%' THEN 1${alnumCase} ELSE 2 END, (${deptQtyExpr} > 0) DESC, i.code`;
   }
   params.push(q.page_size, (q.page - 1) * q.page_size);
   const rows = (
     await tx.query(
       `SELECT i.*, c.name AS category_name,
-              EXISTS (SELECT 1 FROM inv.stock_ledger sl WHERE sl.item_id = i.id) AS has_stock
+              EXISTS (SELECT 1 FROM inv.stock_ledger sl WHERE sl.item_id = i.id) AS has_stock,
+              ${deptQtyExpr} AS dept_qty_on_hand
          FROM master.item i
          LEFT JOIN master.item_category c ON c.id = i.category_id
         ${whereSql} ${orderBySql} LIMIT $${params.length - 1} OFFSET $${params.length}`,

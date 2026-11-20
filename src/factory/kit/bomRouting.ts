@@ -2521,6 +2521,12 @@ export async function listKitCatalogItems(
   const params: unknown[] = [];
   const whereClauses = [
     "(i.status = 'ACTIVE' OR i.code ILIKE 'VT-TUBE-%' OR EXISTS (SELECT 1 FROM bom_refs r WHERE r.id = i.id))",
+    `(
+      EXISTS (SELECT 1 FROM kit_wh_items kw WHERE kw.id = i.id)
+      OR EXISTS (SELECT 1 FROM bom_refs r WHERE r.id = i.id)
+      OR i.code ILIKE 'VT-TUBE-%'
+      OR i.item_type IN ('FINISHED_KIT', 'SEMI_FINISHED')
+    )`,
   ];
 
   if (rawSearch) {
@@ -2578,6 +2584,34 @@ export async function listKitCatalogItems(
          SELECT component_item_id AS id FROM kit.bom_line
          UNION
          SELECT substitute_item_id AS id FROM kit.bom_line_substitute
+       ),
+       kit_wh AS (
+         SELECT id FROM master.warehouse WHERE code = 'KHO-KIT' AND status = 'ACTIVE'
+       ),
+       kit_wh_items AS (
+         SELECT DISTINCT b.item_id AS id
+           FROM inv.stock_balance b
+           JOIN master.location loc ON loc.id = b.location_id
+          WHERE loc.warehouse_id IN (SELECT id FROM kit_wh)
+            AND b.qty_on_hand > 0
+         UNION
+         SELECT DISTINCT dl.item_id AS id
+           FROM inv.stock_document_line dl
+           JOIN inv.stock_document d ON d.id = dl.document_id
+           LEFT JOIN master.location fl ON fl.id = dl.from_location_id
+           LEFT JOIN master.location tl ON tl.id = dl.to_location_id
+          WHERE d.warehouse_id IN (SELECT id FROM kit_wh)
+             OR fl.warehouse_id IN (SELECT id FROM kit_wh)
+             OR tl.warehouse_id IN (SELECT id FROM kit_wh)
+         UNION
+         SELECT DISTINCT fl.item_id AS id
+           FROM prep.formula_line fl
+           JOIN prep.formula f ON f.id = fl.formula_id
+          WHERE f.dept_scope = 'KIT'
+         UNION
+         SELECT DISTINCT f.output_item_id AS id
+           FROM prep.formula f
+          WHERE f.dept_scope = 'KIT'
        )
        SELECT i.id, i.code, i.name, i.item_type, i.base_uom, i.tracking, i.shelf_life_days,
               coalesce(i.is_stocked, true) AS is_stocked,

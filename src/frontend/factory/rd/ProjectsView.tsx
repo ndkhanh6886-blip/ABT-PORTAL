@@ -551,8 +551,8 @@ function ProjectPanel({
     queryFn: () => api<ProjectOpsData>(`/api/factory/rd/project-ops?project_id=${id}`),
   });
   const itemsQuery = useQuery({
-    queryKey: ["factory", "rd", "master-items"],
-    queryFn: () => api<{ rows: { id: string; code: string; name: string; base_uom: string; item_type: string }[] }>("/api/factory/master/items?page_size=2000"),
+    queryKey: ["factory", "rd", "master-items", "RD"],
+    queryFn: () => api<{ rows: { id: string; code: string; name: string; base_uom: string; item_type: string; dept_qty_on_hand?: number }[] }>("/api/factory/master/items?page_size=2000&dept_scope=RD"),
   });
 
   const [subTab, setSubTab] = useState<"gates" | "wbs" | "materials" | "bom" | "tpp" | "risks" | "roadmap">("gates");

@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, fmtDate, fmtQty, useDebouncedValue, useFactoryMe } from "../api";
 import { Card, Empty, ErrorNote, inputClass, LOT_STATUS_LABEL, Pager, StatusBadge, Table } from "../ui";
-import { LotPanel } from "./LotPanel";
+import { LotPanel, type LotPanelMode } from "./LotPanel";
 
 export type StockItemGroup = "" | "RAW" | "SEMI_FINISHED" | "FINISHED";
 
@@ -120,6 +120,7 @@ interface StockRow {
   lot_status: string | null;
   expiry_date: string | null;
   warehouse_code: string;
+  location_id?: string;
   location_code: string;
   is_quarantine: boolean;
   qty_on_hand: string;
@@ -163,6 +164,7 @@ export function StockView({
   const [status, setStatus] = useState(initialStatus);
   const [page, setPage] = useState(1);
   const [lotId, setLotId] = useState<string | null>(null);
+  const [lotMode, setLotMode] = useState<LotPanelMode>("VIEW");
 
   const params = new URLSearchParams({ page: String(page), page_size: "50" });
   if (warehouseId) params.set("warehouse_id", warehouseId);
@@ -527,30 +529,78 @@ export function StockView({
                     <td className="py-2 pr-3 text-right whitespace-nowrap font-semibold">{fmtQty(r.qty_available)}</td>
                     <td className="py-2 pr-3 text-right whitespace-nowrap">
                       {r.lot_id && (
-                        <button
-                          type="button"
-                          onClick={() => setLotId(isLotOpen ? null : r.lot_id)}
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
-                            isLotOpen
-                              ? "bg-sky-600 text-white border-sky-500"
+                        <div className="inline-flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setLotId(r.lot_id);
+                              setLotMode("EDIT");
+                            }}
+                            title="Sửa thông tin cơ bản (Tên vật tư, ĐVT, Mã lô, Lô NSX, Ngày SX, Hạn dùng)"
+                            className="px-2 py-1 rounded-lg text-[11px] font-bold border bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-800 hover:bg-amber-100 transition cursor-pointer"
+                          >
+                            ✏️ Sửa
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setLotId(r.lot_id);
+                              setLotMode("ISSUE");
+                            }}
+                            title="Xuất kho trực tiếp từ lô này"
+                            className="px-2 py-1 rounded-lg text-[11px] font-bold border bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 border-rose-300 dark:border-rose-800 hover:bg-rose-100 transition cursor-pointer"
+                          >
+                            📤 Xuất
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setLotId(r.lot_id);
+                              setLotMode("ADJUST");
+                            }}
+                            title="Điều chỉnh / Cân đối tồn kho thực tế của lô này"
+                            className="px-2 py-1 rounded-lg text-[11px] font-bold border bg-indigo-50 dark:bg-indigo-950/40 text-indigo-800 dark:text-indigo-300 border-indigo-300 dark:border-indigo-800 hover:bg-indigo-100 transition cursor-pointer"
+                          >
+                            ⚖️ Cân đối
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (isLotOpen && lotMode === "VIEW") {
+                                setLotId(null);
+                              } else {
+                                setLotId(r.lot_id);
+                                setLotMode("VIEW");
+                              }
+                            }}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
+                              isLotOpen
+                                ? "bg-sky-600 text-white border-sky-500"
+                                : r.lot_status === "QUARANTINE" || r.lot_status === "PENDING_QC"
+                                  ? "bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/40 hover:bg-amber-500/25"
+                                  : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-200"
+                            }`}
+                          >
+                            {isLotOpen
+                              ? "Đóng lô"
                               : r.lot_status === "QUARANTINE" || r.lot_status === "PENDING_QC"
-                                ? "bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/40 hover:bg-amber-500/25"
-                                : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-200"
-                          }`}
-                        >
-                          {isLotOpen
-                            ? "Đóng lô"
-                            : r.lot_status === "QUARANTINE" || r.lot_status === "PENDING_QC"
-                              ? "🧪 Xem & Duyệt QC"
-                              : "Chi tiết lô"}
-                        </button>
+                                ? "🧪 Duyệt QC"
+                                : "Chi tiết"}
+                          </button>
+                        </div>
                       )}
                     </td>
                   </tr>
                   {isLotOpen && r.lot_id && (
                     <tr className="bg-sky-50/40 dark:bg-sky-950/20">
                       <td colSpan={10} className="p-3 border-b-2 border-sky-400 dark:border-sky-700">
-                        <LotPanel key={r.lot_id} lotId={r.lot_id} onClose={() => setLotId(null)} />
+                        <LotPanel
+                          key={r.lot_id}
+                          lotId={r.lot_id}
+                          initialMode={lotMode}
+                          defaultLocationId={r.location_id}
+                          onClose={() => setLotId(null)}
+                        />
                       </td>
                     </tr>
                   )}
