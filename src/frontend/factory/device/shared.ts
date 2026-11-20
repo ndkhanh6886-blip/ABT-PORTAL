@@ -59,7 +59,7 @@ export const STATION_LABELS: Record<string, string> = {
   STATION_1_MECH: "Trạm 1: Cơ khí & Khung vỏ",
   STATION_2_PCB: "Trạm 2: Điện & Bo mạch điều khiển",
   STATION_3_FW: "Trạm 3: Module Quang/Nhiệt & Nạp Firmware",
-  STATION_4_FQC: "Trạm 4: Chạy lão hóa (Burn-in) & FQC",
+  STATION_4_FQC: "Trạm 4: Kiểm tra thử nghiệm & FQC",
   FIELD_SERVICE: "Bảo hành / Dịch vụ hiện trường",
 };
 
@@ -107,7 +107,7 @@ export const ORDER_STATUS: Record<string, [string, string]> = {
 
 export const UNIT_STATUS: Record<string, [string, string]> = {
   IN_ASSEMBLY: ["PENDING_QC", "Đang lắp ráp (Trạm 1–3)"],
-  BURN_IN: ["QUARANTINE", "Đang chạy lão hóa (Burn-in)"],
+  BURN_IN: ["QUARANTINE", "Đang kiểm tra thử nghiệm"],
   FQC: ["QUARANTINE", "Đang kiểm tra xuất xưởng (FQC)"],
   QA_PASSED: ["RELEASED", "QA đã giải phóng xuất xưởng"],
   DELIVERED: ["RELEASED", "Đã giao khách hàng"],

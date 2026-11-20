@@ -21,7 +21,7 @@ const ORDER_ACTION_LABELS: Record<string, string> = {
 };
 
 const UNIT_ACTION_LABELS: Record<string, string> = {
-  start_burn_in: "Chuyển sang Trạm 4: Chạy lão hóa (Burn-in)",
+  start_burn_in: "Chuyển sang Kiểm tra thử nghiệm (Trạm cuối)",
   return_assembly: "Trả về Lắp ráp (Trạm 1–3)",
   to_fqc: "Chuyển sang Đo kiểm xuất xưởng (FQC)",
   fail_fqc: "FQC Không đạt (Mở NCR & trả về lắp ráp)",
@@ -136,6 +136,11 @@ interface UnitDetail extends UnitSummary {
     max_temp_c: number | null;
     result: string;
     notes: string | null;
+    nas_path?: string | null;
+    checklist_json?: { code?: string; label: string; passed: boolean }[] | null;
+    attachment_name?: string | null;
+    attachment_data?: string | null;
+    recorded_by_name?: string | null;
   }[];
   bom_lines: BomLine[];
   actions: AllowedAction[];
@@ -192,11 +197,17 @@ export function AssemblyDhrView() {
   });
 
   const [burnForm, setBurnForm] = useState({
-    hours: "48",
-    max_temp_c: "95",
-    cycles_completed: "96",
     result: "PASS" as "PASS" | "FAIL",
-    notes: "Chạy lão hóa 48h ổn định nhiệt/quang",
+    nas_path: "",
+    notes: "Đã kiểm tra thử nghiệm đạt các chỉ tiêu kỹ thuật, ký phiếu thử nghiệm và lưu NAS",
+    attachment_name: "",
+    attachment_data: "",
+    checklist: [
+      { code: "MECH_VISUAL", label: "Ngoại quan, khung vỏ cơ khí & lắp ghép hoàn chỉnh", passed: true },
+      { code: "ELEC_POWER", label: "Nguồn điện, an toàn điện & khởi động hệ thống ổn định", passed: true },
+      { code: "FUNC_TRIAL", label: "Chạy thử nghiệm chức năng / thông số kỹ thuật đạt yêu cầu", passed: true },
+      { code: "NAS_SIGNED", label: "Đã ký Phiếu kiểm tra thử nghiệm & lưu hồ sơ trên NAS", passed: true },
+    ],
   });
 
   const [fqcForm, setFqcForm] = useState({
@@ -609,7 +620,7 @@ export function AssemblyDhrView() {
                       🟢 DHR REVIEW-BY-EXCEPTION (RbE)
                     </span>
                     <span className="font-semibold text-slate-800 dark:text-slate-200">
-                      {d.units.filter((u) => u.fqc_passed === true).length}/{d.units.length} máy đạt chuẩn thông số lắp ráp 4 trạm &amp; Burn-in {d.required_burn_in_hours}h
+                      {d.units.filter((u) => u.fqc_passed === true).length}/{d.units.length} máy đạt chuẩn thông số lắp ráp &amp; Kiểm tra thử nghiệm
                     </span>
                   </div>
                   <div className="font-mono text-[11px] text-slate-600 dark:text-slate-300">
@@ -643,7 +654,7 @@ export function AssemblyDhrView() {
 
                 <div className="p-3 rounded-2xl border border-sky-200 dark:border-sky-900/60 bg-sky-50/40 dark:bg-sky-950/20 flex flex-col gap-2">
                   <div className="text-[11px] font-bold uppercase tracking-wider text-sky-900 dark:text-sky-200">
-                    Chuỗi thực thi Lệnh Lắp Ráp (WO) ➔ Xuất Kho Nguyên Liệu BOM ➔ Lão Hóa ➔ FQC ➔ Bàn Giao Giao Hàng
+                    Chuỗi thực thi Lệnh Lắp Ráp (WO) ➔ Xuất Kho Nguyên Liệu BOM ➔ Kiểm Tra Thử Nghiệm ➔ FQC ➔ Bàn Giao Giao Hàng
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <Button
@@ -674,7 +685,7 @@ export function AssemblyDhrView() {
                     <Button
                       variant="ghost"
                       disabled={orderSerialMut.isPending || d.units.length === 0}
-                      title={`Chỉ chuyển các máy đã ghi lão hóa ĐẠT ≥ ${d.required_burn_in_hours}h; model phải có tiêu chuẩn FQC`}
+                      title="Chuyển các máy đã Kiểm tra thử nghiệm ĐẠT sang bộ phận QC (FQC)"
                       onClick={() =>
                         orderSerialMut.mutate({
                           operation: "progress_stage",
@@ -683,7 +694,7 @@ export function AssemblyDhrView() {
                         })
                       }
                     >
-                      🔥 2. Chuyển máy đã lão hóa ĐẠT ➔ QC (FQC)
+                      🧪 2. Chuyển máy đã Kiểm tra thử nghiệm ĐẠT ➔ QC (FQC)
                     </Button>
                     <span className="text-[11px] text-slate-500 dark:text-slate-400 self-center">
                       3. QC ghi kết quả FQC trên phiếu QC, QA ký giải phóng từng máy (nút trên từng máy).
@@ -733,9 +744,6 @@ export function AssemblyDhrView() {
                     <span>
                       Số lượng: <strong>{d.qty} máy</strong> (Đã cấp: <strong>{d.units.length} Serial</strong>)
                     </span>
-                    <span>
-                      Yêu cầu lão hóa: <strong>{d.required_burn_in_hours} giờ</strong>
-                    </span>
                   </div>
                   {d.units.length < d.qty && d.status !== "CANCELLED" && (
                     <Button
@@ -749,7 +757,7 @@ export function AssemblyDhrView() {
                 </div>
 
                 {d.units.length > 0 ? (
-                  <Table head={["Số Serial (Bấm để mở DHR / Đổi S/N)", "Firmware", "Linh kiện DHR", "Burn-in", "FQC", "Bảo hành đến", "Trạng thái"]}>
+                  <Table head={["Số Serial (Bấm để mở DHR / Đổi S/N)", "Firmware", "Linh kiện DHR", "KT Thử nghiệm", "FQC", "Bảo hành đến", "Trạng thái"]}>
                     {d.units.map((unit) => {
                       const unitBlockedByShortage =
                         unit.status === "IN_ASSEMBLY" &&
@@ -820,7 +828,11 @@ export function AssemblyDhrView() {
                           <td className="py-2 pr-3">{unit.firmware_version ?? d.default_firmware ?? "—"}</td>
                           <td className="py-2 pr-3">{unit.component_count} dòng</td>
                           <td className="py-2 pr-3">
-                            {unit.passed_burn_in_hours != null ? `${fmtQty(unit.passed_burn_in_hours)}h PASS` : "Chưa chạy"}
+                            {unit.passed_burn_in_hours != null ? (
+                              <span className="text-emerald-600 dark:text-emerald-400 font-bold">ĐẠT (PASS)</span>
+                            ) : (
+                              "Chưa KT"
+                            )}
                           </td>
                           <td className="py-2 pr-3">
                             {unit.fqc_passed === true ? "ĐẠT" : unit.fqc_summary ? "KHÔNG ĐẠT" : "Chưa đo"}
@@ -1007,61 +1019,169 @@ export function AssemblyDhrView() {
 
             <div className="flex flex-col gap-3">
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                2. Chạy lão hóa (Burn-in {u.required_burn_in_hours}h), Kiểm định FQC &amp; Bàn giao
+                2. Kiểm tra thử nghiệm (Đạt / Không đạt), Ký phiếu thử nghiệm &amp; Chuyển QC
               </h3>
 
-              {u.status === "BURN_IN" && (
-                <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 flex flex-col gap-2.5">
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                    <Field label="Số giờ chạy thực tế">
-                      <input
-                        type="number"
-                        className={inputClass}
-                        value={burnForm.hours}
-                        onChange={(e) => setBurnForm({ ...burnForm, hours: e.target.value })}
-                      />
-                    </Field>
-                    <Field label="Nhiệt độ cực đại (°C)">
-                      <input
-                        type="number"
-                        className={inputClass}
-                        value={burnForm.max_temp_c}
-                        onChange={(e) => setBurnForm({ ...burnForm, max_temp_c: e.target.value })}
-                      />
-                    </Field>
-                    <Field label="Kết quả Burn-in">
+              {(u.status === "BURN_IN" || (u.status === "IN_ASSEMBLY" && u.components.length > 0)) && (
+                <div className="p-3.5 rounded-xl border-2 border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/40 dark:bg-slate-950/60 flex flex-col gap-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-indigo-200/70 dark:border-slate-800">
+                    <div className="text-xs font-extrabold text-indigo-950 dark:text-indigo-200">
+                      🧪 Phiếu Kiểm Tra Thử Nghiệm Thiết Bị (Trạm cuối KTCN trước khi chuyển QC)
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setBurnForm((prev) => ({
+                          ...prev,
+                          result: "PASS",
+                          checklist: prev.checklist.map((item) => ({ ...item, passed: true })),
+                        }))
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-extrabold cursor-pointer shadow-2xs"
+                    >
+                      ☑ Tick PASS nhanh tất cả chỉ tiêu
+                    </button>
+                  </div>
+
+                  {/* Checklist các chỉ tiêu kiểm tra thử nghiệm */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {burnForm.checklist.map((item, idx) => (
+                      <label
+                        key={item.code}
+                        className={`flex items-start gap-2 p-2 rounded-xl border text-xs font-semibold cursor-pointer transition-colors ${
+                          item.passed
+                            ? "bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800 text-emerald-950 dark:text-emerald-200"
+                            : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={item.passed}
+                          onChange={(e) => {
+                            const nextList = burnForm.checklist.map((c, i) =>
+                              i === idx ? { ...c, passed: e.target.checked } : c
+                            );
+                            const allPass = nextList.every((c) => c.passed);
+                            setBurnForm({
+                              ...burnForm,
+                              checklist: nextList,
+                              result: allPass ? "PASS" : burnForm.result,
+                            });
+                          }}
+                          className="mt-0.5 w-4 h-4 accent-emerald-600 rounded cursor-pointer shrink-0"
+                        />
+                        <span>
+                          {idx + 1}. {item.label}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <Field label="Kết luận Kiểm tra thử nghiệm">
                       <select
                         className={inputClass}
                         value={burnForm.result}
                         onChange={(e) => setBurnForm({ ...burnForm, result: e.target.value as "PASS" | "FAIL" })}
                       >
-                        <option value="PASS">PASS — Đạt ổn định</option>
-                        <option value="FAIL">FAIL — Có sự cố</option>
+                        <option value="PASS">PASS — ĐẠT (Đủ điều kiện chuyển sang QC)</option>
+                        <option value="FAIL">FAIL — KHÔNG ĐẠT (Ghi nhận lỗi / Căn chỉnh lại)</option>
                       </select>
                     </Field>
+                    <Field label="Mã phiếu thử nghiệm đã ký / Đường dẫn lưu NAS">
+                      <input
+                        className={inputClass}
+                        placeholder="VD: \\NAS\KTCN\PhieuThuNghiem\PCR-WD8..."
+                        value={burnForm.nas_path}
+                        onChange={(e) => setBurnForm({ ...burnForm, nas_path: e.target.value })}
+                      />
+                    </Field>
                   </div>
-                  <Field label="Nhật ký chạy lão hóa">
-                    <input
-                      className={inputClass}
-                      value={burnForm.notes}
-                      onChange={(e) => setBurnForm({ ...burnForm, notes: e.target.value })}
-                    />
-                  </Field>
-                  <div className="flex justify-end">
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <Field label="Tải lên file Kết quả / Bản scan Phiếu thử nghiệm đã ký (PDF, Word, Excel, Ảnh)">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="file"
+                          accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                              setBurnForm((prev) => ({
+                                ...prev,
+                                attachment_name: file.name,
+                                attachment_data: typeof reader.result === "string" ? reader.result : "",
+                              }));
+                            };
+                            reader.readAsDataURL(file);
+                          }}
+                          className="text-xs file:mr-2 file:py-1 file:px-2.5 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-indigo-100 file:text-indigo-800 hover:file:bg-indigo-200 cursor-pointer"
+                        />
+                        {burnForm.attachment_name && (
+                          <button
+                            type="button"
+                            onClick={() => setBurnForm((prev) => ({ ...prev, attachment_name: "", attachment_data: "" }))}
+                            className="text-[11px] font-bold text-rose-600 hover:underline shrink-0 cursor-pointer"
+                          >
+                            ✕ Bỏ file
+                          </button>
+                        )}
+                      </div>
+                      {burnForm.attachment_name && (
+                        <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 mt-1">
+                          📎 Đã chọn file: {burnForm.attachment_name}
+                        </div>
+                      )}
+                    </Field>
+                    <Field label="Ghi chú / Nhận xét kiểm tra thử nghiệm">
+                      <input
+                        className={inputClass}
+                        value={burnForm.notes}
+                        onChange={(e) => setBurnForm({ ...burnForm, notes: e.target.value })}
+                      />
+                    </Field>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
                     <Button
+                      variant="ghost"
                       disabled={unitWorkMut.isPending}
                       onClick={() =>
                         unitWorkMut.mutate({
                           kind: "burn_in",
-                          hours: Number(burnForm.hours),
-                          max_temp_c: Number(burnForm.max_temp_c),
-                          cycles_completed: Number(burnForm.cycles_completed),
                           result: burnForm.result,
-                          notes: burnForm.notes,
+                          nas_path: burnForm.nas_path.trim() || null,
+                          notes: burnForm.notes.trim() || null,
+                          checklist: burnForm.checklist,
+                          attachment_name: burnForm.attachment_name || null,
+                          attachment_data: burnForm.attachment_data || null,
+                          auto_advance_to_fqc: false,
                         })
                       }
                     >
-                      Ghi kết quả Burn-in
+                      💾 Ghi kết quả Kiểm tra thử nghiệm
+                    </Button>
+                    <Button
+                      disabled={unitWorkMut.isPending}
+                      onClick={() => {
+                        const allChecked = burnForm.checklist.map((c) => ({ ...c, passed: true }));
+                        setBurnForm((prev) => ({ ...prev, result: "PASS", checklist: allChecked }));
+                        unitWorkMut.mutate({
+                          kind: "burn_in",
+                          result: "PASS",
+                          nas_path: burnForm.nas_path.trim() || null,
+                          notes: burnForm.notes.trim() || "Đã kiểm tra thử nghiệm ĐẠT, ký phiếu thử nghiệm và chuyển sang QC",
+                          checklist: allChecked,
+                          attachment_name: burnForm.attachment_name || null,
+                          attachment_data: burnForm.attachment_data || null,
+                          auto_advance_to_fqc: true,
+                          fqc_assignee_id: fqcAssignee ? Number(fqcAssignee) : null,
+                        });
+                      }}
+                    >
+                      ⚡ Tick PASS nhanh &amp; Chuyển ngay sang QC (FQC)
                     </Button>
                   </div>
                 </div>
@@ -1126,21 +1246,57 @@ export function AssemblyDhrView() {
               )}
 
               {u.burn_in_runs.length > 0 ? (
-                <Table head={["Thời điểm", "Giờ chạy / Yêu cầu", "Nhiệt độ", "Kết quả", "Ghi chú"]}>
-                  {u.burn_in_runs.map((r) => (
-                    <tr key={r.id}>
-                      <td className="py-2 pr-3">{fmtDateTime(r.ended_at)}</td>
-                      <td className="py-2 pr-3">
-                        {fmtQty(r.hours)}h / {fmtQty(r.required_hours)}h
-                      </td>
-                      <td className="py-2 pr-3">{r.max_temp_c != null ? `${r.max_temp_c} °C` : "—"}</td>
-                      <td className="py-2 pr-3 font-bold">{r.result}</td>
-                      <td className="py-2 pr-3">{r.notes ?? "—"}</td>
-                    </tr>
-                  ))}
+                <Table head={["Thời điểm", "Kết quả", "Chỉ tiêu / Hồ sơ NAS & File KQ", "Ghi chú"]}>
+                  {u.burn_in_runs.map((r) => {
+                    const checks = Array.isArray(r.checklist_json) ? r.checklist_json : [];
+                    const passCnt = checks.filter((c) => c.passed).length;
+                    return (
+                      <tr key={r.id}>
+                        <td className="py-2 pr-3 whitespace-nowrap">{fmtDateTime(r.ended_at)}</td>
+                        <td className="py-2 pr-3 font-bold">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[11px] font-extrabold ${
+                              r.result === "PASS"
+                                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                                : "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300"
+                            }`}
+                          >
+                            {r.result === "PASS" ? "ĐẠT (PASS)" : "KHÔNG ĐẠT (FAIL)"}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-3 text-xs space-y-0.5">
+                          {checks.length > 0 && (
+                            <div className="font-semibold text-emerald-700 dark:text-emerald-300">
+                              ✓ Đạt {passCnt}/{checks.length} chỉ tiêu thử nghiệm
+                            </div>
+                          )}
+                          {r.nas_path && (
+                            <div className="font-mono text-[11px] text-sky-700 dark:text-sky-300">
+                              📁 NAS: {r.nas_path}
+                            </div>
+                          )}
+                          {r.attachment_name && r.attachment_data && (
+                            <div>
+                              <a
+                                href={r.attachment_data}
+                                download={r.attachment_name}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline"
+                              >
+                                📎 {r.attachment_name} (Tải / Xem file KQ)
+                              </a>
+                            </div>
+                          )}
+                          {!checks.length && !r.nas_path && !r.attachment_name && "Đã kiểm tra thử nghiệm"}
+                        </td>
+                        <td className="py-2 pr-3">{r.notes ?? "—"}</td>
+                      </tr>
+                    );
+                  })}
                 </Table>
               ) : (
-                <Empty>Chưa có bản ghi chạy lão hóa (Burn-in) nào.</Empty>
+                <Empty>Chưa có bản ghi kiểm tra thử nghiệm nào.</Empty>
               )}
             </div>
           </div>

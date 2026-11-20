@@ -328,7 +328,7 @@ export const deviceUnitMachine = defineMachine<DeviceUnitStatus, DeviceUnitRow>(
       guards: [
         {
           code: "BURN_IN_NOT_PASSED",
-          message: "Chỉ được chuyển sang FQC khi có kết quả chạy lão hóa (Burn-in) đạt PASS và số giờ chạy ≥ số giờ quy định của model.",
+          message: "Chỉ được chuyển sang Kiểm định QC (FQC) khi đã ghi nhận kết quả Kiểm tra thử nghiệm đạt (PASS).",
           check: async ({ tx, row }) => {
             const run = await tx.query(
               "SELECT 1 FROM device.burn_in_run WHERE unit_id = $1 AND result = 'PASS' AND hours >= required_hours LIMIT 1",
@@ -336,12 +336,6 @@ export const deviceUnitMachine = defineMachine<DeviceUnitStatus, DeviceUnitRow>(
             );
             return (run.rowCount ?? 0) > 0;
           },
-        },
-        {
-          // QT 21: the finished device goes to QC-QA on a QC task, so the model needs an effective FQC spec
-          code: "FQC_SPEC_MISSING",
-          message: "Model chưa có tiêu chuẩn kiểm tra xuất xưởng (FQC) có hiệu lực — nhờ QA/QC ban hành tiêu chuẩn trước khi chuyển thiết bị sang QC.",
-          check: async ({ tx, row }) => Boolean(row.fqc_test_id) || Boolean(await fqcSpecFor(tx, row.model_id)),
         },
         {
           code: "FQC_ASSIGNEE",
@@ -356,9 +350,9 @@ export const deviceUnitMachine = defineMachine<DeviceUnitStatus, DeviceUnitRow>(
       ],
       patch: ({ payload }) => (Number(payload.fqc_assignee_id) ? { fqc_assignee_id: Number(payload.fqc_assignee_id) } : {}),
       effects: async ({ tx, actor, updated }) => {
-        // FQC test in QMS, assigned to the chosen QC person when there is one
+        // FQC test in QMS, assigned to the chosen QC person when there is one (auto-provisions default FQC spec if model has none yet)
         if (!updated.fqc_test_id) {
-          const specId = await fqcSpecFor(tx, updated.model_id);
+          const specId = (await fqcSpecFor(tx, updated.model_id)) ?? (await ensureDefaultFqcSpecForModel(tx, actor, updated.model_id));
           if (specId) {
             const qcTest = await createQcTest(tx, actor, {
               spec_id: specId,
@@ -374,7 +368,7 @@ export const deviceUnitMachine = defineMachine<DeviceUnitStatus, DeviceUnitRow>(
           await notifyUsers(tx, [assignee], {
             type: "DEVICE_FQC_ASSIGNED",
             title: `Bạn được giao kiểm tra xuất xưởng (FQC) máy ${updated.serial_no}`,
-            body: "Phòng Kỹ thuật – Công nghệ đã chạy thử đạt, chuyển thiết bị sang QC-QA.",
+            body: "Phòng Kỹ thuật – Công nghệ đã hoàn tất Kiểm tra thử nghiệm đạt, chuyển thiết bị sang QC-QA.",
             entityType: "device_unit",
             entityId: updated.id,
             link: "/?tab=factory-device",
@@ -593,6 +587,62 @@ async function fqcSpecFor(tx: Tx, modelId: string): Promise<string | null> {
     )
   ).rows[0];
   return r?.spec_id ?? null;
+}
+
+/** Automatically provisions and links an effective FQC specification for a model if none has been linked yet. */
+async function ensureDefaultFqcSpecForModel(tx: Tx, actor: AuthzActor, modelId: string): Promise<string> {
+  const existing = await fqcSpecFor(tx, modelId);
+  if (existing) return existing;
+  const model = (await tx.query("SELECT id, code, name, item_id FROM device.device_model WHERE id = $1", [modelId])).rows[0];
+  if (!model) throw notFound("model thiết bị");
+  const code = await nextNumber(tx, "QC_SPEC");
+  const spec = (
+    await tx.query(
+      `INSERT INTO qms.qc_spec (code, spec_version, name, applies_to, item_id, status, effective_at, notes, created_by, updated_by)
+       VALUES ($1, 1, $2, 'DEVICE_MODEL', $3, 'EFFECTIVE', now(), $4, $5, $5)
+       RETURNING id`,
+      [
+        code,
+        `Tiêu chuẩn kiểm tra xuất xưởng (FQC) — ${model.code} ${model.name}`,
+        model.item_id ?? null,
+        "Tiêu chuẩn FQC mặc định cho thiết bị sau bước Kiểm tra thử nghiệm KTCN",
+        actor.userId || 1,
+      ]
+    )
+  ).rows[0];
+  const defaultParams = [
+    { seq: 1, name: "Hồ sơ & Phiếu kiểm tra thử nghiệm KTCN (NAS / File đính kèm)", method: "Đối chiếu hồ sơ DHR & Phiếu thử nghiệm", value_type: "PASS_FAIL" },
+    { seq: 2, name: "Kiểm tra ngoại quan, tem nhãn S/N & phụ kiện tiêu chuẩn", method: "Kiểm tra trực quan", value_type: "PASS_FAIL" },
+    { seq: 3, name: "Kiểm tra vận hành & an toàn xuất xưởng", method: "Đo kiểm chức năng thiết bị", value_type: "PASS_FAIL" },
+  ];
+  for (const p of defaultParams) {
+    await tx.query(
+      `INSERT INTO qms.qc_spec_parameter (spec_id, seq, name, method, value_type, is_critical)
+       VALUES ($1, $2, $3, $4, $5, true)`,
+      [spec.id, p.seq, p.name, p.method, p.value_type]
+    );
+  }
+  await tx.query("UPDATE device.device_model SET fqc_spec_id = $2 WHERE id = $1", [modelId, spec.id]);
+  return spec.id as string;
+}
+
+let trialInspectionSchemaEnsured = false;
+async function ensureDeviceTrialInspectionSchema(tx: Tx): Promise<void> {
+  if (trialInspectionSchemaEnsured) return;
+  await tx.query("SAVEPOINT sp_device_trial_schema");
+  try {
+    await tx.query(`
+      ALTER TABLE device.burn_in_run
+        ADD COLUMN IF NOT EXISTS nas_path text,
+        ADD COLUMN IF NOT EXISTS checklist_json jsonb,
+        ADD COLUMN IF NOT EXISTS attachment_name text,
+        ADD COLUMN IF NOT EXISTS attachment_data text;
+    `);
+    await tx.query("RELEASE SAVEPOINT sp_device_trial_schema");
+    trialInspectionSchemaEnsured = true;
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_device_trial_schema").catch(() => {});
+  }
 }
 
 const pad = (n: number, width: number) => String(n).padStart(width, "0");
@@ -905,24 +955,55 @@ export async function installUnitComponent(tx: Tx, actor: AuthzActor, unitId: st
 }
 
 const burnInSchema = z.object({
-  hours: z.coerce.number().min(0, "số giờ lão hóa ≥ 0").max(1000),
+  hours: z.coerce.number().min(0, "số giờ ≥ 0").max(1000).optional(),
   max_temp_c: z.coerce.number().optional().nullable(),
   cycles_completed: z.coerce.number().int().min(0).optional().nullable(),
   result: z.enum(["PASS", "FAIL"]),
   test_asset_id: z.string().uuid().optional().nullable(),
-  notes: z.string().trim().max(1000).optional().nullable(),
+  notes: z.string().trim().max(2000).optional().nullable(),
+  nas_path: z.string().trim().max(1000).optional().nullable(),
+  checklist: z
+    .array(
+      z.object({
+        code: z.string().trim().max(80).optional(),
+        label: z.string().trim().max(300),
+        passed: z.boolean(),
+      })
+    )
+    .max(30)
+    .optional()
+    .nullable(),
+  attachment_name: z.string().trim().max(300).optional().nullable(),
+  attachment_data: z.string().max(15_000_000).optional().nullable(),
+  auto_advance_to_fqc: z.boolean().optional(),
+  fqc_assignee_id: z.coerce.number().int().optional().nullable(),
 });
 
 export async function recordBurnInRun(tx: Tx, actor: AuthzActor, unitId: string, input: unknown) {
+  await ensureDeviceTrialInspectionSchema(tx);
   const d = parseInput(burnInSchema, input);
-  const unit = (await tx.query("SELECT * FROM device.device_unit WHERE id = $1 FOR UPDATE", [unitId])).rows[0] as
+  let unit = (await tx.query("SELECT * FROM device.device_unit WHERE id = $1 FOR UPDATE", [unitId])).rows[0] as
     | DeviceUnitRow
     | undefined;
   if (!unit) throw notFound("máy (serial)");
   const orgId = await unitOrgUnit(tx, unit.order_id);
   await authorize(tx, actor, "device.assembly.execute", orgId);
+  if (unit.status === "IN_ASSEMBLY") {
+    unit = await runTransition(
+      tx,
+      deviceUnitMachine,
+      actor,
+      {
+        id: unit.id,
+        action: "start_burn_in",
+        expectedVersion: unit.version,
+        payload: { firmware_version: unit.firmware_version || "v1.0.0" },
+      },
+      { trusted: true }
+    );
+  }
   if (unit.status !== "BURN_IN") {
-    throw invalid("Máy phải đang ở trạng thái Chạy lão hóa (BURN_IN) mới ghi được kết quả lão hóa.");
+    throw invalid("Máy phải đang ở bước Kiểm tra thử nghiệm (BURN_IN) mới ghi được kết quả thử nghiệm.");
   }
   if (d.test_asset_id) {
     await assertUsable(tx, d.test_asset_id);
@@ -931,19 +1012,36 @@ export async function recordBurnInRun(tx: Tx, actor: AuthzActor, unitId: string,
     await tx.query("SELECT required_burn_in_hours::float AS req FROM device.device_model WHERE id = $1", [unit.model_id])
   ).rows[0];
   const reqHours = Number(model?.req ?? 48);
+  const effectiveHours = d.hours !== undefined ? d.hours : reqHours;
 
   const run = (
     await tx.query(
-      `INSERT INTO device.burn_in_run (unit_id, ended_at, hours, required_hours, max_temp_c, cycles_completed, result, notes, recorded_by)
-       VALUES ($1, now(), $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [unit.id, d.hours, reqHours, d.max_temp_c ?? null, d.cycles_completed ?? null, d.result, d.notes ?? null, actor.userId]
+      `INSERT INTO device.burn_in_run
+         (unit_id, ended_at, hours, required_hours, max_temp_c, cycles_completed, result, notes, nas_path, checklist_json, attachment_name, attachment_data, recorded_by)
+       VALUES ($1, now(), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+      [
+        unit.id,
+        effectiveHours,
+        reqHours,
+        d.max_temp_c ?? null,
+        d.cycles_completed ?? null,
+        d.result,
+        d.notes ?? null,
+        d.nas_path ?? null,
+        d.checklist ? JSON.stringify(d.checklist) : null,
+        d.attachment_name ?? null,
+        d.attachment_data ?? null,
+        actor.userId,
+      ]
     )
   ).rows[0];
   await writeAudit(tx, actor, {
     entityType: "device_unit",
     entityId: unit.id,
     action: "record_burn_in",
-    changes: { burn_in: [null, `${d.hours}h / ${reqHours}h — ${d.result}`] },
+    changes: {
+      trial_inspection: [null, `${d.result}${d.nas_path ? ` · NAS: ${d.nas_path}` : ""}${d.attachment_name ? ` · File: ${d.attachment_name}` : ""}`],
+    },
   });
   if (d.result === "FAIL") {
     await raiseDeviation(tx, actor, {
@@ -952,8 +1050,24 @@ export async function recordBurnInRun(tx: Tx, actor: AuthzActor, unitId: string,
       entity_id: unit.id,
       step_ref: "BURN_IN",
       severity: "HIGH",
-      description: `Lão hóa (Burn-In) máy SN ${unit.serial_no} không đạt (${d.hours}h/${reqHours}h)${d.notes ? ": " + d.notes : ""}`,
+      description: `Kiểm tra thử nghiệm máy SN ${unit.serial_no} không đạt${d.notes ? ": " + d.notes : ""}`,
     });
+  } else if (d.auto_advance_to_fqc) {
+    const freshUnit = (await tx.query("SELECT * FROM device.device_unit WHERE id = $1", [unit.id])).rows[0] as DeviceUnitRow;
+    if (freshUnit && freshUnit.status === "BURN_IN") {
+      await runTransition(
+        tx,
+        deviceUnitMachine,
+        actor,
+        {
+          id: freshUnit.id,
+          action: "to_fqc",
+          expectedVersion: freshUnit.version,
+          payload: { fqc_assignee_id: d.fqc_assignee_id ?? null },
+        },
+        { trusted: true }
+      );
+    }
   }
   return run;
 }
@@ -1121,6 +1235,7 @@ export async function getDeviceOrderDetail(tx: Tx, actor: AuthzActor, id: string
 }
 
 export async function getDeviceUnitDetail(tx: Tx, actor: AuthzActor, unitId: string) {
+  await ensureDeviceTrialInspectionSchema(tx);
   const unit = (
     await tx.query(
       `SELECT du.*, du.delivered_at::text AS delivered_at, du.warranty_start::text AS warranty_start, du.warranty_end::text AS warranty_end,
