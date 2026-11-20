@@ -1970,23 +1970,10 @@ function OrderMrpForecastSection({
   );
 }
 
-const SAMPLE_Q4_FORECAST_TEXT = [
-  "LBC-021\tBộ nhuộm gram\t20",
-  "DD-016\tPBS Buffer 10X, pH 7.4\t20",
-  "DD-030\tTrisure Reagent\t5",
-  "DD-039\tTE 1X Buffer pH 8.0\t2",
-  "DD-059\t6X GelGreen Loading buffer With Tricolor\t20",
-  "DD-073\tTopClean® DNA/RNA Away\t3",
-  "DD-074\tWB1 buffer\t10",
-  "DD-075\tWB2 buffer\t10",
-  "DD-076\tEB buffer\t3",
-  "DD-078\tCL buffer\t10",
-  "HI-612\tTopPURE® Maga Genomic Extraction Kit\t30",
-  "THE-004\tMáy ủ nhiệt khô ABT Dry Bath\t2",
-  "OLG-001\tBộ Primer / Probe tổng hợp theo yêu cầu\t15",
-].join("\n");
-
-function classifyClientItemDomain(code: string, name: string): "KIT" | "OLIGO" | "DEVICE" {
+function classifyClientItemDomain(code: string, name: string, catalogDomain?: string): "KIT" | "OLIGO" | "DEVICE" {
+  if (catalogDomain === "KIT" || catalogDomain === "OLIGO" || catalogDomain === "DEVICE") {
+    return catalogDomain;
+  }
   const c = code.trim().toUpperCase();
   const t = `${code} ${name}`.toUpperCase();
   if (
@@ -2014,30 +2001,23 @@ function classifyClientItemDomain(code: string, name: string): "KIT" | "OLIGO" |
   return "KIT";
 }
 
-function parseForecastPasteText(raw: string): { product_code: string; product_name: string; quantity: number }[] {
-  const lines = raw
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-  const out: { product_code: string; product_name: string; quantity: number }[] = [];
+interface ForecastDraftRow {
+  id: string;
+  product_code: string;
+  product_name: string;
+  uom: string;
+  quantity: string;
+  domain_key?: "KIT" | "OLIGO" | "DEVICE";
+}
 
-  for (const ln of lines) {
-    if (/^(THỐNG KÊ|MÃ\s|STT)/i.test(ln)) continue;
-    const cols = ln.includes("\t")
-      ? ln.split("\t").map((c) => c.trim())
-      : ln.split(/[;|,]/).map((c) => c.trim());
-
-    if (cols.length >= 2) {
-      const code = cols[0].replace(/\s+/g, "").toUpperCase();
-      const lastCol = cols[cols.length - 1];
-      const qtyNum = Number(lastCol.replace(/[^\d.,]/g, "").replace(",", "."));
-      const name = cols.length >= 3 ? cols.slice(1, -1).join(" ") : code;
-      if (code && /^[A-Z0-9._-]{3,}$/i.test(code) && qtyNum > 0) {
-        out.push({ product_code: code, product_name: name || code, quantity: qtyNum });
-      }
-    }
-  }
-  return out;
+function createEmptyForecastRow(): ForecastDraftRow {
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    product_code: "",
+    product_name: "",
+    uom: "",
+    quantity: "",
+  };
 }
 
 function QuarterlyForecastCreatorPanel({
@@ -2048,21 +2028,306 @@ function QuarterlyForecastCreatorPanel({
   onCancel: () => void;
 }) {
   const qc = useQueryClient();
-  const [forecastPeriod, setForecastPeriod] = useState("Quý IV.2026");
-  const [forecastCode, setForecastCode] = useState("FC-Q4-2026");
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  const catalog = useQuery({
+    queryKey: ["factory", "internal-order-catalog"],
+    queryFn: () =>
+      api<{
+        departments: { id: string; code: string; name: string; module_key: string }[];
+        items: { id: string; code: string; name: string; base_uom: string; domain_key: string; kd_item_code?: string | null }[];
+      }>("/api/factory/intake/ops"),
+  });
+
+  const [forecastPeriod, setForecastPeriod] = useState("");
+  const [forecastCode, setForecastCode] = useState("");
   const [requestedDate, setRequestedDate] = useState(() =>
     new Date(Date.now() + 30 * 86400 * 1000).toISOString().slice(0, 10)
   );
-  const [notes, setNotes] = useState(
-    "Dự trù nguyên vật liệu theo bảng Forecast Quý của Phòng Kinh doanh (Tự động tách về P-KIT, P-THIET-BI, P-OLIGO)"
-  );
-  const [pasteText, setPasteText] = useState(SAMPLE_Q4_FORECAST_TEXT);
+  const [notes, setNotes] = useState("");
+  const [rows, setRows] = useState<ForecastDraftRow[]>(() => [createEmptyForecastRow()]);
+  const [quickPickSearch, setQuickPickSearch] = useState("");
+  const [quickPickCode, setQuickPickCode] = useState("");
+  const [quickPickQty, setQuickPickQty] = useState("1");
+  const [showExcelBox, setShowExcelBox] = useState(false);
+  const [excelNotice, setExcelNotice] = useState<string | null>(null);
+  const [excelError, setExcelError] = useState<string | null>(null);
   const [resultOrders, setResultOrders] = useState<any[] | null>(null);
 
-  const parsedRows = parseForecastPasteText(pasteText);
-  const kitRows = parsedRows.filter((r) => classifyClientItemDomain(r.product_code, r.product_name) === "KIT");
-  const deviceRows = parsedRows.filter((r) => classifyClientItemDomain(r.product_code, r.product_name) === "DEVICE");
-  const oligoRows = parsedRows.filter((r) => classifyClientItemDomain(r.product_code, r.product_name) === "OLIGO");
+  const catalogItems = catalog.data?.items ?? [];
+
+  const filteredCatalogItems = React.useMemo(() => {
+    const q = quickPickSearch.trim().toLowerCase();
+    if (!q) return catalogItems.slice(0, 150);
+    return catalogItems
+      .filter(
+        (it) =>
+          it.code.toLowerCase().includes(q) ||
+          it.name.toLowerCase().includes(q) ||
+          (it.kd_item_code && it.kd_item_code.toLowerCase().includes(q))
+      )
+      .slice(0, 150);
+  }, [catalogItems, quickPickSearch]);
+
+  const matchCatalogItem = React.useCallback(
+    (codeRaw: string) => {
+      const norm = codeRaw.trim().toUpperCase();
+      if (!norm) return undefined;
+      return catalogItems.find(
+        (it) =>
+          it.code.trim().toUpperCase() === norm ||
+          (it.kd_item_code && it.kd_item_code.trim().toUpperCase() === norm)
+      );
+    },
+    [catalogItems]
+  );
+
+  const handleQuickAddItem = () => {
+    const codeToAdd = quickPickCode.trim() || filteredCatalogItems[0]?.code || "";
+    if (!codeToAdd) return;
+    const matched = matchCatalogItem(codeToAdd);
+    const qtyNum = Math.max(1, Number(String(quickPickQty).replace(",", ".")) || 1);
+    const cleanCode = (matched?.code ?? codeToAdd).trim().toUpperCase();
+    const cleanName = matched?.name ?? cleanCode;
+    const cleanUom = matched?.base_uom ?? "";
+    const cleanDom = (matched?.domain_key as "KIT" | "OLIGO" | "DEVICE" | undefined) ?? undefined;
+
+    setRows((prev) => {
+      // If there's only 1 empty row, replace it
+      if (prev.length === 1 && !prev[0].product_code.trim() && !prev[0].product_name.trim()) {
+        return [
+          {
+            id: prev[0].id,
+            product_code: cleanCode,
+            product_name: cleanName,
+            uom: cleanUom,
+            quantity: String(qtyNum),
+            domain_key: cleanDom,
+          },
+        ];
+      }
+      // If code already exists in table, add to its quantity
+      const existIdx = prev.findIndex((r) => r.product_code.trim().toUpperCase() === cleanCode);
+      if (existIdx >= 0) {
+        return prev.map((r, i) =>
+          i === existIdx
+            ? {
+                ...r,
+                quantity: String((Number(String(r.quantity).replace(",", ".")) || 0) + qtyNum),
+              }
+            : r
+        );
+      }
+      return [
+        ...prev,
+        {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          product_code: cleanCode,
+          product_name: cleanName,
+          uom: cleanUom,
+          quantity: String(qtyNum),
+          domain_key: cleanDom,
+        },
+      ];
+    });
+    setQuickPickCode("");
+    setQuickPickSearch("");
+    setQuickPickQty("1");
+  };
+
+  const handleDownloadExcelTemplate = async () => {
+    const XLSX = await import("xlsx");
+    const wb = XLSX.utils.book_new();
+
+    const templateHeaders = [["STT", "Mã hàng hóa (*)", "Tên hàng hóa", "Đơn vị tính", "Số lượng Forecast (*)", "Ghi chú"]];
+    const ws = XLSX.utils.aoa_to_sheet(templateHeaders);
+    ws["!cols"] = [{ wch: 6 }, { wch: 20 }, { wch: 42 }, { wch: 14 }, { wch: 22 }, { wch: 30 }];
+    XLSX.utils.book_append_sheet(wb, ws, "Forecast_Quy");
+
+    if (catalogItems.length > 0) {
+      const refData = [
+        ["Mã hàng hóa", "Tên hàng hóa", "ĐVT", "Phân hệ Sản xuất"],
+        ...catalogItems.map((it) => [
+          it.code,
+          it.name,
+          it.base_uom,
+          it.domain_key === "DEVICE"
+            ? "Phòng Kỹ thuật – Thiết bị (KTCN)"
+            : it.domain_key === "OLIGO"
+              ? "Phòng Tổng hợp Oligo"
+              : "Phòng Sản xuất Kit",
+        ]),
+      ];
+      const wsRef = XLSX.utils.aoa_to_sheet(refData);
+      wsRef["!cols"] = [{ wch: 20 }, { wch: 45 }, { wch: 12 }, { wch: 32 }];
+      XLSX.utils.book_append_sheet(wb, wsRef, "Danh_Muc_Ma_Hang_Tham_Chieu");
+    }
+
+    XLSX.writeFile(wb, "Bieu_Mau_Nhap_Forecast_Quy_ABT.xlsx");
+  };
+
+  const handleExcelFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setExcelError(null);
+    setExcelNotice(null);
+
+    try {
+      const XLSX = await import("xlsx");
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const firstSheetName = wb.SheetNames[0];
+      if (!firstSheetName) {
+        setExcelError("File Excel không có sheet dữ liệu nào.");
+        return;
+      }
+      const ws = wb.Sheets[firstSheetName];
+      const matrix = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, defval: "" });
+
+      let codeCol = -1;
+      let nameCol = -1;
+      let uomCol = -1;
+      let qtyCol = -1;
+      let headerRowIdx = -1;
+
+      for (let rIdx = 0; rIdx < Math.min(matrix.length, 15); rIdx++) {
+        const row = (matrix[rIdx] ?? []).map((cell) => String(cell ?? "").trim().toLowerCase());
+        const cIdx = row.findIndex(
+          (h) =>
+            h === "mã" ||
+            h.includes("mã hàng") ||
+            h.includes("ma hang") ||
+            h.includes("mã sp") ||
+            h.includes("mã sản phẩm") ||
+            h === "sku" ||
+            h === "code"
+        );
+        const qIdx = row.findIndex(
+          (h) =>
+            h.includes("số lượng") ||
+            h.includes("so luong") ||
+            h === "sl" ||
+            h.includes("forecast") ||
+            h === "qty" ||
+            h === "quantity"
+        );
+        if (cIdx >= 0 && qIdx >= 0) {
+          headerRowIdx = rIdx;
+          codeCol = cIdx;
+          qtyCol = qIdx;
+          nameCol = row.findIndex((h) => h.includes("tên") || h.includes("ten ") || h.includes("name"));
+          uomCol = row.findIndex((h) => h.includes("đơn vị") || h.includes("đvt") || h.includes("uom"));
+          break;
+        }
+      }
+
+      const imported: ForecastDraftRow[] = [];
+      const startRow = headerRowIdx >= 0 ? headerRowIdx + 1 : 0;
+
+      for (let rIdx = startRow; rIdx < matrix.length; rIdx++) {
+        const row = matrix[rIdx] ?? [];
+        if (!Array.isArray(row) || row.every((c) => String(c ?? "").trim() === "")) continue;
+
+        let rawCode = "";
+        let rawName = "";
+        let rawUom = "";
+        let rawQty = "";
+
+        if (codeCol >= 0 && qtyCol >= 0) {
+          rawCode = String(row[codeCol] ?? "").trim();
+          rawName = nameCol >= 0 ? String(row[nameCol] ?? "").trim() : "";
+          rawUom = uomCol >= 0 ? String(row[uomCol] ?? "").trim() : "";
+          rawQty = String(row[qtyCol] ?? "").trim();
+        } else {
+          // Fallback: [Mã, Tên, Số lượng] or [STT, Mã, Tên, Số lượng]
+          const nonEmpty = row.map((c) => String(c ?? "").trim());
+          if (nonEmpty.length >= 3 && /^\d+$/.test(nonEmpty[0]) && /^[A-Za-z0-9._-]{3,}$/.test(nonEmpty[1])) {
+            rawCode = nonEmpty[1];
+            rawName = nonEmpty[2];
+            rawQty = nonEmpty[3] ?? "";
+          } else if (nonEmpty.length >= 2) {
+            rawCode = nonEmpty[0];
+            rawName = nonEmpty.length >= 3 ? nonEmpty[1] : "";
+            rawQty = nonEmpty[nonEmpty.length - 1];
+          }
+        }
+
+        const cleanCode = rawCode.replace(/\s+/g, "").toUpperCase();
+        if (!cleanCode || /^(STT|MÃ|THỐNG)/i.test(cleanCode)) continue;
+
+        const qtyNum = Number(String(rawQty).replace(/[^\d.,-]/g, "").replace(",", "."));
+        if (!Number.isFinite(qtyNum) || qtyNum <= 0) continue;
+
+        const matched = matchCatalogItem(cleanCode);
+        imported.push({
+          id: `${Date.now()}-${rIdx}-${Math.random().toString(36).slice(2, 6)}`,
+          product_code: matched?.code ?? cleanCode,
+          product_name: rawName || matched?.name || cleanCode,
+          uom: rawUom || matched?.base_uom || "",
+          quantity: String(qtyNum),
+          domain_key: (matched?.domain_key as "KIT" | "OLIGO" | "DEVICE" | undefined) ?? undefined,
+        });
+      }
+
+      if (imported.length === 0) {
+        setExcelError(
+          "Không tìm thấy dòng mã hàng nào hợp lệ có Số lượng > 0 trong file Excel. Vui lòng kiểm tra cột 'Mã hàng hóa (*)' và 'Số lượng Forecast (*)'."
+        );
+        return;
+      }
+
+      setRows((prev) => {
+        const existingValid = prev.filter((r) => r.product_code.trim() !== "");
+        const merged = [...existingValid];
+        for (const imp of imported) {
+          const idx = merged.findIndex(
+            (m) => m.product_code.trim().toUpperCase() === imp.product_code.trim().toUpperCase()
+          );
+          if (idx >= 0) {
+            const curQty = Number(String(merged[idx].quantity).replace(",", ".")) || 0;
+            const addQty = Number(String(imp.quantity).replace(",", ".")) || 0;
+            merged[idx] = {
+              ...merged[idx],
+              product_name: merged[idx].product_name || imp.product_name,
+              uom: merged[idx].uom || imp.uom,
+              quantity: String(curQty + addQty),
+            };
+          } else {
+            merged.push(imp);
+          }
+        }
+        return merged.length > 0 ? merged : [createEmptyForecastRow()];
+      });
+
+      setExcelNotice(`✅ Đã nạp thành công ${imported.length} mã hàng từ file "${file.name}" vào danh sách Forecast.`);
+    } catch (err) {
+      setExcelError(`Không thể đọc file Excel: ${(err as Error).message}`);
+    }
+  };
+
+  const validItems = React.useMemo(() => {
+    const out: { product_code: string; product_name: string; quantity: number; domain_key: "KIT" | "OLIGO" | "DEVICE" }[] = [];
+    for (const r of rows) {
+      const code = r.product_code.trim().toUpperCase();
+      const qty = Number(String(r.quantity).replace(",", "."));
+      if (!code || !Number.isFinite(qty) || qty <= 0) continue;
+      const matched = matchCatalogItem(code);
+      const name = r.product_name.trim() || matched?.name || code;
+      const dom = classifyClientItemDomain(code, name, r.domain_key ?? matched?.domain_key);
+      out.push({
+        product_code: code,
+        product_name: name,
+        quantity: qty,
+        domain_key: dom,
+      });
+    }
+    return out;
+  }, [rows, matchCatalogItem]);
+
+  const kitRows = validItems.filter((r) => r.domain_key === "KIT");
+  const deviceRows = validItems.filter((r) => r.domain_key === "DEVICE");
+  const oligoRows = validItems.filter((r) => r.domain_key === "OLIGO");
 
   const submitMut = useMutation({
     mutationFn: () =>
@@ -2071,11 +2336,17 @@ function QuarterlyForecastCreatorPanel({
         idempotent: true,
         json: {
           op: "create_quarterly_forecast",
-          forecast_period: forecastPeriod,
-          forecast_code: forecastCode || undefined,
+          forecast_period: forecastPeriod.trim() || "Forecast Quý",
+          forecast_code: forecastCode.trim() || undefined,
           requested_date: requestedDate,
-          notes,
-          items: parsedRows,
+          notes:
+            notes.trim() ||
+            "Dự trù nguyên vật liệu theo bảng Forecast Quý của Phòng Kinh doanh",
+          items: validItems.map(({ product_code, product_name, quantity }) => ({
+            product_code,
+            product_name,
+            quantity,
+          })),
         },
       }),
     onSuccess: (res) => {
@@ -2086,7 +2357,7 @@ function QuarterlyForecastCreatorPanel({
 
   return (
     <Card
-      title="📊 Lập Bảng Forecast Quý (Kinh Doanh) → Tự Động Tách Luồng Sang 3 Phòng SX (Kit · KTCN · Oligo) Để Dự Trù Nguyên Liệu (MRP)"
+      title="📊 Lập Bảng Forecast Quý (Kinh Doanh) → Tự Động Tách Luồng Sang 3 Phòng SX (Kit · KTCN · Oligo) Để Dự Trù Nguyên Liệu"
       actions={
         <Button variant="ghost" onClick={onCancel}>
           Đóng ✕
@@ -2094,49 +2365,22 @@ function QuarterlyForecastCreatorPanel({
       }
     >
       <div className="flex flex-col gap-3.5">
-        {/* Tóm tắt quy trình 4 bước */}
-        <div className="grid gap-2.5 sm:grid-cols-4 text-xs">
-          <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800">
-            <div className="font-extrabold text-amber-900 dark:text-amber-200">1️⃣ Kinh doanh nhập/dán Forecast Quý</div>
-            <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
-              Dán trực tiếp bảng <b>MÃ | TÊN HÀNG HÓA | SỐ LƯỢNG</b> từ Email/Excel (các dòng không có SL như DD-042 tự động bỏ qua).
-            </div>
-          </div>
-          <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800">
-            <div className="font-extrabold text-emerald-900 dark:text-emerald-200">2️⃣ Tự động phân luồng 3 Phòng SX</div>
-            <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
-              Hệ thống căn cứ Mã SKU &amp; Nhóm sản phẩm để tách thành các phiếu dự trù riêng cho <b>P-KIT</b>, <b>P-THIET-BI (KTCN)</b> và <b>P-OLIGO</b>.
-            </div>
-          </div>
-          <div className="p-2.5 rounded-xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800">
-            <div className="font-extrabold text-sky-900 dark:text-sky-200">3️⃣ Nổ định mức BOM &amp; Trừ tồn kho</div>
-            <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
-              Mỗi phòng mở phiếu Forecast của mình ➔ Hệ thống tự nổ BOM (Hóa chất, BTP, Bao bì, Linh kiện, Amidite) &amp; trừ tồn Kho Phòng + Kho Tổng.
-            </div>
-          </div>
-          <div className="p-2.5 rounded-xl bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800">
-            <div className="font-extrabold text-purple-900 dark:text-purple-200">4️⃣ 1-Click Phát hành PR sang Cung ứng</div>
-            <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
-              Trưởng phòng SX rà soát lượng thiếu (Net Shortage) và bấm <b>1-Click Tạo PR Dự trù Quý</b> chuyển thẳng sang <b>Cung Ứng NVL</b>.
-            </div>
-          </div>
-        </div>
-
+        {/* Thông tin chung của kỳ Forecast */}
         <div className="grid gap-3 sm:grid-cols-4">
           <Field label="Kỳ Forecast *">
             <input
               className={inputClass}
               value={forecastPeriod}
               onChange={(e) => setForecastPeriod(e.target.value)}
-              placeholder="VD: Quý IV.2026"
+              placeholder="Nhập kỳ Forecast (VD: Quý I.2027)"
             />
           </Field>
-          <Field label="Mã Bảng Forecast Quý *">
+          <Field label="Mã Bảng Forecast Quý">
             <input
               className={inputClass}
               value={forecastCode}
               onChange={(e) => setForecastCode(e.target.value)}
-              placeholder="VD: FC-Q4-2026"
+              placeholder="Để trống tự sinh mã (hoặc nhập mã)"
             />
           </Field>
           <Field label="Thời hạn cần hoàn tất dự trù NVL">
@@ -2148,37 +2392,21 @@ function QuarterlyForecastCreatorPanel({
             />
           </Field>
           <Field label="Ghi chú gửi các Phòng Sản xuất">
-            <input className={inputClass} value={notes} onChange={(e) => setNotes(e.target.value)} />
+            <input
+              className={inputClass}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Nhập ghi chú gửi các phòng sản xuất..."
+            />
           </Field>
         </div>
 
-        <div className="grid gap-3 lg:grid-cols-12">
-          <div className="lg:col-span-5 flex flex-col gap-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200">
-                📋 Dán bảng Thống kê Forecast từ Email / Excel (MÃ | TÊN HÀNG HÓA | SỐ LƯỢNG):
-              </span>
-              <button
-                type="button"
-                onClick={() => setPasteText(SAMPLE_Q4_FORECAST_TEXT)}
-                className="text-[11px] font-bold text-sky-700 dark:text-sky-300 hover:underline cursor-pointer"
-              >
-                Nạp lại mẫu Quý IV.2026
-              </button>
-            </div>
-            <textarea
-              rows={11}
-              className={`${inputClass} font-mono text-xs`}
-              value={pasteText}
-              onChange={(e) => setPasteText(e.target.value)}
-              placeholder={"LBC-021\tBộ nhuộm gram\t20\nDD-016\tPBS Buffer 10X, pH 7.4\t20"}
-            />
-          </div>
-
-          <div className="lg:col-span-7 flex flex-col gap-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200">
-                🔀 Xem trước kết quả Tự động Phân luồng ({parsedRows.length} mã hàng hợp lệ):
+        {/* Thanh công cụ: Thêm nhanh từng mã hàng + Nút Thêm bằng Excel (có biểu mẫu nhập) */}
+        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/60 p-3 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-extrabold text-slate-800 dark:text-slate-100">
+                📋 Danh sách Mã hàng Forecast ({validItems.length} mã hợp lệ)
               </span>
               <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold">
                 <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300">
@@ -2193,27 +2421,266 @@ function QuarterlyForecastCreatorPanel({
               </div>
             </div>
 
-            <div className="max-h-60 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-2">
-              <Table head={["#", "Mã Hàng Hóa", "Tên Hàng Hóa", "SL Forecast", "Phòng SX Nhận Dự Trù NVL"]}>
-                {parsedRows.map((r, i) => {
-                  const dom = classifyClientItemDomain(r.product_code, r.product_name);
-                  const meta = MODULE_META[dom];
-                  return (
-                    <tr key={`${r.product_code}-${i}`}>
-                      <td className="py-1.5 pr-2 text-xs">{i + 1}</td>
-                      <td className="py-1.5 pr-2 font-mono font-bold text-xs">{r.product_code}</td>
-                      <td className="py-1.5 pr-2 text-xs">{r.product_name}</td>
-                      <td className="py-1.5 pr-2 font-bold text-xs">{fmtQty(r.quantity)}</td>
-                      <td className="py-1.5 pr-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setRows((prev) => [...prev, createEmptyForecastRow()])}
+                className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold cursor-pointer shadow-xs"
+              >
+                + Thêm dòng mã hàng
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowExcelBox((v) => !v)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                  showExcelBox
+                    ? "bg-emerald-700 text-white border-emerald-700"
+                    : "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-200 border-emerald-300 dark:border-emerald-800 hover:bg-emerald-100"
+                }`}
+              >
+                📥 Thêm bằng Excel (Kèm Biểu mẫu nhập)
+              </button>
+              {rows.some((r) => r.product_code.trim() !== "") && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRows([createEmptyForecastRow()]);
+                    setExcelNotice(null);
+                    setExcelError(null);
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold cursor-pointer"
+                >
+                  Xóa hết dòng
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Khung Thêm bằng Excel & Tải biểu mẫu chuẩn */}
+          {showExcelBox && (
+            <div className="rounded-xl border-2 border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/30 p-3 space-y-2.5 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="font-extrabold text-emerald-900 dark:text-emerald-200">
+                    📥 Nhập danh sách Forecast từ File Excel (.xlsx, .xls, .csv)
+                  </div>
+                  <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                    Tải biểu mẫu Excel chuẩn (có kèm sheet Danh mục mã hàng tham chiếu), điền Mã hàng hóa &amp; Số lượng Forecast rồi tải file lên hệ thống.
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleDownloadExcelTemplate}
+                    className="px-3 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-emerald-400 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100/70 font-bold cursor-pointer"
+                  >
+                    📄 Tải Biểu mẫu Excel (.xlsx)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold cursor-pointer shadow-xs"
+                  >
+                    📂 Chọn file Excel để tải lên
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    className="hidden"
+                    onChange={handleExcelFileUpload}
+                  />
+                </div>
+              </div>
+              {excelNotice && (
+                <div className="rounded-lg bg-emerald-100/80 dark:bg-emerald-900/50 px-2.5 py-1.5 font-semibold text-emerald-900 dark:text-emerald-200">
+                  {excelNotice}
+                </div>
+              )}
+              {excelError && (
+                <div className="rounded-lg bg-rose-100/80 dark:bg-rose-950/60 px-2.5 py-1.5 font-semibold text-rose-700 dark:text-rose-300">
+                  ⚠️ {excelError}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Thanh chọn nhanh mã hàng từ Danh mục để thêm vào bảng */}
+          <div className="grid gap-2 sm:grid-cols-12 items-end bg-white dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800">
+            <div className="sm:col-span-4">
+              <Field label="Tìm nhanh trong Danh mục Hàng hóa">
+                <input
+                  className={inputClass}
+                  placeholder="🔍 Gõ mã hoặc tên sản phẩm để lọc..."
+                  value={quickPickSearch}
+                  onChange={(e) => {
+                    setQuickPickSearch(e.target.value);
+                    setQuickPickCode("");
+                  }}
+                />
+              </Field>
+            </div>
+            <div className="sm:col-span-5">
+              <Field label="Chọn Mã hàng hóa từ Danh mục">
+                <select
+                  className={inputClass}
+                  value={quickPickCode || filteredCatalogItems[0]?.code || ""}
+                  onChange={(e) => setQuickPickCode(e.target.value)}
+                >
+                  {filteredCatalogItems.length === 0 ? (
+                    <option value="">— Không tìm thấy mã phù hợp —</option>
+                  ) : (
+                    filteredCatalogItems.map((it) => (
+                      <option key={it.id} value={it.code}>
+                        {it.code} — {it.name} ({it.base_uom})
+                      </option>
+                    ))
+                  )}
+                </select>
+              </Field>
+            </div>
+            <div className="sm:col-span-2">
+              <Field label="Số lượng Forecast">
+                <input
+                  type="number"
+                  min="1"
+                  step="any"
+                  className={`${inputClass} font-mono font-bold`}
+                  value={quickPickQty}
+                  onChange={(e) => setQuickPickQty(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleQuickAddItem();
+                    }
+                  }}
+                />
+              </Field>
+            </div>
+            <div className="sm:col-span-1">
+              <button
+                type="button"
+                onClick={handleQuickAddItem}
+                disabled={filteredCatalogItems.length === 0 && !quickPickCode}
+                className="w-full py-2 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-xs font-bold cursor-pointer"
+                title="Thêm mã hàng này vào bảng Forecast"
+              >
+                + Thêm
+              </button>
+            </div>
+          </div>
+
+          {/* Bảng danh sách từng dòng Mã hàng Forecast (chỉnh sửa trực tiếp) */}
+          <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 overflow-hidden">
+            <datalist id="forecast-catalog-codes">
+              {catalogItems.map((it) => (
+                <option key={it.id} value={it.code}>
+                  {it.name} ({it.base_uom})
+                </option>
+              ))}
+            </datalist>
+            <Table head={["#", "Mã Hàng Hóa *", "Tên Hàng Hóa", "ĐVT", "Số Lượng Forecast *", "Phòng SX Nhận Dự Trù", ""]}>
+              {rows.map((r, idx) => {
+                const matched = matchCatalogItem(r.product_code);
+                const resolvedName = r.product_name || matched?.name || "";
+                const resolvedUom = r.uom || matched?.base_uom || "";
+                const hasCode = r.product_code.trim().length > 0;
+                const dom = hasCode
+                  ? classifyClientItemDomain(r.product_code, resolvedName, r.domain_key ?? matched?.domain_key)
+                  : null;
+                const meta = dom ? MODULE_META[dom] : null;
+
+                return (
+                  <tr key={r.id}>
+                    <td className="py-1.5 pr-2 text-xs text-slate-400 font-mono">{idx + 1}</td>
+                    <td className="py-1.5 pr-2 min-w-[160px]">
+                      <input
+                        list="forecast-catalog-codes"
+                        className={`${inputClass} w-full font-mono font-bold text-xs`}
+                        placeholder="Nhập / chọn mã hàng..."
+                        value={r.product_code}
+                        onChange={(e) => {
+                          const nextCode = e.target.value;
+                          const m = matchCatalogItem(nextCode);
+                          setRows((prev) =>
+                            prev.map((row, i) =>
+                              i === idx
+                                ? {
+                                    ...row,
+                                    product_code: nextCode,
+                                    product_name: m ? m.name : row.product_name,
+                                    uom: m ? m.base_uom : row.uom,
+                                    domain_key: (m?.domain_key as "KIT" | "OLIGO" | "DEVICE" | undefined) ?? undefined,
+                                  }
+                                : row
+                            )
+                          );
+                        }}
+                      />
+                    </td>
+                    <td className="py-1.5 pr-2 min-w-[240px]">
+                      <input
+                        className={`${inputClass} w-full text-xs`}
+                        placeholder="Tự động điền khi chọn mã hoặc nhập tên..."
+                        value={resolvedName}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setRows((prev) => prev.map((row, i) => (i === idx ? { ...row, product_name: v } : row)));
+                        }}
+                      />
+                    </td>
+                    <td className="py-1.5 pr-2 w-24">
+                      <input
+                        className={`${inputClass} w-full text-xs font-mono`}
+                        placeholder="ĐVT"
+                        value={resolvedUom}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setRows((prev) => prev.map((row, i) => (i === idx ? { ...row, uom: v } : row)));
+                        }}
+                      />
+                    </td>
+                    <td className="py-1.5 pr-2 w-36">
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        className={`${inputClass} w-full font-mono font-bold text-xs`}
+                        placeholder="Nhập SL..."
+                        value={r.quantity}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setRows((prev) => prev.map((row, i) => (i === idx ? { ...row, quantity: v } : row)));
+                        }}
+                      />
+                    </td>
+                    <td className="py-1.5 pr-2 whitespace-nowrap">
+                      {meta ? (
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${meta.color}`}>
                           {meta.badge}
                         </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </Table>
-            </div>
+                      ) : (
+                        <span className="text-[11px] text-slate-400">—</span>
+                      )}
+                    </td>
+                    <td className="py-1.5 text-right">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setRows((prev) =>
+                            prev.length > 1 ? prev.filter((_, i) => i !== idx) : [createEmptyForecastRow()]
+                          )
+                        }
+                        className="px-2 py-1 rounded-lg text-xs font-bold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                        title="Xóa dòng này"
+                      >
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </Table>
           </div>
         </div>
 
@@ -2244,12 +2711,12 @@ function QuarterlyForecastCreatorPanel({
             Hủy
           </Button>
           <Button
-            disabled={parsedRows.length === 0 || submitMut.isPending}
+            disabled={validItems.length === 0 || submitMut.isPending}
             onClick={() => submitMut.mutate()}
           >
             {submitMut.isPending
               ? "Đang phân luồng Forecast…"
-              : `🚀 Phát Hành Forecast Quý & Chuyển Sang Các Phòng Sản Xuất (${parsedRows.length} mã)`}
+              : `🚀 Phát Hành Forecast Quý & Chuyển Sang Các Phòng Sản Xuất (${validItems.length} mã)`}
           </Button>
         </div>
       </div>
