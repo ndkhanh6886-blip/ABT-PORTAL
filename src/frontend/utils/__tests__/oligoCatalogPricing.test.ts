@@ -185,3 +185,107 @@ describe("Factory Oligo Pricing 130-SKU Mapping", () => {
     expect(codes).toContain("PRE-01");
   });
 });
+
+describe("Báo giá Kinh doanh — nhận diện trình tự (quy tắc 1, 2)", () => {
+  it.each([
+    ["/56-FAM/ACGTACGTAC/3BHQ_1/", "PROBE", "FAM.100"],
+    ["FAM-ACGTACGTAC-BHQ1", "PROBE", "FAM.100"],
+    ["5'-[VIC]-ACGTACGTAC-[MGB]-3'", "PROBE", "VIC-MGB.100"],
+    ["HEX-ACGTACGTAC-TAMRA", "PROBE", "HEX-TAMRA.100"],
+    ["Texas Red-ACGTACGTAC-BHQ2", "PROBE", "TEX.100"],
+    ["/FAM/ACGTACGTAC", "DYE_PRIMER", "FAM-Primer"],
+    ["5'-Cy5-ACGTACGTAC-3'", "DYE_PRIMER", "Cy5-Primer"],
+    ["/5Biosg/ACGTACGTAC", "BIOTIN_NH2", "BIOTIN"],
+    ["5'-ACGTACGTAC-3'", undefined, undefined],
+  ])("%s → 10 base, chế độ %s / %s", (seq, mode, code) => {
+    const p = parseOligoSequenceDetails(seq);
+    expect(p.cleanSeq).toBe("ACGTACGTAC");
+    expect(p.baseCount).toBe(10);
+    expect(p.detectedMode).toBe(mode);
+    expect(p.detectedDyeOrProbeCode).toBe(code);
+  });
+
+  it("tên nhãn chứa ký tự base (TAMRA) không cộng vào số base", () => {
+    expect(parseOligoSequenceDetails("TAMRA-ACGTACGTAC").baseCount).toBe(10);
+  });
+
+  it("base suy biến IUPAC được đếm; LNA / 2'-OMe đếm 1 base", () => {
+    expect(parseOligoSequenceDetails("ACGTRYSWKMBDHVN").baseCount).toBe(15);
+    const p = parseOligoSequenceDetails("ACG+AmCGT{T}");
+    expect(p.cleanSeq).toBe("ACGACGTT");
+    expect(p.lnaCount).toBe(2);
+  });
+});
+
+describe("Báo giá Kinh doanh — tinh sạch chỉ cộng phí khi cao hơn mặc định (quy tắc 3)", () => {
+  const purCodes = (input: Parameters<typeof buildOligoSkuCombination>[0]) =>
+    buildOligoSkuCombination(input).items.filter((x) => x.code.startsWith("PUR-")).map((x) => x.code);
+  const base = { scale: "100 nmol" as const, tubes: 1 };
+  const seq20 = "ACGTTGCAAGTCCTGATGCA";
+  const seq40 = seq20 + seq20;
+  const seq70 = seq40 + "ACGTTGCAAGTCCTGATGCAACGTTGCAAG";
+
+  it("primer 20 nt (PRI-02, mặc định Desalt): Cartridge / HPLC / PAGE đều cao hơn → tính phí", () => {
+    for (const pur of ["PUR-01", "PUR-02", "PUR-03"] as const) {
+      expect(purCodes({ ...base, rawSequence: seq20, mode: "UNMODIFIED", purificationCode: pur })).toEqual([pur]);
+    }
+  });
+
+  it("primer 40 nt (PRI-03, mặc định Cartridge): Cartridge bằng mặc định → không phí; PAGE / HPLC → tính phí", () => {
+    const combo = buildOligoSkuCombination({ ...base, rawSequence: seq40, mode: "UNMODIFIED", purificationCode: "PUR-01" });
+    expect(combo.items.map((x) => x.code)).toEqual(["PRI-03.100"]);
+    expect(combo.warnings.some((w) => w.includes("không cộng phí"))).toBe(true);
+    expect(purCodes({ ...base, rawSequence: seq40, mode: "UNMODIFIED", purificationCode: "PUR-03" })).toEqual(["PUR-03"]);
+    expect(purCodes({ ...base, rawSequence: seq40, mode: "UNMODIFIED", purificationCode: "PUR-02" })).toEqual(["PUR-02"]);
+  });
+
+  it("primer 70 nt (PRI-05, mặc định HPLC): không cấp nào cộng phí", () => {
+    for (const pur of ["PUR-01", "PUR-02", "PUR-03"] as const) {
+      expect(purCodes({ ...base, rawSequence: seq70, mode: "UNMODIFIED", purificationCode: pur })).toEqual([]);
+    }
+  });
+
+  it("primer / probe huỳnh quang (đã gồm HPLC): không cấp nào cộng phí", () => {
+    for (const pur of ["PUR-01", "PUR-02", "PUR-03"] as const) {
+      expect(purCodes({ ...base, rawSequence: seq20, mode: "DYE_PRIMER", dyeOrProbeCode: "FAM-Primer", purificationCode: pur })).toEqual([]);
+      expect(purCodes({ ...base, rawSequence: seq20, mode: "PROBE", dyeOrProbeCode: "FAM.100", purificationCode: pur })).toEqual([]);
+    }
+  });
+
+  it("primer Biotin (mặc định Cartridge): Cartridge không phí; HPLC tính phí", () => {
+    expect(purCodes({ ...base, rawSequence: seq20, mode: "BIOTIN_NH2", dyeOrProbeCode: "BIOTIN", purificationCode: "PUR-01" })).toEqual([]);
+    expect(purCodes({ ...base, rawSequence: seq20, mode: "BIOTIN_NH2", dyeOrProbeCode: "BIOTIN", purificationCode: "PUR-02" })).toEqual(["PUR-02"]);
+  });
+});
+
+describe("Báo giá Kinh doanh — các quyết định nghiệp vụ 11/2026", () => {
+  const base = { scale: "100 nmol" as const, tubes: 1 };
+  const purCodes = (input: Parameters<typeof buildOligoSkuCombination>[0]) =>
+    buildOligoSkuCombination(input).items.filter((x) => x.code.startsWith("PUR-")).map((x) => x.code);
+
+  it("primer chỉ có dye internal được nhận là primer huỳnh quang (giá trọn gói, không tính base)", () => {
+    const p = parseOligoSequenceDetails("ACGTTGCAAG/FAM/TCCTGATGCA");
+    expect(p.detectedMode).toBe("DYE_PRIMER");
+    expect(p.detectedDyeOrProbeCode).toBe("FAM-Primer");
+    expect(p.baseCount).toBe(20);
+  });
+
+  it("trình tự đúng 35 nt dùng PRI-03 (Cartridge): Cartridge không cộng phí", () => {
+    const seq35 = "ACGTTGCAAGTCCTGATGCAACGTTGCAAGTCCTG";
+    const combo = buildOligoSkuCombination({ ...base, rawSequence: seq35, mode: "UNMODIFIED", purificationCode: "PUR-01" });
+    expect(combo.items.map((x) => x.code)).toEqual(["PRI-03.100"]);
+  });
+
+  it("primer Biotin/NH2: vẫn tính base; Desalt/Cartridge không phí; PAGE/HPLC tính phí", () => {
+    for (const code of ["BIOTIN", "NH2"]) {
+      const input = { ...base, rawSequence: "ACGTTGCAAGTCCTGATGCA", mode: "BIOTIN_NH2" as const, dyeOrProbeCode: code };
+      const combo = buildOligoSkuCombination({ ...input, purificationCode: "PUR-01" });
+      expect(combo.items.map((x) => [x.code, x.totalQty])).toEqual([
+        ["PRI-02.100", 20],
+        [`${code}.100`, 1],
+      ]);
+      expect(purCodes({ ...input, purificationCode: "PUR-03" })).toEqual(["PUR-03"]);
+      expect(purCodes({ ...input, purificationCode: "PUR-02" })).toEqual(["PUR-02"]);
+    }
+  });
+});
