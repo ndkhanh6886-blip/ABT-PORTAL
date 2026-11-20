@@ -3635,10 +3635,12 @@ export const UnifiedWorkspace: React.FC = () => {
     });
   }, [weeklySchedule, rolePerspective, filterDept, departmentStaffList, selectedAssignee, currentStaffName]);
 
-  // RBAC Filtered Projects (Dự án liên phòng ban + Dự án Stage-Gate R&D / KTCN):
+  // RBAC Filtered Projects (Chỉ hiển thị các Dự án & Nhóm việc liên phòng ban được tạo trực tiếp tại tab Dự Án này;
+  // các đề tài R&D, nghiên cứu thiết bị, phần mềm hiển thị riêng tại phân hệ phòng ban chuyên môn):
   const filteredLabProjects = useMemo(() => {
     const myUid = Number((user as any)?.id) || 0;
-    return allCompanyProjects.filter((p: any) => {
+    return (labProjects || []).filter((p: any) => {
+      if (p?.isHubProject) return false;
       const partDepts: string[] = Array.isArray(p.participatingDepts) ? p.participatingDepts : [];
       const stageDepts: string[] = Array.isArray(p.stages) ? p.stages.map((s: any) => s.dept).filter(Boolean) : [];
       const matchesDeptFilter = (targetDept: string) => {
@@ -3694,7 +3696,7 @@ export const UnifiedWorkspace: React.FC = () => {
 
       return true;
     });
-  }, [allCompanyProjects, user, rolePerspective, userDept, filterDept, departmentStaffList, selectedAssignee, currentStaffName, thematicFilterType, searchQuery, resolveUserIdForStaffName]);
+  }, [labProjects, user, rolePerspective, userDept, filterDept, departmentStaffList, selectedAssignee, currentStaffName, thematicFilterType, searchQuery, resolveUserIdForStaffName]);
 
   // RBAC Filtered Sales Targets:
   // - Staff: ONLY sees their assigned pipeline targets
@@ -11655,20 +11657,18 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   <Layers className="w-3.5 h-3.5" />
                   <span>{projectCompactMode ? "📋 Chế độ gọn (Mở rộng tất cả)" : "📑 Thu gọn tất cả dự án"}</span>
                 </button>
-                {selectedDept !== "all" && (
-                  <button
-                    type="button"
-                    onClick={() => openCreateThematicModal(selectedDept)}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 hover:bg-purple-100 cursor-pointer transition-all"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Dự án {formatWorkspaceScopeLabel(selectedDept, true)}</span>
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => openCreateThematicModal(selectedDept !== "all" ? selectedDept : undefined)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white shadow-xs cursor-pointer transition-all"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{selectedDept !== "all" ? `Tạo Dự án (${formatWorkspaceScopeLabel(selectedDept, true)})` : "Tạo Dự Án / Nhóm Việc Mới"}</span>
+                </button>
               </div>
             </div>
 
-            {/* Project Category Filter Chips (bao gồm cả Dự án tự thiết kế & các mẫu) */}
+            {/* Project Category Filter Chips (chỉ tính các dự án được tạo tại tab Dự Án này) */}
             {(() => {
               const currentDept = selectedDept;
               const relevantTypes = currentDept === "all"
@@ -11692,9 +11692,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     ...(DEPARTMENT_THEMATIC_TYPES[currentDept] || [])
                   ];
 
-              const customCount = allCompanyProjects.filter((p: any) => p.typeId === "custom_project").length;
-              const rdStageGateCount = allCompanyProjects.filter((p: any) => p.typeId === "rd_stage_gate").length;
-              const ktcnStageGateCount = allCompanyProjects.filter((p: any) => p.typeId === "ktcn_stage_gate").length;
+              const customCount = (labProjects || []).filter((p: any) => !p?.isHubProject && p.typeId === "custom_project").length;
 
               return (
                 <div className="flex items-center gap-1.5 overflow-x-auto pb-2.5 mb-4 no-scrollbar border-b border-slate-100 dark:border-slate-800">
@@ -11715,40 +11713,6 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   </button>
                   <button
                     type="button"
-                    onClick={() => setThematicFilterType(thematicFilterType === "rd_stage_gate" ? "all" : "rd_stage_gate")}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all shrink-0 cursor-pointer border ${
-                      thematicFilterType === "rd_stage_gate"
-                        ? "bg-cyan-50 dark:bg-cyan-950/80 text-cyan-800 dark:text-cyan-200 border-cyan-400 dark:border-cyan-600 font-bold shadow-xs ring-2 ring-cyan-500/20"
-                        : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700"
-                    }`}
-                  >
-                    <span>🧬</span>
-                    <span>R&amp;D Stage-Gate</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold font-mono ${
-                      rdStageGateCount > 0 ? "bg-cyan-100 dark:bg-cyan-950 text-cyan-800 dark:text-cyan-300" : "bg-slate-100 dark:bg-slate-800 text-slate-400"
-                    }`}>
-                      {rdStageGateCount}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setThematicFilterType(thematicFilterType === "ktcn_stage_gate" ? "all" : "ktcn_stage_gate")}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all shrink-0 cursor-pointer border ${
-                      thematicFilterType === "ktcn_stage_gate"
-                        ? "bg-amber-50 dark:bg-amber-950/80 text-amber-800 dark:text-amber-200 border-amber-400 dark:border-amber-600 font-bold shadow-xs ring-2 ring-amber-500/20"
-                        : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700"
-                    }`}
-                  >
-                    <span>⚙️</span>
-                    <span>KTCN Stage-Gate</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold font-mono ${
-                      ktcnStageGateCount > 0 ? "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300" : "bg-slate-100 dark:bg-slate-800 text-slate-400"
-                    }`}>
-                      {ktcnStageGateCount}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
                     onClick={() => setThematicFilterType(thematicFilterType === "custom_project" ? "all" : "custom_project")}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all shrink-0 cursor-pointer border ${
                       thematicFilterType === "custom_project"
@@ -11765,7 +11729,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     </span>
                   </button>
                   {relevantTypes.map((t) => {
-                    const count = allCompanyProjects.filter((p: any) => p.typeId === t.id).length;
+                    const count = (labProjects || []).filter((p: any) => !p?.isHubProject && p.typeId === t.id).length;
                     const isSelected = thematicFilterType === t.id;
                     return (
                       <button
@@ -11810,8 +11774,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 </button>
               </div>
             ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
-                {filteredLabProjects.map((prj) => {
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 bg-slate-100/70 dark:bg-slate-950/60 p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-800">
+                {filteredLabProjects.map((prj, prjIdx) => {
                   const stages = prj.stages || [];
                   const completedStages = stages.filter((s: any) => s.status === "completed").length;
                   const totalStages = stages.length;
@@ -11831,21 +11795,6 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     }));
                   const cleanStageName = (raw: any) => String(raw || "").replace(/^(Gate\s*\d+\s*:\s*)+/i, "$1");
 
-                  const isApp = prj.dept === "Application";
-                  const isSales = prj.dept === "Kinh Doanh";
-                  const isWh = prj.dept === "Kho & Vận Hành";
-                  const isProc = prj.dept === "Cung Ứng";
-
-                  const badgeColor = isApp
-                    ? "bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 border-purple-200 dark:border-purple-800"
-                    : isSales
-                    ? "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border-amber-200 dark:border-amber-800"
-                    : isWh
-                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"
-                    : isProc
-                    ? "bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 border-blue-200 dark:border-blue-800"
-                    : "bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800";
-
                   const partDepts: string[] = Array.isArray(prj.participatingDepts) && prj.participatingDepts.length > 0
                     ? prj.participatingDepts
                     : Array.from(new Set([
@@ -11853,90 +11802,131 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         ...stages.map((s: any) => s.dept).filter(Boolean)
                       ]));
 
+                  // Phân nhóm màu sắc rõ ràng theo loại dự án / nhóm sản phẩm để dễ phân biệt bằng mắt
+                  const refUpper = String(prj.customerOrRef || "").toUpperCase();
+                  const nameLower = String(prj.name || "").toLowerCase();
+                  const isDevicePrj = prj.typeId === "ktcn_stage_gate" || prj.targetTab === "factory-device" || refUpper.includes("DEVICE") || nameLower.includes("máy") || nameLower.includes("thiết bị");
+                  const isOligoPrj = refUpper.includes("OLIGO") || nameLower.includes("oligo") || nameLower.includes("primer") || nameLower.includes("probe");
+                  const isSolutionPrj = refUpper.includes("OTHER") || nameLower.includes("dung dịch") || nameLower.includes("môi trường") || nameLower.includes("buffer");
+                  const isKitPrj = refUpper.includes("KIT") || nameLower.includes("kit") || prj.typeId === "rd_stage_gate";
+
+                  const theme = isDevicePrj
+                    ? {
+                        cardBorder: "border-amber-300 dark:border-amber-800/80 border-l-amber-600 dark:border-l-amber-500",
+                        headerBg: "bg-gradient-to-r from-amber-100/90 via-amber-50/60 to-white dark:from-amber-950/70 dark:via-amber-950/30 dark:to-slate-900",
+                        codeBadge: "bg-amber-950 text-amber-100 dark:bg-amber-900 dark:text-amber-100 border-amber-700",
+                        domainBadge: "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/80 dark:text-amber-200 dark:border-amber-700",
+                        domainIcon: "⚙️",
+                        progressBar: "bg-amber-500",
+                      }
+                    : isOligoPrj
+                    ? {
+                        cardBorder: "border-violet-300 dark:border-violet-800/80 border-l-violet-600 dark:border-l-violet-500",
+                        headerBg: "bg-gradient-to-r from-violet-100/90 via-violet-50/60 to-white dark:from-violet-950/70 dark:via-violet-950/30 dark:to-slate-900",
+                        codeBadge: "bg-violet-950 text-violet-100 dark:bg-violet-900 dark:text-violet-100 border-violet-700",
+                        domainBadge: "bg-violet-100 text-violet-900 border-violet-300 dark:bg-violet-950/80 dark:text-violet-200 dark:border-violet-700",
+                        domainIcon: "🧬",
+                        progressBar: "bg-violet-600",
+                      }
+                    : isSolutionPrj
+                    ? {
+                        cardBorder: "border-emerald-300 dark:border-emerald-800/80 border-l-emerald-600 dark:border-l-emerald-500",
+                        headerBg: "bg-gradient-to-r from-emerald-100/90 via-emerald-50/60 to-white dark:from-emerald-950/70 dark:via-emerald-950/30 dark:to-slate-900",
+                        codeBadge: "bg-emerald-950 text-emerald-100 dark:bg-emerald-900 dark:text-emerald-100 border-emerald-700",
+                        domainBadge: "bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950/80 dark:text-emerald-200 dark:border-emerald-700",
+                        domainIcon: "🧪",
+                        progressBar: "bg-emerald-600",
+                      }
+                    : isKitPrj
+                    ? {
+                        cardBorder: "border-sky-300 dark:border-sky-800/80 border-l-sky-600 dark:border-l-sky-500",
+                        headerBg: "bg-gradient-to-r from-sky-100/90 via-sky-50/60 to-white dark:from-sky-950/70 dark:via-sky-950/30 dark:to-slate-900",
+                        codeBadge: "bg-sky-950 text-sky-100 dark:bg-sky-900 dark:text-sky-100 border-sky-700",
+                        domainBadge: "bg-sky-100 text-sky-900 border-sky-300 dark:bg-sky-950/80 dark:text-sky-200 dark:border-sky-700",
+                        domainIcon: "🧬",
+                        progressBar: "bg-sky-600",
+                      }
+                    : {
+                        cardBorder: "border-indigo-300 dark:border-indigo-800/80 border-l-indigo-600 dark:border-l-indigo-500",
+                        headerBg: "bg-gradient-to-r from-indigo-100/90 via-indigo-50/60 to-white dark:from-indigo-950/70 dark:via-indigo-950/30 dark:to-slate-900",
+                        codeBadge: "bg-indigo-950 text-indigo-100 dark:bg-indigo-900 dark:text-indigo-100 border-indigo-700",
+                        domainBadge: "bg-indigo-100 text-indigo-900 border-indigo-300 dark:bg-indigo-950/80 dark:text-indigo-200 dark:border-indigo-700",
+                        domainIcon: "🚀",
+                        progressBar: "bg-indigo-600",
+                      };
+
+                  const activeStageIdx = stages.findIndex((s: any) => s.status === "in_progress");
+                  const currentStageIdx = activeStageIdx >= 0 ? activeStageIdx : stages.findIndex((s: any) => s.status !== "completed");
+                  const formatShortDate = (raw: any) => {
+                    const s = String(raw || "").trim();
+                    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+                      const [y, m, d] = s.split("-");
+                      return `${d}/${m}/${y}`;
+                    }
+                    return s;
+                  };
+
                   return (
                     <div
                       key={prj.id}
-                      className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3.5 flex flex-col justify-between shadow-xs hover:border-purple-400 dark:hover:border-purple-600 transition-all group"
+                      className={`bg-white dark:bg-slate-900 border-2 border-l-[6px] ${theme.cardBorder} rounded-2xl flex flex-col justify-between shadow-sm hover:shadow-md transition-all overflow-hidden group`}
                     >
                       <div>
-                        {/* Card Header: Badges + Progress + Expand/Collapse Toggle */}
-                        <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
+                        {/* Thanh Header màu nổi bật giúp tách biệt rõ từng thẻ Dự án */}
+                        <div className={`px-3.5 py-2 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-2 flex-wrap ${theme.headerBg}`}>
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700">
+                            <span className="px-2 py-0.5 rounded-md text-[11px] font-black bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-2xs">
+                              #{String(prjIdx + 1).padStart(2, "0")}
+                            </span>
+                            <span className={`font-mono text-xs font-extrabold px-2 py-0.5 rounded-md border ${theme.codeBadge}`}>
                               {prj.id}
                             </span>
-                            {prj.isHubProject && prj.sourceBadge && (
-                              <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-lg bg-cyan-50 dark:bg-cyan-950/60 text-cyan-800 dark:text-cyan-200 border border-cyan-300 dark:border-cyan-800">
-                                {prj.sourceBadge}
-                              </span>
-                            )}
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border ${prj.dept === "Liên Phòng Ban" || (Array.isArray(prj.participatingDepts) && prj.participatingDepts.length > 1) ? "bg-gradient-to-r from-purple-600 to-indigo-600 text-white border-purple-600" : badgeColor}`}>
-                              {prj.dept === "Liên Phòng Ban" || (Array.isArray(prj.participatingDepts) && prj.participatingDepts.length > 1) ? "🚀 Liên Phòng Ban" : prj.dept}
+                            <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border ${theme.domainBadge}`}>
+                              {theme.domainIcon} {prj.customerOrRef ? prj.customerOrRef : (prj.dept === "Liên Phòng Ban" ? "Liên Phòng Ban" : prj.dept)}
                             </span>
                             {prj.isHubProject && prj.currentStageLabel && (
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-white/90 dark:bg-slate-800 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-700">
                                 🎯 {prj.currentStageLabel}
-                              </span>
-                            )}
-                            {prj.customerOrRef && (
-                              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-                                🔗 {prj.customerOrRef}
                               </span>
                             )}
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                               prj.status === "Completed"
-                                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
+                                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300"
                                 : prj.status === "Review"
-                                ? "bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300"
+                                ? "bg-purple-100 text-purple-800 dark:bg-purple-950/80 dark:text-purple-300"
                                 : prj.status === "Planning"
-                                ? "bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300"
-                                : "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+                                ? "bg-blue-100 text-blue-800 dark:bg-blue-950/80 dark:text-blue-300"
+                                : "bg-amber-100 text-amber-900 dark:bg-amber-950/80 dark:text-amber-300"
                             }`}>
                               {prj.status === "Completed" ? "Đã nghiệm thu" : prj.status === "Review" ? "Đang nghiệm thu" : prj.status === "Planning" ? "Lập đề cương" : "Đang thực hiện"}
                             </span>
                           </div>
 
                           <div className="flex items-center gap-1.5 ml-auto">
-                            {/* Mini Progress Indicator */}
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[11px] font-mono font-bold text-purple-600 dark:text-purple-400">
+                            <div className="flex items-center gap-1.5 bg-white/90 dark:bg-slate-800/90 px-2 py-0.5 rounded-lg border border-slate-200/80 dark:border-slate-700">
+                              <span className="text-[10px] font-mono font-extrabold text-slate-700 dark:text-slate-200">
                                 {completedStages}/{totalStages} GĐ ({progressPct}%)
                               </span>
-                              <div className="w-14 bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                              <div className="w-12 bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full overflow-hidden">
                                 <div
-                                  className={`h-full transition-all duration-500 rounded-full ${
-                                    progressPct === 100
-                                      ? "bg-emerald-500"
-                                      : progressPct > 50
-                                      ? "bg-purple-600"
-                                      : "bg-amber-500"
-                                  }`}
-                                  style={{ width: `${Math.max(6, progressPct)}%` }}
+                                  className={`h-full transition-all duration-500 rounded-full ${progressPct === 100 ? "bg-emerald-500" : theme.progressBar}`}
+                                  style={{ width: `${Math.max(8, progressPct)}%` }}
                                 />
                               </div>
                             </div>
 
-                            {prj.isHubProject ? (
-                              <button
-                                type="button"
-                                onClick={() => navigateToTargetTab(prj.targetTab || "factory-rd")}
-                                className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 cursor-pointer"
-                                title="Mở chi tiết dự án tại Phân hệ Kỹ thuật"
-                              >
-                                ↗ Mở phân hệ
-                              </button>
-                            ) : (
+                            {!prj.isHubProject && (
                               <>
                                 <button
                                   onClick={() => openEditThematicModal(prj)}
-                                  className="p-1 rounded text-slate-400 hover:text-purple-600 hover:bg-purple-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                                  className="p-1 rounded bg-white/80 dark:bg-slate-800 text-slate-500 hover:text-purple-600 transition-colors cursor-pointer"
                                   title="Chỉnh sửa dự án / thêm giai đoạn & công việc"
                                 >
                                   <Pencil className="w-3.5 h-3.5" />
                                 </button>
                                 <button
                                   onClick={() => handleDeleteThematicProject(prj.id)}
-                                  className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                                  className="p-1 rounded bg-white/80 dark:bg-slate-800 text-slate-500 hover:text-rose-600 transition-colors cursor-pointer"
                                   title="Xóa dự án"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -11947,7 +11937,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             <button
                               type="button"
                               onClick={togglePrjCollapse}
-                              className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/70 dark:hover:bg-purple-900/70 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 cursor-pointer transition-colors"
+                              className="px-2.5 py-0.5 rounded-lg text-[10px] font-extrabold bg-white hover:bg-purple-50 dark:bg-slate-800 dark:hover:bg-purple-900/70 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-700 cursor-pointer transition-colors shadow-2xs"
                               title={isPrjCollapsed ? "Nhấn để xổ ra xem chi tiết các giai đoạn & công việc" : "Nhấn để thu gọn thẻ dự án"}
                             >
                               {isPrjCollapsed ? "▼ Chi tiết" : "▲ Thu gọn"}
@@ -11955,91 +11945,71 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           </div>
                         </div>
 
-                        {/* Title & Compact Info Strip */}
-                        <div
-                          onClick={togglePrjCollapse}
-                          className="cursor-pointer group/title"
-                          title={isPrjCollapsed ? "Nhấn để mở xem chi tiết dự án & danh sách giai đoạn" : "Nhấn để thu gọn"}
-                        >
-                          <h4 className="text-sm font-bold text-slate-900 dark:text-white group-hover/title:text-purple-600 dark:group-hover/title:text-purple-400 transition-colors leading-snug">
-                            {prj.name}
-                          </h4>
-                          {prj.description && (
-                            <p className={`text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed ${isPrjCollapsed ? "line-clamp-1" : ""}`}>
-                              {prj.description}
-                            </p>
-                          )}
-                        </div>
+                        {/* Nội dung chính của thẻ Dự án */}
+                        <div className="p-3.5">
+                          <div
+                            onClick={togglePrjCollapse}
+                            className="cursor-pointer group/title"
+                            title={isPrjCollapsed ? "Nhấn để mở xem chi tiết dự án & danh sách giai đoạn" : "Nhấn để thu gọn"}
+                          >
+                            <h4 className="text-[15px] font-extrabold text-slate-900 dark:text-white group-hover/title:text-purple-600 dark:group-hover/title:text-purple-400 transition-colors leading-snug">
+                              {prj.name}
+                            </h4>
+                            {prj.description && (
+                              <p className={`text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed ${isPrjCollapsed ? "line-clamp-1" : ""}`}>
+                                {prj.description}
+                              </p>
+                            )}
+                          </div>
 
-                        {/* Compact Horizontal Metadata Strip (Always visible, 1 compact row) */}
-                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-600 dark:text-slate-400 mt-2 pt-1.5 border-t border-slate-100 dark:border-slate-800/80">
-                          <span>
-                            <span className="text-slate-400">👤 PM:</span>{" "}
-                            <strong className="text-slate-800 dark:text-slate-200">{prj.lead || "Chưa gán"}</strong>
-                          </span>
-                          <span className="text-slate-300 dark:text-slate-700">•</span>
-                          <span>
-                            <span className="text-slate-400">📅</span>{" "}
-                            <span className="font-semibold text-slate-700 dark:text-slate-300">
-                              {prj.startDate ? prj.startDate : "Bắt đầu"} {prj.endDate ? `➔ ${prj.endDate}` : ""}
-                            </span>
-                          </span>
-                          {prj.budget && (
-                            <>
-                              <span className="text-slate-300 dark:text-slate-700">•</span>
-                              <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
-                                💰 {prj.budget}
+                          {/* Dải thông tin gọn gàng: PM + Tiến độ + Ngân sách + Stepper G0-G4 + Nút thao tác nhanh */}
+                          <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 flex-wrap">
+                            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-slate-600 dark:text-slate-400">
+                              <span className="inline-flex items-center gap-1 bg-slate-100 dark:bg-slate-800/90 px-2 py-0.5 rounded-md border border-slate-200/80 dark:border-slate-700">
+                                <span>👤</span>
+                                <strong className="text-slate-900 dark:text-slate-100">{prj.lead || "Chưa gán"}</strong>
                               </span>
-                            </>
-                          )}
-                          {partDepts.length > 0 && (
-                            <>
-                              <span className="text-slate-300 dark:text-slate-700">•</span>
-                              <span className="inline-flex items-center gap-1 flex-wrap">
-                                <span className="text-[10px] text-slate-400">🏢</span>
-                                {partDepts.map((d: string) => (
-                                  <span
-                                    key={d}
-                                    className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 border border-purple-200/80 dark:border-purple-800/60"
-                                  >
-                                    {d}
-                                  </span>
-                                ))}
+                              <span className="font-medium text-slate-600 dark:text-slate-300">
+                                📅 {prj.startDate ? formatShortDate(prj.startDate) : "Bắt đầu"}{prj.endDate && prj.endDate !== prj.startDate ? ` ➔ ${formatShortDate(prj.endDate)}` : ""}
                               </span>
-                            </>
-                          )}
-                        </div>
-
-                        {/* COMPACT MODE: 1-line Stage Pills Strip + Quick Actions */}
-                        {isPrjCollapsed ? (
-                          <div className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-2 flex-wrap">
-                            <div className="flex items-center gap-1 flex-wrap flex-1 min-w-0">
-                              {stages.map((stg: any, sIdx: number) => {
-                                const isDone = stg.status === "completed";
-                                const isInProg = stg.status === "in_progress";
-                                const stgLabel = cleanStageName(stg.name);
-                                return (
-                                  <span
-                                    key={stg.id || sIdx}
-                                    onClick={togglePrjCollapse}
-                                    title={`Giai đoạn ${sIdx + 1}: ${stgLabel}${stg.assignee ? ` • Phụ trách: ${stg.assignee}` : ""}${stg.due ? ` • Hạn: ${stg.due}` : ""} (Nhấn để xổ chi tiết)`}
-                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border cursor-pointer transition-colors ${
-                                      isDone
-                                        ? "bg-emerald-50 border-emerald-300 text-emerald-800 dark:bg-emerald-950/50 dark:border-emerald-800 dark:text-emerald-300"
-                                        : isInProg
-                                        ? "bg-purple-100 border-purple-400 text-purple-900 dark:bg-purple-950/70 dark:border-purple-600 dark:text-purple-200"
-                                        : "bg-slate-50 border-slate-200 text-slate-600 hover:border-purple-300 dark:bg-slate-800/70 dark:border-slate-700 dark:text-slate-300"
-                                    }`}
-                                  >
-                                    <span>GĐ{sIdx + 1}</span>
-                                    <span className="truncate max-w-[115px] font-medium">{stgLabel}</span>
-                                    {isDone ? <span>✓</span> : isInProg ? <span>●</span> : null}
-                                  </span>
-                                );
-                              })}
+                              {prj.budget && (
+                                <span className="text-emerald-700 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/50 px-1.5 py-0.5 rounded border border-emerald-200/70 dark:border-emerald-800/60">
+                                  💰 {prj.budget}
+                                </span>
+                              )}
                             </div>
 
-                            <div className="flex items-center gap-1.5 shrink-0">
+                            {/* Stepper chấm giai đoạn gọn (G0..G4 / GĐ1..N) + Nút Bảng việc & Mở phân hệ */}
+                            <div className="flex items-center gap-1.5 flex-wrap ml-auto">
+                              {stages.length > 0 && (
+                                <div className="inline-flex items-center gap-1 bg-slate-50 dark:bg-slate-800/60 px-1.5 py-0.5 rounded-lg border border-slate-200/80 dark:border-slate-700">
+                                  {stages.map((stg: any, sIdx: number) => {
+                                    const isDone = stg.status === "completed";
+                                    const isCurrent = sIdx === currentStageIdx;
+                                    const stgLabel = cleanStageName(stg.name);
+                                    const shortCode = /^Gate\s*(\d+)/i.test(stgLabel)
+                                      ? `G${stgLabel.match(/^Gate\s*(\d+)/i)?.[1]}`
+                                      : `B${sIdx + 1}`;
+                                    return (
+                                      <span
+                                        key={stg.id || sIdx}
+                                        onClick={togglePrjCollapse}
+                                        title={`Giai đoạn ${sIdx + 1}: ${stgLabel}${stg.assignee ? ` • Phụ trách: ${stg.assignee}` : ""}${stg.due ? ` • Hạn: ${stg.due}` : ""} (Nhấn để xem chi tiết)`}
+                                        className={`px-1.5 py-0.2 rounded text-[10px] font-mono font-extrabold cursor-pointer transition-all ${
+                                          isDone
+                                            ? "bg-emerald-600 text-white"
+                                            : isCurrent
+                                            ? "bg-purple-600 text-white ring-2 ring-purple-400/40"
+                                            : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:border-purple-400"
+                                        }`}
+                                      >
+                                        {shortCode}{isDone ? "✓" : isCurrent ? "•" : ""}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
                               <button
                                 type="button"
                                 onClick={() => {
@@ -12053,16 +12023,21 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                 <ListTodo className="w-3 h-3" />
                                 <span>Bảng việc</span>
                               </button>
-                              <button
-                                type="button"
-                                onClick={togglePrjCollapse}
-                                className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-slate-100 hover:bg-purple-50 dark:bg-slate-800 dark:hover:bg-purple-950/60 text-slate-700 hover:text-purple-700 dark:text-slate-300 dark:hover:text-purple-300 border border-slate-200 dark:border-slate-700 cursor-pointer transition-colors"
-                              >
-                                ▼ Xem {totalStages} giai đoạn
-                              </button>
+
+                              {prj.isHubProject && (
+                                <button
+                                  type="button"
+                                  onClick={() => navigateToTargetTab(prj.targetTab || "factory-rd")}
+                                  className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 cursor-pointer"
+                                  title="Mở chi tiết dự án tại Phân hệ Kỹ thuật"
+                                >
+                                  ↗ Phân hệ
+                                </button>
+                              )}
                             </div>
                           </div>
-                        ) : (
+
+                        {!isPrjCollapsed && (
                           <>
                             {/* EXPANDED MODE: Full Collaborators & Detailed Stage Cards */}
                             {Array.isArray(prj.collaborators) && prj.collaborators.length > 0 && (
@@ -12334,11 +12309,12 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             </div>
                           </>
                         )}
+                        </div>
                       </div>
 
                       {/* Card Footer: Cross-Module Actions (only shown when expanded) */}
                       {!isPrjCollapsed && (
-                      <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-1.5 flex-wrap text-xs">
+                      <div className="px-3.5 pb-3.5 pt-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-1.5 flex-wrap text-xs">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           {prj.isHubProject ? (
                             <>
