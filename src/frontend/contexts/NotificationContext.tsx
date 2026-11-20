@@ -449,7 +449,7 @@ export function mergeNotificationMatrixWithDefaults(
                 ...def,
                 enabled: typeof custom.enabled === "boolean" ? custom.enabled : def.enabled,
                 enableToast: typeof custom.enableToast === "boolean" ? custom.enableToast : def.enableToast,
-                targetRoles: Array.isArray(custom.targetRoles) && custom.targetRoles.length > 0 ? custom.targetRoles : def.targetRoles,
+                targetRoles: Array.isArray(custom.targetRoles) ? custom.targetRoles : def.targetRoles,
                 targetEmployeeIds: Array.isArray(custom.targetEmployeeIds) ? custom.targetEmployeeIds : def.targetEmployeeIds,
                 targetEmployeeNames: Array.isArray(custom.targetEmployeeNames) ? custom.targetEmployeeNames : def.targetEmployeeNames,
             };
@@ -936,10 +936,30 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
         });
     }, [notifyActivity]);
 
-    // Filter notifications based on selectedEmployeeFilter
+    // Filter notifications based on selectedEmployeeFilter & Notification Matrix
     const filteredNotifications = useMemo(() => {
+        const resolveNotifMatrixConfig = (n: Notification): NotificationMatrixEvent | undefined => {
+            if (n.eventKey && matrixSettings[n.eventKey]) {
+                return matrixSettings[n.eventKey];
+            }
+            const t = String(n.title || "").trim();
+            if (!t) return undefined;
+            if (t.startsWith("Bạn được giao kiểm tra xuất xưởng (FQC)")) {
+                return matrixSettings["factory_device_fqc_assigned"];
+            }
+            return Object.values(matrixSettings).find(
+                (m) => m.name && (t === m.name || t.startsWith(`${m.name}:`))
+            );
+        };
+
+        const activeNotifications = allNotifications.filter((n) => {
+            const cfg = resolveNotifMatrixConfig(n);
+            if (cfg && cfg.enabled === false) return false;
+            return true;
+        });
+
         if (selectedEmployeeFilter === "all") {
-            return allNotifications;
+            return activeNotifications;
         }
 
         const normalizeNotifDeptKey = (raw: string): string => {
@@ -1055,9 +1075,57 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             const effectiveDept = (matchedPersonnel?.department || uDept).toLowerCase();
             const effectivePos = (matchedPersonnel?.position || "").toLowerCase();
 
-            const nameTokens = Array.from(new Set([uName, effectiveName, uUsername, effectiveEmpId].filter(t => t && t.length >= 2)));
+            const nameTokens = Array.from(new Set([uName, effectiveName, effectiveEmpId].filter(t => t && t.length >= 2)));
+            const isViewerAdminOrDirector =
+                uRole === "admin" ||
+                uRole === "director" ||
+                effectiveDept.includes("giám đốc") ||
+                effectiveDept.includes("bod");
 
-            return allNotifications.filter(n => {
+            return activeNotifications.filter(n => {
+                const matrixCfg = resolveNotifMatrixConfig(n);
+                const effectiveMatrixRoles = matrixCfg
+                    ? (matrixCfg.targetRoles || [])
+                    : ([n.recipientRole, ...(n.targetRoles || [])].filter(Boolean) as string[]);
+                const matrixAllowsAdmin =
+                    effectiveMatrixRoles.includes("admin") || effectiveMatrixRoles.includes("director");
+                const isExplicitlyInMatrixEmployees = Boolean(
+                    matrixCfg && (
+                        (Array.isArray(matrixCfg.targetEmployeeIds) && matrixCfg.targetEmployeeIds.some(id => {
+                            const idLower = String(id || "").toLowerCase();
+                            return idLower === effectiveEmpId || idLower === uEmpId || idLower === effectiveEmail || idLower === uUsername || idLower === effectiveName;
+                        })) ||
+                        (Array.isArray(matrixCfg.targetEmployeeNames) && matrixCfg.targetEmployeeNames.some(nm => {
+                            const nmLower = String(nm || "").toLowerCase();
+                            return nameTokens.some(tok => nmLower.includes(tok) || tok.includes(nmLower));
+                        }))
+                    )
+                );
+
+                // Nếu người xem là Ban Giám Đốc / Admin và sự kiện trong Ma trận thông báo KHÔNG tích chọn gửi cho Ban Giám Đốc:
+                // - Với thông báo sản xuất/kỹ thuật nhà máy tự động (Hệ thống Nhà máy ISO 13485 / Khối Kỹ thuật): ẩn hoàn toàn trừ khi BGĐ được gán đích danh trong Ma trận hoặc là Chủ nhiệm/Người thực hiện trực tiếp.
+                const isTechnicalSystemNotice =
+                    matrixCfg?.block === "technical" ||
+                    String(n.id || "").startsWith("FN-") ||
+                    String(n.category || "").startsWith("factory_") ||
+                    n.sender?.name === "Hệ thống Nhà máy (ISO 13485)";
+
+                if (isViewerAdminOrDirector && !matrixAllowsAdmin && !isExplicitlyInMatrixEmployees) {
+                    if (isTechnicalSystemNotice) {
+                        const directPersonalNames = [
+                            n.assignee || "",
+                            ...(n.assignees || []),
+                            n.creator || "",
+                        ].filter(Boolean).map(s => String(s).toLowerCase());
+                        const isDirectPersonalOwner = directPersonalNames.some(cand =>
+                            nameTokens.some(tok => cand.includes(tok) || tok.includes(cand))
+                        );
+                        return isDirectPersonalOwner;
+                    }
+                }
+
+                if (isExplicitlyInMatrixEmployees) return true;
+
                 // 1. Direct employee ID match
                 if (Array.isArray(n.targetEmployeeIds) && n.targetEmployeeIds.some(id => {
                     const idLower = String(id || "").toLowerCase();
@@ -1096,9 +1164,8 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                     return true;
                 }
 
-                // 5. Role match against targetRoles / recipientRole
-                const allTargetRoles = [n.recipientRole, ...(n.targetRoles || [])].filter(Boolean) as string[];
-                if (allTargetRoles.length > 0 && matchRoleAgainstPerson(allTargetRoles, effectiveDept, effectivePos, uRole, uName)) {
+                // 5. Role match against effectiveMatrixRoles (governed by Notification Matrix)
+                if (effectiveMatrixRoles.length > 0 && matchRoleAgainstPerson(effectiveMatrixRoles, effectiveDept, effectivePos, uRole, uName)) {
                     return true;
                 }
 
@@ -1106,7 +1173,11 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             });
         }
 
-        return allNotifications.filter(n => {
+        return activeNotifications.filter(n => {
+            const matrixCfg = resolveNotifMatrixConfig(n);
+            const effectiveMatrixRoles = matrixCfg
+                ? (matrixCfg.targetRoles || [])
+                : ([n.recipientRole, ...(n.targetRoles || [])].filter(Boolean) as string[]);
             if (n.targetEmployeeIds && n.targetEmployeeIds.includes(selectedEmployeeFilter)) return true;
             
             const targetPersonnel = personnelList.find(p => 
@@ -1134,9 +1205,8 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                     n.recipientDept.toLowerCase() === targetPersonnel.department.toLowerCase()
                 )) return true;
 
-                // Role matching against targetRoles or recipientRole
-                const allTargetRoles = [n.recipientRole, ...(n.targetRoles || [])].filter(Boolean) as string[];
-                if (allTargetRoles.length > 0 && matchRoleAgainstPerson(allTargetRoles, targetPersonnel.department || "", targetPersonnel.position || "")) {
+                // Role matching against effectiveMatrixRoles (governed by Notification Matrix)
+                if (effectiveMatrixRoles.length > 0 && matchRoleAgainstPerson(effectiveMatrixRoles, targetPersonnel.department || "", targetPersonnel.position || "")) {
                     return true;
                 }
             } else {
@@ -1151,7 +1221,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             
             return false;
         });
-    }, [allNotifications, selectedEmployeeFilter, personnelList, user]);
+    }, [allNotifications, selectedEmployeeFilter, personnelList, user, matrixSettings]);
 
     const getEffectiveReaderId = useCallback((customReader?: string) => {
         if (customReader) return customReader;

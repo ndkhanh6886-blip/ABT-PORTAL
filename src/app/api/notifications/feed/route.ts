@@ -4,9 +4,93 @@ import { query, withTransaction } from "@/backend/db/db";
 import { getAuthorizedUser, isAdminUser, setAuditActor, unauthorizedResponse } from "@/backend/services/authz";
 import { getFactoryPool, withTransaction as withFactoryTx } from "@/factory/core/db";
 import { markRead as markFactoryNotificationsRead } from "@/factory/core/notifications";
-import { factoryNoticeKey } from "@/factory/noticeMatrix";
+import { FACTORY_NOTICE_EVENTS, factoryNoticeKey } from "@/factory/noticeMatrix";
 
 export const dynamic = "force-dynamic";
+
+function resolveDefaultFactoryRoles(type: string, category: string): string[] {
+  const t = (type || "").toUpperCase();
+  const def = FACTORY_NOTICE_EVENTS.find((e) => e.type.toUpperCase() === t);
+  if (def?.defaultRoles && def.defaultRoles.length > 0) {
+    return [...def.defaultRoles];
+  }
+  const dept = def?.dept || "";
+  switch (dept) {
+    case "Đơn Nội Bộ":
+      return ["factory_intake", "factory_kit", "factory_oligo", "factory_device", "sales_head"];
+    case "Nghiên cứu R&D": {
+      const roles = ["factory_rd"];
+      if (t.includes("GATE") || t.includes("HOLD") || t.includes("KILL") || t.includes("APPROVE")) roles.push("admin");
+      if (t.includes("TECH_TRANSFER")) roles.push("factory_kit", "factory_qa");
+      return roles;
+    }
+    case "Sản xuất Kit": {
+      const roles = ["factory_kit"];
+      if (t.includes("QC") || t.includes("QA") || t.includes("EBR") || t.includes("BOM") || t.includes("ROUTING")) roles.push("factory_qa");
+      if (t.includes("FAIL_QC")) roles.push("admin");
+      return roles;
+    }
+    case "Tổng hợp Oligo": {
+      const roles = ["factory_oligo"];
+      if (t.includes("QC")) roles.push("factory_qa");
+      if (t.includes("QC_PASSED")) roles.push("factory_intake");
+      return roles;
+    }
+    case "Kỹ thuật – Thiết bị": {
+      const roles = ["factory_device"];
+      if (t.includes("FQC") || t.includes("QA") || t.includes("VALIDATION") || t.includes("ECO")) roles.push("factory_qa");
+      if (t.includes("COMPLETE_PQ") || t.includes("ECO_SUBMIT")) roles.push("admin");
+      return roles;
+    }
+    case "QA/QC": {
+      const roles = ["factory_qa", "qa_qc"];
+      if (t.includes("CONCESSION") || t.includes("DEVIATION") || t.includes("NCR")) roles.push("admin");
+      if (t.includes("IQC")) roles.push("factory_wh");
+      return roles;
+    }
+    case "Kho Nhà máy": {
+      const roles = ["factory_wh", "factory_qa"];
+      if (t.includes("REJECT")) roles.push("factory_purchase");
+      if (t.includes("RECONCILE")) roles.push("accountant", "admin");
+      return roles;
+    }
+    case "Mua hàng Nhà máy": {
+      const roles = ["factory_purchase"];
+      if (t.includes("ESCALATE") || t.includes("BOD")) roles.push("admin");
+      if (t.includes("APPROVE") || t.includes("MRP") || t.includes("DELIVERY")) roles.push("factory_wh");
+      return roles;
+    }
+    default:
+      return [category || "factory_qa"];
+  }
+}
+
+function resolveMatrixRule(
+  eventKey: string | undefined,
+  storedMatrix: Record<string, any>,
+  fallbackRoles: string[]
+): {
+  enabled: boolean;
+  targetRoles: string[];
+  targetEmployeeNames: string[];
+  targetEmployeeIds: string[];
+} {
+  const cfg = eventKey && storedMatrix && typeof storedMatrix === "object" ? storedMatrix[eventKey] : undefined;
+  if (cfg && typeof cfg === "object") {
+    return {
+      enabled: typeof cfg.enabled === "boolean" ? cfg.enabled : true,
+      targetRoles: Array.isArray(cfg.targetRoles) ? cfg.targetRoles : fallbackRoles,
+      targetEmployeeNames: Array.isArray(cfg.targetEmployeeNames) ? cfg.targetEmployeeNames : [],
+      targetEmployeeIds: Array.isArray(cfg.targetEmployeeIds) ? cfg.targetEmployeeIds : [],
+    };
+  }
+  return {
+    enabled: true,
+    targetRoles: fallbackRoles,
+    targetEmployeeNames: [],
+    targetEmployeeIds: [],
+  };
+}
 
 function toIso(val: any, fallback?: string): string {
   if (!val) return fallback ?? new Date().toISOString();
@@ -108,7 +192,7 @@ export async function GET(req: NextRequest) {
       query(
         `SELECT key, data FROM app_storage
           WHERE key = ANY($1::text[])`,
-        [["tbr_activity_notifications", "workspace_proposals", "notification_read_receipts"]]
+        [["tbr_activity_notifications", "workspace_proposals", "notification_read_receipts", "system_notification_matrix"]]
       ).catch(() => ({ rows: [] as any[] })),
 
       query(
@@ -137,21 +221,25 @@ export async function GET(req: NextRequest) {
           const pool = getFactoryPool();
           if (admin) {
             return await pool.query(
-              `SELECT DISTINCT ON (COALESCE(source_key, type || ':' || title || ':' || COALESCE(entity_id, id::text)))
-                      id, user_id, type, title, body, entity_type, entity_id, link, source_key, read_at, created_at
-                 FROM core.notification
-                ORDER BY COALESCE(source_key, type || ':' || title || ':' || COALESCE(entity_id, id::text)),
-                         CASE WHEN user_id = $1 THEN 0 ELSE 1 END,
-                         created_at DESC
+              `SELECT DISTINCT ON (COALESCE(n.source_key, n.type || ':' || n.title || ':' || COALESCE(n.entity_id, n.id::text)))
+                      n.id, n.user_id, n.type, n.title, n.body, n.entity_type, n.entity_id, n.link, n.source_key, n.read_at, n.created_at,
+                      up.display_name AS recipient_name
+                 FROM core.notification n
+                 LEFT JOIN core.user_profile up ON up.user_id = n.user_id
+                ORDER BY COALESCE(n.source_key, n.type || ':' || n.title || ':' || COALESCE(n.entity_id, n.id::text)),
+                         CASE WHEN n.user_id = $1 THEN 0 ELSE 1 END,
+                         n.created_at DESC
                 LIMIT 100`,
               [meId]
             );
           }
           return await pool.query(
-            `SELECT id, user_id, type, title, body, entity_type, entity_id, link, source_key, read_at, created_at
-               FROM core.notification
-              WHERE user_id = $1
-              ORDER BY created_at DESC
+            `SELECT n.id, n.user_id, n.type, n.title, n.body, n.entity_type, n.entity_id, n.link, n.source_key, n.read_at, n.created_at,
+                    up.display_name AS recipient_name
+               FROM core.notification n
+               LEFT JOIN core.user_profile up ON up.user_id = n.user_id
+              WHERE n.user_id = $1
+              ORDER BY n.created_at DESC
               LIMIT 80`,
             [meId]
           );
@@ -241,6 +329,9 @@ export async function GET(req: NextRequest) {
     const receiptsRaw = storageMap.get("notification_read_receipts");
     const receipts: Record<string, string[]> =
       receiptsRaw && typeof receiptsRaw === "object" && !Array.isArray(receiptsRaw) ? receiptsRaw : {};
+    const matrixRaw = storageMap.get("system_notification_matrix");
+    const storedMatrix: Record<string, any> =
+      matrixRaw && typeof matrixRaw === "object" && !Array.isArray(matrixRaw) ? matrixRaw : {};
 
     const coveredCodes = new Set<string>();
     for (const n of storedList) {
@@ -251,24 +342,59 @@ export async function GET(req: NextRequest) {
       extractCodes(`${n?.title || ""} ${n?.message || ""}`).forEach((c) => coveredCodes.add(c));
     }
 
-    const feed: any[] = storedList.map((n) => ({ ...n }));
+    const feed: any[] = [];
+    for (const rawN of storedList) {
+      if (!rawN) continue;
+      const evKey = rawN.eventKey;
+      if (evKey) {
+        const mRule = resolveMatrixRule(evKey, storedMatrix, Array.isArray(rawN.targetRoles) ? rawN.targetRoles : []);
+        if (!mRule.enabled) continue;
+        feed.push({
+          ...rawN,
+          targetRoles: mRule.targetRoles,
+          targetEmployeeNames: Array.from(new Set([...(Array.isArray(rawN.targetEmployeeNames) ? rawN.targetEmployeeNames : []), ...mRule.targetEmployeeNames])),
+          targetEmployeeIds: Array.from(new Set([...(Array.isArray(rawN.targetEmployeeIds) ? rawN.targetEmployeeIds : []), ...mRule.targetEmployeeIds])),
+        });
+      } else {
+        feed.push({ ...rawN });
+      }
+    }
 
     // 1. Factory core.notification entries (cross-dept outbox events)
     for (const fn of factoryNotifRes.rows) {
       const category = inferFactoryCategory(fn.type, fn.link);
+      const evKey = factoryNoticeKey(fn.type);
+      const defaultRoles = resolveDefaultFactoryRoles(fn.type, category);
+      const mRule = resolveMatrixRule(evKey, storedMatrix, defaultRoles);
+      if (!mRule.enabled) continue;
+
       const parsedLink = extractTabFromLinkUrl(fn.link);
       const isReadOwn = Number(fn.user_id) === meId && Boolean(fn.read_at);
+      const adminAllowedByMatrix = mRule.targetRoles.includes("admin") || mRule.targetRoles.includes("director");
+      const recipientName = String(fn.recipient_name || "").trim();
+      const includeRecipientAsPersonalTarget =
+        Boolean(recipientName) &&
+        (Number(fn.user_id) !== meId || !admin || adminAllowedByMatrix || mRule.targetEmployeeNames.includes(recipientName));
+      const targetEmpNames = Array.from(
+        new Set([
+          ...(includeRecipientAsPersonalTarget ? [recipientName] : []),
+          ...mRule.targetEmployeeNames,
+        ].filter(Boolean))
+      );
+
       feed.push({
         id: `FN-${fn.id}`,
         title: fn.title,
         message: fn.body || fn.title,
         type: /REJECT|FAIL|HOLD|KILL|SHORTAGE|MISMATCH|CONFLICT/i.test(fn.type) ? "warning" : "info",
         category,
-        eventKey: factoryNoticeKey(fn.type),
+        eventKey: evKey,
         createdAt: toIso(fn.created_at),
         readBy: isReadOwn ? [...meReaderKeys] : [],
         sender: { name: "Hệ thống Nhà máy (ISO 13485)" },
-        targetRoles: ["admin", category],
+        targetRoles: mRule.targetRoles,
+        targetEmployeeNames: targetEmpNames.length > 0 ? targetEmpNames : undefined,
+        targetEmployeeIds: mRule.targetEmployeeIds.length > 0 ? mRule.targetEmployeeIds : undefined,
         targetId: fn.entity_id || fn.id,
         link: parsedLink
           ? { tab: parsedLink.tab, itemId: parsedLink.itemId || fn.entity_id || undefined }
@@ -281,6 +407,9 @@ export async function GET(req: NextRequest) {
     for (const t of tasksRes.rows) {
       const codeUpper = String(t.task_code || "").toUpperCase();
       if (codeUpper && coveredCodes.has(codeUpper)) continue;
+      const evKey = t.status === "DONE" ? "task_status_updated" : "task_assigned";
+      const mRule = resolveMatrixRule(evKey, storedMatrix, t.status === "DONE" ? ["admin", "sales_head"] : ["admin"]);
+      if (!mRule.enabled) continue;
       const assignees = splitNames(t.assignee_name);
       const statusLabel = TASK_STATUS_VI[t.status] || t.status;
       feed.push({
@@ -289,16 +418,17 @@ export async function GET(req: NextRequest) {
         message: `${t.title}${assignees.length ? ` · Phụ trách: ${assignees.join(", ")}` : ""}${t.department ? ` (${t.department})` : ""}`,
         type: t.status === "DONE" ? "success" : "info",
         category: "task",
-        eventKey: t.status === "DONE" ? "task_status_updated" : "task_assigned",
+        eventKey: evKey,
         createdAt: toIso(t.updated_at || t.created_at),
         readBy: [],
         sender: { name: t.created_by_name || assignees[0] || "Điều hành công việc" },
-        targetEmployeeNames: [...assignees, ...(t.created_by_name ? [t.created_by_name] : [])].filter(Boolean),
+        targetEmployeeNames: Array.from(new Set([...assignees, ...(t.created_by_name ? [t.created_by_name] : []), ...mRule.targetEmployeeNames].filter(Boolean))),
+        targetEmployeeIds: mRule.targetEmployeeIds.length > 0 ? mRule.targetEmployeeIds : undefined,
         assignee: assignees[0] || undefined,
         assignees,
         creator: t.created_by_name || undefined,
         recipientDept: t.department || undefined,
-        targetRoles: ["admin"],
+        targetRoles: mRule.targetRoles,
         taskId: t.task_code || String(t.id),
         link: { tab: "workspace", subTab: "tasks", itemId: t.task_code || String(t.id) },
       });
@@ -308,7 +438,9 @@ export async function GET(req: NextRequest) {
     for (const w of wfRes.rows) {
       const codeUpper = String(w.workflow_code || "").toUpperCase();
       if (codeUpper && coveredCodes.has(codeUpper)) continue;
-      const names = Array.from(new Set([...splitNames(w.assignee_name), ...splitNames(w.requester_name)]));
+      const mRule = resolveMatrixRule("workflow_cross_dept", storedMatrix, ["admin"]);
+      if (!mRule.enabled) continue;
+      const names = Array.from(new Set([...splitNames(w.assignee_name), ...splitNames(w.requester_name), ...mRule.targetEmployeeNames]));
       const statusLabel = WF_STATUS_VI[w.status] || w.status;
       feed.push({
         id: `LIVE-WF-${w.id}`,
@@ -321,11 +453,12 @@ export async function GET(req: NextRequest) {
         readBy: [],
         sender: { name: w.requester_name || "Quy trình phối hợp" },
         targetEmployeeNames: names,
+        targetEmployeeIds: mRule.targetEmployeeIds.length > 0 ? mRule.targetEmployeeIds : undefined,
         assignee: splitNames(w.assignee_name)[0] || undefined,
         assignees: splitNames(w.assignee_name),
         creator: w.requester_name || undefined,
         recipientDept: w.target_dept || w.requester_dept || undefined,
-        targetRoles: ["admin"],
+        targetRoles: mRule.targetRoles,
         workflowId: w.id,
         workflowCode: w.workflow_code || undefined,
         link: { tab: "workspace", subTab: "workflows", itemId: w.workflow_code || String(w.id) },
@@ -372,6 +505,8 @@ export async function GET(req: NextRequest) {
 
     // 5. Live Daily Reports
     for (const d of dailyRes.rows) {
+      const mRule = resolveMatrixRule("daily_report_submitted", storedMatrix, ["admin", "sales_head", "app_head"]);
+      if (!mRule.enabled) continue;
       const ts = toIso(d.created_at, d.log_date ? `${String(d.log_date).slice(0, 10)}T17:00:00+07:00` : undefined);
       const preview = String(d.work_content || d.result || "Đã nộp báo cáo công việc ngày").slice(0, 140);
       feed.push({
@@ -384,10 +519,11 @@ export async function GET(req: NextRequest) {
         createdAt: ts,
         readBy: [],
         sender: { name: d.employee_name || "Nhân viên" },
-        targetEmployeeNames: d.employee_name ? [d.employee_name] : [],
+        targetEmployeeNames: Array.from(new Set([...(d.employee_name ? [d.employee_name] : []), ...mRule.targetEmployeeNames])),
+        targetEmployeeIds: mRule.targetEmployeeIds.length > 0 ? mRule.targetEmployeeIds : undefined,
         creator: d.employee_name || undefined,
         recipientDept: d.department || undefined,
-        targetRoles: ["admin"],
+        targetRoles: mRule.targetRoles,
         link: { tab: "workspace", subTab: "reports", itemId: String(d.id) },
       });
     }
@@ -397,18 +533,23 @@ export async function GET(req: NextRequest) {
       const codeUpper = String(p.code || "").toUpperCase();
       if (codeUpper && coveredCodes.has(codeUpper)) continue;
       const isSw = p.target_domain === "SOFTWARE";
+      const evKey = "factory_rd_idea_approve";
+      const mRule = resolveMatrixRule(evKey, storedMatrix, [isSw ? "factory_device" : "factory_rd"]);
+      if (!mRule.enabled) continue;
       feed.push({
         id: `LIVE-RD-PRJ-${p.id}`,
         title: `${isSw ? "💻 Dự án Phần mềm" : "🧬 Đề tài R&D"} ${p.code} (${p.current_stage})`,
         message: `${p.name}${p.leader_name ? ` · Chủ nhiệm: ${p.leader_name}` : ""} · TT: ${p.status}`,
         type: p.status === "TRANSFERRED" ? "success" : "info",
         category: isSw ? "factory_device" : "factory_rd",
+        eventKey: evKey,
         createdAt: toIso(p.updated_at || p.created_at),
         readBy: [],
         sender: { name: p.leader_name || p.dept_name || "R&D" },
-        targetEmployeeNames: p.leader_name ? [p.leader_name] : [],
+        targetEmployeeNames: Array.from(new Set([...(p.leader_name ? [p.leader_name] : []), ...mRule.targetEmployeeNames])),
+        targetEmployeeIds: mRule.targetEmployeeIds.length > 0 ? mRule.targetEmployeeIds : undefined,
         recipientDept: p.dept_name || (isSw ? "Kỹ thuật – Thiết bị" : "Nghiên cứu R&D"),
-        targetRoles: ["admin", isSw ? "factory_device" : "factory_rd"],
+        targetRoles: mRule.targetRoles,
         targetId: p.code,
         link: { tab: isSw ? "factory-it" : "factory-rd", itemId: p.id },
       });
@@ -417,18 +558,23 @@ export async function GET(req: NextRequest) {
     for (const e of rdExpRes.rows) {
       const codeUpper = String(e.code || "").toUpperCase();
       if (codeUpper && coveredCodes.has(codeUpper)) continue;
+      const evKey = e.status === "APPROVED" ? "factory_rd_experiment_approve" : e.status === "RETURNED" ? "factory_rd_experiment_return" : "factory_rd_experiment_submit";
+      const mRule = resolveMatrixRule(evKey, storedMatrix, ["factory_rd"]);
+      if (!mRule.enabled) continue;
       feed.push({
         id: `LIVE-RD-ELN-${e.id}`,
         title: `🧪 Nhật ký Thí nghiệm ELN ${e.code} [${e.status}]`,
         message: `${e.title}${e.performer_name ? ` · Thực hiện: ${e.performer_name}` : ""}`,
         type: e.status === "APPROVED" ? "success" : "info",
         category: "factory_rd",
+        eventKey: evKey,
         createdAt: toIso(e.updated_at || e.created_at),
         readBy: [],
         sender: { name: e.performer_name || "Phòng R&D" },
-        targetEmployeeNames: e.performer_name ? [e.performer_name] : [],
+        targetEmployeeNames: Array.from(new Set([...(e.performer_name ? [e.performer_name] : []), ...mRule.targetEmployeeNames])),
+        targetEmployeeIds: mRule.targetEmployeeIds.length > 0 ? mRule.targetEmployeeIds : undefined,
         recipientDept: "Nghiên cứu R&D",
-        targetRoles: ["admin", "factory_rd"],
+        targetRoles: mRule.targetRoles,
         targetId: e.code,
         link: { tab: "factory-rd", itemId: e.id },
       });

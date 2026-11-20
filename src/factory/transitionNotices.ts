@@ -42,10 +42,11 @@ for (const n of TRANSITION_NOTICES) {
     if (!row) return;
     const scope = await machine.scopeOf?.(row, tx);
     const users = scope ? await usersWithPermission(tx, n.notify, scope) : await usersWithPermissionAnywhere(tx, n.notify);
-    const label = row.code ?? row.name ?? row.title ?? "";
+    const label = row.code ?? row.serial_no ?? row.lot_no ?? row.batch_code ?? row.order_code ?? row.ticket_code ?? row.doc_code ?? row.name ?? row.title ?? "";
+    const directAssignee = n.entity === "device_unit" && n.action === "to_fqc" ? Number(row.fqc_assignee_id ?? 0) : 0;
     await notifyUsers(
       tx,
-      users.filter((u) => u !== ev.payload.by),
+      users.filter((u) => u !== ev.payload.by && (!directAssignee || u !== directAssignee)),
       {
         type: transitionNoticeType(n.entity, n.action),
         title: label ? `${n.name}: ${label}` : n.name,

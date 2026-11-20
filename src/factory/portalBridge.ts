@@ -92,11 +92,20 @@ setNoticePolicy({
     }
 
     const names: string[] = ev && Array.isArray(ev.targetEmployeeNames) ? ev.targetEmployeeNames : [];
-    const userIds = roles.includes("admin") || names.length
+    const includeAdmin = roles.includes("admin") || roles.includes("director");
+    const userIds = includeAdmin || names.length
       ? (
           await query(
-            "SELECT id FROM users WHERE is_active IS NOT FALSE AND role <> 'customer' AND (($1 AND role = 'admin') OR full_name = ANY($2::text[]))",
-            [roles.includes("admin"), names]
+            "SELECT id FROM users WHERE is_active IS NOT FALSE AND role <> 'customer' AND (($1 AND role IN ('admin', 'director')) OR full_name = ANY($2::text[]))",
+            [includeAdmin, names]
+          )
+        ).rows.map((r: any) => Number(r.id))
+      : [];
+    const excludedUserIds = !includeAdmin
+      ? (
+          await query(
+            "SELECT id FROM users WHERE is_active IS NOT FALSE AND role IN ('admin', 'director') AND NOT (full_name = ANY($1::text[]))",
+            [names]
           )
         ).rows.map((r: any) => Number(r.id))
       : [];
@@ -104,6 +113,7 @@ setNoticePolicy({
       enabled: ev ? ev.enabled !== false : true,
       permissions: TECHNICAL_MATRIX_ROLES.filter((r) => roles.includes(r.code)).map((r) => r.permission),
       userIds,
+      excludedUserIds,
     };
   },
 });
