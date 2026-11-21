@@ -771,6 +771,8 @@ export async function GET(req: NextRequest) {
       channelsQuery += ` WHERE ${channelAccessSql("$1::text[]")}`;
       channelsQuery += ` ORDER BY c.last_message_at DESC NULLS LAST, c.id ASC`;
 
+      await query("ALTER TABLE personnel ADD COLUMN IF NOT EXISTS date_of_birth DATE").catch(() => {});
+
       const [channelsRes, personnelRes, tasksRes, workflowsRes] = await Promise.all([
         query(channelsQuery, params),
         query(`
@@ -783,6 +785,7 @@ export async function GET(req: NextRequest) {
             COALESCE(p.position, 'Thành viên') as position,
             COALESCE(p.email, '') as email,
             COALESCE(p.phone, '') as phone,
+            p.date_of_birth::text as date_of_birth,
             p.employee_code as employee_code,
             u.last_seen_at,
             CASE 
@@ -816,6 +819,7 @@ export async function GET(req: NextRequest) {
             'Quản trị viên hệ thống' as position,
             COALESCE(u.email, 'admin@abtvn.com') as email,
             '' as phone,
+            NULL::text as date_of_birth,
             'admin' as employee_code,
             u.last_seen_at,
             CASE 
@@ -850,6 +854,67 @@ export async function GET(req: NextRequest) {
         }
       }
       const dedupedPersonnelList = Array.from(dedupedPersonnelMap.values());
+
+      // Tự động đăng thông báo Chúc mừng sinh nhật lên kênh #Công ty (general) vào đúng ngày sinh nhật của nhân sự
+      try {
+        const vnToday = new Intl.DateTimeFormat("en-CA", {
+          timeZone: "Asia/Ho_Chi_Minh",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        }).format(new Date());
+        const [, vnMm, vnDd] = vnToday.split("-");
+        const birthdayStaffToday = dedupedPersonnelList.filter((p: any) => {
+          const dob = String(p.date_of_birth || "").slice(0, 10);
+          const m = dob.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+          return Boolean(m && m[2] === vnMm && m[3] === vnDd);
+        });
+        if (birthdayStaffToday.length > 0) {
+          const generalCh = (channelsRes.rows || []).find(
+            (c: any) => String(c.channel_code || "").toLowerCase() === "general" || isCompanyWideChannel(c)
+          );
+          if (generalCh?.id) {
+            const storageKey = `hr_birthday_chat_greeted_${vnToday}`;
+            const stRes = await query("SELECT data FROM app_storage WHERE key = $1", [storageKey]).catch(() => ({ rows: [] as any[] }));
+            const greetedCodes = new Set<string>(Array.isArray(stRes.rows[0]?.data) ? stRes.rows[0].data : []);
+            let newGreeted = false;
+            for (const bp of birthdayStaffToday) {
+              const codeKey = String(bp.employee_code || bp.username || bp.full_name).trim().toUpperCase();
+              if (!codeKey || greetedCodes.has(codeKey)) continue;
+              const ddMm = `${vnDd}/${vnMm}`;
+              const msgText =
+                `🎂🎉 **CHÚC MỪNG SINH NHẬT ${String(bp.full_name || "").toUpperCase()} (${ddMm})!** 🎉🎂\n` +
+                `Hệ thống ABT thay mặt Ban Giám Đốc và toàn thể Anh/Chị/Em công ty gửi lời chúc mừng sinh nhật nồng nhiệt nhất tới **${bp.full_name}** (${bp.position || "Chuyên viên"} – ${bp.department || "ABT"})!\n` +
+                `Chúc Anh/Chị tuổi mới thật nhiều sức khỏe, hạnh phúc và gặt hái nhiều thành công rực rỡ cùng đại gia đình ABT! 💐🥂`;
+              await query(
+                `INSERT INTO chat_messages (channel_id, channel_code, sender_name, sender_role, sender_dept, content, is_pinned)
+                 VALUES ($1, $2, $3, $4, $5, $6, TRUE)`,
+                [
+                  generalCh.id,
+                  generalCh.channel_code || "general",
+                  "Hành Chính Nhân Sự & Văn Hóa ABT",
+                  "Chúc mừng sinh nhật",
+                  "ABT",
+                  msgText,
+                ]
+              );
+              await query("UPDATE chat_channels SET last_message_at = CURRENT_TIMESTAMP WHERE id = $1", [generalCh.id]);
+              greetedCodes.add(codeKey);
+              newGreeted = true;
+            }
+            if (newGreeted) {
+              await query(
+                `INSERT INTO app_storage (key, data, updated_at)
+                 VALUES ($1, $2::jsonb, CURRENT_TIMESTAMP)
+                 ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = CURRENT_TIMESTAMP`,
+                [storageKey, JSON.stringify(Array.from(greetedCodes))]
+              ).catch(() => {});
+            }
+          }
+        }
+      } catch (bdayErr) {
+        console.warn("[CHAT_BIRTHDAY_AUTO_GREET_WARN]:", bdayErr);
+      }
 
       const accessibleRows = (channelsRes.rows || []).filter((c: any) => canUserAccessChannelRow(ident, c));
 

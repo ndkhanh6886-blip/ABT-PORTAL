@@ -40,6 +40,64 @@ function isSameDepartment(a?: string | null, b?: string | null): boolean {
   return Boolean(na && nb && na === nb);
 }
 
+/** Chuẩn hóa ngày tháng năm sinh về định dạng YYYY-MM-DD (hỗ trợ YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY và số serial ngày Excel). */
+function parsePersonnelBirthDate(raw: any): string | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+    return raw.toISOString().slice(0, 10);
+  }
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 1000 && raw < 80000) {
+    // Excel serial date (days since 1899-12-30)
+    const utcMs = Math.round((raw - 25569) * 86400 * 1000);
+    const d = new Date(utcMs);
+    if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  }
+  const s = String(raw).trim();
+  if (!s) return null;
+  let m = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if (m) {
+    const yyyy = Number(m[1]);
+    const mm = Number(m[2]);
+    const dd = Number(m[3]);
+    if (yyyy >= 1930 && yyyy <= 2100 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+      return `${String(yyyy).padStart(4, "0")}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+    }
+  }
+  m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+  if (m) {
+    const dd = Number(m[1]);
+    const mm = Number(m[2]);
+    const yyyy = Number(m[3]);
+    if (yyyy >= 1930 && yyyy <= 2100 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+      return `${String(yyyy).padStart(4, "0")}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+    }
+  }
+  if (/^\d{4,5}$/.test(s)) {
+    const serial = Number(s);
+    if (serial > 1000 && serial < 80000) {
+      const utcMs = Math.round((serial - 25569) * 86400 * 1000);
+      const d = new Date(utcMs);
+      if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+    }
+  }
+  return null;
+}
+
+function formatDateOnly(val: any): string | null {
+  if (!val) return null;
+  if (typeof val === "string") {
+    const m = val.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (m) return m[1];
+  }
+  if (val instanceof Date && !Number.isNaN(val.getTime())) {
+    const yyyy = val.getFullYear();
+    const mm = String(val.getMonth() + 1).padStart(2, "0");
+    const dd = String(val.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  return parsePersonnelBirthDate(val);
+}
+
 /** Removes deleted employee/account references across Zalo bindings, org assignments, permission backups, and Factory RBAC. */
 async function cleanupDeletedStaffArtifacts(opts: {
   personnelIds?: number[];
@@ -220,8 +278,12 @@ export async function GET(req: NextRequest) {
       let logsTotal = 0;
 
       try {
+        await query("ALTER TABLE personnel ADD COLUMN IF NOT EXISTS date_of_birth DATE").catch(() => {});
         const pRes = await query("SELECT * FROM personnel ORDER BY id ASC");
-        personnelRows = pRes.rows;
+        personnelRows = (pRes.rows || []).map((p: any) => ({
+          ...p,
+          date_of_birth: formatDateOnly(p.date_of_birth),
+        }));
       } catch (e: any) {
         console.error("Failed to query personnel:", e.message);
       }
@@ -304,7 +366,8 @@ export async function GET(req: NextRequest) {
       if (!isAdmin) {
         personnelRows = personnelRows.map((p: any) => ({
           id: p.id, employee_code: p.employee_code, full_name: p.full_name,
-          department: p.department, position: p.position, email: p.email, phone: p.phone, status: p.status,
+          department: p.department, position: p.position, email: p.email, phone: p.phone,
+          date_of_birth: p.date_of_birth, status: p.status,
         }));
         usersRows = usersRows.map((u: any) => ({
           id: u.id, username: u.username, full_name: u.full_name, role: u.role,
@@ -351,12 +414,14 @@ export async function POST(req: NextRequest) {
     if (!isAdminUser(me)) return forbiddenResponse("Chỉ Quản trị viên / Ban Giám Đốc mới được thay đổi cấu hình nhân sự và tài khoản.");
 
     if (action === "personnel") {
-      const { id, employee_code, full_name, department, position, email, phone, status } = body;
+      await query("ALTER TABLE personnel ADD COLUMN IF NOT EXISTS date_of_birth DATE").catch(() => {});
+      const { id, employee_code, full_name, department, position, email, phone, date_of_birth, status } = body;
       const cleanEmail = normalizePersonText(email).toLowerCase();
       const cleanName = normalizePersonText(full_name);
       const cleanDept = normalizePersonText(department);
       const cleanPos = normalizePersonText(position);
       const cleanPhone = normalizePersonText(phone);
+      const cleanDob = parsePersonnelBirthDate(date_of_birth);
       const requestedCode = normalizePersonText(employee_code);
       const role = inferSystemRoleFromPosition(cleanDept, cleanPos);
 
@@ -366,8 +431,8 @@ export async function POST(req: NextRequest) {
 
       if (id) {
         await query(
-          `UPDATE personnel SET full_name=$1, department=$2, position=$3, email=$4, phone=$5, status=$6 WHERE id=$7`,
-          [cleanName, cleanDept, cleanPos, cleanEmail, cleanPhone, status || "ACTIVE", id]
+          `UPDATE personnel SET full_name=$1, department=$2, position=$3, email=$4, phone=$5, status=$6, date_of_birth=$7 WHERE id=$8`,
+          [cleanName, cleanDept, cleanPos, cleanEmail, cleanPhone, status || "ACTIVE", cleanDob, id]
         );
         // Automatically sync to users table (chat account)
         const variants = employeeCodeVariants(requestedCode);
@@ -408,9 +473,9 @@ export async function POST(req: NextRequest) {
         }
         const code = requestedCode || await nextEmployeeCode();
         await query(
-          `INSERT INTO personnel (employee_code, full_name, department, position, email, phone, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [code, cleanName, cleanDept, cleanPos, cleanEmail, cleanPhone, status || "ACTIVE"]
+          `INSERT INTO personnel (employee_code, full_name, department, position, email, phone, date_of_birth, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [code, cleanName, cleanDept, cleanPos, cleanEmail, cleanPhone, cleanDob, status || "ACTIVE"]
         );
         // Tạo tài khoản đăng nhập tương ứng; không ghi đè tài khoản đã tồn tại
         const ins = await query(
@@ -521,6 +586,15 @@ export async function POST(req: NextRequest) {
             : undefined;
         const empCode = rawEmpCode || matchedExisting?.employee_code || `NV-ABT-${importBatchStamp}-${++importAutoSeq}`;
         const rawRole = getVal(["Vai trò hệ thống (*)", "Vai trò hệ thống", "Vai Trò Hệ Thống", "Vai trò", "role", "Role"]);
+        const rawDob = getVal([
+          "Ngày sinh (DD/MM/YYYY)",
+          "Ngày sinh",
+          "Ngày tháng năm sinh",
+          "date_of_birth",
+          "DOB",
+          "Ngaysinh",
+        ]);
+        const cleanDob = parsePersonnelBirthDate(rawDob);
         const statusRaw = (getVal(["Trạng thái", "status"]) || "ACTIVE").toUpperCase();
         const status = statusRaw.includes("NGHỈ") || statusRaw.includes("INACTIVE") ? "INACTIVE" : "ACTIVE";
         const resolvedRole = inferSystemRoleFromPosition(dept, position, rawRole);
@@ -530,17 +604,18 @@ export async function POST(req: NextRequest) {
 
         // 1. Upsert into personnel (Single Source of Truth)
         const pUpsert = await query(
-          `INSERT INTO personnel (employee_code, full_name, department, position, email, phone, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
+          `INSERT INTO personnel (employee_code, full_name, department, position, email, phone, date_of_birth, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            ON CONFLICT (employee_code) DO UPDATE 
            SET full_name = EXCLUDED.full_name,
                department = EXCLUDED.department,
                position = EXCLUDED.position,
                email = EXCLUDED.email,
                phone = EXCLUDED.phone,
+               date_of_birth = COALESCE(EXCLUDED.date_of_birth, personnel.date_of_birth),
                status = EXCLUDED.status
            RETURNING id, employee_code, full_name, department, email`,
-          [empCode, fullName, dept, position, email, phone, status]
+          [empCode, fullName, dept, position, email, phone, cleanDob, status]
         );
         if (pUpsert.rows[0] && !existingPersonnelRows.some((p) => p.employee_code === empCode)) {
           existingPersonnelRows.push(pUpsert.rows[0]);

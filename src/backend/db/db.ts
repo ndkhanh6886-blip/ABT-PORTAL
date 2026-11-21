@@ -1461,9 +1461,11 @@ async function ensurePersonnelTableImpl() {
         position VARCHAR(150),
         email VARCHAR(150),
         phone VARCHAR(50),
+        date_of_birth DATE,
         status VARCHAR(50) DEFAULT 'ACTIVE',
         created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
+      ALTER TABLE personnel ADD COLUMN IF NOT EXISTS date_of_birth DATE;
     `);
 
     // 5. Ensure an admin account exists. A brand-new database gets INITIAL_ADMIN_PASSWORD or a random

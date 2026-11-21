@@ -294,6 +294,18 @@ const COMMERCIAL_NOTIFICATION_MATRIX: Record<string, NotificationMatrixEvent> = 
         targetRoles: ["admin", "sales_head", "app_head"],
         targetEmployeeIds: []
     },
+    hr_birthday_celebration: {
+        key: "hr_birthday_celebration",
+        name: "🎂 Tự động thông báo & Chúc mừng sinh nhật nhân sự",
+        category: "workspace",
+        categoryLabel: "Hành Chính Nhân Sự",
+        block: "commercial",
+        description: "Tự động tạo thông báo chúc mừng sinh nhật nhân sự trên chuông thông báo toàn công ty, nhắc trước 3 ngày và tự động đăng lời chúc lên kênh chat #Công ty.",
+        enabled: true,
+        enableToast: true,
+        targetRoles: ["admin", "hr_admin", "sales_head", "sales_rep", "app_head", "app_engineer", "warehouse_lead", "warehouse_staff", "procurement_lead", "procurement_staff", "accountant_head", "accountant", "legal_head", "legal_staff", "qa_qc_lead", "qa_qc", "rd_head", "rd_staff", "kit_head", "kit_staff", "oligo_head", "oligo_staff", "device_head", "device_staff"],
+        targetEmployeeIds: []
+    },
     invoice_vat_issued: {
         key: "invoice_vat_issued",
         name: "Xuất hóa đơn VAT & Xác nhận thanh toán công nợ",

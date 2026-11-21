@@ -522,12 +522,12 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
 
   const handleDownloadPersonnelTemplate = () => {
     const sampleData = [
-      { "Mã nhân viên (*)": "NV-ABT-001", "Họ và tên (*)": "Nguyễn Văn A", "Tên đăng nhập (*)": "NV-ABT-001", "Mật khẩu khởi tạo": "", "Phòng ban (*)": "Ban Giám Đốc", "Chức vụ / Vị trí (*)": "Giám đốc", "Vai trò hệ thống (*)": "admin", "Email (*)": "a.nv@abt-vn.net", "Số điện thoại": "0900000001", "Trạng thái": "Đang làm việc" },
-      { "Mã nhân viên (*)": "NV-ABT-002", "Họ và tên (*)": "Trần Thị B", "Tên đăng nhập (*)": "NV-ABT-002", "Mật khẩu khởi tạo": "", "Phòng ban (*)": "Kinh Doanh", "Chức vụ / Vị trí (*)": "Nhân viên Sales", "Vai trò hệ thống (*)": "sales_rep", "Email (*)": "b.tt@abt-vn.net", "Số điện thoại": "0900000002", "Trạng thái": "Đang làm việc" },
-      { "Mã nhân viên (*)": "NV-ABT-003", "Họ và tên (*)": "Lê Minh C", "Tên đăng nhập (*)": "NV-ABT-003", "Mật khẩu khởi tạo": "", "Phòng ban (*)": "R&D", "Chức vụ / Vị trí (*)": "Trưởng phòng R&D", "Vai trò hệ thống (*)": "rd_head", "Email (*)": "c.lm@abt-vn.net", "Số điện thoại": "0900000003", "Trạng thái": "Đang làm việc" },
-      { "Mã nhân viên (*)": "NV-ABT-004", "Họ và tên (*)": "Phạm Hoàng D", "Tên đăng nhập (*)": "NV-ABT-004", "Mật khẩu khởi tạo": "", "Phòng ban (*)": "Sản xuất", "Chức vụ / Vị trí (*)": "Nhân viên sản xuất", "Vai trò hệ thống (*)": "kit_staff", "Email (*)": "d.ph@abt-vn.net", "Số điện thoại": "0900000004", "Trạng thái": "Đang làm việc" },
-      { "Mã nhân viên (*)": "NV-ABT-005", "Họ và tên (*)": "Vũ Quốc E", "Tên đăng nhập (*)": "NV-ABT-005", "Mật khẩu khởi tạo": "", "Phòng ban (*)": "KTCN", "Chức vụ / Vị trí (*)": "Nhân viên Sản xuất thiết bị", "Vai trò hệ thống (*)": "device_staff", "Email (*)": "e.vq@abt-vn.net", "Số điện thoại": "0900000005", "Trạng thái": "Đang làm việc" },
-      { "Mã nhân viên (*)": "NV-ABT-006", "Họ và tên (*)": "Đặng Thu F", "Tên đăng nhập (*)": "NV-ABT-006", "Mật khẩu khởi tạo": "", "Phòng ban (*)": "QC/QA", "Chức vụ / Vị trí (*)": "Nhân viên QC", "Vai trò hệ thống (*)": "qa_qc", "Email (*)": "f.dt@abt-vn.net", "Số điện thoại": "0900000006", "Trạng thái": "Đang làm việc" }
+      { "Mã nhân viên (*)": "NV-ABT-001", "Họ và tên (*)": "Nguyễn Văn A", "Ngày sinh (DD/MM/YYYY)": "15/05/1990", "Tên đăng nhập (*)": "NV-ABT-001", "Mật khẩu khởi tạo": "", "Phòng ban (*)": "Ban Giám Đốc", "Chức vụ / Vị trí (*)": "Giám đốc", "Vai trò hệ thống (*)": "admin", "Email (*)": "a.nv@abt-vn.net", "Số điện thoại": "0900000001", "Trạng thái": "Đang làm việc" },
+      { "Mã nhân viên (*)": "NV-ABT-002", "Họ và tên (*)": "Trần Thị B", "Ngày sinh (DD/MM/YYYY)": "20/08/1995", "Tên đăng nhập (*)": "NV-ABT-002", "Mật khẩu khởi tạo": "", "Phòng ban (*)": "Kinh Doanh", "Chức vụ / Vị trí (*)": "Nhân viên Sales", "Vai trò hệ thống (*)": "sales_rep", "Email (*)": "b.tt@abt-vn.net", "Số điện thoại": "0900000002", "Trạng thái": "Đang làm việc" },
+      { "Mã nhân viên (*)": "NV-ABT-003", "Họ và tên (*)": "Lê Minh C", "Ngày sinh (DD/MM/YYYY)": "10/11/1992", "Tên đăng nhập (*)": "NV-ABT-003", "Mật khẩu khởi tạo": "", "Phòng ban (*)": "R&D", "Chức vụ / Vị trí (*)": "Trưởng phòng R&D", "Vai trò hệ thống (*)": "rd_head", "Email (*)": "c.lm@abt-vn.net", "Số điện thoại": "0900000003", "Trạng thái": "Đang làm việc" },
+      { "Mã nhân viên (*)": "NV-ABT-004", "Họ và tên (*)": "Phạm Hoàng D", "Ngày sinh (DD/MM/YYYY)": "02/03/1996", "Tên đăng nhập (*)": "NV-ABT-004", "Mật khẩu khởi tạo": "", "Phòng ban (*)": "Sản xuất", "Chức vụ / Vị trí (*)": "Nhân viên sản xuất", "Vai trò hệ thống (*)": "kit_staff", "Email (*)": "d.ph@abt-vn.net", "Số điện thoại": "0900000004", "Trạng thái": "Đang làm việc" },
+      { "Mã nhân viên (*)": "NV-ABT-005", "Họ và tên (*)": "Vũ Quốc E", "Ngày sinh (DD/MM/YYYY)": "18/07/1994", "Tên đăng nhập (*)": "NV-ABT-005", "Mật khẩu khởi tạo": "", "Phòng ban (*)": "KTCN", "Chức vụ / Vị trí (*)": "Nhân viên Sản xuất thiết bị", "Vai trò hệ thống (*)": "device_staff", "Email (*)": "e.vq@abt-vn.net", "Số điện thoại": "0900000005", "Trạng thái": "Đang làm việc" },
+      { "Mã nhân viên (*)": "NV-ABT-006", "Họ và tên (*)": "Đặng Thu F", "Ngày sinh (DD/MM/YYYY)": "25/12/1997", "Tên đăng nhập (*)": "NV-ABT-006", "Mật khẩu khởi tạo": "", "Phòng ban (*)": "QC/QA", "Chức vụ / Vị trí (*)": "Nhân viên QC", "Vai trò hệ thống (*)": "qa_qc", "Email (*)": "f.dt@abt-vn.net", "Số điện thoại": "0900000006", "Trạng thái": "Đang làm việc" }
     ];
 
     // Bảng tham chiếu = cấu hình phòng ban thực tế (mỗi vị trí, vai trò mặc định, khối)
@@ -629,6 +629,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
     position: "Chuyên Viên Kinh Doanh (Sales Specialist)",
     email: "",
     phone: "",
+    date_of_birth: "",
     status: "ACTIVE"
   });
 
@@ -1278,6 +1279,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
         position: pToEdit.position || "Chuyên Viên Kinh Doanh (Sales Specialist)",
         email: pToEdit.email || "",
         phone: pToEdit.phone || "",
+        date_of_birth: pToEdit.date_of_birth ? String(pToEdit.date_of_birth).slice(0, 10) : "",
         status: pToEdit.status || "ACTIVE"
       });
     } else {
@@ -1296,6 +1298,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
         position: defaultPos,
         email: "",
         phone: "",
+        date_of_birth: "",
         status: "ACTIVE"
       });
     }
@@ -2089,12 +2092,90 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
             </div>
           </div>
 
+          {/* Banner Sinh Nhật Hôm Nay & Sắp Tới (Trong 30 ngày) */}
+          {(() => {
+            const now = new Date();
+            const curYear = now.getFullYear();
+            const todayUtc = Date.UTC(curYear, now.getMonth(), now.getDate());
+            const bdayList = personnel
+              .filter((p) => p?.date_of_birth && p.status !== "INACTIVE" && p.status !== "RESIGNED")
+              .map((p) => {
+                const m = String(p.date_of_birth).slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+                if (!m) return null;
+                const bYear = Number(m[1]);
+                const bMonth = Number(m[2]);
+                const bDay = Number(m[3]);
+                let nextUtc = Date.UTC(curYear, bMonth - 1, bDay);
+                if (nextUtc < todayUtc) nextUtc = Date.UTC(curYear + 1, bMonth - 1, bDay);
+                const daysUntil = Math.round((nextUtc - todayUtc) / 86400000);
+                return {
+                  ...p,
+                  bDay,
+                  bMonth,
+                  bYear,
+                  ddMm: `${String(bDay).padStart(2, "0")}/${String(bMonth).padStart(2, "0")}`,
+                  daysUntil,
+                };
+              })
+              .filter((x): x is NonNullable<typeof x> => Boolean(x && x.daysUntil <= 30))
+              .sort((a, b) => a.daysUntil - b.daysUntil);
+
+            if (bdayList.length === 0) return null;
+            const todayBirthdays = bdayList.filter((x) => x.daysUntil === 0);
+            const upcomingBirthdays = bdayList.filter((x) => x.daysUntil > 0);
+
+            return (
+              <div className="p-3.5 rounded-2xl border border-pink-200 dark:border-pink-800/70 bg-gradient-to-r from-pink-50/80 via-rose-50/70 to-amber-50/70 dark:from-pink-950/30 dark:via-rose-950/20 dark:to-amber-950/20 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-xs font-extrabold text-rose-900 dark:text-rose-200">
+                    <span className="text-base">🎂</span>
+                    <span>
+                      Lịch Sinh Nhật Cán Bộ Nhân Viên ABT (Tự động tạo thông báo chúc mừng &amp; đăng lời chúc lên kênh #Công ty)
+                    </span>
+                  </div>
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-600 text-white">
+                    {todayBirthdays.length > 0
+                      ? `🎉 Hôm nay có ${todayBirthdays.length} sinh nhật!`
+                      : `${upcomingBirthdays.length} sinh nhật trong 30 ngày tới`}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {bdayList.map((bp) => (
+                    <div
+                      key={bp.id}
+                      className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs ${
+                        bp.daysUntil === 0
+                          ? "bg-rose-600 text-white border-rose-700 font-bold shadow-sm"
+                          : "bg-white/90 dark:bg-slate-900/80 text-slate-800 dark:text-slate-200 border-pink-200 dark:border-pink-800"
+                      }`}
+                    >
+                      <span>{bp.daysUntil === 0 ? "🎂" : "🎁"}</span>
+                      <span>
+                        <b>{bp.full_name}</b> ({bp.department})
+                      </span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded font-mono text-[11px] ${
+                          bp.daysUntil === 0
+                            ? "bg-white/20 text-white"
+                            : "bg-pink-100 dark:bg-pink-950 text-pink-800 dark:text-pink-300 font-bold"
+                        }`}
+                      >
+                        {bp.ddMm} · {bp.daysUntil === 0 ? "HÔM NAY!" : `Còn ${bp.daysUntil} ngày`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 font-bold border-b border-slate-200 dark:border-slate-700">
                   <th className="py-3 px-4">Mã NV</th>
                   <th className="py-3 px-4">Họ Và Tên</th>
+                  <th className="py-3 px-4">Ngày Sinh</th>
                   <th className="py-3 px-4">Phòng Ban</th>
                   <th className="py-3 px-4">Vị Trí / Chức Danh</th>
                   <th className="py-3 px-4">Email Công Vụ</th>
@@ -2114,10 +2195,47 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                     (u) => u?.email && p?.email && String(u.email).toLowerCase().trim() === String(p.email).toLowerCase().trim()
                   );
 
+                  const dobInfo = (() => {
+                    if (!p.date_of_birth) return null;
+                    const m = String(p.date_of_birth).slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+                    if (!m) return null;
+                    const bYear = Number(m[1]);
+                    const bMonth = Number(m[2]);
+                    const bDay = Number(m[3]);
+                    const now = new Date();
+                    const curYear = now.getFullYear();
+                    const todayUtc = Date.UTC(curYear, now.getMonth(), now.getDate());
+                    let nextUtc = Date.UTC(curYear, bMonth - 1, bDay);
+                    if (nextUtc < todayUtc) nextUtc = Date.UTC(curYear + 1, bMonth - 1, bDay);
+                    const daysUntil = Math.round((nextUtc - todayUtc) / 86400000);
+                    return {
+                      formatted: `${String(bDay).padStart(2, "0")}/${String(bMonth).padStart(2, "0")}/${bYear}`,
+                      daysUntil,
+                    };
+                  })();
+
                   return (
                     <tr key={p.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
                       <td className="py-3 px-4 font-mono font-bold text-orange-600 dark:text-orange-400">{p.employee_code}</td>
                       <td className="py-3 px-4 font-bold text-slate-900 dark:text-white">{p.full_name}</td>
+                      <td className="py-3 px-4 whitespace-nowrap">
+                        {dobInfo ? (
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-mono font-semibold text-slate-800 dark:text-slate-200">{dobInfo.formatted}</span>
+                            {dobInfo.daysUntil === 0 ? (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-rose-600 text-white text-[10px] font-bold w-fit">
+                                🎂 Sinh nhật hôm nay!
+                              </span>
+                            ) : dobInfo.daysUntil <= 14 ? (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-pink-100 dark:bg-pink-950/60 text-pink-800 dark:text-pink-300 text-[10px] font-bold w-fit">
+                                🎉 Sắp SN ({dobInfo.daysUntil} ngày)
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 text-[11px]">Chưa cập nhật</span>
+                        )}
+                      </td>
                       <td className="py-3 px-4">
                         <span className="font-semibold text-slate-800 dark:text-slate-200">
                           {p.department}
@@ -3902,18 +4020,32 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Trạng Thái Làm Việc</label>
-                <select
-                  value={personnelFormData.status}
-                  onChange={(e) => setPersonnelFormData({ ...personnelFormData, status: e.target.value })}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
-                >
-                  <option value="ACTIVE">ACTIVE (Đang làm việc chính thức)</option>
-                  <option value="PROBATION">PROBATION (Đang thử việc)</option>
-                  <option value="ON_LEAVE">ON_LEAVE (Tạm nghỉ chế độ / công tác)</option>
-                  <option value="RESIGNED">RESIGNED (Đã thôi việc)</option>
-                </select>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    🎂 Ngày Tháng Năm Sinh
+                  </label>
+                  <input
+                    type="date"
+                    value={personnelFormData.date_of_birth}
+                    onChange={(e) => setPersonnelFormData({ ...personnelFormData, date_of_birth: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Trạng Thái Làm Việc</label>
+                  <select
+                    value={personnelFormData.status}
+                    onChange={(e) => setPersonnelFormData({ ...personnelFormData, status: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
+                  >
+                    <option value="ACTIVE">ACTIVE (Đang làm việc chính thức)</option>
+                    <option value="PROBATION">PROBATION (Đang thử việc)</option>
+                    <option value="ON_LEAVE">ON_LEAVE (Tạm nghỉ chế độ / công tác)</option>
+                    <option value="RESIGNED">RESIGNED (Đã thôi việc)</option>
+                  </select>
+                </div>
               </div>
 
               <div className="pt-2 flex items-center justify-end gap-2">

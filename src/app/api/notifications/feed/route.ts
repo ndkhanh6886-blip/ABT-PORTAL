@@ -188,6 +188,7 @@ export async function GET(req: NextRequest) {
       factoryNotifRes,
       rdProjectsRes,
       rdExpRes,
+      birthdaysRes,
     ] = await Promise.all([
       query(
         `SELECT key, data FROM app_storage
@@ -274,6 +275,21 @@ export async function GET(req: NextRequest) {
                LEFT JOIN core.user_profile up ON up.user_id = coalesce(e.submitted_by, e.created_by)
               ORDER BY COALESCE(e.updated_at, e.created_at) DESC
               LIMIT 25`
+          );
+        } catch {
+          return { rows: [] as any[] };
+        }
+      })(),
+
+      (async () => {
+        try {
+          await query("ALTER TABLE personnel ADD COLUMN IF NOT EXISTS date_of_birth DATE").catch(() => {});
+          return await query(
+            `SELECT id, employee_code, full_name, department, position, date_of_birth::text AS date_of_birth
+               FROM personnel
+              WHERE date_of_birth IS NOT NULL
+                AND (status IS NULL OR (UPPER(status) <> 'INACTIVE' AND UPPER(status) <> 'RESIGNED'))
+              ORDER BY id ASC`
           );
         } catch {
           return { rows: [] as any[] };
@@ -578,6 +594,115 @@ export async function GET(req: NextRequest) {
         targetId: e.code,
         link: { tab: "factory-rd", itemId: e.id },
       });
+    }
+
+    // 7. Automatic Birthday Greeting & Upcoming Birthday Reminder Notifications (Vietnam Timezone)
+    const vnNowStr = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Ho_Chi_Minh",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    const [vnYearStr, vnMonthStr, vnDayStr] = vnNowStr.split("-");
+    const vnYear = Number(vnYearStr);
+    const vnMonth = Number(vnMonthStr);
+    const vnDay = Number(vnDayStr);
+    const todayUtcMs = Date.UTC(vnYear, vnMonth - 1, vnDay);
+    const ALL_COMPANY_ROLES = [
+      "admin",
+      "director",
+      "hr_admin",
+      "sales_head",
+      "sales_rep",
+      "app_head",
+      "app_engineer",
+      "warehouse_lead",
+      "warehouse_staff",
+      "procurement_lead",
+      "procurement_staff",
+      "accountant_head",
+      "accountant",
+      "legal_head",
+      "legal_staff",
+      "qa_qc_lead",
+      "qa_qc",
+      "rd_head",
+      "rd_staff",
+      "kit_head",
+      "kit_staff",
+      "oligo_head",
+      "oligo_staff",
+      "device_head",
+      "device_staff",
+      "factory_qa",
+      "factory_rd",
+      "factory_kit",
+      "factory_oligo",
+      "factory_device",
+      "factory_wh",
+      "factory_purchase",
+      "factory_intake",
+    ];
+
+    for (const p of birthdaysRes.rows) {
+      const dobStr = String(p.date_of_birth || "").slice(0, 10);
+      const m = dobStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!m) continue;
+      const bMonth = Number(m[2]);
+      const bDay = Number(m[3]);
+      let nextBdayUtcMs = Date.UTC(vnYear, bMonth - 1, bDay);
+      if (nextBdayUtcMs < todayUtcMs) {
+        nextBdayUtcMs = Date.UTC(vnYear + 1, bMonth - 1, bDay);
+      }
+      const daysUntil = Math.round((nextBdayUtcMs - todayUtcMs) / 86400000);
+      const ddMm = `${String(bDay).padStart(2, "0")}/${String(bMonth).padStart(2, "0")}`;
+
+      if (daysUntil === 0) {
+        const mRule = resolveMatrixRule("hr_birthday_celebration", storedMatrix, ALL_COMPANY_ROLES);
+        if (!mRule.enabled) continue;
+        const targetNames = Array.from(
+          new Set([
+            ...(p.full_name ? [String(p.full_name).trim()] : []),
+            ...(me.full_name ? [String(me.full_name).trim()] : []),
+            ...mRule.targetEmployeeNames,
+          ].filter(Boolean))
+        );
+        feed.push({
+          id: `LIVE-BIRTHDAY-${vnYear}-${p.employee_code || p.id}`,
+          title: `🎂 Chúc mừng sinh nhật ${p.full_name} (${ddMm})!`,
+          message: `Hôm nay là sinh nhật của ${p.full_name} (${p.position || "Cán bộ nhân viên"} — ${p.department || "ABT"}). Chúc Anh/Chị tuổi mới thật nhiều sức khỏe, niềm vui và thành công rực rỡ cùng đại gia đình ABT! 🎉💐`,
+          type: "success",
+          category: "system",
+          eventKey: "hr_birthday_celebration",
+          createdAt: `${vnNowStr}T08:00:00+07:00`,
+          readBy: [],
+          sender: { name: "Hành Chính Nhân Sự & Văn Hóa ABT" },
+          targetRoles: mRule.targetRoles,
+          targetEmployeeNames: targetNames,
+          targetEmployeeIds: mRule.targetEmployeeIds.length > 0 ? mRule.targetEmployeeIds : undefined,
+          recipientDept: p.department || undefined,
+          link: { tab: "chat" },
+        });
+      } else if (daysUntil >= 1 && daysUntil <= 3) {
+        const mRule = resolveMatrixRule("hr_birthday_celebration", storedMatrix, ["admin", "hr_admin"]);
+        if (!mRule.enabled) continue;
+        feed.push({
+          id: `LIVE-BIRTHDAY-UPCOMING-${vnYear}-${p.employee_code || p.id}`,
+          title: `🎉 Sắp đến sinh nhật ${p.full_name} (${ddMm} — còn ${daysUntil} ngày)`,
+          message: `Sinh nhật của ${p.full_name} (${p.position || "Chuyên viên"} — ${p.department || "ABT"}) vào ngày ${ddMm}/${vnYear}. Hãy chuẩn bị lời chúc mừng sinh nhật!`,
+          type: "info",
+          category: "system",
+          eventKey: "hr_birthday_celebration",
+          createdAt: `${vnNowStr}T07:30:00+07:00`,
+          readBy: [],
+          sender: { name: "Hành Chính Nhân Sự & Văn Hóa ABT" },
+          targetRoles: mRule.targetRoles,
+          targetEmployeeNames: mRule.targetEmployeeNames.length > 0 ? mRule.targetEmployeeNames : undefined,
+          targetEmployeeIds: mRule.targetEmployeeIds.length > 0 ? mRule.targetEmployeeIds : undefined,
+          recipientDept: p.department || undefined,
+          link: { tab: "settings", subTab: "personnel" },
+        });
+      }
     }
 
     // Merge persisted read receipts onto every item, sort newest first, cap 250
