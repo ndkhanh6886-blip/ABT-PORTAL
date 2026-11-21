@@ -9,6 +9,14 @@ import {
   type OligoCatalogEntry,
   type OligoCatalogGroup,
 } from "@/shared/oligoCatalog";
+import {
+  ABT_DYE_PRIMER_FAMILY_BY_DYE,
+  ABT_PROBE_SKU_BY_PAIR,
+  baseLetterOf,
+  isFluorescentDye,
+  isQuencher,
+  parseOligoSequence,
+} from "@/shared/oligoSequence";
 
 export {
   ABT_OLIGO_130_CATALOG,
@@ -169,124 +177,74 @@ export function recommendBasePrimerCode(
   return `PRI-05.${scaleNum}`;
 }
 
+/** Thứ bậc cấp tinh sạch, theo cùng thứ tự với tính giá nhà máy (pricing.ts): Desalt < Cartridge(OPC) < PAGE < HPLC. 0 = không rõ. */
+export const OLIGO_PURIFICATION_RANK: Readonly<Record<string, number>> = {
+  "PUR-01": 2,
+  "PUR-03": 3,
+  "PUR-02": 4,
+};
+
+export function purificationRank(codeOrText?: string | null): number {
+  const raw = String(codeOrText || "").trim();
+  if (!raw) return 0;
+  const byCode = OLIGO_PURIFICATION_RANK[raw.toUpperCase()];
+  if (byCode) return byCode;
+  const t = raw.toLowerCase();
+  if (t.includes("hplc")) return 4;
+  if (t.includes("page")) return 3;
+  if (t.includes("cartridge") || t.includes("opc")) return 2;
+  if (t.includes("desalt") || t.includes("muối") || t.includes("muoi")) return 1;
+  return 0;
+}
+
 export function parseOligoSequenceDetails(rawSeq: string): ParsedOligoSequenceDetails {
   const src = String(rawSeq || "").trim();
-  const detectedTags: string[] = [];
 
-  // Normalize bracketed LNA / Inosine markers before stripping annotations
-  let working = src;
-  let lnaCount = 0;
-  let inosineCount = 0;
+  // Ký hiệu riêng của Kinh doanh trước khi đưa vào bộ tách dùng chung:
+  // LNA viết [LNA-A] / [LNAA] / {A}; Inosine viết (I), (dI), [Inosine]
+  const working = src
+    .replace(/\[(?:LNA[-_ ]?|d?LNA)([ATGCU])\]/gi, (_m, b: string) => `+${b.toUpperCase()}`)
+    .replace(/\{([ATGCU])\}/gi, (_m, b: string) => `+${b.toUpperCase()}`)
+    .replace(/(?:\[(?:dI|Inosine|I)\]|\((?:dI|Inosine|I)\)|\/(?:dI|Inosine)\/)/gi, "I");
 
-  // Match bracketed LNA notations such as [+A], [LNA-A], [LNAA]
-  working = working.replace(/\[(?:\+|LNA[-_ ]?|d?LNA)([ATGCU])\]/gi, (_, b: string) => {
-    lnaCount += 1;
-    return b.toUpperCase();
-  });
-  // Match curly brace LNA notation {A} or {G}
-  working = working.replace(/\{([ATGCU])\}/gi, (_, b: string) => {
-    lnaCount += 1;
-    return b.toUpperCase();
-  });
-  // Match +A / +T / +G / +C / +U
-  working = working.replace(/\+([ATGCU])/gi, (_, b: string) => {
-    lnaCount += 1;
-    return b.toUpperCase();
-  });
+  const parsed = parseOligoSequence(working);
+  const cleanSeq = parsed.bases.map(baseLetterOf).join("");
+  const lnaCount = parsed.bases.filter((b) => b.startsWith("+")).length;
+  const inosineCount = parsed.bases.filter((b) => b === "I").length;
+  const allMods = [...parsed.mods5Prime, ...parsed.modsInternal, ...parsed.mods3Prime];
+  const detectedTags = [...new Set(allMods)];
 
-  // Match bracketed/parenthesized/slashed Inosine: [I], [dI], (I), (dI), /dI/, [Inosine]
-  working = working.replace(/(?:\[(?:dI|Inosine|I)\]|\((?:dI|Inosine|I)\)|\/(?:dI|Inosine|I)\/)/gi, () => {
-    inosineCount += 1;
-    return "I";
-  });
-
-  // Capture bracketed 5'/3' dye/quencher/mod tags (plus common 5'-TAG / 3'-TAG tokens)
-  const tagRegex = /\[([^\]]+)\]|(?:5['’]|3['’])\s*-?\s*([A-Z0-9-]{2,15})/gi;
-  let m: RegExpExecArray | null;
-  while ((m = tagRegex.exec(working)) !== null) {
-    const rawTag = (m[1] || m[2] || "").trim().toUpperCase();
-    if (rawTag && !/^[0-9]+$/.test(rawTag) && !detectedTags.includes(rawTag)) {
-      detectedTags.push(rawTag);
-    }
-  }
-
-  const stripped = working
-    .replace(/\[[^\]]*\]/g, "")
-    .replace(/\([^\)]*\)/g, "")
-    .replace(/5'|3'|5’|3’/gi, "")
-    .toUpperCase()
-    .replace(/[^ATGCURYSWKMBDHVNI]/g, "");
-
-  // Count 'I' bases from cleaned IUPAC string unless already counted via [dI]
-  const rawICount = (stripped.match(/I/g) || []).length;
-  if (rawICount > inosineCount) {
-    inosineCount = rawICount;
-  }
-
-  // Suggest Oligo mode & SKU when 5'/3' dye or mod tags appear in sequence text
-  const upperSrc = src.toUpperCase();
+  // Gợi ý chế độ & mã SKU từ nhóm đánh dấu đã nhận diện (không dò chuỗi con trong toàn bộ text,
+  // để ký tự base không bị hiểu nhầm thành tên nhãn và ngược lại).
   let detectedMode: OligoProductMode | undefined;
   let detectedDyeOrProbeCode: string | undefined;
 
-  const hasBhq1 = upperSrc.includes("BHQ1") || upperSrc.includes("BHQ-1");
-  const hasBhq2 = upperSrc.includes("BHQ2") || upperSrc.includes("BHQ-2");
-  const hasBhq3 = upperSrc.includes("BHQ3") || upperSrc.includes("BHQ-3");
-  const hasTamra = upperSrc.includes("TAMRA");
-  const hasMgb = upperSrc.includes("MGB");
+  const dyes = allMods.filter((m) => isFluorescentDye(m));
+  const quenchers3 = parsed.mods3Prime.filter((m) => isQuencher(m) || m === "TAMRA");
+  const dye5 = parsed.mods5Prime.find((m) => isFluorescentDye(m)) ?? dyes.find((m) => !quenchers3.includes(m));
 
-  if (hasMgb) {
+  if (quenchers3.length > 0) {
     detectedMode = "PROBE";
-    if (upperSrc.includes("VIC")) detectedDyeOrProbeCode = "VIC-MGB.100";
-    else if (upperSrc.includes("HEX")) detectedDyeOrProbeCode = "HEX-MGB.100";
-    else detectedDyeOrProbeCode = "FAM-MGB.100";
-  } else if (hasTamra) {
-    detectedMode = "PROBE";
-    if (upperSrc.includes("VIC")) detectedDyeOrProbeCode = "VIC-TAMRA.100";
-    else if (upperSrc.includes("HEX")) detectedDyeOrProbeCode = "HEX-TAMRA.100";
-    else detectedDyeOrProbeCode = "FAM-TAMRA.100";
-  } else if (hasBhq1 || hasBhq2 || hasBhq3) {
-    detectedMode = "PROBE";
-    if (upperSrc.includes("AF647")) detectedDyeOrProbeCode = "AF647-BHQ2.100";
-    else if (upperSrc.includes("AF568")) detectedDyeOrProbeCode = "AF568-BHQ2.100";
-    else if (upperSrc.includes("TEXAS") || upperSrc.includes("TEX")) detectedDyeOrProbeCode = "TEX.100";
-    else if (upperSrc.includes("CY5")) detectedDyeOrProbeCode = "CY5.100";
-    else if (upperSrc.includes("CY3")) detectedDyeOrProbeCode = "Cy3-BHQ2.100";
-    else if (upperSrc.includes("ROX")) detectedDyeOrProbeCode = "ROX-BHQ2.100";
-    else if (upperSrc.includes("VIC")) detectedDyeOrProbeCode = "VIC-BHQ1.100";
-    else if (upperSrc.includes("HEX")) detectedDyeOrProbeCode = "HEX.100";
-    else detectedDyeOrProbeCode = "FAM.100";
-  } else if (upperSrc.includes("BIOTIN")) {
+    const dye = dye5 ?? "FAM";
+    const q = quenchers3[0];
+    detectedDyeOrProbeCode =
+      ABT_PROBE_SKU_BY_PAIR[`${dye}/${q}`] ??
+      (q === "MGB" ? "FAM-MGB.100" : q === "TAMRA" ? "FAM-TAMRA.100" : "FAM.100");
+  } else if (dye5 && ABT_DYE_PRIMER_FAMILY_BY_DYE[dye5]) {
+    detectedMode = "DYE_PRIMER";
+    detectedDyeOrProbeCode = ABT_DYE_PRIMER_FAMILY_BY_DYE[dye5];
+  } else if (allMods.includes("BIOTIN")) {
     detectedMode = "BIOTIN_NH2";
     detectedDyeOrProbeCode = "BIOTIN";
-  } else if (upperSrc.includes("NH2") || upperSrc.includes("AMINE")) {
+  } else if (allMods.includes("NH2")) {
     detectedMode = "BIOTIN_NH2";
     detectedDyeOrProbeCode = "NH2";
-  } else {
-    const dyeFamilies: Array<[string, string]> = [
-      ["FAM", "FAM-Primer"],
-      ["HEX", "HEX-Primer"],
-      ["TEXASRED", "Texasred-Primer"],
-      ["TEX", "Texasred-Primer"],
-      ["CY5", "Cy5-Primer"],
-      ["CY3", "Cy3-Primer"],
-      ["ROX", "ROX-Primer"],
-      ["VIC", "VIC-Primer"],
-      ["AF568", "AF568-Primer"],
-      ["AF647", "AF647-Primer"],
-    ];
-    for (const [kw, prefix] of dyeFamilies) {
-      if (upperSrc.includes(`[${kw}]`) || upperSrc.includes(`5'-${kw}`) || upperSrc.includes(`5'${kw}`)) {
-        detectedMode = "DYE_PRIMER";
-        detectedDyeOrProbeCode = prefix;
-        break;
-      }
-    }
   }
 
   return {
-    cleanSeq: stripped,
-    formattedSeq: stripped ? `5'-${stripped}-3'` : src || "5'-...-3'",
-    baseCount: stripped.length,
+    cleanSeq,
+    formattedSeq: cleanSeq ? `5'-${cleanSeq}-3'` : src || "5'-...-3'",
+    baseCount: cleanSeq.length,
     lnaCount,
     inosineCount,
     detectedTags,
@@ -464,19 +422,31 @@ export function buildOligoSkuCombination(
     });
   };
 
+  /**
+   * Tinh sạch: chỉ cộng phí PUR-xx khi cấp yêu cầu CAO HƠN cấp mặc định đã gồm trong mã chính
+   * (Desalt < Cartridge/OPC < PAGE < HPLC). Bằng hoặc thấp hơn mặc định → không cộng phí.
+   */
+  const pushPurificationAboveDefault = (defaultSkuCodes: string[], reason: string) => {
+    const reqPur = input.purificationCode;
+    if (!reqPur) return;
+    const defaultText = defaultSkuCodes
+      .map((c) => getOligoCatalogEntry(c)?.purification || "")
+      .reduce((best, t) => (purificationRank(t) > purificationRank(best) ? t : best), "");
+    const reqRank = purificationRank(reqPur);
+    const defRank = purificationRank(defaultText);
+    if (defRank > 0 && reqRank <= defRank) {
+      warnings.push(
+        `${defaultSkuCodes[0]} đã gồm tinh sạch mặc định (${defaultText}); ${reqPur} không cao hơn mặc định nên không cộng phí.`
+      );
+      return;
+    }
+    pushComponent(reqPur, "ADDON", 1, reason);
+  };
+
   if (input.mode === "UNMODIFIED") {
     const priCode = recommendBasePrimerCode(bases, effectiveScale, input.primerFamily || "AUTO");
     pushComponent(priCode, "PRIMARY", bases, `Tổng hợp ${bases} base (${effectiveScale})`);
-    const priEntry = getOligoCatalogEntry(priCode);
-    if (input.purificationCode) {
-      // Check if default purification already satisfies request
-      const reqPur = input.purificationCode;
-      const defPur = (priEntry?.purification || "").toLowerCase();
-      if (reqPur === "PUR-01" && (defPur.includes("cartridge") || defPur.includes("hplc"))) {
-        warnings.push(`${priCode} đã bao gồm tinh sạch mặc định (${priEntry?.purification}); kiểm tra trước khi cộng thêm PUR-01.`);
-      }
-      pushComponent(reqPur, "ADDON", 1, "Dịch vụ tinh sạch bổ sung theo yêu cầu");
-    }
+    pushPurificationAboveDefault([priCode], "Dịch vụ tinh sạch bổ sung theo yêu cầu");
     if (input.lyophilized) {
       pushComponent("PRE-01", "ADDON", 1, "Đông khô mẫu trước khi giao");
     }
@@ -490,9 +460,7 @@ export function buildOligoSkuCombination(
     const scaleNum = parseScaleNumber(effectiveScale);
     const modCode = `${modPrefix}.${scaleNum}`;
     pushComponent(modCode, "ADDON", 1, `Gắn nhãn ${modPrefix} đầu 5' (${effectiveScale})`);
-    if (input.purificationCode) {
-      pushComponent(input.purificationCode, "ADDON", 1, "Dịch vụ tinh sạch nâng cấp (HPLC/PAGE/Cartridge)");
-    }
+    pushPurificationAboveDefault([priCode, modCode], "Dịch vụ tinh sạch nâng cấp (HPLC/PAGE/Cartridge)");
     if (input.lyophilized) {
       pushComponent("PRE-01", "ADDON", 1, "Đông khô mẫu");
     }
@@ -506,10 +474,7 @@ export function buildOligoSkuCombination(
       1,
       `Primer gắn huỳnh quang đầu 5' (${effectiveScale} — đã gồm base nền, HPLC & đông khô)`
     );
-    if (input.purificationCode) {
-      warnings.push(`${dyeCode} đã bao gồm Tinh sạch HPLC mặc định; chỉ chọn ${input.purificationCode} nếu cần tính thêm phí riêng.`);
-      pushComponent(input.purificationCode, "ADDON", 1, "Phụ phí tinh sạch bổ sung");
-    }
+    pushPurificationAboveDefault([dyeCode], "Phụ phí tinh sạch bổ sung");
     if (input.lyophilized) {
       warnings.push(`${dyeCode} đã bao gồm đông khô mặc định; chỉ giữ PRE-01 nếu cần tính thêm lần chia/đông khô riêng.`);
       pushComponent("PRE-01", "ADDON", 1, "Phụ phí đông khô bổ sung");
@@ -524,10 +489,7 @@ export function buildOligoSkuCombination(
       1,
       "Probe đầu dò 2 nhãn (100 nmol — đã gồm tổng hợp base, HPLC & đông khô)"
     );
-    if (input.purificationCode) {
-      warnings.push(`${probeCode} đã bao gồm Tinh sạch HPLC mặc định.`);
-      pushComponent(input.purificationCode, "ADDON", 1, "Phụ phí tinh sạch bổ sung");
-    }
+    pushPurificationAboveDefault([probeCode], "Phụ phí tinh sạch bổ sung");
     if (input.lyophilized) {
       warnings.push(`${probeCode} đã bao gồm đông khô mặc định.`);
       pushComponent("PRE-01", "ADDON", 1, "Phụ phí đông khô bổ sung");
