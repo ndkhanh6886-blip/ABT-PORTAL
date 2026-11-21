@@ -10,6 +10,7 @@ import { parseInput } from "../core/records";
 import { defineMachine, type GuardContext } from "../core/stateMachine";
 import { z } from "zod/v3";
 import { ensureInternalOrderLineKitSpecColumns } from "./kdEvents";
+import { ensureDeviceTrialInspectionSchema } from "../device/assembly";
 import "./gateway";
 
 export type OrderStatus = "RECEIVED" | "ACCEPTED" | "IN_PRODUCTION" | "READY" | "PARTIALLY_DELIVERED" | "DELIVERED" | "CLOSED" | "REJECTED" | "CANCELLED";
@@ -163,6 +164,7 @@ async function visibleUnits(tx: Tx, actor: AuthzActor): Promise<string[] | "ALL"
 }
 
 export async function listOrders(tx: Tx, actor: AuthzActor, status?: string) {
+  await ensureDeviceTrialInspectionSchema(tx);
   const units = await visibleUnits(tx, actor);
   if (units !== "ALL" && !units.length) return [];
   return (
@@ -190,36 +192,10 @@ export async function listOrders(tx: Tx, actor: AuthzActor, status?: string) {
                  WHERE l.order_id = o.id
               ), '[]'::jsonb) AS linked_device_orders,
               COALESCE((
-                SELECT jsonb_agg(
-                         jsonb_build_object(
-                           'id', c.id,
-                           'code', c.code,
-                           'lot_code', c.lot_code,
-                           'product_code', c.product_code,
-                           'product_name', c.product_name,
-                           'mfg_date', c.mfg_date,
-                           'expiry_date', c.expiry_date,
-                           'good_qty', c.good_qty::float,
-                           'uom', c.uom,
-                           'tests_per_kit', c.tests_per_kit,
-                           'spec_code', c.spec_code,
-                           'tccs_code', c.tccs_code,
-                           'specification', c.specification,
-                           'storage_condition', c.storage_condition,
-                           'qc_summary', c.qc_summary,
-                           'qc_results_snapshot', c.qc_results_snapshot,
-                           'analyst_name', c.analyst_name,
-                           'issued_by_name', c.issued_by_name,
-                           'issued_at', c.issued_at,
-                           'qc_test_id', c.qc_test_id,
-                           'template_key', c.template_key,
-                           'custom_fields', c.custom_fields,
-                           'custom_notes', c.custom_notes
-                         )
-                         ORDER BY c.issued_at DESC
-                       )
+                SELECT jsonb_agg(to_jsonb(c) ORDER BY c.issued_at DESC)
                   FROM kit.coa_certificate c
                  WHERE c.superseded_by_id IS NULL
+                   AND NOT EXISTS (SELECT 1 FROM kit.coa_certificate child WHERE child.amended_from_id = c.id)
                    AND (
                      EXISTS (
                        SELECT 1 FROM kit.production_order kpo
@@ -275,6 +251,7 @@ export async function listOrders(tx: Tx, actor: AuthzActor, status?: string) {
 
 export async function getOrder(tx: Tx, actor: AuthzActor, id: string) {
   await ensureInternalOrderLineKitSpecColumns(tx);
+  await ensureDeviceTrialInspectionSchema(tx);
   const order = (
     await tx.query(
       "SELECT o.*, u.code AS org_unit_code, u.name AS org_unit_name, u.module_key FROM intake.internal_order o JOIN core.org_unit u ON u.id = o.org_unit_id WHERE o.id = $1",
@@ -406,19 +383,35 @@ export async function getOrder(tx: Tx, actor: AuthzActor, id: string) {
   ).rows;
   const issued_kit_coas = (
     await tx.query(
-      `SELECT c.id, c.code, c.lot_code, c.product_code, c.product_name,
-              c.mfg_date, c.expiry_date, c.good_qty::float AS good_qty, c.uom,
-              c.tests_per_kit, c.spec_code, c.tccs_code, c.specification,
-              c.storage_condition, c.qc_summary, c.qc_results_snapshot,
-              c.analyst_name, c.issued_by_name, c.issued_at, c.qc_test_id,
-              c.template_key, c.custom_fields, c.custom_notes
+      `SELECT c.*,
+              po.code AS order_code,
+              COALESCE(b.tccs_code, b_item.tccs_code) AS tccs_code,
+              COALESCE(b.specification, b_item.specification) AS bom_specification,
+              COALESCE(b.storage_condition, b_item.storage_condition) AS bom_storage_condition,
+              COALESCE(b.shelf_life_months, b_item.shelf_life_months) AS shelf_life_months,
+              i.storage_condition AS item_storage_condition,
+              rv.display_name AS reviewer_name
          FROM kit.coa_certificate c
+         LEFT JOIN kit.production_order po ON po.id = c.production_order_id
+         LEFT JOIN inv.lot l ON l.id = c.lot_id
+         LEFT JOIN master.item i ON i.id = l.item_id
+         LEFT JOIN kit.bom b ON b.id = po.bom_id
+         LEFT JOIN LATERAL (
+           SELECT b2.tccs_code, b2.specification, b2.storage_condition, b2.shelf_life_months
+             FROM kit.bom b2
+            WHERE b2.product_item_id = l.item_id
+            ORDER BY (b2.status = 'EFFECTIVE') DESC, b2.bom_version DESC
+            LIMIT 1
+         ) b_item ON po.bom_id IS NULL AND l.item_id IS NOT NULL
+         LEFT JOIN qms.qc_test qt ON qt.id = c.qc_test_id
+         LEFT JOIN core.user_profile rv ON rv.user_id = qt.reviewer_id
         WHERE c.superseded_by_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM kit.coa_certificate child WHERE child.amended_from_id = c.id)
           AND (
             EXISTS (
               SELECT 1 FROM kit.production_order kpo
-              JOIN intake.internal_order_line l ON l.id = kpo.internal_order_line_id
-             WHERE l.order_id = $1 AND (c.production_order_id = kpo.id OR c.lot_id = kpo.lot_id)
+              JOIN intake.internal_order_line iol ON iol.id = kpo.internal_order_line_id
+             WHERE iol.order_id = $1 AND (c.production_order_id = kpo.id OR c.lot_id = kpo.lot_id)
             )
             OR EXISTS (
               SELECT 1 FROM intake.shipment s

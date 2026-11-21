@@ -17,6 +17,7 @@ import { DEFAULT_ABT_KIT_BOM_COMPONENTS } from "@/shared/defaultKitBomComponents
 import { findAccessorySet, isExtractionAccessoryProduct } from "@/frontend/utils/extractionAccessories";
 import { kitSpecOf, kitSpecToFactorySupplyAndTube, kitSpecLabel, hasKitSpec, hasPackagingSpec } from "@/frontend/utils/packagingForm";
 import { loadQcFormsConfig } from "../qms/qaOps";
+import { ensureDeviceTrialInspectionSchema } from "../device/assembly";
 import "./permissions";
 import "../kit/permissions";
 import "../oligo/orders";
@@ -79,25 +80,44 @@ export async function getInternalOrderCatalogOptions(tx: Tx, actor: AuthzActor) 
 
   let qc_forms_config: any = null;
   try {
-    qc_forms_config = await loadQcFormsConfig(tx);
+    const loaded = await loadQcFormsConfig(tx);
+    qc_forms_config = loaded?.qcFormsConfig ?? null;
   } catch {
     qc_forms_config = null;
   }
 
+  await ensureDeviceTrialInspectionSchema(tx);
+
   const all_issued_coas = (
     await tx.query(
-      `SELECT c.id, c.code, c.lot_code, c.product_code, c.product_name,
-              c.mfg_date, c.expiry_date, c.good_qty::float AS good_qty, c.uom,
-              c.tests_per_kit, c.spec_code, c.tccs_code, c.specification,
-              c.storage_condition, c.qc_summary, c.qc_results_snapshot,
-              c.analyst_name, c.issued_by_name, c.issued_at, c.qc_test_id,
-              c.template_key, c.custom_fields, c.custom_notes,
-              kpo.code AS order_code, io.code AS internal_order_code, io.kd_po_code
+      `SELECT c.*,
+              kpo.code AS order_code,
+              io.code AS internal_order_code,
+              io.kd_po_code,
+              COALESCE(b.tccs_code, b_item.tccs_code) AS tccs_code,
+              COALESCE(b.specification, b_item.specification) AS bom_specification,
+              COALESCE(b.storage_condition, b_item.storage_condition) AS bom_storage_condition,
+              COALESCE(b.shelf_life_months, b_item.shelf_life_months) AS shelf_life_months,
+              i.storage_condition AS item_storage_condition,
+              rv.display_name AS reviewer_name
          FROM kit.coa_certificate c
          LEFT JOIN kit.production_order kpo ON kpo.id = c.production_order_id
          LEFT JOIN intake.internal_order_line iol ON iol.id = kpo.internal_order_line_id
          LEFT JOIN intake.internal_order io ON io.id = iol.order_id
+         LEFT JOIN inv.lot l ON l.id = c.lot_id
+         LEFT JOIN master.item i ON i.id = l.item_id
+         LEFT JOIN kit.bom b ON b.id = kpo.bom_id
+         LEFT JOIN LATERAL (
+           SELECT b2.tccs_code, b2.specification, b2.storage_condition, b2.shelf_life_months
+             FROM kit.bom b2
+            WHERE b2.product_item_id = l.item_id
+            ORDER BY (b2.status = 'EFFECTIVE') DESC, b2.bom_version DESC
+            LIMIT 1
+         ) b_item ON kpo.bom_id IS NULL AND l.item_id IS NOT NULL
+         LEFT JOIN qms.qc_test qt ON qt.id = c.qc_test_id
+         LEFT JOIN core.user_profile rv ON rv.user_id = qt.reviewer_id
         WHERE c.superseded_by_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM kit.coa_certificate child WHERE child.amended_from_id = c.id)
         ORDER BY c.issued_at DESC
         LIMIT 150`
     )

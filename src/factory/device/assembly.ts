@@ -675,7 +675,7 @@ async function ensureDefaultFqcSpecForModel(tx: Tx, actor: AuthzActor, modelId: 
 }
 
 let trialInspectionSchemaEnsured = false;
-async function ensureDeviceTrialInspectionSchema(tx: Tx): Promise<void> {
+export async function ensureDeviceTrialInspectionSchema(tx: Tx): Promise<void> {
   if (trialInspectionSchemaEnsured) return;
   await tx.query("SAVEPOINT sp_device_trial_schema");
   try {
