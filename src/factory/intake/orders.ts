@@ -188,7 +188,83 @@ export async function listOrders(tx: Tx, actor: AuthzActor, status?: string) {
                   FROM device.device_order dpo
                   JOIN intake.internal_order_line l ON l.id = dpo.internal_order_line_id
                  WHERE l.order_id = o.id
-              ), '[]'::jsonb) AS linked_device_orders
+              ), '[]'::jsonb) AS linked_device_orders,
+              COALESCE((
+                SELECT jsonb_agg(
+                         jsonb_build_object(
+                           'id', c.id,
+                           'code', c.code,
+                           'lot_code', c.lot_code,
+                           'product_code', c.product_code,
+                           'product_name', c.product_name,
+                           'mfg_date', c.mfg_date,
+                           'expiry_date', c.expiry_date,
+                           'good_qty', c.good_qty::float,
+                           'uom', c.uom,
+                           'tests_per_kit', c.tests_per_kit,
+                           'spec_code', c.spec_code,
+                           'tccs_code', c.tccs_code,
+                           'specification', c.specification,
+                           'storage_condition', c.storage_condition,
+                           'qc_summary', c.qc_summary,
+                           'qc_results_snapshot', c.qc_results_snapshot,
+                           'analyst_name', c.analyst_name,
+                           'issued_by_name', c.issued_by_name,
+                           'issued_at', c.issued_at,
+                           'qc_test_id', c.qc_test_id,
+                           'template_key', c.template_key,
+                           'custom_fields', c.custom_fields,
+                           'custom_notes', c.custom_notes
+                         )
+                         ORDER BY c.issued_at DESC
+                       )
+                  FROM kit.coa_certificate c
+                 WHERE c.superseded_by_id IS NULL
+                   AND (
+                     EXISTS (
+                       SELECT 1 FROM kit.production_order kpo
+                       JOIN intake.internal_order_line l ON l.id = kpo.internal_order_line_id
+                      WHERE l.order_id = o.id AND (c.production_order_id = kpo.id OR c.lot_id = kpo.lot_id)
+                     )
+                     OR EXISTS (
+                       SELECT 1 FROM intake.shipment s
+                       JOIN intake.shipment_line sl ON sl.shipment_id = s.id
+                      WHERE s.order_id = o.id AND sl.lot_id = c.lot_id
+                     )
+                   )
+              ), '[]'::jsonb) AS issued_kit_coas,
+              COALESCE((
+                SELECT jsonb_agg(
+                         jsonb_build_object(
+                           'test_id', t.id,
+                           'test_code', t.code,
+                           'overall_result', t.overall_result,
+                           'serial_no', du.serial_no,
+                           'model_code', dm.code,
+                           'model_name', dm.name,
+                           'revision_code', drev.revision,
+                           'order_code', dpo.code,
+                           'trial_nas_path', dtr.nas_path,
+                           'trial_attachment_name', dtr.attachment_name,
+                           'trial_attachment_data', dtr.attachment_data
+                         )
+                         ORDER BY du.serial_no ASC
+                       )
+                  FROM device.device_order dpo
+                  JOIN intake.internal_order_line l ON l.id = dpo.internal_order_line_id
+                  JOIN device.device_unit du ON du.order_id = dpo.id
+                  JOIN device.device_model dm ON dm.id = du.model_id
+                  LEFT JOIN device.model_revision drev ON drev.id = du.model_revision_id
+                  JOIN qms.qc_test t ON t.entity_type = 'DEVICE_UNIT' AND t.entity_id = du.id AND t.status = 'REVIEWED' AND t.overall_result = 'PASS'
+                  LEFT JOIN LATERAL (
+                    SELECT br.nas_path, br.attachment_name, br.attachment_data
+                      FROM device.burn_in_run br
+                     WHERE br.unit_id = du.id
+                     ORDER BY br.created_at DESC
+                     LIMIT 1
+                  ) dtr ON true
+                 WHERE l.order_id = o.id
+              ), '[]'::jsonb) AS device_fqc_coas
          FROM intake.internal_order o JOIN core.org_unit u ON u.id = o.org_unit_id
         WHERE ($1::uuid[] IS NULL OR o.org_unit_id = ANY($1::uuid[])) AND ($2::text IS NULL OR o.status = $2)
         ORDER BY o.created_at DESC LIMIT 300`,
@@ -328,7 +404,59 @@ export async function getOrder(tx: Tx, actor: AuthzActor, id: string) {
       [id]
     )
   ).rows;
-  return { ...order, lines, linked_oligo_orders, device_po_summary, shipments };
+  const issued_kit_coas = (
+    await tx.query(
+      `SELECT c.id, c.code, c.lot_code, c.product_code, c.product_name,
+              c.mfg_date, c.expiry_date, c.good_qty::float AS good_qty, c.uom,
+              c.tests_per_kit, c.spec_code, c.tccs_code, c.specification,
+              c.storage_condition, c.qc_summary, c.qc_results_snapshot,
+              c.analyst_name, c.issued_by_name, c.issued_at, c.qc_test_id,
+              c.template_key, c.custom_fields, c.custom_notes
+         FROM kit.coa_certificate c
+        WHERE c.superseded_by_id IS NULL
+          AND (
+            EXISTS (
+              SELECT 1 FROM kit.production_order kpo
+              JOIN intake.internal_order_line l ON l.id = kpo.internal_order_line_id
+             WHERE l.order_id = $1 AND (c.production_order_id = kpo.id OR c.lot_id = kpo.lot_id)
+            )
+            OR EXISTS (
+              SELECT 1 FROM intake.shipment s
+              JOIN intake.shipment_line sl ON sl.shipment_id = s.id
+             WHERE s.order_id = $1 AND sl.lot_id = c.lot_id
+            )
+          )
+        ORDER BY c.issued_at DESC`,
+      [id]
+    )
+  ).rows;
+  const device_fqc_coas = (
+    await tx.query(
+      `SELECT t.id AS test_id, t.code AS test_code, t.overall_result,
+              du.serial_no, dm.code AS model_code, dm.name AS model_name,
+              drev.revision AS revision_code, dpo.code AS order_code,
+              dtr.nas_path AS trial_nas_path,
+              dtr.attachment_name AS trial_attachment_name,
+              dtr.attachment_data AS trial_attachment_data
+         FROM device.device_order dpo
+         JOIN intake.internal_order_line l ON l.id = dpo.internal_order_line_id
+         JOIN device.device_unit du ON du.order_id = dpo.id
+         JOIN device.device_model dm ON dm.id = du.model_id
+         LEFT JOIN device.model_revision drev ON drev.id = du.model_revision_id
+         JOIN qms.qc_test t ON t.entity_type = 'DEVICE_UNIT' AND t.entity_id = du.id AND t.status = 'REVIEWED' AND t.overall_result = 'PASS'
+         LEFT JOIN LATERAL (
+           SELECT br.nas_path, br.attachment_name, br.attachment_data
+             FROM device.burn_in_run br
+            WHERE br.unit_id = du.id
+            ORDER BY br.created_at DESC
+            LIMIT 1
+         ) dtr ON true
+        WHERE l.order_id = $1
+        ORDER BY du.serial_no ASC`,
+      [id]
+    )
+  ).rows;
+  return { ...order, lines, linked_oligo_orders, issued_kit_coas, device_fqc_coas, device_po_summary, shipments };
 }
 
 /** Tells the producing department's heads that a new internal order arrived. */

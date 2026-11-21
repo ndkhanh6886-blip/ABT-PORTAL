@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { NextResponse } from "next/server";
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse } from "@/backend/services/authz";
+import { hasPermission } from "@/backend/services/permissions";
 import { clientIp } from "@/backend/services/rateLimit";
 import type { AuthzActor } from "./core/authz";
 import { getFactoryPool, isRetryableTxError, withTransaction, type Tx } from "./core/db";
@@ -61,6 +62,11 @@ export function factoryRoute(
       name: user.full_name || user.username,
       isPortalAdmin: isAdminUser(user),
       isRootAdmin: String(user.role || "").toLowerCase() === "admin" || String(user.username || "").toLowerCase() === "admin",
+      isSalesIntakeUser:
+        hasPermission(user, "sales.view") ||
+        hasPermission(user, "warehouse.view") ||
+        hasPermission(user, "legal.view") ||
+        hasPermission(user, "procurement.view"),
       requestId,
       ip: clientIp(req),
     };

@@ -1,6 +1,6 @@
 import { query as portalQuery } from "@/backend/db/db";
 import type { Tx } from "../core/db";
-import type { AuthzActor } from "../core/authz";
+import { hasFactoryPermission, type AuthzActor } from "../core/authz";
 import { notFound } from "../core/errors";
 import { coaHeader, reviewSignature } from "../qms/coa";
 import { visibleOligoUnits } from "./orders";
@@ -48,7 +48,9 @@ export async function orderCoa(tx: Tx, actor: AuthzActor, orderId: string) {
       [orderId]
     )
   ).rows[0];
-  const units = o ? await visibleOligoUnits(tx, actor) : [];
+  const canViewFromIntake =
+    Boolean(actor.isSalesIntakeUser) || (await hasFactoryPermission(tx, actor, "intake.order.view"));
+  const units = o ? (canViewFromIntake ? "ALL" : await visibleOligoUnits(tx, actor)) : [];
   if (!o || (units !== "ALL" && !units.includes(o.org_unit_id))) throw notFound("đơn Oligo");
 
   // Resolve customer name (when transferred from Sales/Kinh doanh) or department name (when ordered internally by R&D, Kit, QA/QC, Oligo)

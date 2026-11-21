@@ -5,7 +5,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Cpu, Dna, FlaskConical, Plus, Rocket, Truck } from "lucide-react";
 import { ActionBar, type AllowedAction } from "../actions";
 import { api, fmtDate, fmtQty, useFactoryMe, vnToday } from "../api";
-import { printOrderCoa } from "../coa";
+import { printKitCoaCertificate, printOrderCoa, printTestCoa } from "../coa";
+import { DEFAULT_QC_FORMS_CONFIG, normalizeQcFormsConfig } from "../qcSignatures";
 import {
   downloadOligoSequenceExcelTemplate,
   OligoOrderPanel,
@@ -92,6 +93,20 @@ interface OrderDetail {
     due_date: string | null;
     notes: string | null;
     sequence_count: number;
+  }[];
+  issued_kit_coas?: any[];
+  device_fqc_coas?: {
+    test_id: string;
+    test_code: string;
+    overall_result: string;
+    serial_no: string;
+    model_code: string;
+    model_name: string;
+    revision_code?: string | null;
+    order_code?: string | null;
+    trial_nas_path?: string | null;
+    trial_attachment_name?: string | null;
+    trial_attachment_data?: string | null;
   }[];
   device_po_summary?: {
     po_code: string;
@@ -1324,6 +1339,110 @@ function OrderPanel({ id, onClose }: { id: string; onClose: () => void }) {
                       {addOligoSeqMut.isPending ? "Đang nạp trình tự…" : "💾 Lưu & Thêm Trình Tự vào Đơn Oligo"}
                     </Button>
                   </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Khung Xuất COA Chính Thức Cho Sản Phẩm Phòng Sản Xuất Kit (KIT) */}
+          {(o.module_key === "KIT" || (o.issued_kit_coas && o.issued_kit_coas.length > 0)) && (
+            <div className="p-3 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/25 border border-emerald-200 dark:border-emerald-800/70 flex flex-col gap-2">
+              <div className="font-extrabold text-emerald-950 dark:text-emerald-200">
+                📜 Giấy Chứng Nhận Phân Tích Chất Lượng (COA) Đã Cấp Cho Đơn Kit ({o.issued_kit_coas?.length ?? 0} bản COA):
+              </div>
+              {o.issued_kit_coas && o.issued_kit_coas.length > 0 ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  {o.issued_kit_coas.map((c: any) => (
+                    <div
+                      key={c.id}
+                      className="flex flex-wrap items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800"
+                    >
+                      <span className="font-mono font-extrabold text-emerald-800 dark:text-emerald-300 text-xs">
+                        📜 {c.code} · Lô {c.lot_code} ({c.product_code})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => printKitCoaCertificate(c, DEFAULT_QC_FORMS_CONFIG, "BI")}
+                        className="px-2 py-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] cursor-pointer"
+                        title="In / Tải COA Song ngữ chuẩn ABT"
+                      >
+                        📄 In COA (Song ngữ)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => printKitCoaCertificate(c, DEFAULT_QC_FORMS_CONFIG, "VI")}
+                        className="px-2 py-0.5 rounded-lg border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 font-bold text-[10px] cursor-pointer"
+                      >
+                        🇻🇳 COA (VI)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => printKitCoaCertificate(c, DEFAULT_QC_FORMS_CONFIG, "EN")}
+                        className="px-2 py-0.5 rounded-lg border border-sky-300 dark:border-sky-700 bg-sky-50 dark:bg-sky-950/50 text-sky-800 dark:text-sky-300 font-bold text-[10px] cursor-pointer"
+                      >
+                        🇬🇧 COA (EN)
+                      </button>
+                      {c.qc_test_id && (
+                        <button
+                          type="button"
+                          onClick={() => printTestCoa(c.qc_test_id, DEFAULT_QC_FORMS_CONFIG).catch((e) => window.alert(e.message))}
+                          className="px-2 py-0.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 font-bold text-[10px] cursor-pointer"
+                        >
+                          🖨️ Phiếu KQ QC
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                  Lô Kit của đơn này đang trong quá trình sản xuất / kiểm nghiệm FQC tại Phòng QA/QC. Ngay khi QA/QC ký duyệt giải phóng lô &amp; cấp COA, nút tải COA sẽ tự động xuất hiện tại đây.
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Khung Xuất Phiếu KQ FQC / COA & Phiếu Thử Nghiệm Cho Sản Phẩm Phòng Kỹ Thuật – Thiết Bị (DEVICE) */}
+          {(o.module_key === "DEVICE" || (o.device_fqc_coas && o.device_fqc_coas.length > 0)) && (
+            <div className="p-3 rounded-xl bg-sky-50/70 dark:bg-sky-950/25 border border-sky-200 dark:border-sky-800/70 flex flex-col gap-2">
+              <div className="font-extrabold text-sky-950 dark:text-sky-200">
+                🖥️ Hồ Sơ Xuất Xưởng (Phiếu KQ FQC &amp; Phiếu Thử Nghiệm Thiết Bị) Theo Từng Số Serial ({o.device_fqc_coas?.length ?? 0} máy đã duyệt FQC):
+              </div>
+              {o.device_fqc_coas && o.device_fqc_coas.length > 0 ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  {o.device_fqc_coas.map((df) => (
+                    <div
+                      key={df.test_id}
+                      className="flex flex-wrap items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-sky-200 dark:border-sky-800"
+                    >
+                      <span className="font-mono font-extrabold text-sky-800 dark:text-sky-300 text-xs">
+                        🖥️ Serial {df.serial_no} · {df.model_code}
+                        {df.revision_code ? ` (Rev ${df.revision_code})` : ""}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => printTestCoa(df.test_id, DEFAULT_QC_FORMS_CONFIG).catch((e) => window.alert(e.message))}
+                        className="px-2 py-0.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white font-bold text-[10px] cursor-pointer"
+                        title="In Phiếu Trả Kết Quả Kiểm Nghiệm Xuất Xưởng (FQC / COA Thiết bị)"
+                      >
+                        🖨️ In Phiếu KQ FQC / COA ({df.test_code})
+                      </button>
+                      {df.trial_attachment_name && df.trial_attachment_data && (
+                        <a
+                          href={df.trial_attachment_data}
+                          download={df.trial_attachment_name}
+                          className="px-2 py-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px]"
+                          title="Tải file scan Phiếu kiểm tra thử nghiệm đã ký của KTCN"
+                        >
+                          📎 Tải Phiếu thử nghiệm: {df.trial_attachment_name}
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                  Thiết bị đang trong quá trình lắp ráp / kiểm tra thử nghiệm và đo kiểm FQC. Ngay khi Phòng QA/QC duyệt ĐẠT phiếu FQC cho từng mã Serial, nút in Phiếu KQ FQC / COA và tải Phiếu thử nghiệm sẽ hiển thị tại đây.
                 </div>
               )}
             </div>
@@ -2805,9 +2924,40 @@ export function FactoryOrdersModule() {
           linked_oligo_orders?: { id: string; code: string; status: string }[];
           linked_kit_orders?: { id: string; code: string; status: string }[];
           linked_device_orders?: { id: string; code: string; status: string }[];
+          issued_kit_coas?: any[];
+          device_fqc_coas?: {
+            test_id: string;
+            test_code: string;
+            overall_result: string;
+            serial_no: string;
+            model_code: string;
+            model_name: string;
+            revision_code?: string | null;
+            order_code?: string | null;
+            trial_nas_path?: string | null;
+            trial_attachment_name?: string | null;
+            trial_attachment_data?: string | null;
+          }[];
         }[]
       >(`/api/factory/intake/orders${status ? `?status=${status}` : ""}`),
   });
+
+  const coaHubQuery = useQuery({
+    queryKey: ["factory", "intake-catalog-options"],
+    queryFn: () =>
+      api<{
+        qc_forms_config?: any;
+        all_issued_coas?: any[];
+        all_oligo_coa_orders?: any[];
+        all_device_fqc_reports?: any[];
+      }>("/api/factory/intake/ops"),
+  });
+  const [showCoaHub, setShowCoaHub] = useState(false);
+  const [coaSearch, setCoaSearch] = useState("");
+  const [coaTab, setCoaTab] = useState<"ALL" | "KIT" | "OLIGO" | "DEVICE">("ALL");
+  const qcFormsCfg = coaHubQuery.data?.qc_forms_config
+    ? normalizeQcFormsConfig(null, coaHubQuery.data.qc_forms_config, null)
+    : DEFAULT_QC_FORMS_CONFIG;
 
   const allRows = list.data ?? [];
   const filtered = allRows.filter((r) => !moduleFilter || r.module_key === moduleFilter);
@@ -2922,6 +3072,250 @@ export function FactoryOrdersModule() {
       )}
 
       {selected && <OrderPanel key={selected} id={selected} onClose={() => setSelected(null)} />}
+
+      {/* TRUNG TÂM TRA CỨU & LẤY COA THÀNH PHẨM (OLIGO · KIT · THIẾT BỊ) DÀNH CHO BỘ PHẬN KINH DOANH */}
+      <Card
+        title={`📜 Trung Tâm Lấy & Tra Cứu COA Thành Phẩm Dành Cho Kinh Doanh (Kit: ${coaHubQuery.data?.all_issued_coas?.length ?? 0} · Oligo: ${coaHubQuery.data?.all_oligo_coa_orders?.length ?? 0} · Thiết bị: ${coaHubQuery.data?.all_device_fqc_reports?.length ?? 0})`}
+        actions={
+          <Button variant={showCoaHub ? "secondary" : "primary"} onClick={() => setShowCoaHub((v) => !v)}>
+            {showCoaHub ? "Thu gọn Kho COA ▲" : "📜 Mở Kho Tra Cứu & Tải COA (Oligo / Kit / Thiết bị) ▼"}
+          </Button>
+        }
+      >
+        {!showCoaHub ? (
+          <div className="text-xs text-slate-600 dark:text-slate-300 flex flex-wrap items-center justify-between gap-2">
+            <span>
+              💡 Bộ phận Kinh doanh có thể lấy COA trực tiếp tại cột <b>&quot;Thao tác &amp; COA&quot;</b> của từng Đơn Nội Bộ bên dưới, hoặc bấm <b>&quot;📜 Mở Kho Tra Cứu &amp; Tải COA&quot;</b> để tìm theo <b>Số Lô (Lot) Kit, Mã Đơn Oligo, hoặc Số Serial Thiết bị</b> (kể cả hàng xuất từ kho thành phẩm có sẵn).
+            </span>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap gap-1.5">
+                {(
+                  [
+                    ["ALL", "Tất cả (Oligo · Kit · Thiết bị)"],
+                    ["KIT", `🧪 COA Sản phẩm Kit (${coaHubQuery.data?.all_issued_coas?.length ?? 0})`],
+                    ["OLIGO", `🧬 COA Đơn hàng Oligo (${coaHubQuery.data?.all_oligo_coa_orders?.length ?? 0})`],
+                    ["DEVICE", `🖥️ Phiếu KQ FQC / COA Thiết bị (${coaHubQuery.data?.all_device_fqc_reports?.length ?? 0})`],
+                  ] as const
+                ).map(([k, label]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => setCoaTab(k)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border cursor-pointer transition-all ${
+                      coaTab === k
+                        ? "bg-sky-700 text-white border-sky-700"
+                        : "bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="text"
+                value={coaSearch}
+                onChange={(e) => setCoaSearch(e.target.value)}
+                placeholder="🔍 Tìm theo Số Lô (Lot), Mã SP, Mã đơn Oligo, Số Serial máy, Mã PO..."
+                className={`${inputClass} !w-80`}
+              />
+            </div>
+
+            {/* 1. BẢNG COA KIT */}
+            {(coaTab === "ALL" || coaTab === "KIT") && (
+              <div className="space-y-1.5">
+                <div className="text-xs font-extrabold uppercase text-emerald-800 dark:text-emerald-300">
+                  🧪 1. COA Sản Phẩm Phòng Sản Xuất Kit (Do QA/QC Cấp &amp; Đồng Bộ Tự Động)
+                </div>
+                {(() => {
+                  const q = coaSearch.trim().toLowerCase();
+                  const rows = (coaHubQuery.data?.all_issued_coas ?? []).filter(
+                    (c: any) =>
+                      !q ||
+                      String(c.code || "").toLowerCase().includes(q) ||
+                      String(c.lot_code || "").toLowerCase().includes(q) ||
+                      String(c.product_code || "").toLowerCase().includes(q) ||
+                      String(c.product_name || "").toLowerCase().includes(q) ||
+                      String(c.kd_po_code || "").toLowerCase().includes(q)
+                  );
+                  if (rows.length === 0) return <Empty>Chưa có bản COA Kit nào khớp từ khóa.</Empty>;
+                  return (
+                    <Table head={["Số COA", "Số Lô (Lot)", "Mã & Tên Sản Phẩm Kit", "NSX / HSD", "Đơn Nội Bộ / PO", "Tải / In COA"]}>
+                      {rows.slice(0, 30).map((c: any) => (
+                        <tr key={c.id}>
+                          <td className="py-2 pr-3 font-mono font-bold text-emerald-700 dark:text-emerald-400">{c.code}</td>
+                          <td className="py-2 pr-3 font-mono font-bold">{c.lot_code}</td>
+                          <td className="py-2 pr-3">
+                            <b>{c.product_code}</b> — {c.product_name}
+                          </td>
+                          <td className="py-2 pr-3 font-mono text-xs whitespace-nowrap">
+                            {fmtDate(c.mfg_date)} → {fmtDate(c.expiry_date)}
+                          </td>
+                          <td className="py-2 pr-3 font-mono text-xs">
+                            {c.kd_po_code || c.internal_order_code || c.order_code || "Tồn kho TP"}
+                          </td>
+                          <td className="py-2 pr-3 whitespace-nowrap">
+                            <div className="flex flex-wrap gap-1">
+                              <button
+                                type="button"
+                                onClick={() => printKitCoaCertificate(c, qcFormsCfg, "BI")}
+                                className="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] cursor-pointer"
+                              >
+                                📄 In COA (Song ngữ)
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => printKitCoaCertificate(c, qcFormsCfg, "VI")}
+                                className="px-2 py-1 rounded-lg border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 font-bold text-[11px] cursor-pointer"
+                              >
+                                🇻🇳 VI
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => printKitCoaCertificate(c, qcFormsCfg, "EN")}
+                                className="px-2 py-1 rounded-lg border border-sky-300 dark:border-sky-700 bg-sky-50 dark:bg-sky-950/50 text-sky-800 dark:text-sky-300 font-bold text-[11px] cursor-pointer"
+                              >
+                                🇬🇧 EN
+                              </button>
+                              {c.qc_test_id && (
+                                <button
+                                  type="button"
+                                  onClick={() => printTestCoa(c.qc_test_id, qcFormsCfg).catch((e) => window.alert(e.message))}
+                                  className="px-2 py-1 rounded-lg border border-slate-300 dark:border-slate-700 font-bold text-[11px] cursor-pointer"
+                                >
+                                  🖨️ Phiếu KQ QC
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </Table>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* 2. BẢNG COA ĐƠN HÀNG OLIGO */}
+            {(coaTab === "ALL" || coaTab === "OLIGO") && (
+              <div className="space-y-1.5 pt-2 border-t border-slate-200 dark:border-slate-800">
+                <div className="text-xs font-extrabold uppercase text-purple-800 dark:text-purple-300">
+                  🧬 2. COA Đơn Hàng Tổng Hợp Oligo (Primer &amp; Probe / Amplicon)
+                </div>
+                {(() => {
+                  const q = coaSearch.trim().toLowerCase();
+                  const rows = (coaHubQuery.data?.all_oligo_coa_orders ?? []).filter(
+                    (o: any) =>
+                      !q ||
+                      String(o.code || "").toLowerCase().includes(q) ||
+                      String(o.customer_label || "").toLowerCase().includes(q) ||
+                      String(o.kd_po_code || "").toLowerCase().includes(q) ||
+                      String(o.internal_order_code || "").toLowerCase().includes(q)
+                  );
+                  if (rows.length === 0) return <Empty>Chưa có Đơn Oligo nào khớp từ khóa.</Empty>;
+                  return (
+                    <Table head={["Mã Đơn Oligo", "PO Kinh doanh / Đơn Nội Bộ", "Khách hàng / Đơn vị", "Số trình tự", "Tải / In COA Oligo"]}>
+                      {rows.slice(0, 30).map((oo: any) => (
+                        <tr key={oo.id}>
+                          <td className="py-2 pr-3 font-mono font-bold text-purple-700 dark:text-purple-300">{oo.code}</td>
+                          <td className="py-2 pr-3 font-mono text-xs">
+                            {oo.kd_po_code || "—"} {oo.internal_order_code ? `(${oo.internal_order_code})` : ""}
+                          </td>
+                          <td className="py-2 pr-3 font-semibold">{oo.customer_label || "—"}</td>
+                          <td className="py-2 pr-3 font-mono text-xs">
+                            {oo.sequence_count} chuỗi ({oo.primer_probe_count} Primer/Probe · {oo.amplicon_count} Amplicon)
+                          </td>
+                          <td className="py-2 pr-3 whitespace-nowrap">
+                            <div className="flex flex-wrap gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => printOrderCoa(oo.id, "PRIMER_PROBE_ONLY").catch((e) => window.alert(e.message))}
+                                className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] cursor-pointer"
+                              >
+                                📜 COA Đơn hàng (Primer/Probe)
+                              </button>
+                              {Number(oo.amplicon_count) > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => printOrderCoa(oo.id, "AMPLICONS_ONLY").catch((e) => window.alert(e.message))}
+                                  className="px-2.5 py-1 rounded-lg border border-purple-300 dark:border-purple-700 bg-purple-50 dark:bg-purple-950/50 text-purple-800 dark:text-purple-300 font-bold text-[11px] cursor-pointer"
+                                >
+                                  🧬 COA Amplicon
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </Table>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* 3. BẢNG PHIẾU KQ FQC / COA & PHIẾU THỬ NGHIỆM THIẾT BỊ */}
+            {(coaTab === "ALL" || coaTab === "DEVICE") && (
+              <div className="space-y-1.5 pt-2 border-t border-slate-200 dark:border-slate-800">
+                <div className="text-xs font-extrabold uppercase text-sky-800 dark:text-sky-300">
+                  🖥️ 3. Phiếu KQ Kiểm Nghiệm Xuất Xưởng (FQC / COA) &amp; Phiếu Thử Nghiệm Thiết Bị Theo Số Serial
+                </div>
+                {(() => {
+                  const q = coaSearch.trim().toLowerCase();
+                  const rows = (coaHubQuery.data?.all_device_fqc_reports ?? []).filter(
+                    (d: any) =>
+                      !q ||
+                      String(d.serial_no || "").toLowerCase().includes(q) ||
+                      String(d.model_code || "").toLowerCase().includes(q) ||
+                      String(d.model_name || "").toLowerCase().includes(q) ||
+                      String(d.test_code || "").toLowerCase().includes(q) ||
+                      String(d.kd_po_code || "").toLowerCase().includes(q)
+                  );
+                  if (rows.length === 0) return <Empty>Chưa có Thiết bị hoàn tất FQC nào khớp từ khóa.</Empty>;
+                  return (
+                    <Table head={["Số Serial (SN)", "Model Thiết bị", "Mã Phiếu FQC", "Lệnh SX / PO", "Tải / In COA & Phiếu Thử Nghiệm"]}>
+                      {rows.slice(0, 30).map((df: any) => (
+                        <tr key={df.test_id}>
+                          <td className="py-2 pr-3 font-mono font-bold text-sky-700 dark:text-sky-300">{df.serial_no}</td>
+                          <td className="py-2 pr-3">
+                            <b>{df.model_code}</b> — {df.model_name}
+                            {df.revision_code ? ` (Rev ${df.revision_code})` : ""}
+                          </td>
+                          <td className="py-2 pr-3 font-mono font-semibold">{df.test_code}</td>
+                          <td className="py-2 pr-3 font-mono text-xs">
+                            {df.order_code || "—"} {df.kd_po_code ? `(${df.kd_po_code})` : ""}
+                          </td>
+                          <td className="py-2 pr-3 whitespace-nowrap">
+                            <div className="flex flex-wrap gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => printTestCoa(df.test_id, qcFormsCfg).catch((e) => window.alert(e.message))}
+                                className="px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-700 text-white font-bold text-[11px] cursor-pointer"
+                              >
+                                🖨️ In Phiếu KQ FQC / COA Thiết bị
+                              </button>
+                              {df.trial_attachment_name && df.trial_attachment_data && (
+                                <a
+                                  href={df.trial_attachment_data}
+                                  download={df.trial_attachment_name}
+                                  className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px]"
+                                >
+                                  📎 Tải Phiếu thử nghiệm KTCN
+                                </a>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </Table>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+        )}
+      </Card>
 
       <Card
         title="Danh sách Đơn Nội Bộ & Forecast Quý từ Khối Kinh Doanh & Điều Phối Về 3 Phòng Sản Xuất"
@@ -3102,12 +3496,34 @@ export function FactoryOrdersModule() {
                               window.alert(err.message)
                             )
                           }
-                          title="Xuất COA Đơn hàng (gồm các trình tự Primer & Probe)"
+                          title="Xuất COA Đơn hàng Oligo (gồm các trình tự Primer & Probe)"
                           className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] cursor-pointer"
                         >
-                          📜 COA Đơn hàng
+                          📜 COA Oligo
                         </button>
                       )}
+                      {(r.issued_kit_coas ?? []).map((c: any) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => printKitCoaCertificate(c, qcFormsCfg, "BI")}
+                          title={`In COA ${c.code} cho Lô Kit ${c.lot_code}`}
+                          className="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] cursor-pointer"
+                        >
+                          📜 COA Kit ({c.lot_code})
+                        </button>
+                      ))}
+                      {(r.device_fqc_coas ?? []).map((df) => (
+                        <button
+                          key={df.test_id}
+                          type="button"
+                          onClick={() => printTestCoa(df.test_id, qcFormsCfg).catch((err) => window.alert(err.message))}
+                          title={`In Phiếu KQ FQC / COA cho Thiết bị Serial ${df.serial_no}`}
+                          className="px-2 py-1 rounded-lg bg-sky-600 hover:bg-sky-700 text-white font-bold text-[11px] cursor-pointer"
+                        >
+                          🖥️ COA Máy ({df.serial_no})
+                        </button>
+                      ))}
                       <button
                         type="button"
                         className="text-xs font-bold text-sky-700 dark:text-sky-400 hover:underline cursor-pointer"

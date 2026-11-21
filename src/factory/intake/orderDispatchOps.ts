@@ -16,6 +16,7 @@ import { createRequest } from "../purchase/requests";
 import { DEFAULT_ABT_KIT_BOM_COMPONENTS } from "@/shared/defaultKitBomComponents";
 import { findAccessorySet, isExtractionAccessoryProduct } from "@/frontend/utils/extractionAccessories";
 import { kitSpecOf, kitSpecToFactorySupplyAndTube, kitSpecLabel, hasKitSpec, hasPackagingSpec } from "@/frontend/utils/packagingForm";
+import { loadQcFormsConfig } from "../qms/qaOps";
 import "./permissions";
 import "../kit/permissions";
 import "../oligo/orders";
@@ -76,7 +77,85 @@ export async function getInternalOrderCatalogOptions(tx: Tx, actor: AuthzActor) 
     sales_orders = [];
   }
 
-  return { departments, items, sales_orders };
+  let qc_forms_config: any = null;
+  try {
+    qc_forms_config = await loadQcFormsConfig(tx);
+  } catch {
+    qc_forms_config = null;
+  }
+
+  const all_issued_coas = (
+    await tx.query(
+      `SELECT c.id, c.code, c.lot_code, c.product_code, c.product_name,
+              c.mfg_date, c.expiry_date, c.good_qty::float AS good_qty, c.uom,
+              c.tests_per_kit, c.spec_code, c.tccs_code, c.specification,
+              c.storage_condition, c.qc_summary, c.qc_results_snapshot,
+              c.analyst_name, c.issued_by_name, c.issued_at, c.qc_test_id,
+              c.template_key, c.custom_fields, c.custom_notes,
+              kpo.code AS order_code, io.code AS internal_order_code, io.kd_po_code
+         FROM kit.coa_certificate c
+         LEFT JOIN kit.production_order kpo ON kpo.id = c.production_order_id
+         LEFT JOIN intake.internal_order_line iol ON iol.id = kpo.internal_order_line_id
+         LEFT JOIN intake.internal_order io ON io.id = iol.order_id
+        WHERE c.superseded_by_id IS NULL
+        ORDER BY c.issued_at DESC
+        LIMIT 150`
+    )
+  ).rows;
+
+  const all_oligo_coa_orders = (
+    await tx.query(
+      `SELECT o.id, o.code, o.customer_label, o.status, o.created_at,
+              io.code AS internal_order_code, io.kd_po_code,
+              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT')) AS sequence_count,
+              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT') AND s.product_type IN ('PRIMER', 'PROBE')) AS primer_probe_count,
+              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT') AND s.product_type IN ('AMPLICON_LINEAR', 'AMPLICON_PLASMID')) AS amplicon_count
+         FROM oligo.oligo_order o
+         LEFT JOIN intake.internal_order io ON io.id = o.internal_order_id
+        WHERE EXISTS (SELECT 1 FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT'))
+        ORDER BY o.created_at DESC
+        LIMIT 100`
+    )
+  ).rows;
+
+  const all_device_fqc_reports = (
+    await tx.query(
+      `SELECT t.id AS test_id, t.code AS test_code, t.overall_result, t.updated_at AS reviewed_at,
+              du.serial_no, dm.code AS model_code, dm.name AS model_name,
+              drev.revision AS revision_code, dpo.code AS order_code,
+              io.code AS internal_order_code, io.kd_po_code,
+              dtr.nas_path AS trial_nas_path,
+              dtr.attachment_name AS trial_attachment_name,
+              dtr.attachment_data AS trial_attachment_data
+         FROM qms.qc_test t
+         JOIN device.device_unit du ON t.entity_type = 'DEVICE_UNIT' AND du.id = t.entity_id
+         JOIN device.device_model dm ON dm.id = du.model_id
+         LEFT JOIN device.model_revision drev ON drev.id = du.model_revision_id
+         LEFT JOIN device.device_order dpo ON dpo.id = du.order_id
+         LEFT JOIN intake.internal_order_line iol ON iol.id = dpo.internal_order_line_id
+         LEFT JOIN intake.internal_order io ON io.id = iol.order_id
+         LEFT JOIN LATERAL (
+           SELECT br.nas_path, br.attachment_name, br.attachment_data
+             FROM device.burn_in_run br
+            WHERE br.unit_id = du.id
+            ORDER BY br.created_at DESC
+            LIMIT 1
+         ) dtr ON true
+        WHERE t.status = 'REVIEWED' AND t.overall_result = 'PASS'
+        ORDER BY t.updated_at DESC
+        LIMIT 100`
+    )
+  ).rows;
+
+  return {
+    departments,
+    items,
+    sales_orders,
+    qc_forms_config,
+    all_issued_coas,
+    all_oligo_coa_orders,
+    all_device_fqc_reports,
+  };
 }
 
 const createManualOrderSchema = z.object({

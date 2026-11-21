@@ -66,6 +66,8 @@ export interface AuthzActor extends Actor {
    * and e-signatures still apply to it.
    */
   isRootAdmin?: boolean;
+  /** ABT Portal Sales / Commercial Warehouse / Legal user who accesses Đơn Nội Bộ & COA lookup. */
+  isSalesIntakeUser?: boolean;
   /** Scheduled jobs and automatic effects; holds exactly the `systemOnly` permissions. */
   isSystem?: boolean;
 }
@@ -195,6 +197,7 @@ export async function hasFactoryPermission(tx: Tx, actor: AuthzActor, permission
   if (!def) throw new Error(`Quyền chưa được khai báo: ${permission}`);
   if (def.systemOnly || actor.isSystem) return Boolean(def.systemOnly && actor.isSystem);
   if (actor.isRootAdmin) return true;
+  if (actor.isSalesIntakeUser && permission === "intake.order.view") return true;
   if (orgUnitId && permission.startsWith("rd.") && (await isItOrgUnit(tx, orgUnitId))) {
     const itPermission = IT_PERMISSION_FOR[permission];
     return itPermission ? hasFactoryPermission(tx, actor, itPermission, orgUnitId) : false;

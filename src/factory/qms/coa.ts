@@ -1,5 +1,5 @@
 import type { Tx } from "../core/db";
-import { authorize, type AuthzActor } from "../core/authz";
+import { authorize, hasFactoryPermission, type AuthzActor } from "../core/authz";
 import { invalid } from "../core/errors";
 import { getSetting } from "../core/settings";
 import { getQcTest } from "./qcTests";
@@ -23,7 +23,13 @@ export async function reviewSignature(tx: Tx, testId: string) {
  * parameter test equipment from `qms.qc_method` or `qms.qc_result`, and the configured QC/COA template settings.
  */
 export async function coaForTest(tx: Tx, actor: AuthzActor, testId: string) {
-  await authorize(tx, actor, "qms.qc.view");
+  const canViewCoa =
+    Boolean(actor.isSalesIntakeUser) ||
+    (await hasFactoryPermission(tx, actor, "qms.qc.view")) ||
+    (await hasFactoryPermission(tx, actor, "intake.order.view"));
+  if (!canViewCoa) {
+    await authorize(tx, actor, "qms.qc.view");
+  }
   const t = await getQcTest(tx, testId);
   if (t.status !== "REVIEWED") throw invalid("Chỉ in Phiếu KQ / COA cho phiếu QC đã được duyệt.", undefined, "NOT_REVIEWED");
 
