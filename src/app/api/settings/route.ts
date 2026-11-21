@@ -170,11 +170,99 @@ async function cleanupDeletedStaffArtifacts(opts: {
     }
   } catch {}
 
+  // Strip removed employee codes / names / IDs from sales_personnel_custom, sales_personnel_contacts, and system_notification_matrix
+  try {
+    const customRow = (await query("SELECT data FROM app_storage WHERE key = 'sales_personnel_custom' LIMIT 1")).rows[0];
+    if (Array.isArray(customRow?.data)) {
+      const filtered = customRow.data.filter((item: any) => {
+        const c = String(item?.employee_code || item?.employee_id || item?.id || "").trim().toLowerCase();
+        const n = personNameKey(item?.full_name || item?.name || "");
+        return !(codeSet.has(c) || pIdStrSet.has(c) || (n && nameKeySet.has(n)));
+      });
+      if (filtered.length !== customRow.data.length) {
+        await query(
+          "UPDATE app_storage SET data = $1::jsonb, version = COALESCE(version, 1) + 1, updated_at = NOW() WHERE key = 'sales_personnel_custom'",
+          [JSON.stringify(filtered)]
+        );
+      }
+    }
+  } catch {}
+
+  try {
+    const matrixRow = (await query("SELECT data FROM app_storage WHERE key = 'system_notification_matrix' LIMIT 1")).rows[0];
+    if (matrixRow?.data && typeof matrixRow.data === "object" && !Array.isArray(matrixRow.data)) {
+      let matrixChanged = false;
+      const nextMatrix: Record<string, any> = {};
+      for (const [evKey, rule] of Object.entries(matrixRow.data as Record<string, any>)) {
+        if (!rule || typeof rule !== "object") {
+          nextMatrix[evKey] = rule;
+          continue;
+        }
+        const nextRule = { ...rule };
+        if (Array.isArray(rule.targetEmployeeIds)) {
+          const filteredIds = rule.targetEmployeeIds.filter((idVal: any) => {
+            const low = String(idVal || "").trim().toLowerCase();
+            return !(codeSet.has(low) || pIdStrSet.has(low));
+          });
+          if (filteredIds.length !== rule.targetEmployeeIds.length) {
+            nextRule.targetEmployeeIds = filteredIds;
+            matrixChanged = true;
+          }
+        }
+        if (Array.isArray(rule.targetEmployeeNames)) {
+          const filteredNames = rule.targetEmployeeNames.filter((nm: any) => {
+            const nk = personNameKey(String(nm || ""));
+            return !(nk && nameKeySet.has(nk));
+          });
+          if (filteredNames.length !== rule.targetEmployeeNames.length) {
+            nextRule.targetEmployeeNames = filteredNames;
+            matrixChanged = true;
+          }
+        }
+        nextMatrix[evKey] = nextRule;
+      }
+      if (matrixChanged) {
+        await query(
+          "UPDATE app_storage SET data = $1::jsonb, version = COALESCE(version, 1) + 1, updated_at = NOW() WHERE key = 'system_notification_matrix'",
+          [JSON.stringify(nextMatrix)]
+        );
+      }
+    }
+  } catch {}
+
   if (uIds.length > 0) {
     try {
       const fPool = getFactoryPool();
+      await fPool.query("DELETE FROM core.user_permission_exclusion WHERE user_id = ANY($1::int[])", [uIds]).catch(() => {});
+      await fPool.query("DELETE FROM core.user_permission_grant WHERE user_id = ANY($1::int[])", [uIds]).catch(() => {});
       await fPool.query("DELETE FROM core.user_role WHERE user_id = ANY($1::int[])", [uIds]);
       await fPool.query("DELETE FROM core.user_profile WHERE user_id = ANY($1::int[])", [uIds]);
+    } catch {}
+  }
+
+  // Strip deleted employee's QC signature entry from qms.coa_template_config so a reused employee_code doesn't inherit old signature
+  if (codeSet.size > 0) {
+    try {
+      const fPool = getFactoryPool();
+      const cfgRow = (await fPool.query("SELECT value FROM core.system_setting WHERE key = 'qms.coa_template_config' LIMIT 1")).rows[0];
+      if (cfgRow?.value && typeof cfgRow.value === "object") {
+        const val = { ...cfgRow.value };
+        const qcForms = val.qc_forms_config && typeof val.qc_forms_config === "object" ? { ...val.qc_forms_config } : null;
+        if (qcForms && Array.isArray(qcForms.staff_signatures)) {
+          const beforeLen = qcForms.staff_signatures.length;
+          qcForms.staff_signatures = qcForms.staff_signatures.filter((s: any) => {
+            const ec = String(s?.emp_code || "").trim().toLowerCase();
+            return !(ec && codeSet.has(ec));
+          });
+          if (qcForms.staff_signatures.length !== beforeLen) {
+            val.qc_forms_config = qcForms;
+            await fPool.query(
+              "UPDATE core.system_setting SET value = $1::jsonb, updated_at = now() WHERE key = 'qms.coa_template_config'",
+              [JSON.stringify(val)]
+            );
+          }
+        }
+      }
     } catch {}
   }
 
@@ -472,6 +560,8 @@ export async function POST(req: NextRequest) {
           );
         }
         const code = requestedCode || await nextEmployeeCode();
+        // Dọn sạch mọi cấu hình cá nhân / phân quyền cũ gắn với mã nhân viên này (nếu mã này từng thuộc về nhân sự cũ đã xóa)
+        await cleanupDeletedStaffArtifacts({ codes: [code] }).catch(() => {});
         await query(
           `INSERT INTO personnel (employee_code, full_name, department, position, email, phone, date_of_birth, status)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
