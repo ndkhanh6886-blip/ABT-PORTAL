@@ -1,4 +1,5 @@
 import { z } from "zod/v3";
+import { query as portalQuery } from "@/backend/db/db";
 import type { Tx } from "../core/db";
 import { authorizeAnywhere, SYSTEM_ACTOR, type AuthzActor } from "../core/authz";
 import { addDays, vnToday } from "../core/dates";
@@ -66,7 +67,7 @@ export async function getInternalOrderCatalogOptions(tx: Tx, actor: AuthzActor) 
   let sales_orders: any[] = [];
   try {
     sales_orders = (
-      await tx.query(
+      await portalQuery(
         `SELECT id, order_code, customer_name, order_date, delivery_address, order_notes, status, items
            FROM sales_orders
           WHERE COALESCE(status, '') NOT IN ('CANCELLED', 'Cancelled')
@@ -79,93 +80,120 @@ export async function getInternalOrderCatalogOptions(tx: Tx, actor: AuthzActor) 
   }
 
   let qc_forms_config: any = null;
+  await tx.query("SAVEPOINT sp_intake_qc_forms");
   try {
     const loaded = await loadQcFormsConfig(tx);
     qc_forms_config = loaded?.qcFormsConfig ?? null;
+    await tx.query("RELEASE SAVEPOINT sp_intake_qc_forms");
   } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_intake_qc_forms").catch(() => {});
     qc_forms_config = null;
   }
 
   await ensureDeviceTrialInspectionSchema(tx);
 
-  const all_issued_coas = (
-    await tx.query(
-      `SELECT c.*,
-              kpo.code AS order_code,
-              io.code AS internal_order_code,
-              io.kd_po_code,
-              COALESCE(b.tccs_code, b_item.tccs_code) AS tccs_code,
-              COALESCE(b.specification, b_item.specification) AS bom_specification,
-              COALESCE(b.storage_condition, b_item.storage_condition) AS bom_storage_condition,
-              COALESCE(b.shelf_life_months, b_item.shelf_life_months) AS shelf_life_months,
-              i.storage_condition AS item_storage_condition,
-              rv.display_name AS reviewer_name
-         FROM kit.coa_certificate c
-         LEFT JOIN kit.production_order kpo ON kpo.id = c.production_order_id
-         LEFT JOIN intake.internal_order_line iol ON iol.id = kpo.internal_order_line_id
-         LEFT JOIN intake.internal_order io ON io.id = iol.order_id
-         LEFT JOIN inv.lot l ON l.id = c.lot_id
-         LEFT JOIN master.item i ON i.id = l.item_id
-         LEFT JOIN kit.bom b ON b.id = kpo.bom_id
-         LEFT JOIN LATERAL (
-           SELECT b2.tccs_code, b2.specification, b2.storage_condition, b2.shelf_life_months
-             FROM kit.bom b2
-            WHERE b2.product_item_id = l.item_id
-            ORDER BY (b2.status = 'EFFECTIVE') DESC, b2.bom_version DESC
-            LIMIT 1
-         ) b_item ON kpo.bom_id IS NULL AND l.item_id IS NOT NULL
-         LEFT JOIN qms.qc_test qt ON qt.id = c.qc_test_id
-         LEFT JOIN core.user_profile rv ON rv.user_id = qt.reviewer_id
-        WHERE c.superseded_by_id IS NULL
-          AND NOT EXISTS (SELECT 1 FROM kit.coa_certificate child WHERE child.amended_from_id = c.id)
-        ORDER BY c.issued_at DESC
-        LIMIT 150`
-    )
-  ).rows;
+  let all_issued_coas: any[] = [];
+  await tx.query("SAVEPOINT sp_intake_coas");
+  try {
+    all_issued_coas = (
+      await tx.query(
+        `SELECT c.*,
+                kpo.code AS order_code,
+                io.code AS internal_order_code,
+                io.kd_po_code,
+                COALESCE(b.tccs_code, b_item.tccs_code) AS tccs_code,
+                COALESCE(b.specification, b_item.specification) AS bom_specification,
+                COALESCE(b.storage_condition, b_item.storage_condition) AS bom_storage_condition,
+                COALESCE(b.shelf_life_months, b_item.shelf_life_months) AS shelf_life_months,
+                i.storage_condition AS item_storage_condition,
+                rv.display_name AS reviewer_name
+           FROM kit.coa_certificate c
+           LEFT JOIN kit.production_order kpo ON kpo.id = c.production_order_id
+           LEFT JOIN intake.internal_order_line iol ON iol.id = kpo.internal_order_line_id
+           LEFT JOIN intake.internal_order io ON io.id = iol.order_id
+           LEFT JOIN inv.lot l ON l.id = c.lot_id
+           LEFT JOIN master.item i ON i.id = l.item_id
+           LEFT JOIN kit.bom b ON b.id = kpo.bom_id
+           LEFT JOIN LATERAL (
+             SELECT b2.tccs_code, b2.specification, b2.storage_condition, b2.shelf_life_months
+               FROM kit.bom b2
+              WHERE b2.product_item_id = l.item_id
+              ORDER BY (b2.status = 'EFFECTIVE') DESC, b2.bom_version DESC
+              LIMIT 1
+           ) b_item ON kpo.bom_id IS NULL AND l.item_id IS NOT NULL
+           LEFT JOIN qms.qc_test qt ON qt.id = c.qc_test_id
+           LEFT JOIN core.user_profile rv ON rv.user_id = qt.reviewer_id
+          WHERE c.superseded_by_id IS NULL
+            AND NOT EXISTS (SELECT 1 FROM kit.coa_certificate child WHERE child.amended_from_id = c.id)
+          ORDER BY c.issued_at DESC
+          LIMIT 150`
+      )
+    ).rows;
+    await tx.query("RELEASE SAVEPOINT sp_intake_coas");
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_intake_coas").catch(() => {});
+    all_issued_coas = [];
+  }
 
-  const all_oligo_coa_orders = (
-    await tx.query(
-      `SELECT o.id, o.code, o.customer_label, o.status, o.created_at,
-              io.code AS internal_order_code, io.kd_po_code,
-              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT')) AS sequence_count,
-              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT') AND s.product_type IN ('PRIMER', 'PROBE')) AS primer_probe_count,
-              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT') AND s.product_type IN ('AMPLICON_LINEAR', 'AMPLICON_PLASMID')) AS amplicon_count
-         FROM oligo.oligo_order o
-         LEFT JOIN intake.internal_order io ON io.id = o.internal_order_id
-        WHERE EXISTS (SELECT 1 FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT'))
-        ORDER BY o.created_at DESC
-        LIMIT 100`
-    )
-  ).rows;
+  let all_oligo_coa_orders: any[] = [];
+  await tx.query("SAVEPOINT sp_intake_oligo_coas");
+  try {
+    all_oligo_coa_orders = (
+      await tx.query(
+        `SELECT o.id, o.code, o.customer_label, o.status, o.created_at,
+                io.code AS internal_order_code, io.kd_po_code,
+                (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT')) AS sequence_count,
+                (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT') AND s.product_type IN ('PRIMER', 'PROBE')) AS primer_probe_count,
+                (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT') AND s.product_type IN ('AMPLICON_LINEAR', 'AMPLICON_PLASMID')) AS amplicon_count
+           FROM oligo.oligo_order o
+           LEFT JOIN intake.internal_order io ON io.id = o.internal_order_id
+          WHERE EXISTS (SELECT 1 FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT'))
+          ORDER BY o.created_at DESC
+          LIMIT 100`
+      )
+    ).rows;
+    await tx.query("RELEASE SAVEPOINT sp_intake_oligo_coas");
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_intake_oligo_coas").catch(() => {});
+    all_oligo_coa_orders = [];
+  }
 
-  const all_device_fqc_reports = (
-    await tx.query(
-      `SELECT t.id AS test_id, t.code AS test_code, t.overall_result, t.updated_at AS reviewed_at,
-              du.serial_no, dm.code AS model_code, dm.name AS model_name,
-              drev.revision AS revision_code, dpo.code AS order_code,
-              io.code AS internal_order_code, io.kd_po_code,
-              dtr.nas_path AS trial_nas_path,
-              dtr.attachment_name AS trial_attachment_name,
-              dtr.attachment_data AS trial_attachment_data
-         FROM qms.qc_test t
-         JOIN device.device_unit du ON t.entity_type = 'DEVICE_UNIT' AND du.id = t.entity_id
-         JOIN device.device_model dm ON dm.id = du.model_id
-         LEFT JOIN device.model_revision drev ON drev.id = du.model_revision_id
-         LEFT JOIN device.device_order dpo ON dpo.id = du.order_id
-         LEFT JOIN intake.internal_order_line iol ON iol.id = dpo.internal_order_line_id
-         LEFT JOIN intake.internal_order io ON io.id = iol.order_id
-         LEFT JOIN LATERAL (
-           SELECT br.nas_path, br.attachment_name, br.attachment_data
-             FROM device.burn_in_run br
-            WHERE br.unit_id = du.id
-            ORDER BY br.created_at DESC
-            LIMIT 1
-         ) dtr ON true
-        WHERE t.status = 'REVIEWED' AND t.overall_result = 'PASS'
-        ORDER BY t.updated_at DESC
-        LIMIT 100`
-    )
-  ).rows;
+  let all_device_fqc_reports: any[] = [];
+  await tx.query("SAVEPOINT sp_intake_device_fqc");
+  try {
+    all_device_fqc_reports = (
+      await tx.query(
+        `SELECT t.id AS test_id, t.code AS test_code, t.overall_result, t.updated_at AS reviewed_at,
+                du.serial_no, dm.code AS model_code, dm.name AS model_name,
+                drev.revision AS revision_code, dpo.code AS order_code,
+                io.code AS internal_order_code, io.kd_po_code,
+                dtr.nas_path AS trial_nas_path,
+                dtr.attachment_name AS trial_attachment_name,
+                dtr.attachment_data AS trial_attachment_data
+           FROM qms.qc_test t
+           JOIN device.device_unit du ON t.entity_type = 'DEVICE_UNIT' AND du.id = t.entity_id
+           JOIN device.device_model dm ON dm.id = du.model_id
+           LEFT JOIN device.model_revision drev ON drev.id = du.model_revision_id
+           LEFT JOIN device.device_order dpo ON dpo.id = du.order_id
+           LEFT JOIN intake.internal_order_line iol ON iol.id = dpo.internal_order_line_id
+           LEFT JOIN intake.internal_order io ON io.id = iol.order_id
+           LEFT JOIN LATERAL (
+             SELECT br.nas_path, br.attachment_name, br.attachment_data
+               FROM device.burn_in_run br
+              WHERE br.unit_id = du.id
+              ORDER BY br.created_at DESC
+              LIMIT 1
+           ) dtr ON true
+          WHERE t.status = 'REVIEWED' AND t.overall_result = 'PASS'
+          ORDER BY t.updated_at DESC
+          LIMIT 100`
+      )
+    ).rows;
+    await tx.query("RELEASE SAVEPOINT sp_intake_device_fqc");
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_intake_device_fqc").catch(() => {});
+    all_device_fqc_reports = [];
+  }
 
   return {
     departments,
