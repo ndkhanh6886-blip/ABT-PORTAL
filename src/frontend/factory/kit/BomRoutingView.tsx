@@ -5,6 +5,7 @@ import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import { ActionBar } from "../actions";
 import { api, fmtQty, useFactoryMe, vnToday } from "../api";
 import { printElementHtml } from "../coa";
+import { MaterialWhereUsedPanel } from "../warehouse/MaterialWhereUsedPanel";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import {
   ABT_KIT_SUPPLY_FORMS,
@@ -2468,6 +2469,8 @@ export function BomRoutingView({
       )}
 
       <ErrorNote error={error} />
+
+      {subTab === "bom" && <MaterialWhereUsedPanel />}
 
       {subTab === "bom" ? (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">

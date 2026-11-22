@@ -3,12 +3,23 @@ import { invalid } from "@/factory/core/errors";
 import {
   createReplenishmentPrFromWarehouse,
   dispatchInterWarehouseFefo,
+  getMaterialWhereUsedAndCapacity,
   getWarehouseHubOverview,
   holdNearExpiryLot,
   putAwayReleasedLotOneClick,
 } from "@/factory/inv/warehouseOps";
 
-export const GET = factoryRoute((tx, { actor }) => getWarehouseHubOverview(tx, actor));
+export const GET = factoryRoute((tx, { actor, url }) => {
+  const op = url.searchParams.get("op");
+  if (op === "where_used") {
+    return getMaterialWhereUsedAndCapacity(tx, actor, {
+      itemId: url.searchParams.get("item_id"),
+      itemCode: url.searchParams.get("item_code"),
+      q: url.searchParams.get("q"),
+    });
+  }
+  return getWarehouseHubOverview(tx, actor);
+});
 
 export const POST = factoryRoute(async (tx, { actor, body: rawBody }) => {
   const body = (rawBody ?? {}) as Record<string, any>;

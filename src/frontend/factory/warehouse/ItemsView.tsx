@@ -5,6 +5,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { api, fmtQty, useDebouncedValue } from "../api";
 import { isDiscreteStockUomClient } from "../kit/shared";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, Pager, StatusBadge, Table } from "../ui";
+import { MaterialWhereUsedPanel } from "./MaterialWhereUsedPanel";
 import { StockCategoryBadge, type StockItemGroup } from "./StockView";
 
 const ITEM_TYPE_LABEL: Record<string, string> = {
@@ -734,6 +735,7 @@ export function ItemsView({ canManage }: { canManage: boolean }) {
   });
 
   const missingCount = items.data?.missing_uom_count ?? 0;
+  const [whereUsedItemCode, setWhereUsedItemCode] = useState<string | null>(null);
   const visibleItemRows = React.useMemo(() => {
     const raw = items.data?.rows ?? [];
     if (!items.isPlaceholderData) return raw;
@@ -753,6 +755,10 @@ export function ItemsView({ canManage }: { canManage: boolean }) {
 
   return (
     <div className="flex flex-col gap-3">
+      <MaterialWhereUsedPanel
+        externalItemCode={whereUsedItemCode}
+        onClearExternal={() => setWhereUsedItemCode(null)}
+      />
       {showConversions && !convTargetItem && (
         <UomConversionPanel
           canManage={canManage}
@@ -975,22 +981,32 @@ export function ItemsView({ canManage }: { canManage: boolean }) {
                       <td className="py-2 pr-3 whitespace-nowrap">{canManage ? <KdMapping item={r} /> : r.kd_item_code ?? "—"}</td>
                       <td className="py-2 pr-3"><StatusBadge status={r.status === "ACTIVE" ? "RELEASED" : "EXPIRED"} label={r.status === "ACTIVE" ? "Đang dùng" : "Ngừng"} /></td>
                       <td className="py-2 pr-3 whitespace-nowrap text-right">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (isRowConv) {
-                              setShowConversions(false);
-                              setConvTargetItem(null);
-                            } else {
-                              setConvTargetItem(r);
-                              setShowConversions(true);
-                            }
-                          }}
-                          title={`Khai báo hoặc xem quy đổi đơn vị riêng cho ${r.code} (VD: 1 tube = 0,5 mL)`}
-                          className="text-xs font-semibold text-indigo-700 dark:text-indigo-400 hover:underline underline-offset-2 cursor-pointer"
-                        >
-                          {isRowConv ? "Đóng quy đổi" : "⚖️ Quy đổi"}
-                        </button>
+                        <div className="inline-flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setWhereUsedItemCode(r.code)}
+                            title={`Tra cứu xem ${r.code} dùng cho những sản phẩm nào và lượng tồn kho hiện tại sản xuất được bao nhiêu thành phẩm`}
+                            className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 hover:underline underline-offset-2 cursor-pointer"
+                          >
+                            🔍 SP dùng &amp; SL SX
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (isRowConv) {
+                                setShowConversions(false);
+                                setConvTargetItem(null);
+                              } else {
+                                setConvTargetItem(r);
+                                setShowConversions(true);
+                              }
+                            }}
+                            title={`Khai báo hoặc xem quy đổi đơn vị riêng cho ${r.code} (VD: 1 tube = 0,5 mL)`}
+                            className="text-xs font-semibold text-indigo-700 dark:text-indigo-400 hover:underline underline-offset-2 cursor-pointer"
+                          >
+                            {isRowConv ? "Đóng quy đổi" : "⚖️ Quy đổi"}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                     {isRowEditingUom && (

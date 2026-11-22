@@ -547,3 +547,455 @@ export async function openReagentContainer(tx: Tx, actor: AuthzActor, input: unk
   });
   return upd;
 }
+
+/**
+ * Tra cứu ngược Định mức BOM ("Where-Used") cho một Mã Nguyên vật liệu / Hóa chất / Bao bì / Linh kiện / Bán thành phẩm,
+ * đồng thời tính toán số lượng Thành phẩm (Bộ Kit / Bán thành phẩm / Thiết bị) tối đa có thể sản xuất được từ lượng tồn kho hiện có.
+ * Hỗ trợ:
+ *  1. Cấp 1 (Trực tiếp): Nguyên liệu nằm trực tiếp trong BOM Thành phẩm Kit (`finished_good`) hoặc BOM Bán thành phẩm (`semi_finished`).
+ *  2. Cấp 2 (Gián tiếp qua BTP): Nguyên liệu dùng để pha Bán thành phẩm S, và S nằm trong BOM Thành phẩm Kit F.
+ *  3. Nguyên liệu thay thế (`kit.bom_line_substitute`).
+ *  4. Định mức Lắp ráp Thiết bị (`device.model_bom_line`).
+ */
+export async function getMaterialWhereUsedAndCapacity(
+  tx: Tx,
+  actor: AuthzActor,
+  opts: { itemId?: string | null; itemCode?: string | null; q?: string | null }
+) {
+  const canView =
+    actor.isRootAdmin ||
+    Boolean(actor.isSalesIntakeUser) ||
+    (await hasFactoryPermission(tx, actor, "inv.stock.view")) ||
+    (await hasFactoryPermission(tx, actor, "kit.view")) ||
+    (await hasFactoryPermission(tx, actor, "master.data.view")) ||
+    (await hasFactoryPermission(tx, actor, "device.view")) ||
+    (await hasFactoryPermission(tx, actor, "rd.view"));
+  if (!canView) {
+    await authorize(tx, actor, "inv.stock.view");
+  }
+
+  const rawItemId = (opts.itemId ?? "").trim();
+  const rawCode = (opts.itemCode ?? "").trim();
+  const rawQuery = (opts.q ?? rawCode).trim();
+
+  // 1. Find candidate items matching the search query or item_id / item_code
+  let candidates: any[] = [];
+  if (rawItemId) {
+    candidates = (
+      await tx.query(
+        `SELECT id, code, name, item_type, base_uom, storage_condition
+           FROM master.item
+          WHERE id = $1::uuid`,
+        [rawItemId]
+      )
+    ).rows;
+  } else if (rawQuery) {
+    candidates = (
+      await tx.query(
+        `SELECT i.id, i.code, i.name, i.item_type, i.base_uom, i.storage_condition,
+                (SELECT COUNT(*)::int FROM kit.bom_line bl WHERE bl.item_id = i.id) +
+                (SELECT COUNT(*)::int FROM device.model_bom_line mbl WHERE mbl.item_id = i.id) AS used_in_bom_count
+           FROM master.item i
+          WHERE upper(i.code) = upper($1)
+             OR i.code ILIKE '%' || $1 || '%'
+             OR i.name ILIKE '%' || $1 || '%'
+          ORDER BY (upper(i.code) = upper($1)) DESC,
+                   (i.code ILIKE $1 || '%') DESC,
+                   used_in_bom_count DESC,
+                   i.code ASC
+          LIMIT 25`,
+        [rawQuery]
+      )
+    ).rows;
+  } else {
+    // Default list: top raw materials / semi-finished items that are used in the most BOMs
+    candidates = (
+      await tx.query(
+        `SELECT i.id, i.code, i.name, i.item_type, i.base_uom, i.storage_condition,
+                (SELECT COUNT(*)::int FROM kit.bom_line bl WHERE bl.item_id = i.id) +
+                (SELECT COUNT(*)::int FROM device.model_bom_line mbl WHERE mbl.item_id = i.id) AS used_in_bom_count
+           FROM master.item i
+          WHERE EXISTS (SELECT 1 FROM kit.bom_line bl WHERE bl.item_id = i.id)
+             OR EXISTS (SELECT 1 FROM device.model_bom_line mbl WHERE mbl.item_id = i.id)
+          ORDER BY used_in_bom_count DESC, i.code ASC
+          LIMIT 25`
+      )
+    ).rows;
+  }
+
+  const selectedItem =
+    (rawCode ? candidates.find((c) => String(c.code).toUpperCase() === rawCode.toUpperCase()) : null) ??
+    candidates[0] ??
+    null;
+
+  if (!selectedItem) {
+    return {
+      selected_item: null,
+      candidates: [],
+      stock_summary: {
+        total_on_hand: 0,
+        total_reserved: 0,
+        available_released_qty: 0,
+        quarantine_pending_qty: 0,
+      },
+      stock_lots: [],
+      usages: [],
+    };
+  }
+
+  // 2. Stock balances & lots of the selected material
+  const stockLots = (
+    await tx.query(
+      `SELECT sb.id,
+              w.code AS warehouse_code,
+              w.name AS warehouse_name,
+              loc.code AS location_code,
+              loc.is_quarantine,
+              l.id AS lot_id,
+              l.code AS lot_code,
+              l.status AS lot_status,
+              l.expiry_date,
+              sb.qty_on_hand::float AS qty_on_hand,
+              sb.qty_reserved::float AS qty_reserved,
+              GREATEST(0, sb.qty_on_hand - sb.qty_reserved)::float AS qty_available
+         FROM inv.stock_balance sb
+         JOIN master.location loc ON loc.id = sb.location_id
+         JOIN master.warehouse w ON w.id = loc.warehouse_id
+         LEFT JOIN inv.lot l ON l.id = sb.lot_id
+        WHERE sb.item_id = $1 AND sb.qty_on_hand > 0
+        ORDER BY l.expiry_date ASC NULLS LAST, w.code ASC, loc.code ASC`,
+      [selectedItem.id]
+    )
+  ).rows;
+
+  let totalOnHand = 0;
+  let totalReserved = 0;
+  let availableReleasedQty = 0;
+  let quarantinePendingQty = 0;
+
+  for (const row of stockLots) {
+    const onHand = Number(row.qty_on_hand || 0);
+    const reserved = Number(row.qty_reserved || 0);
+    const avail = Math.max(0, onHand - reserved);
+    totalOnHand += onHand;
+    totalReserved += reserved;
+    const isReleasedAndUsable =
+      !row.is_quarantine &&
+      (!row.lot_status || row.lot_status === "RELEASED") &&
+      (!row.expiry_date || String(row.expiry_date).slice(0, 10) >= vnToday());
+    if (isReleasedAndUsable) {
+      availableReleasedQty += avail;
+    } else {
+      quarantinePendingQty += onHand;
+    }
+  }
+
+  // 3. Direct usages in Kit & Semi-finished BOMs (Tier 1)
+  const directKitUsages = (
+    await tx.query(
+      `SELECT b.id AS bom_id,
+              b.code AS bom_code,
+              b.name AS bom_name,
+              b.bom_version,
+              b.status AS bom_status,
+              COALESCE(b.bom_type, 'finished_good') AS bom_type,
+              b.batch_size::float AS batch_size,
+              b.batch_uom,
+              b.tests_per_kit,
+              b.specification AS bom_specification,
+              pi.id AS product_item_id,
+              pi.code AS product_code,
+              pi.name AS product_name,
+              pi.item_type AS product_item_type,
+              pi.base_uom AS product_uom,
+              bl.id AS bom_line_id,
+              bl.line_no,
+              bl.component_name,
+              bl.box_name,
+              bl.qty_per_batch::float AS qty_per_batch,
+              bl.uom AS line_uom,
+              COALESCE(bl.scrap_factor, 0)::float AS scrap_factor,
+              COALESCE(bl.is_packaging, false) AS is_packaging,
+              COALESCE(bl.is_optional, false) AS is_optional
+         FROM kit.bom_line bl
+         JOIN kit.bom b ON b.id = bl.bom_id
+         JOIN master.item pi ON pi.id = b.product_item_id
+        WHERE bl.item_id = $1
+          AND b.status <> 'OBSOLETE'
+        ORDER BY (b.status = 'EFFECTIVE') DESC,
+                 (COALESCE(b.bom_type, 'finished_good') = 'finished_good') DESC,
+                 pi.code ASC,
+                 b.bom_version DESC`,
+      [selectedItem.id]
+    )
+  ).rows;
+
+  // 4. Multi-level Tier 2 usages: Selected Material -> Semi-Finished Product (BTP) -> Finished Kit BOM
+  const semiProductIds = Array.from(
+    new Set(
+      directKitUsages
+        .filter((u) => u.bom_type === "semi_finished" || u.product_item_type === "SEMI_FINISHED")
+        .map((u) => u.product_item_id as string)
+    )
+  );
+
+  let tier2ParentUsages: any[] = [];
+  if (semiProductIds.length > 0) {
+    tier2ParentUsages = (
+      await tx.query(
+        `SELECT b.id AS parent_bom_id,
+                b.code AS parent_bom_code,
+                b.name AS parent_bom_name,
+                b.bom_version AS parent_bom_version,
+                b.status AS parent_bom_status,
+                COALESCE(b.bom_type, 'finished_good') AS parent_bom_type,
+                b.batch_size::float AS parent_batch_size,
+                b.batch_uom AS parent_batch_uom,
+                b.tests_per_kit AS parent_tests_per_kit,
+                b.specification AS parent_bom_specification,
+                pi.id AS parent_product_item_id,
+                pi.code AS parent_product_code,
+                pi.name AS parent_product_name,
+                pi.item_type AS parent_product_item_type,
+                pi.base_uom AS parent_product_uom,
+                bl.item_id AS semi_item_id,
+                bl.component_name AS parent_component_name,
+                bl.box_name AS parent_box_name,
+                bl.qty_per_batch::float AS semi_qty_per_parent_batch,
+                bl.uom AS semi_line_uom,
+                COALESCE(bl.scrap_factor, 0)::float AS parent_scrap_factor,
+                COALESCE((
+                  SELECT SUM(GREATEST(0, sb.qty_on_hand - sb.qty_reserved))::float
+                    FROM inv.stock_balance sb
+                    JOIN master.location loc ON loc.id = sb.location_id
+                    LEFT JOIN inv.lot l ON l.id = sb.lot_id
+                   WHERE sb.item_id = bl.item_id
+                     AND loc.is_quarantine = false
+                     AND COALESCE(l.status, 'RELEASED') = 'RELEASED'
+                ), 0) AS semi_available_stock
+           FROM kit.bom_line bl
+           JOIN kit.bom b ON b.id = bl.bom_id
+           JOIN master.item pi ON pi.id = b.product_item_id
+          WHERE bl.item_id = ANY($1::uuid[])
+            AND b.status <> 'OBSOLETE'
+          ORDER BY (b.status = 'EFFECTIVE') DESC, pi.code ASC`,
+        [semiProductIds]
+      )
+    ).rows;
+  }
+
+  // 5. Substitute usages in Kit BOMs
+  const substituteUsages = (
+    await tx.query(
+      `SELECT b.id AS bom_id,
+              b.code AS bom_code,
+              b.name AS bom_name,
+              b.bom_version,
+              b.status AS bom_status,
+              COALESCE(b.bom_type, 'finished_good') AS bom_type,
+              b.batch_size::float AS batch_size,
+              b.batch_uom,
+              b.tests_per_kit,
+              pi.id AS product_item_id,
+              pi.code AS product_code,
+              pi.name AS product_name,
+              pi.item_type AS product_item_type,
+              pi.base_uom AS product_uom,
+              bl.component_name,
+              bl.box_name,
+              bl.qty_per_batch::float AS base_qty_per_batch,
+              COALESCE(bl.scrap_factor, 0)::float AS scrap_factor,
+              sub.ratio::float AS substitute_ratio,
+              sub.priority AS substitute_priority,
+              orig_i.code AS primary_material_code,
+              orig_i.name AS primary_material_name
+         FROM kit.bom_line_substitute sub
+         JOIN kit.bom_line bl ON bl.id = sub.bom_line_id
+         JOIN master.item orig_i ON orig_i.id = bl.item_id
+         JOIN kit.bom b ON b.id = bl.bom_id
+         JOIN master.item pi ON pi.id = b.product_item_id
+        WHERE sub.substitute_item_id = $1
+          AND b.status <> 'OBSOLETE'
+        ORDER BY (b.status = 'EFFECTIVE') DESC, pi.code ASC`,
+      [selectedItem.id]
+    )
+  ).rows;
+
+  // 6. Device Model BOM usages
+  const deviceUsages = (
+    await tx.query(
+      `SELECT dm.id AS model_id,
+              dm.code AS product_code,
+              dm.name AS product_name,
+              mr.id AS revision_id,
+              mr.revision AS revision_code,
+              mr.status AS bom_status,
+              (mr.id = dm.current_revision_id) AS is_current_revision,
+              mbl.id AS bom_line_id,
+              mbl.station_code,
+              mbl.qty_per_unit::float AS qty_per_unit,
+              mbl.uom AS line_uom,
+              mbl.is_critical,
+              mbl.trace_by
+         FROM device.model_bom_line mbl
+         JOIN device.model_revision mr ON mr.id = mbl.revision_id
+         JOIN device.device_model dm ON dm.id = mr.model_id
+        WHERE mbl.item_id = $1
+          AND mr.status <> 'OBSOLETE'
+        ORDER BY (mr.id = dm.current_revision_id) DESC, dm.code ASC`,
+      [selectedItem.id]
+    )
+  ).rows;
+
+  const usages: any[] = [];
+
+  for (const u of directKitUsages) {
+    const batchSize = Math.max(0.000001, Number(u.batch_size || 1));
+    const reqPerBatch = Number(u.qty_per_batch || 0) * (1 + Number(u.scrap_factor || 0));
+    const reqPerUnit = reqPerBatch / batchSize;
+    const isSemi = u.bom_type === "semi_finished" || u.product_item_type === "SEMI_FINISHED";
+    const maxFromAvail =
+      reqPerUnit > 0
+        ? isSemi
+          ? Math.floor((availableReleasedQty / reqPerUnit) * 100) / 100
+          : Math.floor(availableReleasedQty / reqPerUnit)
+        : 0;
+    const maxFromTotal =
+      reqPerUnit > 0
+        ? isSemi
+          ? Math.floor((totalOnHand / reqPerUnit) * 100) / 100
+          : Math.floor(totalOnHand / reqPerUnit)
+        : 0;
+
+    usages.push({
+      usage_key: `KIT-T1-${u.bom_id}-${u.bom_line_id}`,
+      domain: isSemi ? "SEMI_FINISHED" : "FINISHED_KIT",
+      tier_level: 1,
+      tier_label: isSemi ? "Cấp 1 — Pha Bán thành phẩm (BTP)" : "Cấp 1 — Trực tiếp trong BOM Kit",
+      product_item_id: u.product_item_id,
+      product_code: u.product_code,
+      product_name: u.product_name,
+      product_uom: u.product_uom || u.batch_uom || "Bộ",
+      tests_per_kit: u.tests_per_kit,
+      bom_id: u.bom_id,
+      bom_code: `${u.bom_code} (v${u.bom_version})`,
+      bom_status: u.bom_status,
+      where_in_product: [u.box_name, u.component_name].filter(Boolean).join(" · ") || "Thành phần chính",
+      qty_per_product_unit: Number(reqPerUnit.toFixed(6)),
+      material_uom: u.line_uom || selectedItem.base_uom,
+      scrap_factor: Number(u.scrap_factor || 0),
+      max_producible_available: maxFromAvail,
+      max_producible_total: maxFromTotal,
+      is_optional: u.is_optional,
+    });
+
+    // If this is a semi-finished BOM, also emit Tier 2 rows for every Finished Kit that consumes this semi-finished product
+    if (isSemi) {
+      const children = tier2ParentUsages.filter((p) => p.semi_item_id === u.product_item_id);
+      for (const p of children) {
+        const parentBatchSize = Math.max(0.000001, Number(p.parent_batch_size || 1));
+        const semiPerParentUnit =
+          (Number(p.semi_qty_per_parent_batch || 0) * (1 + Number(p.parent_scrap_factor || 0))) / parentBatchSize;
+        const rawPerParentUnit = reqPerUnit * semiPerParentUnit;
+        const maxKitFromRawAvail = rawPerParentUnit > 0 ? Math.floor(availableReleasedQty / rawPerParentUnit) : 0;
+        const maxKitFromRawTotal = rawPerParentUnit > 0 ? Math.floor(totalOnHand / rawPerParentUnit) : 0;
+        const extraKitFromSemiStock =
+          semiPerParentUnit > 0 ? Math.floor(Number(p.semi_available_stock || 0) / semiPerParentUnit) : 0;
+
+        usages.push({
+          usage_key: `KIT-T2-${u.bom_id}-${p.parent_bom_id}-${p.semi_item_id}`,
+          domain: "FINISHED_KIT",
+          tier_level: 2,
+          tier_label: `Cấp 2 — Qua BTP ${u.product_code} (${u.product_name})`,
+          product_item_id: p.parent_product_item_id,
+          product_code: p.parent_product_code,
+          product_name: p.parent_product_name,
+          product_uom: p.parent_product_uom || p.parent_batch_uom || "Bộ",
+          tests_per_kit: p.parent_tests_per_kit,
+          bom_id: p.parent_bom_id,
+          bom_code: `${p.parent_bom_code} (v${p.parent_bom_version})`,
+          bom_status: p.parent_bom_status,
+          where_in_product: `Pha BTP ${u.product_code} (${Number(reqPerUnit.toFixed(6))} ${u.line_uom || selectedItem.base_uom}/${u.product_uom}) ➔ ${[p.parent_box_name, p.parent_component_name].filter(Boolean).join(" · ") || p.parent_product_code} (${Number(semiPerParentUnit.toFixed(4))} ${p.semi_line_uom}/${p.parent_product_uom})`,
+          qty_per_product_unit: Number(rawPerParentUnit.toFixed(6)),
+          material_uom: u.line_uom || selectedItem.base_uom,
+          scrap_factor: Number(u.scrap_factor || 0),
+          max_producible_available: maxKitFromRawAvail,
+          max_producible_total: maxKitFromRawTotal,
+          extra_producible_from_semi_stock: extraKitFromSemiStock,
+          semi_code: u.product_code,
+          semi_available_stock: Number(p.semi_available_stock || 0),
+          is_optional: false,
+        });
+      }
+    }
+  }
+
+  for (const sub of substituteUsages) {
+    const batchSize = Math.max(0.000001, Number(sub.batch_size || 1));
+    const reqPerUnit =
+      (Number(sub.base_qty_per_batch || 0) *
+        Number(sub.substitute_ratio || 1) *
+        (1 + Number(sub.scrap_factor || 0))) /
+      batchSize;
+    const isSemi = sub.bom_type === "semi_finished" || sub.product_item_type === "SEMI_FINISHED";
+    usages.push({
+      usage_key: `KIT-SUB-${sub.bom_id}-${sub.primary_material_code}`,
+      domain: isSemi ? "SEMI_FINISHED" : "FINISHED_KIT",
+      tier_level: 1,
+      tier_label: `NVL Thay thế (Thay cho ${sub.primary_material_code})`,
+      product_item_id: sub.product_item_id,
+      product_code: sub.product_code,
+      product_name: sub.product_name,
+      product_uom: sub.product_uom || sub.batch_uom || "Bộ",
+      tests_per_kit: sub.tests_per_kit,
+      bom_id: sub.bom_id,
+      bom_code: `${sub.bom_code} (v${sub.bom_version})`,
+      bom_status: sub.bom_status,
+      where_in_product: `${[sub.box_name, sub.component_name].filter(Boolean).join(" · ")} (Tỷ lệ thay thế: ${sub.substitute_ratio})`,
+      qty_per_product_unit: Number(reqPerUnit.toFixed(6)),
+      material_uom: selectedItem.base_uom,
+      scrap_factor: Number(sub.scrap_factor || 0),
+      max_producible_available: reqPerUnit > 0 ? Math.floor(availableReleasedQty / reqPerUnit) : 0,
+      max_producible_total: reqPerUnit > 0 ? Math.floor(totalOnHand / reqPerUnit) : 0,
+      is_optional: true,
+    });
+  }
+
+  for (const d of deviceUsages) {
+    const reqPerUnit = Number(d.qty_per_unit || 0);
+    usages.push({
+      usage_key: `DEV-${d.revision_id}-${d.bom_line_id}`,
+      domain: "DEVICE",
+      tier_level: 1,
+      tier_label: "Cấp 1 — Linh kiện Lắp ráp Thiết bị",
+      product_item_id: d.model_id,
+      product_code: d.product_code,
+      product_name: d.product_name,
+      product_uom: "Máy",
+      tests_per_kit: null,
+      bom_id: d.revision_id,
+      bom_code: `DMR Rev ${d.revision_code}${d.is_current_revision ? " (Hiện hành)" : ""}`,
+      bom_status: d.bom_status,
+      where_in_product: `Trạm lắp ráp: ${d.station_code}${d.is_critical ? " (Trọng yếu)" : ""}`,
+      qty_per_product_unit: Number(reqPerUnit.toFixed(6)),
+      material_uom: d.line_uom || selectedItem.base_uom,
+      scrap_factor: 0,
+      max_producible_available: reqPerUnit > 0 ? Math.floor(availableReleasedQty / reqPerUnit) : 0,
+      max_producible_total: reqPerUnit > 0 ? Math.floor(totalOnHand / reqPerUnit) : 0,
+      is_optional: false,
+    });
+  }
+
+  return {
+    selected_item: selectedItem,
+    candidates,
+    stock_summary: {
+      total_on_hand: Number(totalOnHand.toFixed(4)),
+      total_reserved: Number(totalReserved.toFixed(4)),
+      available_released_qty: Number(availableReleasedQty.toFixed(4)),
+      quarantine_pending_qty: Number(quarantinePendingQty.toFixed(4)),
+    },
+    stock_lots: stockLots,
+    usages,
+  };
+}

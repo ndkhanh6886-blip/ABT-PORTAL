@@ -5,6 +5,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { api, fmtDate, fmtQty, useDebouncedValue, useFactoryMe } from "../api";
 import { Card, Empty, ErrorNote, inputClass, LOT_STATUS_LABEL, Pager, StatusBadge, Table } from "../ui";
 import { LotPanel, type LotPanelMode } from "./LotPanel";
+import { MaterialWhereUsedPanel } from "./MaterialWhereUsedPanel";
 
 export type StockItemGroup = "" | "RAW" | "SEMI_FINISHED" | "FINISHED";
 
@@ -165,6 +166,7 @@ export function StockView({
   const [page, setPage] = useState(1);
   const [lotId, setLotId] = useState<string | null>(null);
   const [lotMode, setLotMode] = useState<LotPanelMode>("VIEW");
+  const [whereUsedItemCode, setWhereUsedItemCode] = useState<string | null>(null);
 
   const params = new URLSearchParams({ page: String(page), page_size: "50" });
   if (warehouseId) params.set("warehouse_id", warehouseId);
@@ -252,6 +254,10 @@ export function StockView({
 
   return (
     <>
+    <MaterialWhereUsedPanel
+      externalItemCode={whereUsedItemCode}
+      onClearExternal={() => setWhereUsedItemCode(null)}
+    />
     <Card title="Tồn kho theo lô và vị trí (Kho Tổng & Kho Nhánh Phòng Ban)">
       {warehouses.length > 1 && (
         <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
@@ -528,8 +534,17 @@ export function StockView({
                     <td className="py-2 pr-3 text-right whitespace-nowrap">{fmtQty(r.qty_reserved)}</td>
                     <td className="py-2 pr-3 text-right whitespace-nowrap font-semibold">{fmtQty(r.qty_available)}</td>
                     <td className="py-2 pr-3 text-right whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setWhereUsedItemCode(r.item_code)}
+                          title={`Xem mã vật tư ${r.item_code} dùng cho những sản phẩm nào và tồn kho hiện tại sản xuất được bao nhiêu thành phẩm`}
+                          className="px-2 py-1 rounded-lg text-[11px] font-bold border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800 hover:bg-emerald-100 transition cursor-pointer"
+                        >
+                          🔍 SP dùng &amp; SL SX
+                        </button>
                       {r.lot_id && (
-                        <div className="inline-flex items-center gap-1">
+                        <>
                           <button
                             type="button"
                             onClick={() => {
@@ -587,8 +602,9 @@ export function StockView({
                                 ? "🧪 Duyệt QC"
                                 : "Chi tiết"}
                           </button>
-                        </div>
+                        </>
                       )}
+                      </div>
                     </td>
                   </tr>
                   {isLotOpen && r.lot_id && (
