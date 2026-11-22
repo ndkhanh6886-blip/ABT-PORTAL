@@ -9,6 +9,7 @@ import { runTransition } from "../core/stateMachine";
 import { createStockDocument, stockDocumentMachine } from "./documents";
 import { createLot, lotMachine } from "./lots";
 import { createRequest, prMachine } from "../purchase/requests";
+import { toBaseQty } from "../master/service";
 import "./permissions";
 import "../purchase/permissions";
 
@@ -593,8 +594,8 @@ export async function getMaterialWhereUsedAndCapacity(
     candidates = (
       await tx.query(
         `SELECT i.id, i.code, i.name, i.item_type, i.base_uom, i.storage_condition,
-                (SELECT COUNT(*)::int FROM kit.bom_line bl WHERE bl.item_id = i.id) +
-                (SELECT COUNT(*)::int FROM device.model_bom_line mbl WHERE mbl.item_id = i.id) AS used_in_bom_count
+                (SELECT COUNT(*)::int FROM kit.bom_line bl WHERE bl.component_item_id = i.id) +
+                (SELECT COUNT(*)::int FROM device.model_bom_line mbl WHERE mbl.component_item_id = i.id) AS used_in_bom_count
            FROM master.item i
           WHERE upper(i.code) = upper($1)
              OR i.code ILIKE '%' || $1 || '%'
@@ -612,11 +613,11 @@ export async function getMaterialWhereUsedAndCapacity(
     candidates = (
       await tx.query(
         `SELECT i.id, i.code, i.name, i.item_type, i.base_uom, i.storage_condition,
-                (SELECT COUNT(*)::int FROM kit.bom_line bl WHERE bl.item_id = i.id) +
-                (SELECT COUNT(*)::int FROM device.model_bom_line mbl WHERE mbl.item_id = i.id) AS used_in_bom_count
+                (SELECT COUNT(*)::int FROM kit.bom_line bl WHERE bl.component_item_id = i.id) +
+                (SELECT COUNT(*)::int FROM device.model_bom_line mbl WHERE mbl.component_item_id = i.id) AS used_in_bom_count
            FROM master.item i
-          WHERE EXISTS (SELECT 1 FROM kit.bom_line bl WHERE bl.item_id = i.id)
-             OR EXISTS (SELECT 1 FROM device.model_bom_line mbl WHERE mbl.item_id = i.id)
+          WHERE EXISTS (SELECT 1 FROM kit.bom_line bl WHERE bl.component_item_id = i.id)
+             OR EXISTS (SELECT 1 FROM device.model_bom_line mbl WHERE mbl.component_item_id = i.id)
           ORDER BY used_in_bom_count DESC, i.code ASC
           LIMIT 25`
       )
@@ -690,6 +691,25 @@ export async function getMaterialWhereUsedAndCapacity(
     }
   }
 
+  // Helper to convert line quantity to selectedItem.base_uom safely
+  const convertLineQtyToBase = async (
+    itemObj: { id: string; code: string; base_uom: string },
+    qty: number,
+    lineUom?: string | null
+  ): Promise<number> => {
+    const u = (lineUom || itemObj.base_uom || "").trim();
+    if (!u || !itemObj.base_uom || u.toLowerCase() === itemObj.base_uom.toLowerCase()) return qty;
+    await tx.query("SAVEPOINT sp_uom_conv");
+    try {
+      const converted = await toBaseQty(tx, itemObj, qty, u);
+      await tx.query("RELEASE SAVEPOINT sp_uom_conv");
+      return converted;
+    } catch {
+      await tx.query("ROLLBACK TO SAVEPOINT sp_uom_conv").catch(() => {});
+      return qty;
+    }
+  };
+
   // 3. Direct usages in Kit & Semi-finished BOMs (Tier 1)
   const directKitUsages = (
     await tx.query(
@@ -698,11 +718,10 @@ export async function getMaterialWhereUsedAndCapacity(
               b.name AS bom_name,
               b.bom_version,
               b.status AS bom_status,
-              COALESCE(b.bom_type, 'finished_good') AS bom_type,
-              b.batch_size::float AS batch_size,
-              b.batch_uom,
+              CASE WHEN pi.item_type = 'SEMI_FINISHED' THEN 'semi_finished' ELSE 'finished_good' END AS bom_type,
+              COALESCE(b.base_qty, 1)::float AS batch_size,
+              b.base_uom AS batch_uom,
               b.tests_per_kit,
-              b.specification AS bom_specification,
               pi.id AS product_item_id,
               pi.code AS product_code,
               pi.name AS product_name,
@@ -710,20 +729,21 @@ export async function getMaterialWhereUsedAndCapacity(
               pi.base_uom AS product_uom,
               bl.id AS bom_line_id,
               bl.line_no,
-              bl.component_name,
-              bl.box_name,
-              bl.qty_per_batch::float AS qty_per_batch,
+              bl.box_no,
+              bl.component_role,
+              bl.notes AS line_notes,
+              bl.qty_per_base::float AS qty_per_batch,
               bl.uom AS line_uom,
-              COALESCE(bl.scrap_factor, 0)::float AS scrap_factor,
-              COALESCE(bl.is_packaging, false) AS is_packaging,
-              COALESCE(bl.is_optional, false) AS is_optional
+              (COALESCE(bl.scrap_pct, 0)::float / 100.0) AS scrap_factor,
+              (bl.component_role = 'PACKAGING') AS is_packaging,
+              (NOT COALESCE(bl.is_critical, true)) AS is_optional
          FROM kit.bom_line bl
          JOIN kit.bom b ON b.id = bl.bom_id
          JOIN master.item pi ON pi.id = b.product_item_id
-        WHERE bl.item_id = $1
+        WHERE bl.component_item_id = $1
           AND b.status <> 'OBSOLETE'
         ORDER BY (b.status = 'EFFECTIVE') DESC,
-                 (COALESCE(b.bom_type, 'finished_good') = 'finished_good') DESC,
+                 (pi.item_type <> 'SEMI_FINISHED') DESC,
                  pi.code ASC,
                  b.bom_version DESC`,
       [selectedItem.id]
@@ -748,35 +768,34 @@ export async function getMaterialWhereUsedAndCapacity(
                 b.name AS parent_bom_name,
                 b.bom_version AS parent_bom_version,
                 b.status AS parent_bom_status,
-                COALESCE(b.bom_type, 'finished_good') AS parent_bom_type,
-                b.batch_size::float AS parent_batch_size,
-                b.batch_uom AS parent_batch_uom,
+                COALESCE(b.base_qty, 1)::float AS parent_batch_size,
+                b.base_uom AS parent_batch_uom,
                 b.tests_per_kit AS parent_tests_per_kit,
-                b.specification AS parent_bom_specification,
                 pi.id AS parent_product_item_id,
                 pi.code AS parent_product_code,
                 pi.name AS parent_product_name,
                 pi.item_type AS parent_product_item_type,
                 pi.base_uom AS parent_product_uom,
-                bl.item_id AS semi_item_id,
-                bl.component_name AS parent_component_name,
-                bl.box_name AS parent_box_name,
-                bl.qty_per_batch::float AS semi_qty_per_parent_batch,
+                bl.component_item_id AS semi_item_id,
+                bl.box_no AS parent_box_no,
+                bl.component_role AS parent_component_role,
+                bl.notes AS parent_line_notes,
+                bl.qty_per_base::float AS semi_qty_per_parent_batch,
                 bl.uom AS semi_line_uom,
-                COALESCE(bl.scrap_factor, 0)::float AS parent_scrap_factor,
+                (COALESCE(bl.scrap_pct, 0)::float / 100.0) AS parent_scrap_factor,
                 COALESCE((
                   SELECT SUM(GREATEST(0, sb.qty_on_hand - sb.qty_reserved))::float
                     FROM inv.stock_balance sb
                     JOIN master.location loc ON loc.id = sb.location_id
                     LEFT JOIN inv.lot l ON l.id = sb.lot_id
-                   WHERE sb.item_id = bl.item_id
+                   WHERE sb.item_id = bl.component_item_id
                      AND loc.is_quarantine = false
                      AND COALESCE(l.status, 'RELEASED') = 'RELEASED'
                 ), 0) AS semi_available_stock
            FROM kit.bom_line bl
            JOIN kit.bom b ON b.id = bl.bom_id
            JOIN master.item pi ON pi.id = b.product_item_id
-          WHERE bl.item_id = ANY($1::uuid[])
+          WHERE bl.component_item_id = ANY($1::uuid[])
             AND b.status <> 'OBSOLETE'
           ORDER BY (b.status = 'EFFECTIVE') DESC, pi.code ASC`,
         [semiProductIds]
@@ -792,26 +811,28 @@ export async function getMaterialWhereUsedAndCapacity(
               b.name AS bom_name,
               b.bom_version,
               b.status AS bom_status,
-              COALESCE(b.bom_type, 'finished_good') AS bom_type,
-              b.batch_size::float AS batch_size,
-              b.batch_uom,
+              CASE WHEN pi.item_type = 'SEMI_FINISHED' THEN 'semi_finished' ELSE 'finished_good' END AS bom_type,
+              COALESCE(b.base_qty, 1)::float AS batch_size,
+              b.base_uom AS batch_uom,
               b.tests_per_kit,
               pi.id AS product_item_id,
               pi.code AS product_code,
               pi.name AS product_name,
               pi.item_type AS product_item_type,
               pi.base_uom AS product_uom,
-              bl.component_name,
-              bl.box_name,
-              bl.qty_per_batch::float AS base_qty_per_batch,
-              COALESCE(bl.scrap_factor, 0)::float AS scrap_factor,
-              sub.ratio::float AS substitute_ratio,
+              bl.box_no,
+              bl.component_role,
+              bl.notes AS line_notes,
+              bl.qty_per_base::float AS base_qty_per_batch,
+              bl.uom AS line_uom,
+              (COALESCE(bl.scrap_pct, 0)::float / 100.0) AS scrap_factor,
+              COALESCE(sub.conversion_factor, 1)::float AS substitute_ratio,
               sub.priority AS substitute_priority,
               orig_i.code AS primary_material_code,
               orig_i.name AS primary_material_name
          FROM kit.bom_line_substitute sub
          JOIN kit.bom_line bl ON bl.id = sub.bom_line_id
-         JOIN master.item orig_i ON orig_i.id = bl.item_id
+         JOIN master.item orig_i ON orig_i.id = bl.component_item_id
          JOIN kit.bom b ON b.id = bl.bom_id
          JOIN master.item pi ON pi.id = b.product_item_id
         WHERE sub.substitute_item_id = $1
@@ -840,7 +861,7 @@ export async function getMaterialWhereUsedAndCapacity(
          FROM device.model_bom_line mbl
          JOIN device.model_revision mr ON mr.id = mbl.revision_id
          JOIN device.device_model dm ON dm.id = mr.model_id
-        WHERE mbl.item_id = $1
+        WHERE mbl.component_item_id = $1
           AND mr.status <> 'OBSOLETE'
         ORDER BY (mr.id = dm.current_revision_id) DESC, dm.code ASC`,
       [selectedItem.id]
@@ -851,21 +872,30 @@ export async function getMaterialWhereUsedAndCapacity(
 
   for (const u of directKitUsages) {
     const batchSize = Math.max(0.000001, Number(u.batch_size || 1));
-    const reqPerBatch = Number(u.qty_per_batch || 0) * (1 + Number(u.scrap_factor || 0));
-    const reqPerUnit = reqPerBatch / batchSize;
+    const reqPerBatchInLineUom = Number(u.qty_per_batch || 0) * (1 + Number(u.scrap_factor || 0));
+    const reqPerUnitInLineUom = reqPerBatchInLineUom / batchSize;
+    const reqPerUnitBase = await convertLineQtyToBase(selectedItem, reqPerUnitInLineUom, u.line_uom);
     const isSemi = u.bom_type === "semi_finished" || u.product_item_type === "SEMI_FINISHED";
     const maxFromAvail =
-      reqPerUnit > 0
+      reqPerUnitBase > 0
         ? isSemi
-          ? Math.floor((availableReleasedQty / reqPerUnit) * 100) / 100
-          : Math.floor(availableReleasedQty / reqPerUnit)
+          ? Math.floor((availableReleasedQty / reqPerUnitBase) * 100) / 100
+          : Math.floor(availableReleasedQty / reqPerUnitBase)
         : 0;
     const maxFromTotal =
-      reqPerUnit > 0
+      reqPerUnitBase > 0
         ? isSemi
-          ? Math.floor((totalOnHand / reqPerUnit) * 100) / 100
-          : Math.floor(totalOnHand / reqPerUnit)
+          ? Math.floor((totalOnHand / reqPerUnitBase) * 100) / 100
+          : Math.floor(totalOnHand / reqPerUnitBase)
         : 0;
+
+    const whereLabel = [
+      u.box_no ? `Hộp ${u.box_no}` : null,
+      u.component_role ? `Vai trò: ${u.component_role}` : null,
+      u.line_notes ? u.line_notes : null,
+    ]
+      .filter(Boolean)
+      .join(" · ") || "Thành phần chính";
 
     usages.push({
       usage_key: `KIT-T1-${u.bom_id}-${u.bom_line_id}`,
@@ -880,9 +910,9 @@ export async function getMaterialWhereUsedAndCapacity(
       bom_id: u.bom_id,
       bom_code: `${u.bom_code} (v${u.bom_version})`,
       bom_status: u.bom_status,
-      where_in_product: [u.box_name, u.component_name].filter(Boolean).join(" · ") || "Thành phần chính",
-      qty_per_product_unit: Number(reqPerUnit.toFixed(6)),
-      material_uom: u.line_uom || selectedItem.base_uom,
+      where_in_product: whereLabel,
+      qty_per_product_unit: Number(reqPerUnitBase.toFixed(6)),
+      material_uom: selectedItem.base_uom,
       scrap_factor: Number(u.scrap_factor || 0),
       max_producible_available: maxFromAvail,
       max_producible_total: maxFromTotal,
@@ -891,16 +921,26 @@ export async function getMaterialWhereUsedAndCapacity(
 
     // If this is a semi-finished BOM, also emit Tier 2 rows for every Finished Kit that consumes this semi-finished product
     if (isSemi) {
+      const semiItemObj = {
+        id: u.product_item_id as string,
+        code: u.product_code as string,
+        base_uom: (u.product_uom || u.batch_uom || "mL") as string,
+      };
       const children = tier2ParentUsages.filter((p) => p.semi_item_id === u.product_item_id);
       for (const p of children) {
         const parentBatchSize = Math.max(0.000001, Number(p.parent_batch_size || 1));
-        const semiPerParentUnit =
+        const semiPerParentUnitInLineUom =
           (Number(p.semi_qty_per_parent_batch || 0) * (1 + Number(p.parent_scrap_factor || 0))) / parentBatchSize;
-        const rawPerParentUnit = reqPerUnit * semiPerParentUnit;
+        const semiPerParentUnitBase = await convertLineQtyToBase(
+          semiItemObj,
+          semiPerParentUnitInLineUom,
+          p.semi_line_uom
+        );
+        const rawPerParentUnit = reqPerUnitBase * semiPerParentUnitBase;
         const maxKitFromRawAvail = rawPerParentUnit > 0 ? Math.floor(availableReleasedQty / rawPerParentUnit) : 0;
         const maxKitFromRawTotal = rawPerParentUnit > 0 ? Math.floor(totalOnHand / rawPerParentUnit) : 0;
         const extraKitFromSemiStock =
-          semiPerParentUnit > 0 ? Math.floor(Number(p.semi_available_stock || 0) / semiPerParentUnit) : 0;
+          semiPerParentUnitBase > 0 ? Math.floor(Number(p.semi_available_stock || 0) / semiPerParentUnitBase) : 0;
 
         usages.push({
           usage_key: `KIT-T2-${u.bom_id}-${p.parent_bom_id}-${p.semi_item_id}`,
@@ -915,9 +955,9 @@ export async function getMaterialWhereUsedAndCapacity(
           bom_id: p.parent_bom_id,
           bom_code: `${p.parent_bom_code} (v${p.parent_bom_version})`,
           bom_status: p.parent_bom_status,
-          where_in_product: `Pha BTP ${u.product_code} (${Number(reqPerUnit.toFixed(6))} ${u.line_uom || selectedItem.base_uom}/${u.product_uom}) ➔ ${[p.parent_box_name, p.parent_component_name].filter(Boolean).join(" · ") || p.parent_product_code} (${Number(semiPerParentUnit.toFixed(4))} ${p.semi_line_uom}/${p.parent_product_uom})`,
+          where_in_product: `Pha BTP ${u.product_code} (${Number(reqPerUnitBase.toFixed(6))} ${selectedItem.base_uom}/${semiItemObj.base_uom}) ➔ Hộp ${p.parent_box_no || 1} (${Number(semiPerParentUnitBase.toFixed(4))} ${semiItemObj.base_uom}/${p.parent_product_uom || "Bộ"})`,
           qty_per_product_unit: Number(rawPerParentUnit.toFixed(6)),
-          material_uom: u.line_uom || selectedItem.base_uom,
+          material_uom: selectedItem.base_uom,
           scrap_factor: Number(u.scrap_factor || 0),
           max_producible_available: maxKitFromRawAvail,
           max_producible_total: maxKitFromRawTotal,
@@ -932,11 +972,12 @@ export async function getMaterialWhereUsedAndCapacity(
 
   for (const sub of substituteUsages) {
     const batchSize = Math.max(0.000001, Number(sub.batch_size || 1));
-    const reqPerUnit =
+    const reqInLineUom =
       (Number(sub.base_qty_per_batch || 0) *
         Number(sub.substitute_ratio || 1) *
         (1 + Number(sub.scrap_factor || 0))) /
       batchSize;
+    const reqPerUnitBase = await convertLineQtyToBase(selectedItem, reqInLineUom, sub.line_uom);
     const isSemi = sub.bom_type === "semi_finished" || sub.product_item_type === "SEMI_FINISHED";
     usages.push({
       usage_key: `KIT-SUB-${sub.bom_id}-${sub.primary_material_code}`,
@@ -951,18 +992,19 @@ export async function getMaterialWhereUsedAndCapacity(
       bom_id: sub.bom_id,
       bom_code: `${sub.bom_code} (v${sub.bom_version})`,
       bom_status: sub.bom_status,
-      where_in_product: `${[sub.box_name, sub.component_name].filter(Boolean).join(" · ")} (Tỷ lệ thay thế: ${sub.substitute_ratio})`,
-      qty_per_product_unit: Number(reqPerUnit.toFixed(6)),
+      where_in_product: `Hộp ${sub.box_no || 1} · ${sub.component_role || "REAGENT"} (Tỷ lệ thay thế: ${sub.substitute_ratio})`,
+      qty_per_product_unit: Number(reqPerUnitBase.toFixed(6)),
       material_uom: selectedItem.base_uom,
       scrap_factor: Number(sub.scrap_factor || 0),
-      max_producible_available: reqPerUnit > 0 ? Math.floor(availableReleasedQty / reqPerUnit) : 0,
-      max_producible_total: reqPerUnit > 0 ? Math.floor(totalOnHand / reqPerUnit) : 0,
+      max_producible_available: reqPerUnitBase > 0 ? Math.floor(availableReleasedQty / reqPerUnitBase) : 0,
+      max_producible_total: reqPerUnitBase > 0 ? Math.floor(totalOnHand / reqPerUnitBase) : 0,
       is_optional: true,
     });
   }
 
   for (const d of deviceUsages) {
-    const reqPerUnit = Number(d.qty_per_unit || 0);
+    const reqInLineUom = Number(d.qty_per_unit || 0);
+    const reqPerUnitBase = await convertLineQtyToBase(selectedItem, reqInLineUom, d.line_uom);
     usages.push({
       usage_key: `DEV-${d.revision_id}-${d.bom_line_id}`,
       domain: "DEVICE",
@@ -977,11 +1019,11 @@ export async function getMaterialWhereUsedAndCapacity(
       bom_code: `DMR Rev ${d.revision_code}${d.is_current_revision ? " (Hiện hành)" : ""}`,
       bom_status: d.bom_status,
       where_in_product: `Trạm lắp ráp: ${d.station_code}${d.is_critical ? " (Trọng yếu)" : ""}`,
-      qty_per_product_unit: Number(reqPerUnit.toFixed(6)),
-      material_uom: d.line_uom || selectedItem.base_uom,
+      qty_per_product_unit: Number(reqPerUnitBase.toFixed(6)),
+      material_uom: selectedItem.base_uom,
       scrap_factor: 0,
-      max_producible_available: reqPerUnit > 0 ? Math.floor(availableReleasedQty / reqPerUnit) : 0,
-      max_producible_total: reqPerUnit > 0 ? Math.floor(totalOnHand / reqPerUnit) : 0,
+      max_producible_available: reqPerUnitBase > 0 ? Math.floor(availableReleasedQty / reqPerUnitBase) : 0,
+      max_producible_total: reqPerUnitBase > 0 ? Math.floor(totalOnHand / reqPerUnitBase) : 0,
       is_optional: false,
     });
   }
