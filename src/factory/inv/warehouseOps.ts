@@ -1,6 +1,6 @@
 import { z } from "zod/v3";
 import type { Tx } from "../core/db";
-import { authorizeAnywhere, SYSTEM_ACTOR, type AuthzActor } from "../core/authz";
+import { authorize, authorizeAnywhere, hasFactoryPermission, SYSTEM_ACTOR, type AuthzActor } from "../core/authz";
 import { vnToday } from "../core/dates";
 import { invalid, notFound } from "../core/errors";
 import { writeAudit } from "../core/audit";
