@@ -3757,7 +3757,7 @@ export const UnifiedWorkspace: React.FC = () => {
         id: g.id,
         name: `${g.icon || "🏛️"} ${g.name || g.id}${
           Array.isArray(g.combinedDepts) && g.combinedDepts.length > 0
-            ? ` [Tổ hợp: ${g.combinedDepts.join(" + ")}]`
+            ? ` (${g.combinedDepts.length} phòng)`
             : ""
         }`,
         icon: Award,
@@ -10386,9 +10386,9 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       })()}
 
       {/* ==================== LEVEL 2: UNIFIED FILTER & ACTION BAR ==================== */}
-      <div className="bg-gradient-to-r from-slate-100/95 via-indigo-50/70 to-slate-100/95 dark:from-slate-900 dark:via-indigo-950/35 dark:to-slate-900 border-2 border-indigo-200/80 dark:border-indigo-800/70 rounded-2xl p-3.5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
+      <div className="bg-gradient-to-r from-slate-100/95 via-indigo-50/70 to-slate-100/95 dark:from-slate-900 dark:via-indigo-950/35 dark:to-slate-900 border-2 border-indigo-200/80 dark:border-indigo-800/70 rounded-2xl p-3.5 shadow-sm flex flex-wrap items-center justify-between gap-2.5">
         {/* Left: Department Dropdown + Search + Status */}
-        <div className="flex flex-wrap items-center gap-2.5 flex-1">
+        <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
           {/* Department Selector with Staff Personal Locking & Manager Department Locking */}
           {rolePerspective === "staff" ? (
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/80 shrink-0">
@@ -10404,9 +10404,9 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               <span>Phòng ban: {effectiveSelectedDept}</span>
             </div>
           ) : (
-            <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <div className="flex flex-wrap items-center gap-2 min-w-0 max-w-full">
               {/* Quick 1-Click Block (Khối) Selector */}
-              <div className="inline-flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-xl border border-slate-200/70 dark:border-slate-700/70">
+              <div className="inline-flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-xl border border-slate-200/70 dark:border-slate-700/70 shrink-0">
                 {[
                   { id: "all", label: "🏢 Toàn công ty" },
                   { id: "BLOCK_COMMERCIAL", label: "💼 Khối KD & VP" },
@@ -10433,7 +10433,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 })}
               </div>
 
-              <div className="relative shrink-0">
+              <div className="relative min-w-0 max-w-[220px] sm:max-w-[260px]">
                 <select
                   value={selectedDept}
                   onChange={(e) => {
@@ -10442,7 +10442,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       setTaskSourceFilter("all");
                     }
                   }}
-                  className="appearance-none pl-8 pr-8 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white border border-transparent hover:border-slate-300 dark:hover:border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer transition-all"
+                  className="w-full appearance-none pl-8 pr-7 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white border border-transparent hover:border-slate-300 dark:hover:border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer transition-all truncate"
                 >
                   <option value="all" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white py-1">
                     🏢 Toàn công ty (Tất cả các Khối)
@@ -10483,24 +10483,24 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       {functionalGroups.map((fg) => (
                         <option key={fg.id} value={fg.id}>
                           {fg.icon || "🏛️"} {fg.name || fg.id}
-                          {fg.combinedDepts?.length ? ` (${fg.combinedDepts.join(" + ")})` : ""}
+                          {fg.combinedDepts?.length ? ` (${fg.combinedDepts.length} phòng)` : ""}
                         </option>
                       ))}
                     </optgroup>
                   )}
                 </select>
                 <Filter className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500" />
-                <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" />
+                <ChevronDown className="w-3.5 h-3.5 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" />
               </div>
 
               <button
                 type="button"
                 onClick={() => openFunctionalGroupModal()}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-extrabold bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/70 dark:hover:bg-amber-900 text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-700 cursor-pointer transition-all shadow-2xs shrink-0"
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/70 dark:hover:bg-amber-900 text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-700 cursor-pointer transition-all shadow-2xs shrink-0 whitespace-nowrap"
                 title="Tạo thêm Ban chức năng (VD: BAN ISO, BAN ĐÀO TẠO), gộp Tổ hợp các phòng ban và giao việc trong nhóm"
               >
-                <span>🏛️ Ban / Nhóm chức năng ({functionalGroups.length})</span>
-                <span className="px-1.5 py-0.2 rounded bg-amber-600 text-white text-[10px] font-black">+ Tạo / Giao việc</span>
+                <span>🏛️ Ban / Nhóm ({functionalGroups.length})</span>
+                <span className="px-1.5 py-0.2 rounded bg-amber-600 text-white text-[10px] font-black">+ Tạo</span>
               </button>
             </div>
           )}
@@ -10626,7 +10626,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
         </div>
 
         {/* Right: Dynamic Actions strictly per active tab */}
-        <div className="flex items-center gap-2 shrink-0 justify-between md:justify-end">
+        <div className="flex flex-wrap items-center gap-2 shrink-0 justify-end ml-auto">
           {/* TAB 1: BẢNG CÔNG VIỆC -> CHỈ hiển thị chuyển chế độ và nút Tạo Việc Mới */}
           {renderedSubTab === "tasks" && (
             <>
@@ -15909,7 +15909,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     {functionalGroups.map((fg) => (
                       <option key={fg.id} value={fg.id}>
                         {fg.icon || "🏛️"} {fg.name || fg.id}
-                        {fg.combinedDepts?.length ? ` [Tổ hợp: ${fg.combinedDepts.join(" + ")}]` : ""}
+                        {fg.combinedDepts?.length ? ` (${fg.combinedDepts.length} phòng)` : ""}
                       </option>
                     ))}
                   </optgroup>
@@ -20226,7 +20226,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       {functionalGroups.map((fg) => (
                         <option key={fg.id} value={fg.id}>
                           {fg.icon || "🏛️"} {fg.name || fg.id}
-                          {fg.combinedDepts?.length ? ` (${fg.combinedDepts.join(" + ")})` : ""}
+                          {fg.combinedDepts?.length ? ` (${fg.combinedDepts.length} phòng)` : ""}
                         </option>
                       ))}
                     </optgroup>
