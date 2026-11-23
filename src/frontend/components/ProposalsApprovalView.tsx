@@ -64,6 +64,41 @@ export type ProposalStatus =
   | "REJECTED"
   | "WITHDRAWN";
 
+/**
+ * 3 chế độ hiển thị của Đề xuất / Tờ trình:
+ * - "PRIVATE": Bảo mật theo luồng duyệt — chỉ Người trình, Người duyệt các bước, Người thực thi, Người nhận bàn giao, Người theo dõi (Followers) và Ban Giám Đốc thấy.
+ * - "DEPT": Nội bộ phòng ban & Người duyệt — mở rộng thêm cho các nhân sự cùng phòng ban với người trình (hoặc Trưởng/Phó phòng các bước liên quan).
+ * - "PUBLIC": Công khai toàn công ty — mọi nhân viên đều thấy. Với Đơn xin nghỉ phép (DXNP), người ngoài luồng duyệt sẽ chỉ thấy Lịch ngày nghỉ & Người nhận bàn giao (ẩn lý do riêng tư & tệp đính kèm nhạy cảm).
+ */
+export type ProposalVisibility = "PRIVATE" | "DEPT" | "PUBLIC";
+
+export const PROPOSAL_VISIBILITY_META: Record<
+  ProposalVisibility,
+  { label: string; shortLabel: string; desc: string; badgeCls: string }
+> = {
+  PRIVATE: {
+    label: "🔒 Bảo mật theo luồng duyệt (Không công khai)",
+    shortLabel: "🔒 Bảo mật theo luồng",
+    desc: "Chỉ Người tạo, Người duyệt các bước, Người theo dõi (CC) và Ban Giám Đốc xem được. Nhân viên khác (kể cả cùng phòng hoặc ngoài phòng) không thấy.",
+    badgeCls:
+      "bg-rose-50 text-rose-800 border-rose-300 dark:bg-rose-950/70 dark:text-rose-300 dark:border-rose-800"
+  },
+  DEPT: {
+    label: "🏢 Nội bộ Phòng ban & Người duyệt",
+    shortLabel: "🏢 Nội bộ phòng ban",
+    desc: "Nhân sự cùng phòng ban với người trình, các cấp phê duyệt/thực thi, Người theo dõi và Ban Giám Đốc xem được. Phòng ban khác không liên quan không thấy.",
+    badgeCls:
+      "bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/70 dark:text-amber-300 dark:border-amber-800"
+  },
+  PUBLIC: {
+    label: "🌐 Công khai toàn công ty (Với Đơn nghỉ phép: Công khai lịch & ẩn lý do riêng)",
+    shortLabel: "🌐 Công khai toàn công ty",
+    desc: "Mọi nhân viên đều thấy. Riêng với Đơn xin nghỉ phép (DXNP), người ngoài luồng chỉ thấy Ngày nghỉ & Người nhận bàn giao, tự động ẩn lý do cá nhân và file đính kèm.",
+    badgeCls:
+      "bg-teal-50 text-teal-800 border-teal-300 dark:bg-teal-950/70 dark:text-teal-300 dark:border-teal-800"
+  }
+};
+
 export interface ProposalFieldSchema {
   key: string;
   label: string;
@@ -101,6 +136,7 @@ export interface ProposalTemplate {
   fields: ProposalFieldSchema[];
   defaultSteps: ProposalStepTemplate[];
   defaultFollowers?: string[];
+  defaultVisibility?: ProposalVisibility;
 }
 
 export interface ProposalStepInstance {
@@ -151,6 +187,7 @@ export interface ProposalItem {
   steps: ProposalStepInstance[];
   currentStepIndex: number;
   status: ProposalStatus;
+  visibility?: ProposalVisibility;
   followers: string[];
   executorName?: string;
   executedAt?: string;
@@ -1228,6 +1265,196 @@ export function normalizeProposalStepsForRequester(
   return { steps: reindexed, changed };
 }
 
+export function isLeaveProposal(p: Partial<ProposalItem> | null | undefined): boolean {
+  if (!p) return false;
+  const tid = String(p.templateId || "").toLowerCase();
+  const code = String(p.proposalCode || "").toUpperCase();
+  const tname = String(p.templateName || "").toLowerCase();
+  return tid === "tmpl_leave_request" || code.startsWith("DXNP") || tname.includes("nghỉ phép");
+}
+
+/**
+ * Xác định chế độ hiển thị mặc định chuẩn quản trị doanh nghiệp cho từng mẫu đề xuất:
+ * - "PUBLIC": Đơn xin nghỉ phép (DXNP - công khai lịch ngày nghỉ & người nhận bàn giao nhưng ẩn lý do riêng) và Tờ trình Ban Giám Đốc / Chủ trương chung.
+ * - "DEPT": Đề xuất Đi công tác (DXCT), Mua sắm vật tư, Xuất kho mẫu Demo / Kho Nhà máy, Xử lý hàng hỏng.
+ * - "PRIVATE": Đề nghị Thanh toán (DNTT), Tạm ứng (DNTU), Hoàn ứng (QTHU), Xuất hóa đơn (DNXHD), Chiết khấu đặc biệt (DXCK), Công nợ (DXCN), Tăng ca (DKTC).
+ */
+export function resolveDefaultTemplateVisibility(
+  tmpl?: Partial<ProposalTemplate> | null
+): ProposalVisibility {
+  if (tmpl?.defaultVisibility && ["PRIVATE", "DEPT", "PUBLIC"].includes(tmpl.defaultVisibility)) {
+    return tmpl.defaultVisibility;
+  }
+  const id = String(tmpl?.id || "").toLowerCase();
+  const prefix = String(tmpl?.codePrefix || "").toUpperCase();
+  const cat = String(tmpl?.category || "").toUpperCase();
+
+  if (id === "tmpl_leave_request" || prefix === "DXNP") return "PUBLIC";
+  if (cat === "EXECUTIVE" || id === "tmpl_executive_memo" || prefix === "TTR") return "PUBLIC";
+  if (id === "tmpl_business_trip" || prefix === "DXCT") return "DEPT";
+  if (cat === "TECHNICAL_OPS") return "DEPT";
+  // FINANCE, COMMERCIAL, OVERTIME -> mặc định PRIVATE (Bảo mật theo luồng duyệt)
+  return "PRIVATE";
+}
+
+/**
+ * Lấy chế độ hiển thị hiệu lực của một tờ trình (nếu tờ trình cũ chưa có trường `visibility` thì suy luận từ mẫu đề xuất).
+ */
+export function getEffectiveProposalVisibility(
+  p: Partial<ProposalItem> | null | undefined,
+  template?: Partial<ProposalTemplate> | null
+): ProposalVisibility {
+  if (p?.visibility && ["PRIVATE", "DEPT", "PUBLIC"].includes(p.visibility)) {
+    return p.visibility;
+  }
+  if (template?.defaultVisibility && ["PRIVATE", "DEPT", "PUBLIC"].includes(template.defaultVisibility)) {
+    return template.defaultVisibility;
+  }
+  return resolveDefaultTemplateVisibility({
+    id: p?.templateId,
+    codePrefix: String(p?.proposalCode || "").split("-")[0],
+    category: p?.category
+  });
+}
+
+/**
+ * Kiểm tra người dùng có nằm trực tiếp trong luồng phê duyệt / thực thi / theo dõi của tờ trình hay không:
+ * - Ban Giám Đốc / Quản trị viên (`isDirector`)
+ * - Chính người tạo đề xuất (`requesterName`)
+ * - Người duyệt tại bất kỳ bước nào (`steps[].approverName` hoặc `decidedBy`) hoặc Trưởng/Phó phòng của bước mang nhãn chức danh chung cùng phòng
+ * - Người thực thi (`executorName`), Người nhận bàn giao công việc (`formValues.handoverStaff`), Thành viên cùng đi công tác (`formValues.companions`)
+ * - Người theo dõi (`followers`)
+ */
+export function isUserDirectlyInProposalFlow(
+  p: ProposalItem,
+  currentStaffName: string,
+  userDept: string,
+  isDirector: boolean,
+  isManager: boolean,
+  personnelList?: any[]
+): boolean {
+  if (!p) return false;
+  if (isDirector) return true;
+  if (!currentStaffName) return false;
+
+  if (isSamePerson(p.requesterName, currentStaffName)) return true;
+  if (p.executorName && isSamePerson(p.executorName, currentStaffName)) return true;
+  if (Array.isArray(p.followers) && p.followers.some((f) => isSamePerson(f, currentStaffName))) return true;
+
+  const handover = String(p.formValues?.handoverStaff || p.formValues?.handover_person || "").trim();
+  if (handover && isSamePerson(handover, currentStaffName)) return true;
+
+  const companions = String(p.formValues?.companions || "").trim();
+  if (
+    companions &&
+    companions
+      .split(/[,;\n]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .some((c) => isSamePerson(c, currentStaffName))
+  ) {
+    return true;
+  }
+
+  const isLeader = isManager || isPersonDeptHeadOrDeputy(currentStaffName, userDept, personnelList);
+  // Trưởng/Phó phòng của chính người đề xuất luôn nằm trong luồng quản lý trực tiếp của nhân viên phòng mình
+  if (
+    isLeader &&
+    userDept &&
+    (isSameWorkspaceDept(p.requesterDept, userDept) ||
+      (Boolean(canonicalDepartment(p.requesterDept)) &&
+        canonicalDepartment(p.requesterDept) === canonicalDepartment(userDept)))
+  ) {
+    return true;
+  }
+
+  for (const st of p.steps || []) {
+    if (!st) continue;
+    if (st.approverName && isSamePerson(st.approverName, currentStaffName)) return true;
+    if (st.decidedBy && isSamePerson(st.decidedBy, currentStaffName)) return true;
+    if (userDept && canonName(st.approverName) === canonName(userDept)) return true;
+    // Nếu bước duyệt để nhãn chức danh chung (VD: "Trưởng bộ phận", "Kế toán trưởng", "Hành Chính Nhân Sự") thì Trưởng/Phó phòng của phòng đó nằm trong luồng
+    if (isLeader && userDept && isGenericRoleApproverLabel(st.approverName)) {
+      const sameStepDept =
+        isSameWorkspaceDept(st.dept, userDept) ||
+        (Boolean(canonicalDepartment(st.dept)) &&
+          canonicalDepartment(st.dept) === canonicalDepartment(userDept));
+      if (sameStepDept) return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Kiểm tra người dùng có được xem toàn bộ chi tiết nhạy cảm (Lý do riêng tư, Tệp đính kèm, Thảo luận) của Đơn xin nghỉ phép hay không.
+ * Với Đơn nghỉ phép để chế độ PUBLIC, đồng nghiệp ngoài luồng vẫn thấy Lịch ngày nghỉ & Người bàn giao nhưng ẩn Lý do cá nhân & File đính kèm.
+ */
+export function canUserSeeFullLeaveDetails(
+  p: ProposalItem,
+  currentStaffName: string,
+  userDept: string,
+  isDirector: boolean,
+  isManager: boolean,
+  personnelList?: any[]
+): boolean {
+  if (isUserDirectlyInProposalFlow(p, currentStaffName, userDept, isDirector, isManager, personnelList)) {
+    return true;
+  }
+  // Phòng Hành chính - Nhân sự & Kế toán được xem để tổng hợp chấm công & chế độ BHXH
+  const canonUserDept = canonicalDepartment(userDept);
+  const normUserDept = normalizeWorkspaceDept(userDept);
+  if (
+    canonUserDept === "Hành chính" ||
+    normUserDept === "Hành Chính Nhân Sự" ||
+    normUserDept === "Kế Toán"
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Kiểm tra người dùng hiện tại có quyền nhìn thấy tờ trình `p` trên danh sách hay không, theo 3 chế độ hiển thị:
+ * - Bản nháp (`DRAFT`): chỉ người tạo (hoặc BGĐ) thấy.
+ * - `PRIVATE` (Bảo mật theo luồng duyệt): chỉ những người trực tiếp trong luồng (`isUserDirectlyInProposalFlow`) thấy.
+ * - `DEPT` (Nội bộ phòng ban & Người duyệt): những người trong luồng + nhân sự cùng phòng ban với người tạo (`requesterDept`).
+ * - `PUBLIC` (Công khai toàn công ty): mọi nhân viên đã đăng nhập đều thấy.
+ */
+export function canUserViewProposal(
+  p: ProposalItem,
+  currentStaffName: string,
+  userDept: string,
+  isDirector: boolean,
+  isManager: boolean,
+  personnelList?: any[],
+  template?: Partial<ProposalTemplate> | null
+): boolean {
+  if (!p) return false;
+  if (isDirector) return true;
+  // Bản nháp chưa gửi duyệt: chỉ chính người tạo mới thấy
+  if (p.status === "DRAFT") {
+    return isSamePerson(p.requesterName, currentStaffName);
+  }
+  if (isUserDirectlyInProposalFlow(p, currentStaffName, userDept, isDirector, isManager, personnelList)) {
+    return true;
+  }
+  const vis = getEffectiveProposalVisibility(p, template);
+  if (vis === "PUBLIC") {
+    return true;
+  }
+  if (vis === "DEPT") {
+    if (!userDept) return false;
+    return (
+      isSameWorkspaceDept(p.requesterDept, userDept) ||
+      (Boolean(canonicalDepartment(p.requesterDept)) &&
+        canonicalDepartment(p.requesterDept) === canonicalDepartment(userDept))
+    );
+  }
+  // vis === "PRIVATE"
+  return false;
+}
+
 export function isProposalWaitingForUser(
   p: ProposalItem,
   currentStaffName: string,
@@ -1359,10 +1586,11 @@ export function ProposalsApprovalView({
   const [isQuickCatalogOpen, setIsQuickCatalogOpen] = useState<boolean>(false);
 
   const openNewTemplateModal = (defaultCat: ProposalCategoryKey = "FINANCE") => {
+    const resolvedCat: ProposalCategoryKey = defaultCat === ("all" as any) ? "FINANCE" : defaultCat;
     setEditingTemplate({
       id: `tmpl_custom_${Date.now()}`,
       codePrefix: "DXM",
-      category: defaultCat === "all" as any ? "FINANCE" : defaultCat,
+      category: resolvedCat,
       name: "",
       icon: "📋",
       description: "",
@@ -1379,7 +1607,8 @@ export function ProposalsApprovalView({
         { stepOrder: 2, stepName: "Phòng chuyên môn thẩm định", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Kế toán trưởng", slaHours: 8 },
         { stepOrder: 3, stepName: "Ban Giám Đốc phê duyệt", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Ban Giám Đốc", slaHours: 12, conditionMinAmount: 5000000 }
       ],
-      defaultFollowers: []
+      defaultFollowers: [],
+      defaultVisibility: resolveDefaultTemplateVisibility({ category: resolvedCat })
     });
     setIsTemplateBuilderOpen(true);
   };
@@ -1535,6 +1764,7 @@ export function ProposalsApprovalView({
     proposalCode: string;
     title: string;
     priority: "NORMAL" | "HIGH" | "URGENT";
+    visibility: ProposalVisibility;
     neededByDate: string;
     totalAmount: number;
     summaryReason: string;
@@ -1553,6 +1783,7 @@ export function ProposalsApprovalView({
     proposalCode: `DX-${new Date().getFullYear()}-001`,
     title: "",
     priority: "HIGH",
+    visibility: "PRIVATE",
     neededByDate: todayVN(),
     totalAmount: 0,
     summaryReason: "",
@@ -1718,6 +1949,7 @@ export function ProposalsApprovalView({
       proposalCode: generateProposalCode(tmpl),
       title: isLeaveTmpl ? `Xin nghỉ phép — ${currentStaffName} (${formatDayVN(todayVN())})` : "",
       priority: isLeaveTmpl ? "NORMAL" : "HIGH",
+      visibility: resolveDefaultTemplateVisibility(tmpl),
       neededByDate: todayVN(),
       totalAmount: 0,
       summaryReason: "",
@@ -1785,6 +2017,7 @@ export function ProposalsApprovalView({
         ...prev,
         proposalCode: generateProposalCode(tmpl),
         title: isLeaveTmpl && !prev.title ? `Xin nghỉ phép — ${currentStaffName} (${formatDayVN(todayVN())})` : prev.title,
+        visibility: resolveDefaultTemplateVisibility(tmpl),
         formValues: { ...defaultDateValues, ...prev.formValues },
         lineItems:
           tmpl.hasLineItems && prev.lineItems.length === 0
@@ -1863,12 +2096,14 @@ export function ProposalsApprovalView({
   }, [externalOpenProposalId, proposals]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openEditProposalModal = (p: ProposalItem) => {
+    const tmpl = templates.find((t) => t.id === p.templateId);
     setEditingProposalId(p.id);
     setSelectedTemplateId(p.templateId);
     setFormState({
       proposalCode: p.proposalCode,
       title: p.title,
       priority: p.priority,
+      visibility: getEffectiveProposalVisibility(p, tmpl),
       neededByDate: p.neededByDate || todayVN(),
       totalAmount: p.totalAmount || 0,
       summaryReason: p.summaryReason || "",
@@ -2140,6 +2375,7 @@ export function ProposalsApprovalView({
       steps: stepsList,
       currentStepIndex: activeIdx,
       status: submitMode,
+      visibility: formState.visibility || resolveDefaultTemplateVisibility(activeTemplate),
       followers: formState.followers,
       executorName: formState.executorName,
       linkedRefCode: formState.linkedRefCode.trim(),
@@ -2851,30 +3087,55 @@ export function ProposalsApprovalView({
       </html>`);
   };
 
+  const templateByIdMap = useMemo(() => {
+    const m = new Map<string, ProposalTemplate>();
+    for (const t of templates) {
+      if (t?.id) m.set(t.id, t);
+    }
+    return m;
+  }, [templates]);
+
+  // Danh sách đề xuất mà người dùng hiện tại có quyền nhìn thấy theo 3 chế độ hiển thị (PRIVATE / DEPT / PUBLIC)
+  const accessibleProposals = useMemo(
+    () =>
+      (proposals || []).filter((p) =>
+        canUserViewProposal(
+          p,
+          currentStaffName,
+          userDept,
+          isDirector,
+          isManager,
+          personnelList,
+          templateByIdMap.get(p?.templateId)
+        )
+      ),
+    [proposals, currentStaffName, userDept, isDirector, isManager, personnelList, templateByIdMap]
+  );
+
   // Thống kê & Lọc danh sách Đề xuất theo phân quyền và phân khu
   const waitingForMeList = useMemo(
-    () => (proposals || []).filter((p) => isProposalWaitingForUser(p, currentStaffName, userDept, isDirector, isManager)),
-    [proposals, currentStaffName, userDept, isDirector, isManager]
+    () => accessibleProposals.filter((p) => isProposalWaitingForUser(p, currentStaffName, userDept, isDirector, isManager)),
+    [accessibleProposals, currentStaffName, userDept, isDirector, isManager]
   );
 
   const myProposalsList = useMemo(
-    () => (proposals || []).filter((p) => isSamePerson(p.requesterName, currentStaffName)),
-    [proposals, currentStaffName]
+    () => accessibleProposals.filter((p) => isSamePerson(p.requesterName, currentStaffName)),
+    [accessibleProposals, currentStaffName]
   );
 
   const followingOrExecList = useMemo(
     () =>
-      (proposals || []).filter(
+      accessibleProposals.filter(
         (p) =>
           (p.followers || []).some((f) => isSamePerson(f, currentStaffName)) ||
           isSamePerson(p.executorName, currentStaffName) ||
           (p.steps || []).some((s) => isSamePerson(s.approverName, currentStaffName))
       ),
-    [proposals, currentStaffName]
+    [accessibleProposals, currentStaffName]
   );
 
   const filteredProposals = useMemo(() => {
-    let base = proposals || [];
+    let base = accessibleProposals;
     if (subView === "to_approve") {
       base = waitingForMeList;
     } else if (subView === "my_proposals") {
@@ -2882,29 +3143,13 @@ export function ProposalsApprovalView({
     } else if (subView === "following") {
       base = followingOrExecList;
     } else {
-      // Toàn bộ đề xuất (theo phân quyền - riêng Đơn xin nghỉ phép DXNP cho phép toàn công ty xem để nắm lịch vắng mặt & bàn giao)
-      const isLeaveOrMyRelated = (p: ProposalItem) =>
-        p.templateId === "tmpl_leave_request" ||
-        String(p.proposalCode || "").toUpperCase().startsWith("DXNP") ||
-        String(p.templateName || "").toLowerCase().includes("nghỉ phép") ||
-        isSamePerson(p.requesterName, currentStaffName) ||
-        isSamePerson(p.executorName, currentStaffName) ||
-        (p.followers || []).some((f) => isSamePerson(f, currentStaffName)) ||
-        (p.steps || []).some((s) => isSamePerson(s.approverName, currentStaffName));
-
-      if (rolePerspective === "staff") {
-        base = base.filter((p) => isLeaveOrMyRelated(p));
-      } else if (rolePerspective === "manager" && selectedDept !== "all") {
+      // Nếu Ban Giám Đốc / Trưởng phòng đang lọc theo một phòng ban cụ thể trên thanh lọc chung (`selectedDept !== "all"`)
+      // thì giữ các đơn thuộc phòng đang lọc, các đơn liên quan trực tiếp tới mình hoặc các đơn Công khai toàn công ty
+      if (isDirector && selectedDept !== "all") {
         base = base.filter(
           (p) =>
-            isLeaveOrMyRelated(p) ||
-            isSameWorkspaceDept(p.requesterDept, selectedDept) ||
-            (p.steps || []).some((s) => isSameWorkspaceDept(s.dept, selectedDept))
-        );
-      } else if (selectedDept !== "all") {
-        base = base.filter(
-          (p) =>
-            isLeaveOrMyRelated(p) ||
+            getEffectiveProposalVisibility(p, templateByIdMap.get(p.templateId)) === "PUBLIC" ||
+            isUserDirectlyInProposalFlow(p, currentStaffName, userDept, false, isManager, personnelList) ||
             isSameWorkspaceDept(p.requesterDept, selectedDept) ||
             (p.steps || []).some((s) => isSameWorkspaceDept(s.dept, selectedDept))
         );
@@ -2924,6 +3169,9 @@ export function ProposalsApprovalView({
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
+        const canSeeLeaveReason =
+          !isLeaveProposal(p) ||
+          canUserSeeFullLeaveDetails(p, currentStaffName, userDept, isDirector, isManager, personnelList);
         const hit =
           String(p.proposalCode || "").toLowerCase().includes(q) ||
           String(p.title || "").toLowerCase().includes(q) ||
@@ -2931,18 +3179,22 @@ export function ProposalsApprovalView({
           String(p.requesterName || "").toLowerCase().includes(q) ||
           String(p.customerName || "").toLowerCase().includes(q) ||
           String(p.supplierName || "").toLowerCase().includes(q) ||
-          String(p.summaryReason || "").toLowerCase().includes(q);
+          (canSeeLeaveReason && String(p.summaryReason || "").toLowerCase().includes(q));
         if (!hit) return false;
       }
       return true;
     });
   }, [
-    proposals,
+    accessibleProposals,
     subView,
     waitingForMeList,
     myProposalsList,
     followingOrExecList,
-    rolePerspective,
+    isDirector,
+    isManager,
+    userDept,
+    personnelList,
+    templateByIdMap,
     currentStaffName,
     selectedDept,
     categoryFilter,
@@ -2955,15 +3207,15 @@ export function ProposalsApprovalView({
 
   const totalPendingAmount = useMemo(
     () =>
-      (proposals || [])
+      accessibleProposals
         .filter((p) => p.status === "PENDING")
         .reduce((acc, p) => acc + (Number(p.totalAmount) || 0), 0),
-    [proposals]
+    [accessibleProposals]
   );
 
   const totalApprovedCount = useMemo(
-    () => (proposals || []).filter((p) => p.status === "APPROVED" || p.status === "EXECUTED").length,
-    [proposals]
+    () => accessibleProposals.filter((p) => p.status === "APPROVED" || p.status === "EXECUTED").length,
+    [accessibleProposals]
   );
 
   // ==================== BỘ THEO DÕI NGHỈ PHÉP TOÀN CÔNG TY & TỔNG HỢP CHẤM CÔNG THÁNG ====================
@@ -3013,12 +3265,12 @@ export function ProposalsApprovalView({
 
   // Đơn nghỉ phục hồi từ thông báo, chưa có ngày nghỉ thật: không tính vào chấm công, liệt kê riêng để bổ sung
   const leaveProposalsMissingDates = useMemo(
-    () => (proposals || []).filter((p) => isLeaveProposalItem(p) && needsLeaveDates(p) && p.status !== "REJECTED" && p.status !== "WITHDRAWN"),
-    [proposals]
+    () => accessibleProposals.filter((p) => isLeaveProposalItem(p) && needsLeaveDates(p) && p.status !== "REJECTED" && p.status !== "WITHDRAWN"),
+    [accessibleProposals]
   );
 
   const monthlyLeaveProposals = useMemo(() => {
-    return (proposals || [])
+    return accessibleProposals
       .filter((p) => {
         if (!isLeaveProposalItem(p)) return false;
         if (p.status === "WITHDRAWN" || p.status === "DRAFT") return false;
@@ -3049,11 +3301,19 @@ export function ProposalsApprovalView({
         }
         if (searchQuery.trim()) {
           const q = searchQuery.toLowerCase().trim();
+          const canSeeLeaveReason = canUserSeeFullLeaveDetails(
+            p,
+            currentStaffName,
+            userDept,
+            isDirector,
+            isManager,
+            personnelList
+          );
           const hit =
             String(p.requesterName || "").toLowerCase().includes(q) ||
             String(p.proposalCode || "").toLowerCase().includes(q) ||
             String(p.title || "").toLowerCase().includes(q) ||
-            String(p.summaryReason || "").toLowerCase().includes(q) ||
+            (canSeeLeaveReason && String(p.summaryReason || "").toLowerCase().includes(q)) ||
             String(p.formValues?.handoverStaff || "").toLowerCase().includes(q);
           if (!hit) return false;
         }
@@ -3064,17 +3324,17 @@ export function ProposalsApprovalView({
         const db = getLeaveDatesAndDays(b).fDate;
         return db.localeCompare(da);
       });
-  }, [proposals, leaveMonthFilter, leaveDeptFilter, leaveTypeFilter, leaveStatusFilter, searchQuery]);
+  }, [accessibleProposals, leaveMonthFilter, leaveDeptFilter, leaveTypeFilter, leaveStatusFilter, searchQuery, currentStaffName, userDept, isDirector, isManager, personnelList]);
 
   const todayIsoStr = todayVN();
   const todayLeaveProposals = useMemo(() => {
-    return (proposals || []).filter((p) => {
+    return accessibleProposals.filter((p) => {
       if (!isLeaveProposalItem(p)) return false;
       if (p.status === "REJECTED" || p.status === "WITHDRAWN" || p.status === "DRAFT") return false;
       if (needsLeaveDates(p)) return false;
       return getLeaveDatesAndDays(p).isOffOn(todayIsoStr);
     });
-  }, [proposals, todayIsoStr]);
+  }, [accessibleProposals, todayIsoStr]);
 
   const leaveSummaryByStaff = useMemo(() => {
     const map = new Map<
@@ -3229,6 +3489,14 @@ export function ProposalsApprovalView({
       const { fDate, tDate, days, handoverStaff } = ld;
       const leaveType = ld.rangeLabel ? `${ld.leaveType} — các ngày: ${ld.rangeLabel}` : ld.leaveType;
       const stMeta = getStatusMeta(p.status);
+      const canSeeLeaveReason = canUserSeeFullLeaveDetails(
+        p,
+        currentStaffName,
+        userDept,
+        isDirector,
+        isManager,
+        personnelList
+      );
       const lastApprover =
         (p.steps || [])
           .filter((s) => s.status === "APPROVED")
@@ -3244,7 +3512,9 @@ export function ProposalsApprovalView({
           formatDayVN(tDate),
           days,
           handoverStaff,
-          String(p.summaryReason || p.title || "").replace(/"/g, '""'),
+          canSeeLeaveReason
+            ? String(p.summaryReason || p.title || "").replace(/"/g, '""')
+            : "(Lý do riêng tư — Chỉ hiển thị lịch nghỉ & người nhận bàn giao)",
           stMeta.label,
           lastApprover,
           p.createdAt
@@ -3331,7 +3601,7 @@ export function ProposalsApprovalView({
               <p className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500">GIÁ TRỊ ĐANG TRÌNH DUYỆT</p>
               <p className="text-xl font-black text-rose-600 dark:text-rose-400 mt-1">{formatMoneyVND(totalPendingAmount)}</p>
               <p className="text-[11px] text-slate-500 mt-0.5">
-                {(proposals || []).filter((p) => p.status === "PENDING").length} tờ trình đang trong luồng
+                {accessibleProposals.filter((p) => p.status === "PENDING").length} tờ trình đang trong luồng
               </p>
             </div>
             <div className="w-11 h-11 rounded-2xl bg-rose-100 dark:bg-rose-950 flex items-center justify-center text-rose-600 dark:text-rose-400">
@@ -3351,7 +3621,7 @@ export function ProposalsApprovalView({
             <div>
               <p className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500">ĐÃ DUYỆT &amp; THỰC THI</p>
               <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1">
-                {totalApprovedCount} <span className="text-xs font-bold text-slate-400">/ {proposals.length} phiếu</span>
+                {totalApprovedCount} <span className="text-xs font-bold text-slate-400">/ {accessibleProposals.length} phiếu</span>
               </p>
               <p className="text-[11px] text-slate-500 mt-0.5">Lưu trữ chứng từ điện tử &amp; chữ ký số</p>
             </div>
@@ -3375,7 +3645,7 @@ export function ProposalsApprovalView({
                   : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 shadow-2xs"
               }`}
             >
-              📚 Tất cả đề xuất ({proposals.length})
+              📚 Tất cả đề xuất ({accessibleProposals.length})
             </button>
             <button
               type="button"
@@ -3675,6 +3945,17 @@ export function ProposalsApprovalView({
                           <div className="text-[10px] text-slate-400">
                             {tmpl.hasLineItems ? "✓ Có bảng kê chi tiết" : "Không bảng kê"} • {tmpl.hasAmount ? "Có số tiền" : "Phi tài chính"}
                           </div>
+                          {(() => {
+                            const vKey = resolveDefaultTemplateVisibility(tmpl);
+                            const vMeta = PROPOSAL_VISIBILITY_META[vKey];
+                            return (
+                              <div className="mt-1">
+                                <span className={`inline-block text-[9px] font-bold px-1.5 py-0.5 rounded border ${vMeta.badgeCls}`}>
+                                  {vMeta.shortLabel}
+                                </span>
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td className="py-2.5 px-3">
                           <div className="flex items-center gap-1 flex-wrap text-[11px]">
@@ -4076,7 +4357,13 @@ export function ProposalsApprovalView({
                             </span>
                           </td>
                           <td className="py-2.5 px-3 max-w-xs">
-                            <div className="line-clamp-2 text-slate-600 dark:text-slate-300">{p.summaryReason || p.title}</div>
+                            {canUserSeeFullLeaveDetails(p, currentStaffName, userDept, isDirector, isManager, personnelList) ? (
+                              <div className="line-clamp-2 text-slate-600 dark:text-slate-300">{p.summaryReason || p.title}</div>
+                            ) : (
+                              <div className="text-[11px] italic text-slate-400 dark:text-slate-500">
+                                🔒 Lý do riêng tư (Chỉ hiển thị lịch nghỉ &amp; người bàn giao)
+                              </div>
+                            )}
                           </td>
                           <td className="py-2.5 px-3">
                             <span className={`inline-block px-2 py-0.5 rounded-lg text-[10px] font-extrabold border ${statusMeta.badgeCls}`}>
@@ -4146,6 +4433,11 @@ export function ProposalsApprovalView({
               {proposalsPage.items.map((p) => {
               const catMeta = PROPOSAL_CATEGORY_META[p.category] || PROPOSAL_CATEGORY_META.EXECUTIVE;
               const statusMeta = getStatusMeta(p.status);
+              const effVis = getEffectiveProposalVisibility(p, templateByIdMap.get(p.templateId));
+              const visMeta = PROPOSAL_VISIBILITY_META[effVis] || PROPOSAL_VISIBILITY_META.PRIVATE;
+              const canSeeFullLeave =
+                !isLeaveProposal(p) ||
+                canUserSeeFullLeaveDetails(p, currentStaffName, userDept, isDirector, isManager, personnelList);
               const waitingMe = isProposalWaitingForUser(p, currentStaffName, userDept, isDirector, isManager);
               const activeStep = (p.steps || []).find((s) => s.status === "PENDING_NOW") || p.steps?.[p.currentStepIndex];
               const isOverdue =
@@ -4184,6 +4476,12 @@ export function ProposalsApprovalView({
                       </span>
                       <span className={`px-2.5 py-0.5 rounded-lg text-[11px] font-extrabold border ${statusMeta.badgeCls}`}>
                         {statusMeta.label}
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border ${visMeta.badgeCls}`}
+                        title={visMeta.desc}
+                      >
+                        {visMeta.shortLabel}
                       </span>
                       {p.priority === "URGENT" && (
                         <span className="px-2 py-0.5 rounded-lg text-[10px] font-black bg-rose-600 text-white animate-pulse">
@@ -4234,9 +4532,15 @@ export function ProposalsApprovalView({
                         >
                           {p.title}
                         </h3>
-                        <p className="text-xs text-slate-600 dark:text-slate-300 line-clamp-2 whitespace-pre-line">
-                          {p.summaryReason}
-                        </p>
+                        {canSeeFullLeave ? (
+                          <p className="text-xs text-slate-600 dark:text-slate-300 line-clamp-2 whitespace-pre-line">
+                            {p.summaryReason}
+                          </p>
+                        ) : (
+                          <p className="text-xs italic text-slate-500 dark:text-slate-400">
+                            🏖️ Lịch nghỉ: <strong>{formatDayVN(p.formValues?.fromDate || p.neededByDate)} → {formatDayVN(p.formValues?.toDate || p.neededByDate)}</strong> ({p.formValues?.totalDays || "1"} ngày) • 🤝 Người nhận bàn giao: <strong className="text-teal-700 dark:text-teal-300">{p.formValues?.handoverStaff || "—"}</strong> • <span className="text-slate-400">🔒 Lý do cá nhân đã được ẩn bảo mật</span>
+                          </p>
+                        )}
 
                         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500 pt-1">
                           <span>
@@ -4482,6 +4786,49 @@ export function ProposalsApprovalView({
                 />
               </div>
             )}
+          </div>
+
+          {/* Tùy chọn Phạm vi Hiển thị (Bảo mật theo luồng duyệt / Nội bộ phòng ban / Công khai toàn công ty) */}
+          <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label className="block text-[11px] font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                🔐 Chế độ Hiển thị &amp; Bảo mật của Đề xuất (Ai được phép nhìn thấy tờ trình này?):
+              </label>
+              <span className="text-[11px] text-slate-500">
+                Mặc định chuẩn theo mẫu:{" "}
+                <strong className="text-indigo-600 dark:text-indigo-400">
+                  {PROPOSAL_VISIBILITY_META[resolveDefaultTemplateVisibility(activeTemplate)]?.shortLabel}
+                </strong>
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {(["PRIVATE", "DEPT", "PUBLIC"] as ProposalVisibility[]).map((visKey) => {
+                const meta = PROPOSAL_VISIBILITY_META[visKey];
+                const isSelected = (formState.visibility || "PRIVATE") === visKey;
+                return (
+                  <button
+                    key={visKey}
+                    type="button"
+                    onClick={() => setFormState((prev) => ({ ...prev, visibility: visKey }))}
+                    className={`text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
+                      isSelected
+                        ? "bg-indigo-50/90 dark:bg-indigo-950/60 border-indigo-500 ring-2 ring-indigo-500/25"
+                        : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-indigo-300"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-xs font-extrabold text-slate-900 dark:text-white">{meta.shortLabel}</span>
+                      {isSelected && (
+                        <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black bg-indigo-600 text-white">
+                          Đang chọn
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 leading-snug">{meta.desc}</p>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Tiêu đề & Liên kết Khách hàng / NCC / Mã đơn */}
@@ -5109,6 +5456,11 @@ export function ProposalsApprovalView({
           const p = selectedProposal;
           const tmpl = templates.find((t) => t.id === p.templateId);
           const statusMeta = getStatusMeta(p.status);
+          const effVis = getEffectiveProposalVisibility(p, tmpl);
+          const visMeta = PROPOSAL_VISIBILITY_META[effVis] || PROPOSAL_VISIBILITY_META.PRIVATE;
+          const canSeeFullLeave =
+            !isLeaveProposal(p) ||
+            canUserSeeFullLeaveDetails(p, currentStaffName, userDept, isDirector, isManager, personnelList);
           const waitingMe = isProposalWaitingForUser(p, currentStaffName, userDept, isDirector, isManager);
           const isRequester = isSamePerson(p.requesterName, currentStaffName);
           // Chỉ đúng người có trách nhiệm duyệt ở bước đang chờ hiện tại (PENDING_NOW) mới hiển thị Bảng Quyết Định Phê Duyệt.
@@ -5130,6 +5482,12 @@ export function ProposalsApprovalView({
                     </span>
                     <span className={`px-2.5 py-0.5 rounded-lg text-xs font-extrabold border ${statusMeta.badgeCls}`}>
                       {statusMeta.label}
+                    </span>
+                    <span
+                      className={`px-2.5 py-0.5 rounded-lg text-[11px] font-bold border ${visMeta.badgeCls}`}
+                      title={visMeta.desc}
+                    >
+                      {visMeta.shortLabel}
                     </span>
                     {p.priority === "URGENT" && (
                       <span className="px-2 py-0.5 rounded-lg text-[10px] font-black bg-rose-600 text-white">
@@ -5200,9 +5558,15 @@ export function ProposalsApprovalView({
                   <div className="font-extrabold text-slate-700 dark:text-slate-300 uppercase mb-1">
                     📌 Nội dung giải trình &amp; Lý do đề xuất:
                   </div>
-                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200/70 dark:border-slate-800 whitespace-pre-line text-slate-800 dark:text-slate-200 leading-relaxed">
-                    {p.summaryReason}
-                  </div>
+                  {canSeeFullLeave ? (
+                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200/70 dark:border-slate-800 whitespace-pre-line text-slate-800 dark:text-slate-200 leading-relaxed">
+                      {p.summaryReason}
+                    </div>
+                  ) : (
+                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-dashed border-slate-300 dark:border-slate-800 text-slate-500 italic">
+                      🔒 Lý do xin nghỉ riêng tư và tài liệu cá nhân chỉ hiển thị cho Người xin nghỉ, Trưởng bộ phận phê duyệt, Hành chính - Nhân sự và Ban Giám Đốc. Đồng nghiệp các phòng ban xem được lịch ngày nghỉ và người nhận bàn giao bên dưới để chủ động phối hợp công việc.
+                    </div>
+                  )}
                 </div>
 
                 {(() => {
@@ -5308,7 +5672,7 @@ export function ProposalsApprovalView({
                 )}
 
                 {/* Tệp chứng từ đính kèm */}
-                {Array.isArray(p.attachments) && p.attachments.length > 0 && (
+                {canSeeFullLeave && Array.isArray(p.attachments) && p.attachments.length > 0 && (
                   <div className="pt-2">
                     <div className="font-extrabold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
                       📎 Hồ sơ / Hóa đơn / Chứng từ đính kèm ({p.attachments.length}):
@@ -6030,7 +6394,7 @@ export function ProposalsApprovalView({
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
-                <div className="sm:col-span-9">
+                <div className="sm:col-span-6">
                   <label className="block font-bold mb-1 text-slate-600 dark:text-slate-300">Mô tả hướng dẫn áp dụng (hiển thị cho nhân viên khi lập phiếu)</label>
                   <input
                     type="text"
@@ -6040,8 +6404,25 @@ export function ProposalsApprovalView({
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
                   />
                 </div>
-                <div className="sm:col-span-3">
-                  <label className="block font-bold mb-1 text-slate-600 dark:text-slate-300">Tổng SLA toàn trình (giờ)</label>
+                <div className="sm:col-span-4">
+                  <label className="block font-bold mb-1 text-slate-600 dark:text-slate-300">Phạm vi hiển thị mặc định</label>
+                  <select
+                    value={editingTemplate.defaultVisibility || resolveDefaultTemplateVisibility(editingTemplate)}
+                    onChange={(e) =>
+                      setEditingTemplate({
+                        ...editingTemplate,
+                        defaultVisibility: e.target.value as ProposalVisibility
+                      })
+                    }
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold"
+                  >
+                    <option value="PRIVATE">🔒 Bảo mật theo luồng duyệt (Chỉ người duyệt &amp; theo dõi)</option>
+                    <option value="DEPT">🏢 Nội bộ Phòng ban &amp; Người duyệt</option>
+                    <option value="PUBLIC">🌐 Công khai toàn công ty</option>
+                  </select>
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block font-bold mb-1 text-slate-600 dark:text-slate-300">Tổng SLA (giờ)</label>
                   <input
                     type="number"
                     min={1}

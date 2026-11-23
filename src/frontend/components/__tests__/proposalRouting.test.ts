@@ -5,9 +5,14 @@ import {
   isPersonDeptHeadOrDeputy,
   normalizeProposalStepsForRequester,
   isProposalWaitingForUser,
+  resolveDefaultTemplateVisibility,
+  getEffectiveProposalVisibility,
+  canUserViewProposal,
+  canUserSeeFullLeaveDetails,
   type ProposalItem,
   type ProposalStepInstance
 } from "../ProposalsApprovalView";
+import { filterReadableProposalsForUser } from "@/backend/services/proposalStoreGuard";
 import { getTaskAccess, parseTaskFollowers, taskHasFollower } from "@/backend/services/workspaceTasks";
 
 const SAMPLE_PERSONNEL = [
@@ -380,5 +385,133 @@ describe("Proposal approval routing & escalation rules", () => {
       dept: "Kế Toán",
       approverName: "Trần Hồng Thi"
     });
+  });
+
+  it("enforces 3 visibility modes (PRIVATE, DEPT, PUBLIC) and masks private leave reasons for outside colleagues", () => {
+    expect(resolveDefaultTemplateVisibility({ id: "tmpl_payment_request", codePrefix: "DNTT", category: "FINANCE" })).toBe("PRIVATE");
+    expect(resolveDefaultTemplateVisibility({ id: "tmpl_leave_request", codePrefix: "DXNP", category: "HR_ADMIN" })).toBe("PUBLIC");
+    expect(resolveDefaultTemplateVisibility({ id: "tmpl_capex_procurement", codePrefix: "DXMS-KD", category: "TECHNICAL_OPS" })).toBe("DEPT");
+
+    const paymentProposal: ProposalItem = {
+      id: "PROP-DNTT-1",
+      proposalCode: "DNTT-2026-001",
+      templateId: "tmpl_payment_request",
+      templateName: "Đề nghị Thanh toán (Payment Request)",
+      category: "FINANCE",
+      title: "Thanh toán hóa đơn NCC A",
+      priority: "HIGH",
+      requesterName: "Yin Minh Châu",
+      requesterDept: "Kinh Doanh",
+      createdAt: "2026-11-23 10:00",
+      updatedAt: "2026-11-23 10:00",
+      neededByDate: "2026-11-25",
+      totalAmount: 15000000,
+      currency: "VNĐ",
+      summaryReason: "Thanh toán hợp đồng mua hàng đợt 1",
+      formValues: {},
+      lineItems: [],
+      steps: [
+        {
+          stepOrder: 1,
+          stepName: "Trưởng bộ phận xác nhận",
+          roleType: "DEPT_HEAD",
+          dept: "Kinh Doanh",
+          approverName: "Huỳnh Thị Ngọc Huyền",
+          status: "PENDING_NOW",
+          slaHours: 4
+        },
+        {
+          stepOrder: 2,
+          stepName: "Kế toán kiểm tra chứng từ",
+          roleType: "REVIEWER",
+          dept: "Kế Toán",
+          approverName: "Nguyễn Văn Hiếu",
+          status: "WAITING",
+          slaHours: 8
+        }
+      ],
+      currentStepIndex: 0,
+      status: "PENDING",
+      followers: [],
+      attachments: [],
+      comments: [],
+      auditLogs: []
+    };
+
+    expect(getEffectiveProposalVisibility(paymentProposal)).toBe("PRIVATE");
+
+    // Nhân viên hoặc Trưởng phòng ngoài phòng (VD: QC/QA hoặc R&D) KHÔNG thấy Đề nghị thanh toán
+    expect(
+      canUserViewProposal(paymentProposal, "Nguyễn Thị Thu Thảo", "QA/QC", false, false, SAMPLE_PERSONNEL)
+    ).toBe(false);
+    expect(
+      canUserViewProposal(paymentProposal, "Nguyễn Quốc Bảo", "Nghiên Cứu R&D", false, true, SAMPLE_PERSONNEL)
+    ).toBe(false);
+    // Nhân viên cùng phòng Kinh doanh nhưng không nằm trong luồng duyệt cũng KHÔNG thấy Đề nghị thanh toán PRIVATE
+    expect(
+      canUserViewProposal(paymentProposal, "Trần Văn Sales Khác", "Kinh Doanh", false, false, SAMPLE_PERSONNEL)
+    ).toBe(false);
+    // Người tạo, Trưởng phòng duyệt bước 1, Kế toán duyệt bước 2 và Ban Giám Đốc đều thấy
+    expect(
+      canUserViewProposal(paymentProposal, "Yin Minh Châu", "Kinh Doanh", false, false, SAMPLE_PERSONNEL)
+    ).toBe(true);
+    expect(
+      canUserViewProposal(paymentProposal, "Huỳnh Thị Ngọc Huyền", "Kinh Doanh", false, true, SAMPLE_PERSONNEL)
+    ).toBe(true);
+    expect(
+      canUserViewProposal(paymentProposal, "Nguyễn Văn Hiếu", "Hành Chính Nhân Sự", false, true, SAMPLE_PERSONNEL)
+    ).toBe(true);
+    expect(
+      canUserViewProposal(paymentProposal, "Đỗ Ngọc Diễm Trúc", "Ban Giám Đốc", true, false, SAMPLE_PERSONNEL)
+    ).toBe(true);
+
+    // Đơn xin nghỉ phép (DXNP) để PUBLIC: đồng nghiệp phòng khác thấy lịch nghỉ & người nhận bàn giao nhưng KHÔNG thấy lý do cá nhân
+    const leaveProposal: ProposalItem = {
+      ...paymentProposal,
+      id: "PROP-DXNP-1",
+      proposalCode: "DXNP-2026-010",
+      templateId: "tmpl_leave_request",
+      templateName: "Đơn xin Nghỉ phép / Nghỉ việc riêng",
+      category: "HR_ADMIN",
+      title: "Xin nghỉ phép — Nguyễn Thị Thu Thảo",
+      requesterName: "Nguyễn Thị Thu Thảo",
+      requesterDept: "QA/QC",
+      summaryReason: "Đi khám sức khỏe cá nhân tại bệnh viện",
+      formValues: {
+        leaveType: "Nghỉ phép năm (Có hưởng lương)",
+        fromDate: "2026-11-24",
+        toDate: "2026-11-25",
+        totalDays: "2",
+        handoverStaff: "Phan Thị Thảo Trinh"
+      },
+      attachments: [{ name: "giay-kham.pdf", url: "/uploads/giay-kham.pdf" }]
+    };
+
+    expect(
+      canUserViewProposal(leaveProposal, "Yin Minh Châu", "Kinh Doanh", false, false, SAMPLE_PERSONNEL)
+    ).toBe(true);
+    expect(
+      canUserSeeFullLeaveDetails(leaveProposal, "Yin Minh Châu", "Kinh Doanh", false, false, SAMPLE_PERSONNEL)
+    ).toBe(false);
+    expect(
+      canUserSeeFullLeaveDetails(leaveProposal, "Phan Thị Thảo Trinh", "QA/QC", false, true, SAMPLE_PERSONNEL)
+    ).toBe(true);
+    expect(
+      canUserSeeFullLeaveDetails(leaveProposal, "Nguyễn Văn Hiếu", "Hành Chính Nhân Sự", false, true, SAMPLE_PERSONNEL)
+    ).toBe(true);
+
+    // Kiểm tra lọc từ phía máy chủ (/api/storage) cho nhân viên Kinh Doanh ngoài luồng của đơn QA/QC
+    const serverFiltered = filterReadableProposalsForUser([paymentProposal, leaveProposal], {
+      id: 99,
+      username: "ABT099",
+      full_name: "Nhân viên R&D",
+      role: "rd_staff",
+      department: "Nghiên Cứu R&D",
+      permissions: {}
+    } as any);
+    expect(serverFiltered).toHaveLength(1);
+    expect(serverFiltered[0].proposalCode).toBe("DXNP-2026-010");
+    expect(serverFiltered[0].summaryReason).toContain("Lý do xin nghỉ riêng tư");
+    expect(serverFiltered[0].attachments).toEqual([]);
   });
 });

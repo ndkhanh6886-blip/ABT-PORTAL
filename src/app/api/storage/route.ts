@@ -9,7 +9,14 @@ import { stripCostFields } from "@/backend/services/costVisibility";
 import { CATALOG_KEY, readCatalog, catalogVersion, applyCatalogPatch, replaceCatalog } from "@/backend/services/catalogStore";
 import { itemIdentity } from "@/backend/services/storagePatch";
 import { EMBEDDED_FILE_KEYS, externalizeDataUrls } from "@/backend/services/externalizeDataUrls";
-import { PROTECTED_PROPOSAL_KEY, limitProposalDeletes, keepMissingProposals, dedupeProposalCodes } from "@/backend/services/proposalStoreGuard";
+import {
+  PROTECTED_PROPOSAL_KEY,
+  limitProposalDeletes,
+  keepMissingProposals,
+  dedupeProposalCodes,
+  filterReadableProposalsForUser,
+  preserveRedactedProposalFields,
+} from "@/backend/services/proposalStoreGuard";
 import type { AuthorizedUser } from "@/backend/services/authz";
 import { syncCatalogSuppliersAndProducts } from "@/backend/services/supplierCatalogSync";
 
@@ -79,6 +86,9 @@ function canSeeCost(me: AuthorizedUser) {
   return isAdminUser(me) || hasPermission(me, "warehouse.view_cost_price");
 }
 function readableData(me: AuthorizedUser, key: string, data: any) {
+  if (key === PROTECTED_PROPOSAL_KEY) {
+    return filterReadableProposalsForUser(data, me);
+  }
   return COST_BEARING_KEYS.has(key) && !canSeeCost(me) ? stripCostFields(data) : data;
 }
 /** A user who cannot see costs saves items without them: keep the stored cost fields. */
@@ -258,7 +268,10 @@ export async function POST(request: NextRequest) {
           patch.upserts = await enforceApprovalGuards(key, current, patch.upserts || [], me);
           if (hideCost) patch.upserts = keepStoredCosts(current, patch.upserts);
           // Danh sách đơn từ: không cho một lần lưu xóa hàng loạt đơn (trình duyệt có danh sách sai đã xóa sạch đơn thật)
-          if (key === PROTECTED_PROPOSAL_KEY) droppedDeletes = limitProposalDeletes(patch);
+          if (key === PROTECTED_PROPOSAL_KEY) {
+            patch.upserts = preserveRedactedProposalFields(current, patch.upserts || [], me);
+            droppedDeletes = limitProposalDeletes(patch);
+          }
         }
         let next = applyStoragePatch(current, patch);
         if (key === "sales_contracts") next = stripNestedContractExtra(next);
@@ -300,7 +313,8 @@ export async function POST(request: NextRequest) {
       if (key === PROTECTED_PROPOSAL_KEY) {
         // Ghi đè cả danh sách đơn từ không được làm mất đơn đang có, và không để trùng mã
         const curList = cur.rows[0]?.data ?? null;
-        const { list, kept } = keepMissingProposals(curList, data);
+        const restoredIncoming = preserveRedactedProposalFields(curList, data, me);
+        const { list, kept } = keepMissingProposals(curList, restoredIncoming);
         const existingIds = new Set((Array.isArray(curList) ? curList : []).map((p: any) => String(itemIdentity(p))));
         const recoded = dedupeProposalCodes(list, existingIds, curList);
         data = list;

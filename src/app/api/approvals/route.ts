@@ -1009,23 +1009,41 @@ export async function GET(req: NextRequest) {
     const enrichedRequests = (reqRes.rows || [])
       .filter((row: any) => {
         if (isBoss) return true;
-        // Cho phép toàn công ty & Kế toán xem lịch Nghỉ phép / Công tác (HR_LEAVE_TRIP) để phối hợp bàn giao & chấm công tháng
-        if (row.template_code === "HR_LEAVE_TRIP" || row.category === "HR") return true;
-        if (sameStaffName(row.requester_name, myName) || String(row.requester_username || "").toLowerCase() === myUsername) return true;
-        if (isSameWorkspaceDept(row.requester_dept, me.department)) return true;
+        const isOwner =
+          sameStaffName(row.requester_name, myName) ||
+          (myUsername && String(row.requester_username || "").toLowerCase() === myUsername);
+        if (isOwner) return true;
+
         const stages = Array.isArray(row.approval_stages) ? row.approval_stages : [];
-        if (
-          stages.some(
-            (s: any) =>
-              sameStaffName(s.approver_name, myName) ||
-              String(s.approver_username || "").toLowerCase() === myUsername ||
-              isSameWorkspaceDept(s.dept, me.department)
-          )
-        ) {
-          return true;
-        }
+        const isStageApprover = stages.some(
+          (s: any) =>
+            sameStaffName(s.approver_name, myName) ||
+            (myUsername && String(s.approver_username || "").toLowerCase() === myUsername) ||
+            (isMgr && isSameWorkspaceDept(s.dept, me.department))
+        );
+        if (isStageApprover) return true;
+
         const followers = Array.isArray(row.followers) ? row.followers : [];
         if (followers.some((f: any) => sameStaffName(f, myName))) return true;
+
+        // Trưởng/Phó phòng được xem đề xuất của nhân viên trong chính phòng ban mình
+        if (isMgr && isSameWorkspaceDept(row.requester_dept, me.department)) return true;
+
+        const vis = String(row.form_data?.visibility || "").toUpperCase();
+        if (vis === "PUBLIC") return true;
+        if (vis === "PRIVATE") return false;
+        if (vis === "DEPT") return isSameWorkspaceDept(row.requester_dept, me.department);
+
+        // Mặc định chuẩn theo loại đề xuất khi chưa chọn visibility riêng:
+        // - HR_LEAVE_TRIP (Nghỉ phép / Công tác) & GEN_PROPOSAL (Chủ trương chung): Công khai lịch
+        if (row.template_code === "HR_LEAVE_TRIP" || row.category === "HR" || row.category === "GENERAL") {
+          return true;
+        }
+        // - PROCUREMENT / TECHNICAL: Nội bộ phòng người trình
+        if (row.category === "PROCUREMENT" || row.category === "TECHNICAL") {
+          return isSameWorkspaceDept(row.requester_dept, me.department);
+        }
+        // - FINANCE / SALES (Đề nghị thanh toán, Tạm ứng, Chiết khấu, Thầu): Bảo mật theo luồng duyệt (PRIVATE)
         return false;
       })
       .map((row: any) => {
@@ -1039,8 +1057,29 @@ export async function GET(req: NextRequest) {
         const isOverdue =
           isPendingActive && row.due_at ? new Date(row.due_at).getTime() < Date.now() : false;
 
+        const isHrLeave = row.template_code === "HR_LEAVE_TRIP" || row.category === "HR";
+        const isInFlow =
+          isBoss ||
+          isMyRequest ||
+          (isMgr && isSameWorkspaceDept(row.requester_dept, me.department)) ||
+          stages.some(
+            (s: any) =>
+              sameStaffName(s.approver_name, myName) ||
+              (myUsername && String(s.approver_username || "").toLowerCase() === myUsername) ||
+              (isMgr && isSameWorkspaceDept(s.dept, me.department))
+          ) ||
+          (Array.isArray(row.followers) && row.followers.some((f: any) => sameStaffName(f, myName))) ||
+          sameStaffName(row.form_data?.handover_person, myName) ||
+          isSameWorkspaceDept(me.department, "Hành Chính Nhân Sự") ||
+          isSameWorkspaceDept(me.department, "Kế Toán");
+
         return {
           ...row,
+          justification:
+            isHrLeave && !isInFlow
+              ? "🔒 Lý do xin nghỉ riêng tư (Đã ẩn bảo mật — chỉ hiển thị lịch ngày nghỉ & người nhận bàn giao)"
+              : row.justification,
+          attachments: isHrLeave && !isInFlow ? [] : row.attachments,
           total_amount: Number(row.total_amount || 0),
           current_stage: currentStage || null,
           can_approve_now: canApproveNow,

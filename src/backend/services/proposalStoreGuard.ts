@@ -1,4 +1,8 @@
 import { itemIdentity } from "@/backend/services/storagePatch";
+import type { AuthorizedUser } from "@/backend/services/authz";
+import { isAdminUser } from "@/backend/services/authz";
+import { canonicalDepartment, hasPermission, isDepartmentLeaderPosition } from "@/backend/services/permissions";
+import { isSameWorkspaceDept, normalizeWorkspaceDept, sameStaffName } from "@/backend/services/workspaceTasks";
 
 /**
  * Bảo vệ danh sách Đề xuất & Phê duyệt (app_storage "workspace_proposals").
@@ -93,4 +97,222 @@ export function dedupeProposalCodes(list: any[], existingIds: Set<string> = new 
     }
   }
   return changes;
+}
+
+const KNOWN_LEADERS_AND_DEPUTIES = [
+  "Nguyễn Quốc Bảo",
+  "Nguyễn Thanh Tùng",
+  "Nguyễn Văn Hiếu",
+  "Tô Khánh Nhựt",
+  "Phan Thị Thảo Trinh",
+  "Đoàn Hồng Sơn",
+  "Huỳnh Thị Ngọc Huyền",
+  "Trần Tài",
+];
+
+function isDirectorOrAdminActor(me: AuthorizedUser): boolean {
+  if (isAdminUser(me)) return true;
+  const r = String(me.role || "").toLowerCase();
+  const d = String(me.department || "").toLowerCase();
+  return r.includes("director") || r.includes("giám đốc") || d.includes("giám đốc") || d.includes("bod");
+}
+
+function isDeptLeaderActor(me: AuthorizedUser): boolean {
+  if (isDirectorOrAdminActor(me)) return true;
+  if (hasPermission(me, "workspace.approve_dept")) return true;
+  const r = String(me.role || "").toLowerCase();
+  if (
+    isDepartmentLeaderPosition(r) ||
+    r.includes("head") ||
+    r.includes("lead") ||
+    r.includes("manager") ||
+    r.includes("trưởng phòng") ||
+    r.includes("phó trưởng phòng") ||
+    r.includes("phó phòng") ||
+    r.includes("quản đốc")
+  ) {
+    return true;
+  }
+  const fullName = String(me.full_name || "").trim();
+  return Boolean(fullName && KNOWN_LEADERS_AND_DEPUTIES.some((n) => sameStaffName(n, fullName)));
+}
+
+function isGenericRoleApprover(label: any): boolean {
+  const s = String(label || "").toLowerCase().normalize("NFC").trim();
+  if (!s) return true;
+  return (
+    s === "trưởng bộ phận" ||
+    s === "ban giám đốc" ||
+    s === "kế toán trưởng" ||
+    s === "kế toán viên" ||
+    s === "nhân viên kế toán" ||
+    s === "chuyên viên kế toán" ||
+    s === "thủ quỹ" ||
+    s === "hành chính nhân sự" ||
+    s === "kế toán" ||
+    s === "pháp chế" ||
+    s.startsWith("trưởng phòng") ||
+    s.startsWith("phó trưởng phòng") ||
+    s.startsWith("trưởng bộ phận") ||
+    s.startsWith("trưởng kho") ||
+    s.startsWith("thủ kho") ||
+    s.startsWith("trưởng cung ứng") ||
+    s.startsWith("phụ trách")
+  );
+}
+
+function isLeaveProposalItem(p: any): boolean {
+  if (!p || typeof p !== "object") return false;
+  const tid = String(p.templateId || "").toLowerCase();
+  const code = String(p.proposalCode || "").toUpperCase();
+  const tname = String(p.templateName || "").toLowerCase();
+  return tid === "tmpl_leave_request" || code.startsWith("DXNP") || tname.includes("nghỉ phép");
+}
+
+export function resolveEffectiveProposalVisibility(p: any): "PRIVATE" | "DEPT" | "PUBLIC" {
+  const vis = String(p?.visibility || "").toUpperCase();
+  if (vis === "PRIVATE" || vis === "DEPT" || vis === "PUBLIC") return vis;
+  const tid = String(p?.templateId || "").toLowerCase();
+  const prefix = String(p?.proposalCode || "").split("-")[0].toUpperCase();
+  const cat = String(p?.category || "").toUpperCase();
+
+  if (tid === "tmpl_leave_request" || prefix === "DXNP") return "PUBLIC";
+  if (cat === "EXECUTIVE" || tid === "tmpl_executive_memo" || prefix === "TTR") return "PUBLIC";
+  if (tid === "tmpl_business_trip" || prefix === "DXCT") return "DEPT";
+  if (cat === "TECHNICAL_OPS") return "DEPT";
+  return "PRIVATE";
+}
+
+export function isActorDirectlyInProposalFlow(p: any, me: AuthorizedUser): boolean {
+  if (!p || typeof p !== "object") return false;
+  if (isDirectorOrAdminActor(me)) return true;
+  const myName = String(me.full_name || me.username || "").trim();
+  const myDept = String(me.department || "").trim();
+  if (!myName) return false;
+
+  if (sameStaffName(p.requesterName, myName)) return true;
+  if (p.executorName && sameStaffName(p.executorName, myName)) return true;
+  if (Array.isArray(p.followers) && p.followers.some((f: any) => sameStaffName(f, myName))) return true;
+
+  const handover = String(p.formValues?.handoverStaff || p.formValues?.handover_person || "").trim();
+  if (handover && sameStaffName(handover, myName)) return true;
+
+  const companions = String(p.formValues?.companions || "").trim();
+  if (
+    companions &&
+    companions
+      .split(/[,;\n]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .some((c) => sameStaffName(c, myName))
+  ) {
+    return true;
+  }
+
+  const isLeader = isDeptLeaderActor(me);
+  if (
+    isLeader &&
+    myDept &&
+    (isSameWorkspaceDept(p.requesterDept, myDept) ||
+      (Boolean(canonicalDepartment(p.requesterDept)) &&
+        canonicalDepartment(p.requesterDept) === canonicalDepartment(myDept)))
+  ) {
+    return true;
+  }
+
+  const steps = Array.isArray(p.steps) ? p.steps : [];
+  for (const st of steps) {
+    if (!st) continue;
+    if (st.approverName && sameStaffName(st.approverName, myName)) return true;
+    if (st.decidedBy && sameStaffName(st.decidedBy, myName)) return true;
+    if (myDept && sameStaffName(st.approverName, myDept)) return true;
+    if (isLeader && myDept && isGenericRoleApprover(st.approverName)) {
+      const sameStepDept =
+        isSameWorkspaceDept(st.dept, myDept) ||
+        (Boolean(canonicalDepartment(st.dept)) && canonicalDepartment(st.dept) === canonicalDepartment(myDept));
+      if (sameStepDept) return true;
+    }
+  }
+
+  return false;
+}
+
+export function canActorSeeFullLeaveDetails(p: any, me: AuthorizedUser): boolean {
+  if (isActorDirectlyInProposalFlow(p, me)) return true;
+  const myDept = String(me.department || "").trim();
+  const canonDept = canonicalDepartment(myDept);
+  const normDept = normalizeWorkspaceDept(myDept);
+  if (canonDept === "Hành chính" || normDept === "Hành Chính Nhân Sự" || normDept === "Kế Toán") {
+    return true;
+  }
+  return false;
+}
+
+export function canActorViewProposal(p: any, me: AuthorizedUser): boolean {
+  if (!p || typeof p !== "object") return false;
+  if (isDirectorOrAdminActor(me)) return true;
+  const myName = String(me.full_name || me.username || "").trim();
+  if (String(p.status || "").toUpperCase() === "DRAFT") {
+    return Boolean(myName && sameStaffName(p.requesterName, myName));
+  }
+  if (isActorDirectlyInProposalFlow(p, me)) return true;
+  const vis = resolveEffectiveProposalVisibility(p);
+  if (vis === "PUBLIC") return true;
+  if (vis === "DEPT") {
+    const myDept = String(me.department || "").trim();
+    if (!myDept) return false;
+    return (
+      isSameWorkspaceDept(p.requesterDept, myDept) ||
+      (Boolean(canonicalDepartment(p.requesterDept)) &&
+        canonicalDepartment(p.requesterDept) === canonicalDepartment(myDept))
+    );
+  }
+  return false;
+}
+
+/**
+ * Lọc danh sách `workspace_proposals` trước khi trả về từ `/api/storage`:
+ * - Ẩn hoàn toàn các đề xuất `PRIVATE` / `DEPT` mà người đang đăng nhập không có quyền xem.
+ * - Với Đơn xin nghỉ phép (`DXNP`) công khai lịch (`PUBLIC`), nếu người xem không nằm trong luồng duyệt / HCNS / Kế toán / BGĐ
+ *   thì tự động ẩn lý do cá nhân (`summaryReason`) và tệp đính kèm riêng tư (`attachments`), vẫn giữ nguyên lịch ngày nghỉ & người bàn giao.
+ */
+export function filterReadableProposalsForUser(rawList: any, me: AuthorizedUser): any {
+  if (!Array.isArray(rawList)) return rawList;
+  if (isDirectorOrAdminActor(me)) return rawList;
+  const out: any[] = [];
+  for (const p of rawList) {
+    if (!canActorViewProposal(p, me)) continue;
+    if (isLeaveProposalItem(p) && !canActorSeeFullLeaveDetails(p, me)) {
+      out.push({
+        ...p,
+        summaryReason: "🔒 Lý do xin nghỉ riêng tư (Đã ẩn bảo mật — chỉ hiển thị lịch ngày nghỉ & người nhận bàn giao)",
+        attachments: [],
+      });
+    } else {
+      out.push(p);
+    }
+  }
+  return out;
+}
+
+/**
+ * Khi một tài khoản nhận về đơn nghỉ phép đã bị che `summaryReason` / `attachments` và vô tình gửi patch lên,
+ * giữ nguyên `summaryReason` và `attachments` gốc đang lưu trên máy chủ.
+ */
+export function preserveRedactedProposalFields(current: any, upserts: any[], me: AuthorizedUser): any[] {
+  if (!Array.isArray(current) || !Array.isArray(upserts) || isDirectorOrAdminActor(me)) return upserts;
+  const byId = new Map<string, any>();
+  for (const item of current) {
+    const id = itemIdentity(item);
+    if (id !== null) byId.set(id, item);
+  }
+  return upserts.map((item) => {
+    const prev = byId.get(itemIdentity(item) || "");
+    if (!prev || !isLeaveProposalItem(prev) || canActorSeeFullLeaveDetails(prev, me)) return item;
+    return {
+      ...item,
+      summaryReason: prev.summaryReason,
+      attachments: prev.attachments,
+    };
+  });
 }
