@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import * as XLSX from "xlsx";
+import { AnomalyReportView } from "@/frontend/components/AnomalyReportView";
 import {
   Settings,
   Users,
@@ -329,15 +330,15 @@ const PERMISSION_MATRIX = [
 ];
 
 export interface SettingsModuleProps {
-  initialSubTab?: "personnel" | "users" | "departments" | "audit" | "notifications" | "finance" | "factory";
+  initialSubTab?: "personnel" | "users" | "departments" | "audit" | "notifications" | "finance" | "factory" | "anomalies";
 }
 
 export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab }) => {
-  const [subTab, setSubTab] = useState<"personnel" | "users" | "departments" | "audit" | "notifications" | "finance" | "factory">(() => {
+  const [subTab, setSubTab] = useState<"personnel" | "users" | "departments" | "audit" | "notifications" | "finance" | "factory" | "anomalies">(() => {
     if (initialSubTab) return initialSubTab;
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("settings_target_subtab");
-      if (saved && ["personnel", "users", "departments", "audit", "notifications", "finance", "factory"].includes(saved)) {
+      if (saved && ["personnel", "users", "departments", "audit", "notifications", "finance", "factory", "anomalies"].includes(saved)) {
         localStorage.removeItem("settings_target_subtab");
         return saved as any;
       }
@@ -1107,7 +1108,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
   useEffect(() => {
     const handleNav = (e: any) => {
       if (e.detail && e.detail.tab === "settings" && e.detail.subTab) {
-        const validSubTabs = ["personnel", "users", "departments", "audit", "notifications", "finance", "factory"];
+        const validSubTabs = ["personnel", "users", "departments", "audit", "notifications", "finance", "factory", "anomalies"];
         if (validSubTabs.includes(e.detail.subTab)) {
           setSubTab(e.detail.subTab);
         }
@@ -1618,6 +1619,14 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
               }`}
             >
               <Factory className="w-3.5 h-3.5 shrink-0" /> Vai Trò &amp; PIN Nhà Máy
+            </button>
+            <button
+              onClick={() => setSubTab("anomalies")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+                subTab === "anomalies" ? "bg-white dark:bg-slate-700 text-orange-600 dark:text-orange-400 shadow-xs font-bold" : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+              }`}
+            >
+              <Bell className="w-3.5 h-3.5 shrink-0" /> Báo Cáo Bất Thường
             </button>
           </div>
         </div>
@@ -3059,6 +3068,9 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
 
       {/* SUBTAB: TÀI CHÍNH (phương thức thanh toán) */}
       {subTab === "finance" && <PaymentMethodsSettings />}
+
+      {/* SUBTAB: BÁO CÁO BẤT THƯỜNG (thao tác / dữ liệu lệch quy trình, hàng tuần) */}
+      {subTab === "anomalies" && <AnomalyReportView />}
       {subTab === "factory" && <FactorySettingsModule />}
 
       {/* SUBTAB: NOTIFICATION MATRIX (CÀI ĐẶT MA TRẬN THÔNG BÁO) */}

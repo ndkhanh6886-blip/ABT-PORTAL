@@ -8,6 +8,7 @@ import { LoginScreen } from "@/frontend/components/LoginScreen";
 import { SearchableSelectEnhancer } from "@/frontend/components/SearchableSelectEnhancer";
 import { DataSyncGate } from "@/frontend/components/DataSyncGate";
 import { AccountSecurityModal } from "@/frontend/components/AccountSecurityModal";
+import { AnomalyWeeklyReminder } from "@/frontend/components/AnomalyWeeklyReminder";
 import { BUSINESS_TABS, BusinessTabs, TECHNICAL_TABS, TechnicalTabs, SETTINGS_TABS, SettingsTabs } from "@/frontend/components/GroupTabs";
 import { DepartmentWorkTasksBar } from "@/frontend/components/DepartmentWorkTasksBar";
 
@@ -127,14 +128,14 @@ export default function Home() {
     }
   }, [user]);
 
-  const [settingsSubTab, setSettingsSubTab] = useState<"personnel" | "users" | "departments" | "audit" | "notifications" | "finance" | "factory">("users");
+  const [settingsSubTab, setSettingsSubTab] = useState<"personnel" | "users" | "departments" | "audit" | "notifications" | "finance" | "factory" | "anomalies">("users");
 
   useEffect(() => {
     const handleNav = (e: any) => {
       if (e.detail && e.detail.tab) {
         setActiveTab(e.detail.tab as MainTab);
         if (e.detail.tab === "settings" && e.detail.subTab) {
-          const validSubTabs = ["personnel", "users", "departments", "audit", "notifications", "finance", "factory"];
+          const validSubTabs = ["personnel", "users", "departments", "audit", "notifications", "finance", "factory", "anomalies"];
           if (validSubTabs.includes(e.detail.subTab)) {
             setSettingsSubTab(e.detail.subTab);
           }
@@ -187,6 +188,12 @@ export default function Home() {
       <Navbar activeTab={activeTab} setActiveTab={setActiveTab} currentUser={user} />
 
       <main className="flex-1 w-full px-2 sm:px-4 lg:px-6 py-3.5 sm:py-4 pb-24 lg:pb-5">
+        {can("settings.view") && (
+          <AnomalyWeeklyReminder
+            userKey={String(user.username || user.id || "")}
+            onOpen={() => window.dispatchEvent(new CustomEvent("tbr-navigate", { detail: { tab: "settings", subTab: "anomalies" } }))}
+          />
+        )}
         <DataSyncGate key={user.username || user.id}>
           {BUSINESS_TABS.includes(activeTab) && <BusinessTabs active={activeTab} onChange={setActiveTab} />}
           {TECHNICAL_TABS.includes(activeTab) && <TechnicalTabs active={activeTab} onChange={setActiveTab} />}
