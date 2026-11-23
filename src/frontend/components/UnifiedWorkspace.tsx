@@ -1937,6 +1937,42 @@ const MultiDepartmentDropdownSelect: React.FC<MultiDepartmentDropdownSelectProps
   );
 };
 
+/**
+ * Tính trạng thái hạn chót (Deadline) của công việc:
+ * - isOverdue: Trễ hạn (status !== DONE / CANCELLED và deadlineIso < todayIso)
+ * - isDueToday: Đến hạn hôm nay (status !== DONE / CANCELLED và deadlineIso === todayIso)
+ * - daysLate: Số ngày đã trễ hạn (>= 1 khi isOverdue)
+ */
+export function getTaskDeadlineAlert(task: any, refTodayIso?: string): {
+  deadlineIso: string;
+  isOverdue: boolean;
+  isDueToday: boolean;
+  daysLate: number;
+} {
+  const isCompleted = task?.status === "DONE" || task?.status === "CANCELLED";
+  const raw = String(task?.deadline || "").trim();
+  if (!raw) {
+    return { deadlineIso: "", isOverdue: false, isDueToday: false, daysLate: 0 };
+  }
+  const iso = toISODate(raw) || (/^\d{4}-\d{2}-\d{2}/.test(raw) ? raw.slice(0, 10) : "");
+  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    return { deadlineIso: "", isOverdue: false, isDueToday: false, daysLate: 0 };
+  }
+  if (isCompleted) {
+    return { deadlineIso: iso, isOverdue: false, isDueToday: false, daysLate: 0 };
+  }
+  const todayStr = refTodayIso || todayVN();
+  if (iso < todayStr) {
+    const diffMs = new Date(todayStr + "T00:00:00").getTime() - new Date(iso + "T00:00:00").getTime();
+    const daysLate = Math.max(1, Math.round(diffMs / 86400000));
+    return { deadlineIso: iso, isOverdue: true, isDueToday: false, daysLate };
+  }
+  if (iso === todayStr) {
+    return { deadlineIso: iso, isOverdue: false, isDueToday: true, daysLate: 0 };
+  }
+  return { deadlineIso: iso, isOverdue: false, isDueToday: false, daysLate: 0 };
+}
+
 export const renderTextWithLinks = (
   rawText: any,
   linkClassName = "text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 underline font-semibold break-all cursor-pointer"
@@ -2126,7 +2162,7 @@ export const UnifiedWorkspace: React.FC = () => {
   const [hubWeeklyPlans, setHubWeeklyPlans] = useState<HubWeeklyPlanEvent[]>([]);
   const [workspaceUsersList, setWorkspaceUsersList] = useState<any[]>([]);
   const [taskSourceFilter, setTaskSourceFilter] = useState<"all" | "portal" | "RD" | "KIT_OLIGO" | "DEVICE" | "QA_WH_PUR" | "APP_LEGAL">("all");
-  const [myTaskScopeFilter, setMyTaskScopeFilter] = useState<"ALL" | "ASSIGNED_TO_ME" | "CREATED_BY_ME" | "FOLLOWING" | "MY_DEPT">("ALL");
+  const [myTaskScopeFilter, setMyTaskScopeFilter] = useState<"ALL" | "ASSIGNED_TO_ME" | "CREATED_BY_ME" | "FOLLOWING" | "MY_DEPT" | "OVERDUE">("ALL");
   const [scheduleScopeMode, setScheduleScopeMode] = useState<"person" | "dept">("person");
   const [scheduleWorkSearch, setScheduleWorkSearch] = useState<string>("");
   const [showTechWeeklyPlans, setShowTechWeeklyPlans] = useState<boolean>(true);
@@ -3738,7 +3774,7 @@ export const UnifiedWorkspace: React.FC = () => {
         }
       }
 
-      // Filter by personal scope (Giao cho tôi / Do tôi tạo / Đang theo dõi / Việc phòng tôi)
+      // Filter by personal scope (Giao cho tôi / Do tôi tạo / Đang theo dõi / Việc phòng tôi / Trễ hạn)
       if (myTaskScopeFilter === "ASSIGNED_TO_ME") {
         if (!isAssignedToMe) return false;
       } else if (myTaskScopeFilter === "CREATED_BY_ME") {
@@ -3747,13 +3783,20 @@ export const UnifiedWorkspace: React.FC = () => {
         if (!isFollowedByMe) return false;
       } else if (myTaskScopeFilter === "MY_DEPT") {
         if (!taskInvolvesDept(t, userDept)) return false;
+      } else if (myTaskScopeFilter === "OVERDUE") {
+        if (!getTaskDeadlineAlert(t, currentTodayIso).isOverdue) return false;
       }
 
+      const dlAlert = getTaskDeadlineAlert(t, currentTodayIso);
       const matchStatus =
         statusFilter === "all"
           ? true
           : statusFilter === "FOLLOWING"
           ? isFollowedByMe
+          : statusFilter === "OVERDUE"
+          ? dlAlert.isOverdue
+          : statusFilter === "DUE_TODAY"
+          ? dlAlert.isDueToday
           : t.status === statusFilter;
       const q = searchQuery.trim().toLowerCase();
       const followersStr = parseTaskFollowersList(t.followers).join(" ").toLowerCase();
@@ -3768,8 +3811,18 @@ export const UnifiedWorkspace: React.FC = () => {
         (t.customer_name && t.customer_name.toLowerCase().includes(q)) ||
         (t.department && String(t.department).toLowerCase().includes(q));
       return matchStatus && matchSearch;
+    }).sort((a: any, b: any) => {
+      // Đưa các công việc đang Trễ hạn (Overdue) hoặc Đến hạn hôm nay (Due Today) lên đầu mỗi cột
+      const alA = getTaskDeadlineAlert(a, currentTodayIso);
+      const alB = getTaskDeadlineAlert(b, currentTodayIso);
+      if (alA.isOverdue !== alB.isOverdue) return alA.isOverdue ? -1 : 1;
+      if (alA.isOverdue && alB.isOverdue && alA.daysLate !== alB.daysLate) {
+        return alB.daysLate - alA.daysLate; // Trễ lâu hơn xếp trên
+      }
+      if (alA.isDueToday !== alB.isDueToday) return alA.isDueToday ? -1 : 1;
+      return 0;
     });
-  }, [mergedWorkspaceTasks, rolePerspective, userDept, filterDept, selectedAssignee, taskSourceFilter, myTaskScopeFilter, currentStaffName, statusFilter, searchQuery, user, taskHasAssignee, taskHasFollower, parseTaskFollowersList, isTaskCreatedByStaff, taskInvolvesDept, taskBelongsToStaff]);
+  }, [mergedWorkspaceTasks, rolePerspective, userDept, filterDept, selectedAssignee, taskSourceFilter, myTaskScopeFilter, currentStaffName, statusFilter, searchQuery, user, currentTodayIso, taskHasAssignee, taskHasFollower, parseTaskFollowersList, isTaskCreatedByStaff, taskInvolvesDept, taskBelongsToStaff]);
 
   // RBAC Filtered Technical Weekly Plans (Lịch phân công & Kế hoạch tuần các phòng Kỹ thuật)
   const filteredHubWeeklyPlans = useMemo(() => {
@@ -9512,6 +9565,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               <option value="TODO">Cần làm</option>
               <option value="IN_PROGRESS">Đang làm</option>
               <option value="DONE">Hoàn tất</option>
+              <option value="OVERDUE">🚨 Đang trễ hạn</option>
+              <option value="DUE_TODAY">⏰ Đến hạn hôm nay</option>
               <option value="FOLLOWING">👁️ Đang theo dõi ({followingTasksCount})</option>
             </select>
           )}
@@ -9772,9 +9827,21 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             const myDeptCount = mergedWorkspaceTasks.filter((t: any) =>
               taskInvolvesDept(t, userDept)
             ).length;
+            const overdueScopedTasks = mergedWorkspaceTasks.filter((t: any) => {
+              if (!getTaskDeadlineAlert(t, currentTodayIso).isOverdue) return false;
+              if (rolePerspective === "staff") {
+                return (
+                  taskBelongsToStaff(t, currentStaffName) ||
+                  taskHasFollower(t.followers, currentStaffName) ||
+                  (!cleanWorkspaceAssignee(t.assignee_name) && isSameWorkspaceDept(t.department, userDept))
+                );
+              }
+              return effectiveSelectedDept === "all" || taskInvolvesDept(t, effectiveSelectedDept);
+            });
+            const overdueCount = overdueScopedTasks.length;
 
             const personalPills: {
-              id: "ALL" | "ASSIGNED_TO_ME" | "CREATED_BY_ME" | "FOLLOWING" | "MY_DEPT";
+              id: "ALL" | "ASSIGNED_TO_ME" | "CREATED_BY_ME" | "FOLLOWING" | "MY_DEPT" | "OVERDUE";
               label: string;
               count: number;
               activeClass: string;
@@ -9815,65 +9882,113 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 activeClass: "bg-amber-600 text-white border-amber-600",
                 inactiveClass: "bg-amber-50/70 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 border-amber-200 dark:border-amber-800 hover:bg-amber-100",
               },
+              {
+                id: "OVERDUE",
+                label: "🚨 Đang trễ hạn",
+                count: overdueCount,
+                activeClass: "bg-rose-600 text-white border-rose-600 ring-2 ring-rose-500/30",
+                inactiveClass:
+                  overdueCount > 0
+                    ? "bg-rose-100 dark:bg-rose-950/80 text-rose-800 dark:text-rose-200 border-rose-400 dark:border-rose-700 hover:bg-rose-200 animate-pulse"
+                    : "bg-rose-50/50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800 hover:bg-rose-100",
+              },
             ];
 
             return (
-              <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-2xl border border-indigo-200/80 dark:border-indigo-900/60 bg-indigo-50/40 dark:bg-slate-900/80">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[11px] font-extrabold text-indigo-900 dark:text-indigo-200 mr-1">
-                    👤 Góc nhìn cá nhân:
-                  </span>
-                  {personalPills.map((p) => {
-                    const isActive = myTaskScopeFilter === p.id;
-                    return (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => setMyTaskScopeFilter(p.id)}
-                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
-                          isActive ? `${p.activeClass} shadow-xs` : p.inactiveClass
-                        }`}
-                      >
-                        <span>{p.label}</span>
-                        <span
-                          className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
-                            isActive
-                              ? "bg-white/20 text-current"
-                              : "bg-white/80 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-2xl border border-indigo-200/80 dark:border-indigo-900/60 bg-indigo-50/40 dark:bg-slate-900/80">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[11px] font-extrabold text-indigo-900 dark:text-indigo-200 mr-1">
+                      👤 Góc nhìn cá nhân:
+                    </span>
+                    {personalPills.map((p) => {
+                      const isActive = myTaskScopeFilter === p.id;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => setMyTaskScopeFilter(p.id)}
+                          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                            isActive ? `${p.activeClass} shadow-xs` : p.inactiveClass
                           }`}
                         >
-                          {p.count}
-                        </span>
-                      </button>
-                    );
-                  })}
+                          <span>{p.label}</span>
+                          <span
+                            className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                              isActive
+                                ? "bg-white/20 text-current"
+                                : "bg-white/80 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+                            }`}
+                          >
+                            {p.count}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const defaultDept = rolePerspective === "manager" ? managerDept : defaultConcreteDeptForScope(selectedDept, userDept);
+                      setTaskForm({
+                        id: null,
+                        title: "",
+                        department: defaultDept,
+                        task_category: DEPARTMENT_CATEGORIES[defaultDept]?.[0] || "Chung",
+                        assignee_name: currentStaffName,
+                        customer_name: "",
+                        priority: "MEDIUM",
+                        status: "TODO",
+                        deadline: todayVN(),
+                        description: "",
+                        result: "",
+                        attachments: [],
+                        followers: []
+                      });
+                      setIsTaskModalOpen(true);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-extrabold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    + Tạo / Giao việc mới
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const defaultDept = rolePerspective === "manager" ? managerDept : defaultConcreteDeptForScope(selectedDept, userDept);
-                    setTaskForm({
-                      id: null,
-                      title: "",
-                      department: defaultDept,
-                      task_category: DEPARTMENT_CATEGORIES[defaultDept]?.[0] || "Chung",
-                      assignee_name: currentStaffName,
-                      customer_name: "",
-                      priority: "MEDIUM",
-                      status: "TODO",
-                      deadline: todayVN(),
-                      description: "",
-                      result: "",
-                      attachments: [],
-                      followers: []
-                    });
-                    setIsTaskModalOpen(true);
-                  }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-extrabold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  + Tạo / Giao việc mới
-                </button>
+
+                {overdueCount > 0 && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 rounded-2xl border-2 border-rose-400 dark:border-rose-700 bg-gradient-to-r from-rose-50 via-red-50/90 to-amber-50/70 dark:from-rose-950/60 dark:via-red-950/50 dark:to-slate-900 shadow-xs">
+                    <div className="flex items-center gap-2 text-xs text-rose-900 dark:text-rose-200 min-w-0">
+                      <span className="inline-flex items-center justify-center w-6 h-6 rounded-xl bg-rose-600 text-white font-black text-xs shrink-0 animate-pulse">
+                        !
+                      </span>
+                      <div className="min-w-0">
+                        <span className="font-black uppercase tracking-wide text-rose-700 dark:text-rose-300">
+                          🚨 Cảnh báo tiến độ: Có {overdueCount} công việc đang trễ hạn hoàn thành!
+                        </span>
+                        <span className="ml-2 text-[11px] font-semibold text-rose-800/90 dark:text-rose-200/90">
+                          ({overdueScopedTasks
+                            .slice(0, 3)
+                            .map((t: any) => {
+                              const al = getTaskDeadlineAlert(t, currentTodayIso);
+                              return `${t.task_code || t.title} - trễ ${al.daysLate} ngày (${cleanWorkspaceAssignee(t.assignee_name) || "Chưa gán"})`;
+                            })
+                            .join(" • ")}
+                          {overdueCount > 3 ? ` và ${overdueCount - 3} việc khác` : ""})
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setMyTaskScopeFilter(myTaskScopeFilter === "OVERDUE" ? "ALL" : "OVERDUE")}
+                      className={`px-3 py-1 rounded-xl text-xs font-extrabold border transition-all cursor-pointer shrink-0 ${
+                        myTaskScopeFilter === "OVERDUE"
+                          ? "bg-white dark:bg-slate-900 text-rose-700 dark:text-rose-300 border-rose-300"
+                          : "bg-rose-600 hover:bg-rose-700 text-white border-rose-700 shadow-2xs"
+                      }`}
+                    >
+                      {myTaskScopeFilter === "OVERDUE" ? "↺ Xem lại tất cả công việc" : `🔍 Lọc xem ngay ${overdueCount} việc trễ hạn`}
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })()}
@@ -9999,9 +10114,20 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       Cần Làm (TODO)
                     </span>
                   </div>
-                  <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400">
-                    {filteredTasks.filter((t) => t.status === "TODO").length}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {(() => {
+                      const todoOverdue = filteredTasks.filter((t) => t.status === "TODO" && getTaskDeadlineAlert(t, currentTodayIso).isOverdue).length;
+                      if (todoOverdue === 0) return null;
+                      return (
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-600 text-white animate-pulse">
+                          🚨 {todoOverdue} trễ hạn
+                        </span>
+                      );
+                    })()}
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400">
+                      {filteredTasks.filter((t) => t.status === "TODO").length}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="space-y-2.5 min-h-[300px]">
@@ -10035,9 +10161,20 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       Đang Thực Hiện
                     </span>
                   </div>
-                  <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400">
-                    {filteredTasks.filter((t) => t.status === "IN_PROGRESS").length}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {(() => {
+                      const inProgOverdue = filteredTasks.filter((t) => t.status === "IN_PROGRESS" && getTaskDeadlineAlert(t, currentTodayIso).isOverdue).length;
+                      if (inProgOverdue === 0) return null;
+                      return (
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-600 text-white animate-pulse">
+                          🚨 {inProgOverdue} trễ hạn
+                        </span>
+                      );
+                    })()}
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400">
+                      {filteredTasks.filter((t) => t.status === "IN_PROGRESS").length}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="space-y-2.5 min-h-[300px]">
@@ -10115,11 +10252,32 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {tasksPage.items.map((t) => (
-                    <tr key={t.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                  {tasksPage.items.map((t) => {
+                    const dlAlert = getTaskDeadlineAlert(t, currentTodayIso);
+                    return (
+                    <tr
+                      key={t.id}
+                      className={`transition-colors ${
+                        dlAlert.isOverdue
+                          ? "bg-rose-50/70 dark:bg-rose-950/25 hover:bg-rose-100/70 dark:hover:bg-rose-950/40 border-l-4 border-l-rose-600"
+                          : dlAlert.isDueToday
+                          ? "bg-amber-50/60 dark:bg-amber-950/20 hover:bg-amber-100/60 border-l-4 border-l-amber-500"
+                          : "hover:bg-slate-50 dark:hover:bg-slate-800/40"
+                      }`}
+                    >
                       <td className="py-2.5 px-3">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="font-mono font-bold text-[11px] text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-1.5 py-0.2 rounded">{t.task_code}</span>
+                          {dlAlert.isOverdue && (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-rose-600 text-white animate-pulse">
+                              🚨 TRỄ HẠN {dlAlert.daysLate} NGÀY
+                            </span>
+                          )}
+                          {dlAlert.isDueToday && (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-amber-500 text-white">
+                              ⏰ HẠN HÔM NAY
+                            </span>
+                          )}
                           <span className="font-bold text-slate-900 dark:text-white">{t.title}</span>
                           {t.related_workflow_code && (
                             <span className="text-[10px] text-purple-600 dark:text-purple-400 font-normal">
@@ -10169,7 +10327,23 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       </td>
                       <td className="py-2.5 px-3 text-slate-500">{t.customer_name || "—"}</td>
                       <td className="py-2.5 px-3"><PriorityBadge priority={t.priority} /></td>
-                      <td className="py-2.5 px-3 font-mono text-slate-500 whitespace-nowrap">{t.deadline ? formatDayVN(t.deadline) : "—"}</td>
+                      <td className="py-2.5 px-3 font-mono whitespace-nowrap">
+                        {t.deadline ? (
+                          <span
+                            className={
+                              dlAlert.isOverdue
+                                ? "px-2 py-0.5 rounded-lg bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-700 font-black"
+                                : dlAlert.isDueToday
+                                ? "px-2 py-0.5 rounded-lg bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 font-extrabold"
+                                : "text-slate-500"
+                            }
+                          >
+                            {dlAlert.isOverdue ? `🚨 ${formatDayVN(t.deadline)} (-${dlAlert.daysLate}d)` : dlAlert.isDueToday ? `⏰ ${formatDayVN(t.deadline)}` : formatDayVN(t.deadline)}
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
                       <td className="py-2.5 px-3 whitespace-nowrap">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                           t.status === "DONE" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" :
@@ -10216,7 +10390,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         )}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                   {filteredTasks.length === 0 && (
                     <tr>
                       <td colSpan={8} className="text-center py-8 text-slate-400 italic">
@@ -20695,11 +20870,32 @@ const TaskCard: React.FC<{
   followersList?: string[];
   isFollowedByMe?: boolean;
 }> = ({ task, onStatusChange, onEdit, onScheduleHubItem, onNavigateTab, isReadOnlyFollower, followersList = [], isFollowedByMe }) => {
+  const dlAlert = getTaskDeadlineAlert(task);
   return (
-    <div className="bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700 rounded-xl p-3.5 shadow-xs hover:shadow-md transition-all space-y-2">
-      <div className="flex items-center justify-between gap-1">
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] font-mono font-bold text-slate-400">{task.task_code}</span>
+    <div
+      className={`rounded-xl p-3.5 shadow-xs hover:shadow-md transition-all space-y-2 border ${
+        dlAlert.isOverdue
+          ? "bg-rose-50/75 dark:bg-rose-950/35 border-2 border-rose-500 dark:border-rose-700 border-l-[6px] border-l-rose-600 ring-2 ring-rose-500/20"
+          : dlAlert.isDueToday
+          ? "bg-amber-50/60 dark:bg-amber-950/25 border-amber-400 dark:border-amber-700 border-l-[5px] border-l-amber-500"
+          : "bg-white dark:bg-slate-800 border-slate-200/80 dark:border-slate-700"
+      }`}
+    >
+      <div className="flex items-center justify-between gap-1 flex-wrap">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className={`text-[10px] font-mono font-bold ${dlAlert.isOverdue ? "text-rose-700 dark:text-rose-300" : "text-slate-400"}`}>
+            {task.task_code}
+          </span>
+          {dlAlert.isOverdue && (
+            <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-rose-600 text-white shadow-2xs animate-pulse">
+              🚨 TRỄ HẠN {dlAlert.daysLate} NGÀY
+            </span>
+          )}
+          {dlAlert.isDueToday && (
+            <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-amber-500 text-white shadow-2xs">
+              ⏰ HẠN HÔM NAY
+            </span>
+          )}
           {isFollowedByMe && (
             <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-sky-100 text-sky-800 dark:bg-sky-950/70 dark:text-sky-300 border border-sky-200 dark:border-sky-800">
               👁️ Đang theo dõi
@@ -20808,7 +21004,32 @@ const TaskCard: React.FC<{
             ⏳ Chờ phân công
           </button>
         )}
-        <span className="text-[10px] font-mono">{task.deadline ? formatDayVN(task.deadline, true) : ""}</span>
+        {task.deadline ? (
+          <span
+            className={`text-[10px] font-mono ${
+              dlAlert.isOverdue
+                ? "px-2 py-0.5 rounded-md bg-rose-600 text-white font-black shadow-2xs"
+                : dlAlert.isDueToday
+                ? "px-2 py-0.5 rounded-md bg-amber-500 text-white font-extrabold"
+                : "text-slate-500"
+            }`}
+            title={
+              dlAlert.isOverdue
+                ? `Công việc đã trễ hạn ${dlAlert.daysLate} ngày (Hạn chót: ${formatDayVN(task.deadline)})`
+                : dlAlert.isDueToday
+                ? `Hạn hoàn thành ngay trong hôm nay (${formatDayVN(task.deadline)})`
+                : `Hạn chót: ${formatDayVN(task.deadline)}`
+            }
+          >
+            {dlAlert.isOverdue
+              ? `🚨 Hạn: ${formatDayVN(task.deadline, true)} (-${dlAlert.daysLate}d)`
+              : dlAlert.isDueToday
+              ? `⏰ Hôm nay (${formatDayVN(task.deadline, true)})`
+              : formatDayVN(task.deadline, true)}
+          </span>
+        ) : (
+          <span className="text-[10px] font-mono"></span>
+        )}
       </div>
 
       <div className="flex items-center justify-end gap-1 pt-1 flex-wrap">
