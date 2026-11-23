@@ -1754,6 +1754,189 @@ const DepartmentDropdownSelect: React.FC<DepartmentDropdownSelectProps> = ({ val
   );
 };
 
+interface MultiDepartmentDropdownSelectProps {
+  selectedDepts: string[];
+  onChange: (nextDepts: string[]) => void;
+  departments: Array<{ id: string; name: string }>;
+  placeholder?: string;
+  minSelected?: number;
+  compact?: boolean;
+  accentColor?: "purple" | "indigo";
+}
+
+const MultiDepartmentDropdownSelect: React.FC<MultiDepartmentDropdownSelectProps> = ({
+  selectedDepts,
+  onChange,
+  departments,
+  placeholder = "Chọn các phòng ban phối hợp...",
+  minSelected = 0,
+  compact = false,
+  accentColor = "purple"
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchQ, setSearchQ] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, []);
+
+  const validDepts = useMemo(
+    () => (departments || []).filter((d) => d.id !== "all"),
+    [departments]
+  );
+
+  const filteredDepts = useMemo(() => {
+    const q = searchQ.trim().toLowerCase();
+    if (!q) return validDepts;
+    return validDepts.filter(
+      (d) => d.name.toLowerCase().includes(q) || d.id.toLowerCase().includes(q)
+    );
+  }, [validDepts, searchQ]);
+
+  const currentList = Array.isArray(selectedDepts) ? selectedDepts : [];
+
+  const toggleDept = (deptId: string) => {
+    const isPicked = currentList.includes(deptId);
+    if (isPicked) {
+      if (currentList.length <= minSelected) return;
+      onChange(currentList.filter((x) => x !== deptId));
+    } else {
+      onChange([...currentList, deptId]);
+    }
+  };
+
+  const isPurple = accentColor === "purple";
+  const pillCls = isPurple
+    ? "bg-purple-50 dark:bg-purple-950/70 text-purple-800 dark:text-purple-200 border-purple-300 dark:border-purple-800"
+    : "bg-indigo-50 dark:bg-indigo-950/70 text-indigo-800 dark:text-indigo-200 border-indigo-300 dark:border-indigo-800";
+
+  return (
+    <div ref={containerRef} className="relative w-full text-xs">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => setIsOpen((o) => !o)}
+          className={`inline-flex items-center justify-between gap-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-bold hover:border-indigo-500 transition-all shadow-2xs cursor-pointer ${
+            compact ? "px-2.5 py-1 text-[11px]" : "px-3 py-1.5 text-xs"
+          }`}
+        >
+          <span>
+            {currentList.length > 0
+              ? `🏢 Đã chọn ${currentList.length} phòng ban (Bấm để xổ chọn / bỏ chọn)`
+              : `🏢 ${placeholder}`}
+          </span>
+          <ChevronDown
+            className={`w-3.5 h-3.5 text-slate-500 transition-transform ${isOpen ? "rotate-180" : ""}`}
+          />
+        </button>
+
+        {/* Hiển thị gọn các phòng ban đã tích chọn ngay bên cạnh nút xổ */}
+        {currentList.map((deptId) => {
+          const deptObj = validDepts.find((d) => d.id === deptId);
+          const label = deptObj ? deptObj.name : deptId;
+          return (
+            <span
+              key={deptId}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border font-bold ${
+                compact ? "text-[10px]" : "text-[11px]"
+              } ${pillCls}`}
+            >
+              <span>✓ {label}</span>
+              {currentList.length > minSelected && (
+                <button
+                  type="button"
+                  onClick={() => toggleDept(deptId)}
+                  className="ml-0.5 text-slate-400 hover:text-rose-600 font-black cursor-pointer"
+                  title={`Bỏ chọn ${label}`}
+                >
+                  ×
+                </button>
+              )}
+            </span>
+          );
+        })}
+      </div>
+
+      {isOpen && (
+        <div className="absolute z-50 left-0 mt-1.5 w-full sm:w-[440px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
+          <div className="p-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex flex-wrap items-center justify-between gap-2">
+            <input
+              type="text"
+              value={searchQ}
+              onChange={(e) => setSearchQ(e.target.value)}
+              placeholder="Tìm nhanh phòng ban..."
+              className="flex-1 min-w-[140px] px-2.5 py-1 rounded-lg text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+            />
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => onChange(validDepts.map((d) => d.id))}
+                className="px-2 py-1 rounded-lg text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 cursor-pointer"
+              >
+                Chọn tất cả
+              </button>
+              {minSelected === 0 && currentList.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => onChange([])}
+                  className="px-2 py-1 rounded-lg text-[10px] font-bold bg-rose-50 dark:bg-rose-950 text-rose-700 dark:text-rose-300 hover:bg-rose-100 cursor-pointer"
+                >
+                  Bỏ chọn hết
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setIsOpen(false)}
+                className="px-2 py-1 rounded-lg text-[10px] font-bold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 cursor-pointer"
+              >
+                Xong
+              </button>
+            </div>
+          </div>
+
+          <div className="max-h-60 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/70 p-1">
+            {filteredDepts.map((d) => {
+              const isPicked = currentList.includes(d.id);
+              return (
+                <label
+                  key={d.id}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    toggleDept(d.id);
+                  }}
+                  className={`flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl cursor-pointer transition-colors ${
+                    isPicked
+                      ? "bg-indigo-50/80 dark:bg-indigo-950/50 text-indigo-900 dark:text-indigo-200 font-bold"
+                      : "hover:bg-slate-50 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-300"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <input
+                      type="checkbox"
+                      checked={isPicked}
+                      readOnly
+                      className="w-4 h-4 rounded accent-indigo-600 cursor-pointer shrink-0"
+                    />
+                    <span className="truncate text-xs">{d.name}</span>
+                  </div>
+                  {isPicked && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const renderTextWithLinks = (
   rawText: any,
   linkClassName = "text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 underline font-semibold break-all cursor-pointer"
@@ -18784,34 +18967,19 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               </div>
             </div>
 
-            {/* Multi-select Participating Departments */}
+            {/* Multi-select Participating Departments (Dropdown with checkboxes) */}
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                🏢 Các phòng ban cùng tham gia dự án (Bấm để chọn/bỏ chọn nhiều phòng ban):
+                🏢 Các phòng ban cùng tham gia dự án (Bấm vào nút xổ để tích chọn 1 hoặc nhiều phòng ban):
               </label>
-              <div className="flex flex-wrap gap-1.5">
-                {DEPARTMENTS.filter((d) => d.id !== "all").map((d) => {
-                  const isPicked = Array.isArray(labProjectForm.participatingDepts) && labProjectForm.participatingDepts.includes(d.id);
-                  return (
-                    <button
-                      key={d.id}
-                      type="button"
-                      onClick={() => {
-                        const cur = Array.isArray(labProjectForm.participatingDepts) ? labProjectForm.participatingDepts : [];
-                        const next = isPicked ? cur.filter((x) => x !== d.id) : [...cur, d.id];
-                        setLabProjectForm({ ...labProjectForm, participatingDepts: next });
-                      }}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${
-                        isPicked
-                          ? "bg-purple-600 text-white border-purple-600 shadow-2xs"
-                          : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:border-purple-400"
-                      }`}
-                    >
-                      {isPicked ? "✓ " : "+ "}{d.name}
-                    </button>
-                  );
-                })}
-              </div>
+              <MultiDepartmentDropdownSelect
+                selectedDepts={Array.isArray(labProjectForm.participatingDepts) ? labProjectForm.participatingDepts : []}
+                onChange={(next) => setLabProjectForm({ ...labProjectForm, participatingDepts: next })}
+                departments={DEPARTMENTS}
+                placeholder="Bấm để xổ chọn các phòng ban tham gia dự án..."
+                minSelected={0}
+                accentColor="purple"
+              />
             </div>
           </div>
 
@@ -19152,39 +19320,31 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       </div>
                     </div>
 
-                    {/* Multi-select Coordinating Departments for this Stage */}
-                    <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                    {/* Multi-select Coordinating Departments for this Stage (Dropdown with checkboxes) */}
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 pt-0.5">
                       <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 shrink-0">
-                        🏢 Phòng ban phối hợp GĐ {sIdx + 1} (chọn 1 hoặc nhiều):
+                        🏢 Phòng ban phối hợp GĐ {sIdx + 1}:
                       </span>
-                      {DEPARTMENTS.filter((d) => d.id !== "all").map((d) => {
-                        const isPicked = stgDepts.includes(d.id);
-                        return (
-                          <button
-                            key={d.id}
-                            type="button"
-                            onClick={() => {
-                              const nextDepts = isPicked
-                                ? (stgDepts.length > 1 ? stgDepts.filter((x) => x !== d.id) : stgDepts)
-                                : [...stgDepts, d.id];
-                              const updated = [...labProjectForm.stages];
-                              updated[sIdx] = {
-                                ...updated[sIdx],
-                                depts: nextDepts,
-                                dept: nextDepts[0] || "Kinh Doanh"
-                              };
-                              setLabProjectForm({ ...labProjectForm, stages: updated });
-                            }}
-                            className={`px-2 py-0.5 rounded-md text-[10px] font-bold border transition-all cursor-pointer ${
-                              isPicked
-                                ? "bg-indigo-600 text-white border-indigo-600 shadow-2xs"
-                                : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:border-indigo-400"
-                            }`}
-                          >
-                            {isPicked ? "✓ " : "+ "}{d.name}
-                          </button>
-                        );
-                      })}
+                      <div className="flex-1 min-w-0">
+                        <MultiDepartmentDropdownSelect
+                          selectedDepts={stgDepts}
+                          onChange={(nextDepts) => {
+                            const safeNext = nextDepts.length > 0 ? nextDepts : stgDepts;
+                            const updated = [...labProjectForm.stages];
+                            updated[sIdx] = {
+                              ...updated[sIdx],
+                              depts: safeNext,
+                              dept: safeNext[0] || "Kinh Doanh"
+                            };
+                            setLabProjectForm({ ...labProjectForm, stages: updated });
+                          }}
+                          departments={DEPARTMENTS}
+                          placeholder={`Chọn phòng ban phối hợp GĐ ${sIdx + 1}...`}
+                          minSelected={1}
+                          compact
+                          accentColor="indigo"
+                        />
+                      </div>
                     </div>
 
                     {/* Sub-tasks List inside this Stage */}
@@ -19746,30 +19906,15 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             </div>
 
             {announcementForm.targetScope === "DEPARTMENTS" && (
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                {DEPARTMENTS.filter((d) => d.id !== "all").map((d) => {
-                  const picked = announcementForm.targetDepts.includes(d.id);
-                  return (
-                    <button
-                      key={d.id}
-                      type="button"
-                      onClick={() => {
-                        const next = picked
-                          ? announcementForm.targetDepts.filter((x) => x !== d.id)
-                          : [...announcementForm.targetDepts, d.id];
-                        setAnnouncementForm({ ...announcementForm, targetDepts: next });
-                      }}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${
-                        picked
-                          ? "bg-indigo-600 text-white border-indigo-500"
-                          : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700"
-                      }`}
-                    >
-                      {picked ? "✓ " : "+ "}
-                      {d.name}
-                    </button>
-                  );
-                })}
+              <div className="pt-1">
+                <MultiDepartmentDropdownSelect
+                  selectedDepts={announcementForm.targetDepts}
+                  onChange={(next) => setAnnouncementForm({ ...announcementForm, targetDepts: next })}
+                  departments={DEPARTMENTS}
+                  placeholder="Bấm để xổ chọn các phòng ban nhận thông báo..."
+                  minSelected={0}
+                  accentColor="indigo"
+                />
               </div>
             )}
 
