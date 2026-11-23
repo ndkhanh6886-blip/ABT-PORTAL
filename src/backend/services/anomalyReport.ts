@@ -1,0 +1,308 @@
+import { query } from "@/backend/db/db";
+
+/**
+ * Báo cáo bất thường (hàng tuần): gom các thao tác / dữ liệu lệch quy trình để quản lý phát hiện sớm,
+ * thay vì chờ người dùng báo lỗi (xem phân tích "PORTAL 5.1").
+ * Chỉ ĐỌC dữ liệu. Mỗi mục: tiêu đề, giải thích, cách xử lý đúng và danh sách chứng từ liên quan.
+ */
+export type AnomalyRow = { ref: string; detail: string; actor?: string; at?: string };
+export type AnomalySection = {
+  key: string;
+  title: string;
+  severity: "high" | "medium" | "low";
+  why: string;
+  fix: string;
+  rows: AnomalyRow[];
+};
+export type AnomalyReport = { from: string; to: string; days: number; generatedAt: string; total: number; sections: AnomalySection[] };
+
+const SO_CODE_RE = "SO[0-9]{2}-[A-Z0-9]+-[0-9]+";
+const MAX_ROWS = 50;
+
+const fmt = (d: any) => {
+  if (!d) return "";
+  const x = new Date(d);
+  if (isNaN(x.getTime())) return String(d);
+  return x.toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+};
+
+/** Hạn dùng lưu dạng chữ nhiều định dạng (2026-11-09, 14.10.2026, 14/10/2026): đổi về Date; null nếu không đọc được. */
+export function parseExpiry(v: any): Date | null {
+  const s = String(v ?? "").trim();
+  if (!s) return null;
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  m = /^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/.exec(s);
+  if (m) return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  m = /^(\d{1,2})[./-](\d{4})$/.exec(s); // MM/YYYY -> cuối tháng
+  if (m) return new Date(Number(m[2]), Number(m[1]), 0);
+  return null;
+}
+
+async function safeRows(sql: string, params: any[] = []): Promise<any[]> {
+  try {
+    return (await query(sql, params)).rows || [];
+  } catch (err: any) {
+    console.error("[anomalyReport] Truy vấn lỗi:", err?.message || err);
+    return [];
+  }
+}
+
+export async function buildAnomalyReport(days = 7): Promise<AnomalyReport> {
+  const d = Math.min(90, Math.max(1, Math.floor(days) || 7));
+  const sections: AnomalySection[] = [];
+  const since = `NOW() - INTERVAL '${d} days'`;
+
+  // 1. Đơn bị sửa SAU khi đã xuất hóa đơn (vd SO26-CP-1177 tăng số lượng sau khi đã giao + xuất HĐ)
+  {
+    const rows = await safeRows(
+      `WITH upd AS (
+         SELECT substring(details from '${SO_CODE_RE}') AS code, created_at, actor_name, details
+           FROM audit_logs
+          WHERE action = 'UPDATE' AND created_at >= ${since} AND details ~ '${SO_CODE_RE}'
+       ), inv AS (
+         SELECT substring(details from '${SO_CODE_RE}') AS code, MIN(created_at) AS first_inv
+           FROM audit_logs
+          WHERE action IN ('PARTIAL_INVOICE', 'EDIT_INVOICE', 'UPDATE_INVOICE') AND details ~ '${SO_CODE_RE}'
+          GROUP BY 1
+       )
+       SELECT upd.code, upd.created_at, upd.actor_name, LEFT(upd.details, 160) AS details
+         FROM upd JOIN inv ON inv.code = upd.code AND upd.created_at > inv.first_inv
+        ORDER BY upd.created_at DESC LIMIT ${MAX_ROWS}`
+    );
+    sections.push({
+      key: "edited_after_invoice",
+      title: "Đơn bị sửa sau khi đã xuất hóa đơn",
+      severity: "high",
+      why: "Sửa số lượng / giá sau khi đã giao và xuất HĐ làm lệch giữa SO, phiếu giao, hóa đơn và công nợ; đơn có hàng 0đ còn bị đưa về chờ BGĐ duyệt lại.",
+      fix: "Khách đặt thêm: tạo SO mới. Sửa nhầm: liên hệ Kế toán trước khi sửa và để BGĐ duyệt lại.",
+      rows: rows.map(r => ({ ref: r.code, detail: r.details, actor: r.actor_name, at: fmt(r.created_at) })),
+    });
+  }
+
+  // 2. Phiếu giao vượt số lượng đặt trên SO (theo mã)
+  {
+    const rows = await safeRows(
+      `WITH ord AS (
+         SELECT o.order_code, COALESCE(it->>'productCode', it->>'product_code') AS code, SUM(COALESCE((it->>'quantity')::numeric, 0)) AS ordered
+           FROM sales_orders o, jsonb_array_elements(CASE WHEN jsonb_typeof(o.items) = 'array' THEN o.items ELSE '[]'::jsonb END) it
+          WHERE UPPER(COALESCE(o.delivery_status, '')) <> 'CANCELLED' AND UPPER(COALESCE(it->>'status', '')) <> 'CANCELLED'
+          GROUP BY 1, 2
+       ), slip AS (
+         SELECT s.order_code, COALESCE(it->>'productCode', it->>'product_code') AS code, SUM(COALESCE((it->>'quantity')::numeric, 0)) AS slipped,
+                string_agg(DISTINCT s.slip_code, ', ') AS slips, MAX(s.created_at) AS last_at
+           FROM sales_delivery_slips s, jsonb_array_elements(CASE WHEN jsonb_typeof(s.items) = 'array' THEN s.items ELSE '[]'::jsonb END) it
+          WHERE UPPER(COALESCE(s.status, '')) <> 'CANCELLED'
+          GROUP BY 1, 2
+       )
+       SELECT slip.order_code, slip.code, ord.ordered, slip.slipped, slip.slips, slip.last_at
+         FROM slip JOIN ord ON ord.order_code = slip.order_code AND ord.code = slip.code
+        WHERE slip.slipped > ord.ordered
+        ORDER BY slip.last_at DESC LIMIT ${MAX_ROWS}`
+    );
+    sections.push({
+      key: "over_delivered",
+      title: "Phiếu giao vượt số lượng đặt",
+      severity: "high",
+      why: "Tổng các phiếu giao (chưa hủy) lớn hơn số lượng SO: hàng xuất kho thừa hoặc phiếu trùng.",
+      fix: "Kiểm tra phiếu trùng và hủy phiếu thừa (hàng tự hoàn kho); báo Kế toán nếu đã xuất HĐ.",
+      rows: rows.map(r => ({ ref: r.order_code, detail: `${r.code}: đặt ${Number(r.ordered)}, đã lập phiếu ${Number(r.slipped)} (${r.slips})`, at: fmt(r.last_at) })),
+    });
+  }
+
+  // 3. Phiếu giao lập trùng (cùng đơn, cùng hàng, cách nhau dưới 5 phút) trong kỳ
+  {
+    const rows = await safeRows(
+      `SELECT a.order_code, a.slip_code AS slip_a, b.slip_code AS slip_b, a.creator_name, b.created_at,
+              UPPER(COALESCE(b.status, '')) = 'CANCELLED' OR UPPER(COALESCE(a.status, '')) = 'CANCELLED' AS da_huy
+         FROM sales_delivery_slips a
+         JOIN sales_delivery_slips b ON b.order_code = a.order_code AND b.id > a.id
+          AND b.created_at BETWEEN a.created_at AND a.created_at + INTERVAL '5 minutes'
+          AND b.items = a.items
+        WHERE b.created_at >= ${since}
+        ORDER BY b.created_at DESC LIMIT ${MAX_ROWS}`
+    );
+    sections.push({
+      key: "duplicate_slips",
+      title: "Phiếu giao lập trùng",
+      severity: "medium",
+      why: "Hai phiếu cùng đơn, cùng hàng lập cách nhau vài phút: thường do bấm lưu 2 lần hoặc lập lại khi mạng chậm.",
+      fix: "Bấm lưu một lần; chưa thấy phản hồi thì tải lại trang và kiểm tra danh sách phiếu trước khi lập lại.",
+      rows: rows.map(r => ({ ref: r.order_code, detail: `${r.slip_a} và ${r.slip_b}${r.da_huy ? " (đã hủy 1 phiếu)" : " — CHƯA hủy phiếu thừa"}`, actor: r.creator_name, at: fmt(r.created_at) })),
+    });
+  }
+
+  // 4. Phiếu giao bị hủy trong kỳ
+  {
+    const rows = await safeRows(
+      `SELECT s.slip_code, s.order_code, COALESCE(s.extra_data->>'cancelledBy', s.creator_name) AS nguoi,
+              COALESCE(s.extra_data->>'cancelReason', '') AS ly_do, s.updated_at
+         FROM sales_delivery_slips s
+        WHERE UPPER(COALESCE(s.status, '')) = 'CANCELLED' AND s.updated_at >= ${since}
+        ORDER BY s.updated_at DESC LIMIT ${MAX_ROWS}`
+    );
+    sections.push({
+      key: "cancelled_slips",
+      title: "Phiếu giao bị hủy",
+      severity: "low",
+      why: "Hủy phiếu = hàng nhập lại kho. Hủy nhầm làm đơn bị thiếu giao.",
+      fix: "Chỉ hủy khi không giao; muốn đổi ngày / lô / số lượng thì dùng \"Sửa\".",
+      rows: rows.map(r => ({ ref: r.slip_code, detail: `Đơn ${r.order_code}${r.ly_do ? ` — lý do: ${r.ly_do}` : " — không ghi lý do"}`, actor: r.nguoi, at: fmt(r.updated_at) })),
+    });
+  }
+
+  // 5. Đơn "Đã giao hoàn tất" nhưng các phiếu đã giao chưa đủ số lượng
+  {
+    const rows = await safeRows(
+      `WITH ord AS (
+         SELECT o.order_code, COALESCE(it->>'productCode', it->>'product_code') AS code, SUM(COALESCE((it->>'quantity')::numeric, 0)) AS ordered
+           FROM sales_orders o, jsonb_array_elements(CASE WHEN jsonb_typeof(o.items) = 'array' THEN o.items ELSE '[]'::jsonb END) it
+          WHERE UPPER(COALESCE(o.delivery_status, '')) = 'DELIVERED' AND UPPER(COALESCE(it->>'status', '')) <> 'CANCELLED'
+          GROUP BY 1, 2
+       ), dlv AS (
+         SELECT s.order_code, COALESCE(it->>'productCode', it->>'product_code') AS code, SUM(COALESCE((it->>'quantity')::numeric, 0)) AS delivered
+           FROM sales_delivery_slips s, jsonb_array_elements(CASE WHEN jsonb_typeof(s.items) = 'array' THEN s.items ELSE '[]'::jsonb END) it
+          WHERE UPPER(COALESCE(s.status, '')) <> 'CANCELLED'
+            AND (s.extra_data->>'isDelivered' = 'true'
+                 OR UPPER(COALESCE(s.extra_data->>'deliveryStatus', '')) IN ('WAREHOUSE_DELIVERED', 'DELIVERED')
+                 OR (COALESCE(s.extra_data->>'deliveryStatus', '') = '' AND s.extra_data->>'isDelivered' IS NULL))
+          GROUP BY 1, 2
+       )
+       SELECT ord.order_code, string_agg(ord.code || ' còn ' || (ord.ordered - COALESCE(dlv.delivered, 0)), ', ') AS con_lai
+         FROM ord LEFT JOIN dlv ON dlv.order_code = ord.order_code AND dlv.code = ord.code
+        WHERE COALESCE(dlv.delivered, 0) < ord.ordered
+          AND EXISTS (SELECT 1 FROM sales_delivery_slips s WHERE s.order_code = ord.order_code)
+        GROUP BY ord.order_code ORDER BY 1 LIMIT ${MAX_ROWS}`
+    );
+    sections.push({
+      key: "delivered_but_short",
+      title: "Đơn \"Đã giao hoàn tất\" nhưng còn thiếu hàng",
+      severity: "high",
+      why: "Đơn đóng trong khi phiếu giao chưa đủ số lượng: không lập được phiếu đợt tiếp, khách thiếu hàng.",
+      fix: "Kho lập phiếu đợt tiếp; nếu khách không lấy nữa thì NVKD bấm \"Hủy dòng\".",
+      rows: rows.map(r => ({ ref: r.order_code, detail: r.con_lai })),
+    });
+  }
+
+  // 6–7. Lô hết hạn còn tồn / hạn dùng không đọc được; 8. Số lô kit qPCR sai quy tắc IC
+  {
+    const lots = await safeRows(
+      `SELECT product_code, lot_number, expiry_date, quantity_on_hand, warehouse_location
+         FROM inventory_lots WHERE quantity_on_hand > 0 ORDER BY product_code, lot_number`
+    );
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const expired: AnomalyRow[] = [];
+    const badDate: AnomalyRow[] = [];
+    const badLot: AnomalyRow[] = [];
+    for (const l of lots) {
+      const exp = String(l.expiry_date ?? "").trim();
+      if (exp) {
+        const dt = parseExpiry(exp);
+        if (!dt) badDate.push({ ref: `${l.product_code} / ${l.lot_number}`, detail: `Hạn dùng "${exp}" không đọc được — tồn ${l.quantity_on_hand}` });
+        else if (dt < today) expired.push({ ref: `${l.product_code} / ${l.lot_number}`, detail: `Hết hạn ${exp} — còn tồn ${l.quantity_on_hand} (${l.warehouse_location || "kho"})` });
+      }
+      const code = String(l.product_code || "").toUpperCase();
+      if (/^(SQ|MQ)[A-Z]?-/.test(code)) {
+        const segs = String(l.lot_number || "").toUpperCase().split(".").map(s => s.trim()).filter(Boolean);
+        const icLike = segs.filter(s => s.includes("IC") && s !== "IC");
+        if (icLike.length > 0) badLot.push({ ref: `${l.product_code} / ${l.lot_number}`, detail: `Đoạn "${icLike.join(", ")}" không đúng quy tắc (chỉ ghi ".IC" hoặc bỏ hẳn) — tồn ${l.quantity_on_hand}` });
+      }
+    }
+    sections.push({
+      key: "expired_stock",
+      title: "Lô đã hết hạn còn tồn",
+      severity: "medium",
+      why: "Lô hết hạn không xuất được. Vật tư không có hạn dùng mà nhập ngày tạm cũng rơi vào đây.",
+      fix: "Hàng thật hết hạn: xử lý hủy / cách ly theo quy trình. Vật tư không có hạn dùng: Tồn kho → Sửa lô → \"Không HSD\".",
+      rows: expired.slice(0, MAX_ROWS),
+    });
+    sections.push({
+      key: "unreadable_expiry",
+      title: "Hạn dùng ghi sai định dạng",
+      severity: "low",
+      why: "Phần mềm không đọc được ngày nên không cảnh báo hết hạn / không sắp xếp FEFO đúng.",
+      fix: "Sửa lô, chọn lại ngày bằng ô chọn ngày.",
+      rows: badDate.slice(0, MAX_ROWS),
+    });
+    sections.push({
+      key: "bad_kit_lot",
+      title: "Số lô kit qPCR sai quy tắc",
+      severity: "medium",
+      why: "Phần mềm đọc quy cách (chia sẵn / IC / tube) từ số lô; ghi sai (NO-IC, ICNS...) làm lô không xuất được cho đơn đúng quy cách.",
+      fix: "Sửa số lô trên PNK gốc theo quy tắc: \".C…\" = chia sẵn, \".IC\" = sẵn IC (không IC thì bỏ hẳn), mã tube T01/T02/...",
+      rows: badLot.slice(0, MAX_ROWS),
+    });
+  }
+
+  // 9. Nhập kho trong kỳ có hạn dùng quá gần ngày nhập (≤ 14 ngày) — thường là ngày nhập tạm cho vật tư không có hạn dùng
+  {
+    const txs = await safeRows(
+      `SELECT transaction_code, date, performed_by, items FROM inventory_transactions
+        WHERE transaction_type = 'INBOUND' AND COALESCE(created_at, date::timestamp) >= ${since}
+        ORDER BY date DESC`
+    );
+    const rows: AnomalyRow[] = [];
+    for (const t of txs) {
+      const base = t.date ? new Date(t.date) : null;
+      const items: any[] = Array.isArray(t.items) ? t.items : [];
+      for (const it of items) {
+        const exp = parseExpiry(it?.expiry_date || it?.expiryDate);
+        if (!exp || !base) continue;
+        const gapDays = Math.round((exp.getTime() - base.getTime()) / 86400000);
+        if (gapDays <= 14) {
+          rows.push({
+            ref: t.transaction_code,
+            detail: `${it?.product_code || it?.productCode || "?"} lô ${it?.lot_number || it?.lotNumber || "—"}: hạn dùng ${it?.expiry_date || it?.expiryDate} chỉ ${gapDays} ngày sau ngày nhập`,
+            actor: t.performed_by,
+            at: fmt(t.date),
+          });
+        }
+      }
+      if (rows.length >= MAX_ROWS) break;
+    }
+    sections.push({
+      key: "short_expiry_inbound",
+      title: "Nhập kho với hạn dùng quá gần (≤ 14 ngày)",
+      severity: "low",
+      why: "Thường là nhập ngày tạm cho vật tư không có hạn dùng — vài ngày sau lô bị coi là hết hạn.",
+      fix: "Vật tư không có hạn dùng: tick \"K.HSD\" hoặc để trống khi nhập kho.",
+      rows,
+    });
+  }
+
+  // 10. SO trong kỳ có nhiều dòng giống hệt (cùng mã, cùng ghi chú, chưa có trình tự)
+  {
+    const rows = await safeRows(
+      `SELECT o.order_code, o.sales_rep_name, o.created_at, COALESCE(it->>'productCode', it->>'product_code') AS code, count(*) AS so_dong
+         FROM sales_orders o, jsonb_array_elements(CASE WHEN jsonb_typeof(o.items) = 'array' THEN o.items ELSE '[]'::jsonb END) it
+        WHERE o.created_at >= ${since}
+          AND UPPER(COALESCE(it->>'status', '')) <> 'CANCELLED'
+          AND NULLIF(it->>'sequence', '') IS NULL
+        GROUP BY 1, 2, 3, 4, COALESCE(it->>'notes', ''), COALESCE(it->>'unitPrice', it->>'price', '0')
+       HAVING count(*) > 1
+        ORDER BY o.created_at DESC LIMIT ${MAX_ROWS}`
+    );
+    sections.push({
+      key: "identical_lines",
+      title: "SO có nhiều dòng giống hệt nhau",
+      severity: "low",
+      why: "Nhiều dòng cùng mã, cùng giá, cùng ghi chú (thường là oligo chưa nhập trình tự): khó phân biệt khi giao và mua hàng.",
+      fix: "Mỗi trình tự một dòng, nhập vào ô trình tự; cùng một hàng thì để 1 dòng và tăng số lượng.",
+      rows: rows.map(r => ({ ref: r.order_code, detail: `${r.code}: ${r.so_dong} dòng giống hệt`, actor: r.sales_rep_name, at: fmt(r.created_at) })),
+    });
+  }
+
+  const now = new Date();
+  const from = new Date(now.getTime() - d * 86400000);
+  const order = { high: 0, medium: 1, low: 2 } as const;
+  sections.sort((a, b) => order[a.severity] - order[b.severity]);
+  return {
+    from: from.toISOString(),
+    to: now.toISOString(),
+    days: d,
+    generatedAt: now.toISOString(),
+    total: sections.reduce((s, x) => s + x.rows.length, 0),
+    sections,
+  };
+}
