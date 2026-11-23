@@ -145,6 +145,54 @@ export const DEPARTMENTS = [
   { id: "Ban Giám Đốc", name: "Ban Giám Đốc", icon: Award, block: "EXECUTIVE" },
 ];
 
+export interface CustomFunctionalGroup {
+  id: string;
+  name: string;
+  icon?: string;
+  combinedDepts: string[];
+  lead: string;
+  members: string[];
+  categories?: string[];
+  description?: string;
+  createdBy?: string;
+  updatedAt?: string;
+}
+
+export const DEFAULT_FUNCTIONAL_GROUPS: CustomFunctionalGroup[] = [
+  {
+    id: "BAN ISO",
+    name: "BAN ISO (Hệ thống Quản lý Chất lượng & Tiêu chuẩn)",
+    icon: "🛡️",
+    combinedDepts: ["QA/QC", "Nghiên Cứu R&D", "Sản Xuất Kit", "Tổng Hợp Oligo", "Kỹ Thuật – Thiết Bị", "Pháp Chế"],
+    lead: "",
+    members: [],
+    categories: [
+      "Soạn thảo & Kiểm soát tài liệu SOP / Quy trình ISO",
+      "Đánh giá nội bộ (Internal Audit) & Khắc phục CAPA",
+      "Thẩm định hồ sơ kỹ thuật & Quản trị rủi ro",
+      "Họp rà soát hệ thống quản lý chất lượng",
+      "Khác"
+    ],
+    description: "Ban chuyên trách xây dựng, duy trì, đánh giá nội bộ và cải tiến hệ thống quản lý chất lượng liên phòng ban."
+  },
+  {
+    id: "BAN ĐÀO TẠO",
+    name: "BAN ĐÀO TẠO (Đào tạo Nội bộ & Phát triển Năng lực)",
+    icon: "🎓",
+    combinedDepts: ["Hành Chính Nhân Sự", "Application", "PM", "Nghiên Cứu R&D", "Kinh Doanh"],
+    lead: "",
+    members: [],
+    categories: [
+      "Đào tạo hội nhập nhân sự mới",
+      "Đào tạo chuyên môn Sản phẩm & Ứng dụng kỹ thuật",
+      "Đào tạo quy trình vận hành chuẩn (SOP) & An toàn Lab",
+      "Kiểm tra, đánh giá năng lực & Cấp chứng nhận nội bộ",
+      "Khác"
+    ],
+    description: "Ban chức năng tổ chức đào tạo hội nhập, đào tạo chuyên môn sản phẩm, kỹ thuật và đánh giá năng lực định kỳ."
+  }
+];
+
 export const FICTIONAL_WORKSPACE_ASSIGNEES = new Set([
   "phạm quốc tuấn",
   "lê kỹ thuật",
@@ -1757,11 +1805,13 @@ const DepartmentDropdownSelect: React.FC<DepartmentDropdownSelectProps> = ({ val
 interface MultiDepartmentDropdownSelectProps {
   selectedDepts: string[];
   onChange: (nextDepts: string[]) => void;
-  departments: Array<{ id: string; name: string }>;
+  departments: Array<{ id: string; name: string; isFunctionalGroup?: boolean }>;
   placeholder?: string;
   minSelected?: number;
   compact?: boolean;
   accentColor?: "purple" | "indigo";
+  onCreateCustomDept?: (newName: string) => void;
+  onOpenManageGroups?: () => void;
 }
 
 const MultiDepartmentDropdownSelect: React.FC<MultiDepartmentDropdownSelectProps> = ({
@@ -1771,7 +1821,9 @@ const MultiDepartmentDropdownSelect: React.FC<MultiDepartmentDropdownSelectProps
   placeholder = "Chọn các phòng ban phối hợp...",
   minSelected = 0,
   compact = false,
-  accentColor = "purple"
+  accentColor = "purple",
+  onCreateCustomDept,
+  onOpenManageGroups
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQ, setSearchQ] = useState("");
@@ -1812,6 +1864,26 @@ const MultiDepartmentDropdownSelect: React.FC<MultiDepartmentDropdownSelectProps
     }
   };
 
+  const trimmedSearch = searchQ.trim();
+  const canQuickCreate =
+    trimmedSearch.length >= 2 &&
+    !validDepts.some(
+      (d) =>
+        d.id.toLowerCase() === trimmedSearch.toLowerCase() ||
+        d.name.toLowerCase() === trimmedSearch.toLowerCase()
+    );
+
+  const handleQuickCreateFromSearch = () => {
+    if (!trimmedSearch) return;
+    if (onCreateCustomDept) {
+      onCreateCustomDept(trimmedSearch);
+    }
+    if (!currentList.includes(trimmedSearch)) {
+      onChange([...currentList, trimmedSearch]);
+    }
+    setSearchQ("");
+  };
+
   const isPurple = accentColor === "purple";
   const pillCls = isPurple
     ? "bg-purple-50 dark:bg-purple-950/70 text-purple-800 dark:text-purple-200 border-purple-300 dark:border-purple-800"
@@ -1829,7 +1901,7 @@ const MultiDepartmentDropdownSelect: React.FC<MultiDepartmentDropdownSelectProps
         >
           <span>
             {currentList.length > 0
-              ? `🏢 Đã chọn ${currentList.length} phòng ban (Bấm để xổ chọn / bỏ chọn)`
+              ? `🏢 Đã chọn ${currentList.length} phòng/ban (Bấm để xổ chọn / tạo mới)`
               : `🏢 ${placeholder}`}
           </span>
           <ChevronDown
@@ -1837,7 +1909,20 @@ const MultiDepartmentDropdownSelect: React.FC<MultiDepartmentDropdownSelectProps
           />
         </button>
 
-        {/* Hiển thị gọn các phòng ban đã tích chọn ngay bên cạnh nút xổ */}
+        {onOpenManageGroups && (
+          <button
+            type="button"
+            onClick={onOpenManageGroups}
+            className={`inline-flex items-center gap-1 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200 font-bold hover:bg-amber-100 cursor-pointer ${
+              compact ? "px-2 py-0.5 text-[10px]" : "px-2.5 py-1.5 text-[11px]"
+            }`}
+            title="Tạo hoặc quản lý Ban / Nhóm chức năng (VD: BAN ISO, BAN ĐÀO TẠO) & Tổ hợp phòng ban"
+          >
+            <span>🏛️ + Tạo Ban / Nhóm chức năng</span>
+          </button>
+        )}
+
+        {/* Hiển thị gọn các phòng ban / ban chức năng đã tích chọn ngay bên cạnh nút xổ */}
         {currentList.map((deptId) => {
           const deptObj = validDepts.find((d) => d.id === deptId);
           const label = deptObj ? deptObj.name : deptId;
@@ -1865,14 +1950,20 @@ const MultiDepartmentDropdownSelect: React.FC<MultiDepartmentDropdownSelectProps
       </div>
 
       {isOpen && (
-        <div className="absolute z-50 left-0 mt-1.5 w-full sm:w-[440px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
+        <div className="absolute z-50 left-0 mt-1.5 w-full sm:w-[460px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
           <div className="p-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex flex-wrap items-center justify-between gap-2">
             <input
               type="text"
               value={searchQ}
               onChange={(e) => setSearchQ(e.target.value)}
-              placeholder="Tìm nhanh phòng ban..."
-              className="flex-1 min-w-[140px] px-2.5 py-1 rounded-lg text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && canQuickCreate) {
+                  e.preventDefault();
+                  handleQuickCreateFromSearch();
+                }
+              }}
+              placeholder="Tìm hoặc gõ tên Ban mới (VD: BAN ISO, BAN ĐÀO TẠO)..."
+              className="flex-1 min-w-[160px] px-2.5 py-1 rounded-lg text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
             />
             <div className="flex items-center gap-1">
               <button
@@ -1901,6 +1992,21 @@ const MultiDepartmentDropdownSelect: React.FC<MultiDepartmentDropdownSelectProps
             </div>
           </div>
 
+          {canQuickCreate && (
+            <div className="p-2 bg-amber-50/90 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-800 flex items-center justify-between gap-2">
+              <span className="text-[11px] text-amber-900 dark:text-amber-200 font-semibold truncate">
+                🏛️ Tạo thêm Ban / Nhóm chức năng mới: <strong>"{trimmedSearch}"</strong>
+              </span>
+              <button
+                type="button"
+                onClick={handleQuickCreateFromSearch}
+                className="px-2.5 py-1 rounded-lg text-[10px] font-extrabold bg-amber-600 hover:bg-amber-700 text-white shrink-0 cursor-pointer shadow-2xs"
+              >
+                + Tạo &amp; Tích chọn
+              </button>
+            </div>
+          )}
+
           <div className="max-h-60 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/70 p-1">
             {filteredDepts.map((d) => {
               const isPicked = currentList.includes(d.id);
@@ -1925,12 +2031,35 @@ const MultiDepartmentDropdownSelect: React.FC<MultiDepartmentDropdownSelectProps
                       className="w-4 h-4 rounded accent-indigo-600 cursor-pointer shrink-0"
                     />
                     <span className="truncate text-xs">{d.name}</span>
+                    {d.isFunctionalGroup && (
+                      <span className="px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 text-[9px] font-extrabold shrink-0">
+                        Nhóm chức năng
+                      </span>
+                    )}
                   </div>
                   {isPicked && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />}
                 </label>
               );
             })}
           </div>
+
+          {onOpenManageGroups && (
+            <div className="px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <span className="text-[10px] text-slate-500">
+                Muốn gộp tổ hợp nhiều phòng hoặc gắn thành viên cố định?
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOpen(false);
+                  onOpenManageGroups();
+                }}
+                className="text-[10px] font-extrabold text-amber-700 dark:text-amber-300 hover:underline cursor-pointer"
+              >
+                ⚙️ Cấu hình Ban / Tổ hợp phòng →
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1971,6 +2100,7 @@ interface MultiPersonnelWithLeadSelectProps {
   onChange: (nextCommaSeparated: string) => void;
   personnelList: any[];
   filterDepartments?: string | string[];
+  functionalGroups?: CustomFunctionalGroup[];
   placeholder?: string;
   compact?: boolean;
   membersOnly?: boolean;
@@ -1983,6 +2113,7 @@ const MultiPersonnelWithLeadSelect: React.FC<MultiPersonnelWithLeadSelectProps> 
   onChange,
   personnelList,
   filterDepartments,
+  functionalGroups = [],
   placeholder = "Chọn người chính & thành viên...",
   compact = false,
   membersOnly = false,
@@ -2006,13 +2137,38 @@ const MultiPersonnelWithLeadSelect: React.FC<MultiPersonnelWithLeadSelectProps> 
 
   const parsed = useMemo(() => parseAssigneeWithLead(value), [value]);
 
-  const activeFilterDepts = useMemo(() => {
-    if (!filterDepartments) return [];
-    const arr = Array.isArray(filterDepartments) ? filterDepartments : [filterDepartments];
-    return arr
+  const { activeFilterDepts, matchedFunctionalGroups, groupPriorityStaffNames } = useMemo(() => {
+    if (!filterDepartments) {
+      return { activeFilterDepts: [] as string[], matchedFunctionalGroups: [] as CustomFunctionalGroup[], groupPriorityStaffNames: [] as string[] };
+    }
+    const rawArr = Array.isArray(filterDepartments) ? filterDepartments : [filterDepartments];
+    const cleanArr = rawArr
       .map((d) => String(d || "").trim())
       .filter((d) => d && d !== "all" && d !== "Liên Phòng Ban");
-  }, [filterDepartments]);
+    const matchedGroups: CustomFunctionalGroup[] = [];
+    const expandedDepts = new Set<string>();
+    const priorityNames: string[] = [];
+
+    cleanArr.forEach((d) => {
+      const fg = (functionalGroups || []).find(
+        (g) => g.id.toLowerCase() === d.toLowerCase() || g.name.toLowerCase() === d.toLowerCase()
+      );
+      if (fg) {
+        matchedGroups.push(fg);
+        (fg.combinedDepts || []).forEach((cd) => expandedDepts.add(cd));
+        if (fg.lead) priorityNames.push(fg.lead);
+        (fg.members || []).forEach((m) => priorityNames.push(m));
+      } else {
+        expandedDepts.add(d);
+      }
+    });
+
+    return {
+      activeFilterDepts: Array.from(expandedDepts),
+      matchedFunctionalGroups: matchedGroups,
+      groupPriorityStaffNames: Array.from(new Set(priorityNames.filter(Boolean)))
+    };
+  }, [filterDepartments, functionalGroups]);
 
   const fullCompanyStaff = useMemo(() => {
     const list: any[] = Array.isArray(personnelList) ? [...personnelList] : [];
@@ -2034,15 +2190,17 @@ const MultiPersonnelWithLeadSelect: React.FC<MultiPersonnelWithLeadSelectProps> 
   }, [personnelList]);
 
   const deptMatchedStaff = useMemo(() => {
-    if (activeFilterDepts.length === 0) return fullCompanyStaff;
-    return fullCompanyStaff.filter((p) =>
-      activeFilterDepts.some((d) => isSameWorkspaceDept(p.department, d))
+    if (activeFilterDepts.length === 0 && groupPriorityStaffNames.length === 0) return fullCompanyStaff;
+    return fullCompanyStaff.filter(
+      (p) =>
+        groupPriorityStaffNames.some((gn) => sameStaffName(gn, p.full_name)) ||
+        activeFilterDepts.some((d) => isSameWorkspaceDept(p.department, d))
     );
-  }, [fullCompanyStaff, activeFilterDepts]);
+  }, [fullCompanyStaff, activeFilterDepts, groupPriorityStaffNames]);
 
   const displayedList = useMemo(() => {
     const base =
-      showAllCompany || activeFilterDepts.length === 0 || deptMatchedStaff.length === 0
+      showAllCompany || (activeFilterDepts.length === 0 && groupPriorityStaffNames.length === 0) || deptMatchedStaff.length === 0
         ? fullCompanyStaff
         : deptMatchedStaff;
     const q = search.trim().toLowerCase();
@@ -2055,17 +2213,20 @@ const MultiPersonnelWithLeadSelect: React.FC<MultiPersonnelWithLeadSelectProps> 
             String(p.department || "").toLowerCase().includes(q) ||
             String(p.position || "").toLowerCase().includes(q)
         );
-    // Đưa những người đã được chọn lên đầu danh sách để dễ nhìn
+    // Đưa những người đã được chọn & thành viên chính thức của Ban chức năng lên đầu danh sách
     return [...filtered].sort((a, b) => {
-      const aLead = parsed.lead && sameStaffName(a.full_name, parsed.lead) ? -2 : 0;
-      const bLead = parsed.lead && sameStaffName(b.full_name, parsed.lead) ? -2 : 0;
+      const aLead = parsed.lead && sameStaffName(a.full_name, parsed.lead) ? -3 : 0;
+      const bLead = parsed.lead && sameStaffName(b.full_name, parsed.lead) ? -3 : 0;
       if (aLead !== bLead) return aLead - bLead;
-      const aPicked = parsed.all.some((n) => sameStaffName(n, a.full_name)) ? -1 : 0;
-      const bPicked = parsed.all.some((n) => sameStaffName(n, b.full_name)) ? -1 : 0;
+      const aPicked = parsed.all.some((n) => sameStaffName(n, a.full_name)) ? -2 : 0;
+      const bPicked = parsed.all.some((n) => sameStaffName(n, b.full_name)) ? -2 : 0;
       if (aPicked !== bPicked) return aPicked - bPicked;
+      const aInGroup = groupPriorityStaffNames.some((gn) => sameStaffName(gn, a.full_name)) ? -1 : 0;
+      const bInGroup = groupPriorityStaffNames.some((gn) => sameStaffName(gn, b.full_name)) ? -1 : 0;
+      if (aInGroup !== bInGroup) return aInGroup - bInGroup;
       return String(a.full_name || "").localeCompare(String(b.full_name || ""), "vi");
     });
-  }, [fullCompanyStaff, deptMatchedStaff, activeFilterDepts, showAllCompany, search, parsed]);
+  }, [fullCompanyStaff, deptMatchedStaff, activeFilterDepts, groupPriorityStaffNames, showAllCompany, search, parsed]);
 
   const commitNames = (names: string[]) => {
     onChange(names.join(", "));
@@ -2283,8 +2444,18 @@ const MultiPersonnelWithLeadSelect: React.FC<MultiPersonnelWithLeadSelectProps> 
           </div>
 
           {!membersOnly && (
-            <div className="px-2.5 py-1 bg-amber-50/70 dark:bg-amber-950/30 border-b border-amber-200/60 dark:border-amber-900/50 text-[10px] text-amber-800 dark:text-amber-300 flex items-center justify-between">
+            <div className="px-2.5 py-1 bg-amber-50/70 dark:bg-amber-950/30 border-b border-amber-200/60 dark:border-amber-900/50 text-[10px] text-amber-800 dark:text-amber-300 flex items-center justify-between gap-2 flex-wrap">
               <span>💡 Tích chọn nhiều người • Bấm <strong>⭐ Chính</strong> để chỉ định người chịu trách nhiệm chính</span>
+              {groupPriorityStaffNames.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => commitNames(groupPriorityStaffNames)}
+                  className="px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-[10px] cursor-pointer shrink-0"
+                  title="Tự động điền Trưởng ban làm người chịu trách nhiệm chính và toàn bộ thành viên trong Ban cùng tham gia"
+                >
+                  ⚡ Chọn cả nhóm ({groupPriorityStaffNames.length} TV)
+                </button>
+              )}
             </div>
           )}
 
@@ -2293,7 +2464,7 @@ const MultiPersonnelWithLeadSelect: React.FC<MultiPersonnelWithLeadSelectProps> 
             {displayedList.length === 0 ? (
               <div className="p-3 text-center text-slate-400 text-[11px] space-y-1.5">
                 <div>Không tìm thấy nhân sự khớp từ khóa</div>
-                {activeFilterDepts.length > 0 && !showAllCompany && (
+                {(activeFilterDepts.length > 0 || groupPriorityStaffNames.length > 0) && !showAllCompany && (
                   <button
                     type="button"
                     onClick={() => setShowAllCompany(true)}
@@ -2308,6 +2479,7 @@ const MultiPersonnelWithLeadSelect: React.FC<MultiPersonnelWithLeadSelectProps> 
                 const cleanName = String(p.full_name || "").trim();
                 const isPicked = parsed.all.some((n) => sameStaffName(n, cleanName));
                 const isLead = !membersOnly && Boolean(parsed.lead) && sameStaffName(parsed.lead, cleanName);
+                const isGroupMember = groupPriorityStaffNames.some((gn) => sameStaffName(gn, cleanName));
                 return (
                   <div
                     key={p.employee_code || cleanName}
@@ -2330,6 +2502,11 @@ const MultiPersonnelWithLeadSelect: React.FC<MultiPersonnelWithLeadSelectProps> 
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="truncate text-xs">{cleanName}</span>
+                          {isGroupMember && matchedFunctionalGroups[0] && (
+                            <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300">
+                              🏛️ TV {matchedFunctionalGroups[0].id}
+                            </span>
+                          )}
                           {p.employee_code && (
                             <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
                               {p.employee_code}
@@ -3498,6 +3675,98 @@ export const UnifiedWorkspace: React.FC = () => {
     related_task_code: ""
   });
 
+  // Ban / Nhóm Chức Năng & Tổ Hợp Phòng Ban tùy chỉnh (VD: BAN ISO, BAN ĐÀO TẠO, Tổ hợp phòng...)
+  const [functionalGroups, setFunctionalGroups] = useState<CustomFunctionalGroup[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("unified_functional_groups");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch {}
+    }
+    return DEFAULT_FUNCTIONAL_GROUPS;
+  });
+  const [isFunctionalGroupModalOpen, setIsFunctionalGroupModalOpen] = useState(false);
+  const [editingFunctionalGroupId, setEditingFunctionalGroupId] = useState<string | null>(null);
+  const [functionalGroupForm, setFunctionalGroupForm] = useState<{
+    id: string;
+    name: string;
+    icon: string;
+    combinedDepts: string[];
+    assigneesComma: string;
+    categoriesText: string;
+    description: string;
+  }>({
+    id: "",
+    name: "",
+    icon: "🏛️",
+    combinedDepts: ["QA/QC", "Nghiên Cứu R&D"],
+    assigneesComma: "",
+    categoriesText: "Họp & Triển khai kế hoạch nhóm, Soạn thảo quy trình / Tài liệu, Kiểm tra & Đánh giá nội bộ, Khác",
+    description: ""
+  });
+
+  const persistFunctionalGroups = useCallback(async (nextGroups: CustomFunctionalGroup[]) => {
+    setFunctionalGroups(nextGroups);
+    try {
+      if (typeof window !== "undefined") {
+        localStorage.setItem("unified_functional_groups", JSON.stringify(nextGroups));
+      }
+      await fetch("/api/storage?key=unified_functional_groups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(nextGroups)
+      });
+    } catch (err) {
+      console.warn("Could not save functional groups:", err);
+    }
+  }, []);
+
+  const handleQuickCreateFunctionalGroup = useCallback((rawName: string) => {
+    const cleanId = String(rawName || "").trim();
+    if (!cleanId) return;
+    if (
+      DEPARTMENTS.some((d) => d.id.toLowerCase() === cleanId.toLowerCase()) ||
+      functionalGroups.some((g) => g.id.toLowerCase() === cleanId.toLowerCase())
+    ) {
+      return;
+    }
+    const newGroup: CustomFunctionalGroup = {
+      id: cleanId,
+      name: cleanId,
+      icon: "🏛️",
+      combinedDepts: [],
+      lead: currentStaffName || "",
+      members: [],
+      categories: ["Công việc nhóm chức năng", "Phối hợp liên phòng ban", "Khác"],
+      description: `Ban / Nhóm chức năng: ${cleanId}`,
+      createdBy: currentStaffName,
+      updatedAt: new Date().toISOString()
+    };
+    const next = [...functionalGroups, newGroup];
+    persistFunctionalGroups(next);
+    showToast(`🏛️ Đã tạo Ban / Nhóm chức năng "${cleanId}"!`, "success");
+  }, [functionalGroups, currentStaffName, persistFunctionalGroups, showToast]);
+
+  const allDepartmentsWithGroups = useMemo(() => {
+    const customItems = (functionalGroups || [])
+      .filter((g) => g?.id && !DEPARTMENTS.some((d) => d.id.toLowerCase() === g.id.toLowerCase()))
+      .map((g) => ({
+        id: g.id,
+        name: `${g.icon || "🏛️"} ${g.name || g.id}${
+          Array.isArray(g.combinedDepts) && g.combinedDepts.length > 0
+            ? ` [Tổ hợp: ${g.combinedDepts.join(" + ")}]`
+            : ""
+        }`,
+        icon: Award,
+        block: "FUNCTIONAL_GROUP",
+        isFunctionalGroup: true
+      }));
+    return [...DEPARTMENTS, ...customItems];
+  }, [functionalGroups]);
+
   // Fetch Data from API
   const fetchData = async (opts?: { silent?: boolean }) => {
     try {
@@ -3507,7 +3776,8 @@ export const UnifiedWorkspace: React.FC = () => {
         "unified_thematic_projects",
         "unified_sales_targets",
         "unified_announcements",
-        "workspace_proposals"
+        "workspace_proposals",
+        "unified_functional_groups"
       ];
       const [res, batchStorageRes, workhubRes] = await Promise.all([
         fetch("/api/workflows?action=overview"),
@@ -3681,6 +3951,24 @@ export const UnifiedWorkspace: React.FC = () => {
           if (localProp) setProposals(sanitizeProposalList(JSON.parse(localProp)));
         }
 
+        // Load persistent custom functional groups (Ban ISO, Ban Đào Tạo, Tổ hợp phòng ban...)
+        try {
+          if (Array.isArray(batchStorageData.unified_functional_groups) && batchStorageData.unified_functional_groups.length > 0) {
+            setFunctionalGroups(batchStorageData.unified_functional_groups);
+            if (typeof window !== "undefined") {
+              localStorage.setItem("unified_functional_groups", JSON.stringify(batchStorageData.unified_functional_groups));
+            }
+          } else {
+            const localFg = typeof window !== "undefined" ? localStorage.getItem("unified_functional_groups") : null;
+            if (localFg) {
+              const parsedFg = JSON.parse(localFg);
+              if (Array.isArray(parsedFg) && parsedFg.length > 0) setFunctionalGroups(parsedFg);
+            }
+          }
+        } catch (err) {
+          console.warn("Could not load functional groups:", err);
+        }
+
         // Bỏ chặn hiển thị giao diện ngay lập tức trước khi tải bổ sung danh mục NCC từ /api/procurement
         setLoading(false);
 
@@ -3771,7 +4059,7 @@ export const UnifiedWorkspace: React.FC = () => {
 
   // Keep planner focused directly on Weekly Schedule
 
-  // Dynamic list of staff for the active department (chỉ trả về đúng nhân sự thuộc phòng ban đang chọn)
+  // Dynamic list of staff for the active department (hoặc Ban / Nhóm chức năng / Tổ hợp phòng ban đang chọn)
   const departmentStaffList = useMemo(() => {
     const currentDept = filterDept;
 
@@ -3779,8 +4067,44 @@ export const UnifiedWorkspace: React.FC = () => {
       return personnelList || [];
     }
 
-    const normDept = normalizeWorkspaceDept(currentDept);
+    const matchedGroup = (functionalGroups || []).find(
+      (g) => g.id.toLowerCase() === String(currentDept).toLowerCase()
+    );
     const list: any[] = [];
+
+    if (matchedGroup) {
+      const explicitNames = Array.from(
+        new Set([matchedGroup.lead, ...(matchedGroup.members || [])].filter(Boolean))
+      );
+      explicitNames.forEach((mName) => {
+        const found = (personnelList || []).find((p: any) => sameStaffName(p.full_name, mName));
+        if (found) {
+          if (!list.some((x) => sameStaffName(x.full_name, found.full_name))) list.push(found);
+        } else {
+          list.push({
+            full_name: mName,
+            employee_code: "",
+            position: sameStaffName(mName, matchedGroup.lead) ? `Trưởng ${matchedGroup.id}` : `Thành viên ${matchedGroup.id}`,
+            department: matchedGroup.id
+          });
+        }
+      });
+      // Bổ sung nhân sự từ Tổ hợp các phòng ban của nhóm chức năng
+      const groupDepts = Array.isArray(matchedGroup.combinedDepts) ? matchedGroup.combinedDepts : [];
+      if (groupDepts.length > 0 && Array.isArray(personnelList)) {
+        personnelList.forEach((p: any) => {
+          if (
+            groupDepts.some((gd) => isSameWorkspaceDept(p.department, gd)) &&
+            !list.some((x) => sameStaffName(x.full_name, p.full_name))
+          ) {
+            list.push(p);
+          }
+        });
+      }
+      return list;
+    }
+
+    const normDept = normalizeWorkspaceDept(currentDept);
 
     if (personnelList && personnelList.length > 0) {
       personnelList.forEach((p: any) => {
@@ -3811,7 +4135,7 @@ export const UnifiedWorkspace: React.FC = () => {
     });
 
     return list;
-  }, [personnelList, filterDept]);
+  }, [personnelList, filterDept, functionalGroups]);
 
   // Tự động đồng bộ nhân sự đang chọn ở Bảng việc & Nhật ký Daily khi chuyển Phòng ban
   useEffect(() => {
@@ -4048,10 +4372,42 @@ export const UnifiedWorkspace: React.FC = () => {
     return [...(labProjects || []), ...(hubProjects || [])];
   }, [labProjects, hubProjects]);
 
-  // Kiểm tra một Công việc (bao gồm công việc nội bộ phòng ban và công việc liên phòng ban) có thuộc / liên quan tới phòng ban targetDept hay không
+  // Kiểm tra một Công việc (bao gồm công việc nội bộ phòng ban, Ban chức năng và công việc liên phòng ban) có thuộc / liên quan tới phòng ban targetDept hay không
   const taskInvolvesDept = useCallback((t: any, targetDept: string): boolean => {
     if (!t) return false;
     if (!targetDept || targetDept === "all") return true;
+
+    // 0. Nếu targetDept là một Ban / Nhóm chức năng hoặc Tổ hợp phòng ban (VD: BAN ISO, BAN ĐÀO TẠO)
+    const matchedGroup = (functionalGroups || []).find(
+      (g) => g.id.toLowerCase() === String(targetDept).toLowerCase()
+    );
+    if (matchedGroup) {
+      if (String(t.department || "").toLowerCase() === matchedGroup.id.toLowerCase()) return true;
+      if (
+        Array.isArray(t.involvedDepts) &&
+        t.involvedDepts.some((d: string) => String(d || "").toLowerCase() === matchedGroup.id.toLowerCase())
+      ) {
+        return true;
+      }
+      const explicitMembers = [matchedGroup.lead, ...(matchedGroup.members || [])].filter(Boolean);
+      if (explicitMembers.length > 0 && explicitMembers.some((m) => taskHasAssignee(t.assignee_name, m))) {
+        return true;
+      }
+      // Nếu người dùng lọc theo Tổ hợp phòng ban và nhóm chưa giới hạn thành viên riêng, hiển thị công việc của các phòng ban trong tổ hợp
+      if (
+        explicitMembers.length === 0 &&
+        Array.isArray(matchedGroup.combinedDepts) &&
+        matchedGroup.combinedDepts.length > 0
+      ) {
+        if (matchedGroup.combinedDepts.some((gd) => isSameWorkspaceDept(t.department, gd))) return true;
+        if (
+          Array.isArray(t.involvedDepts) &&
+          t.involvedDepts.some((d: string) => matchedGroup.combinedDepts.some((gd) => isSameWorkspaceDept(d, gd)))
+        ) {
+          return true;
+        }
+      }
+    }
 
     // 1. Công việc thuộc trực tiếp phòng ban targetDept hoặc nằm trong mảng involvedDepts (liên phòng / Factory bridge)
     if (Array.isArray(t.involvedDepts) && t.involvedDepts.some((d: string) => isSameWorkspaceDept(d, targetDept))) {
@@ -4138,7 +4494,177 @@ export const UnifiedWorkspace: React.FC = () => {
     }
 
     return false;
-  }, [userDept, currentStaffName, user, filterDept, departmentStaffList, taskHasAssignee, isTaskCreatedByStaff, workflows, workflowInvolvesDept, allCompanyProjects, resolveUserIdForStaffName]);
+  }, [userDept, currentStaffName, user, filterDept, departmentStaffList, taskHasAssignee, isTaskCreatedByStaff, workflows, workflowInvolvesDept, allCompanyProjects, resolveUserIdForStaffName, functionalGroups]);
+
+  const openFunctionalGroupModal = (groupToEdit?: CustomFunctionalGroup) => {
+    if (groupToEdit) {
+      setEditingFunctionalGroupId(groupToEdit.id);
+      const allAssignees = Array.from(
+        new Set([groupToEdit.lead, ...(groupToEdit.members || [])].filter(Boolean))
+      );
+      setFunctionalGroupForm({
+        id: groupToEdit.id,
+        name: groupToEdit.name || groupToEdit.id,
+        icon: groupToEdit.icon || "🏛️",
+        combinedDepts: Array.isArray(groupToEdit.combinedDepts) ? groupToEdit.combinedDepts : [],
+        assigneesComma: allAssignees.join(", "),
+        categoriesText: Array.isArray(groupToEdit.categories) && groupToEdit.categories.length > 0
+          ? groupToEdit.categories.join(", ")
+          : "Công việc nhóm chức năng, Phối hợp liên phòng ban, Khác",
+        description: groupToEdit.description || ""
+      });
+    } else {
+      setEditingFunctionalGroupId(null);
+      setFunctionalGroupForm({
+        id: "",
+        name: "",
+        icon: "🏛️",
+        combinedDepts: [],
+        assigneesComma: currentStaffName || "",
+        categoriesText: "Họp & Triển khai kế hoạch nhóm, Soạn thảo quy trình / Tài liệu, Kiểm tra & Đánh giá nội bộ, Khác",
+        description: ""
+      });
+    }
+    setIsFunctionalGroupModalOpen(true);
+  };
+
+  const handleSaveFunctionalGroup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanId = functionalGroupForm.id.trim().toUpperCase();
+    if (!cleanId) {
+      showToast("Vui lòng nhập Tên / Mã Ban hoặc Nhóm chức năng (VD: BAN ISO, BAN ĐÀO TẠO)", "error");
+      return;
+    }
+    const cleanName = functionalGroupForm.name.trim() || cleanId;
+    const parsedAssignees = parseAssigneeWithLead(functionalGroupForm.assigneesComma);
+    const categories = functionalGroupForm.categoriesText
+      .split(/[,;\n]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    const newGroup: CustomFunctionalGroup = {
+      id: cleanId,
+      name: cleanName,
+      icon: functionalGroupForm.icon || "🏛️",
+      combinedDepts: functionalGroupForm.combinedDepts,
+      lead: parsedAssignees.lead || currentStaffName || "",
+      members: parsedAssignees.members,
+      categories: categories.length > 0 ? categories : ["Công việc nhóm chức năng", "Khác"],
+      description: functionalGroupForm.description.trim(),
+      createdBy: currentStaffName,
+      updatedAt: new Date().toISOString()
+    };
+
+    const nextGroups = editingFunctionalGroupId
+      ? functionalGroups.map((g) => (g.id === editingFunctionalGroupId ? newGroup : g))
+      : functionalGroups.some((g) => g.id.toLowerCase() === cleanId.toLowerCase())
+      ? functionalGroups.map((g) => (g.id.toLowerCase() === cleanId.toLowerCase() ? newGroup : g))
+      : [...functionalGroups, newGroup];
+
+    await persistFunctionalGroups(nextGroups);
+    showToast(
+      editingFunctionalGroupId
+        ? `🏛️ Đã cập nhật Ban / Nhóm chức năng "${cleanId}"!`
+        : `🏛️ Đã tạo Ban / Nhóm chức năng "${cleanId}"!`,
+      "success"
+    );
+    setEditingFunctionalGroupId(null);
+    setFunctionalGroupForm({
+      id: "",
+      name: "",
+      icon: "🏛️",
+      combinedDepts: [],
+      assigneesComma: currentStaffName || "",
+      categoriesText: "Họp & Triển khai kế hoạch nhóm, Soạn thảo quy trình / Tài liệu, Kiểm tra & Đánh giá nội bộ, Khác",
+      description: ""
+    });
+  };
+
+  const handleDeleteFunctionalGroup = async (groupId: string) => {
+    const next = functionalGroups.filter((g) => g.id !== groupId);
+    await persistFunctionalGroups(next);
+    if (selectedDept === groupId) setSelectedDept("all");
+    showToast(`Đã xóa Ban / Nhóm chức năng "${groupId}"`, "info");
+  };
+
+  const openAssignTaskToFunctionalGroup = (group: CustomFunctionalGroup) => {
+    const allMembers = Array.from(new Set([group.lead, ...(group.members || [])].filter(Boolean)));
+    const firstCat = (group.categories && group.categories[0]) || "Công việc nhóm chức năng";
+    setTaskForm({
+      id: null,
+      title: `[${group.id}] `,
+      department: group.id,
+      task_category: firstCat,
+      assignee_name: allMembers.join(", ") || currentStaffName,
+      customer_name: "",
+      priority: "HIGH",
+      status: "TODO",
+      deadline: toVNDateString(new Date(Date.now() + 3 * 86400000)),
+      description: group.description
+        ? `Triển khai trong ${group.name}${
+            group.combinedDepts?.length ? ` (Tổ hợp phòng: ${group.combinedDepts.join(", ")})` : ""
+          }.\n${group.description}`
+        : "",
+      result: "",
+      attachments: [],
+      followers: []
+    });
+    setIsFunctionalGroupModalOpen(false);
+    setIsTaskModalOpen(true);
+  };
+
+  const openCreateProjectForFunctionalGroup = (group: CustomFunctionalGroup) => {
+    const existingCount = labProjects.length + 1;
+    const newId = `DA-${existingCount < 10 ? "0" + existingCount : existingCount}`;
+    const defaultDue = toVNDateString(new Date(Date.now() + 14 * 86400000));
+    const partDepts = Array.from(new Set([group.id, ...(group.combinedDepts || [])]));
+    const leadPerson = group.lead || currentStaffName;
+    const allGroupAssignees = Array.from(new Set([leadPerson, ...(group.members || [])].filter(Boolean))).join(", ");
+    setEditingThematicId(null);
+    setLabProjectForm({
+      id: newId,
+      name: `[${group.id}] `,
+      dept: group.id,
+      participatingDepts: partDepts,
+      customerOrRef: group.id,
+      typeId: "custom_project",
+      typeName: group.name || group.id,
+      lead: leadPerson,
+      collaborators: group.members || [],
+      startDate: todayVN(),
+      endDate: defaultDue,
+      slot: "Toàn thời gian (Theo tiến trình)",
+      priority: "Cao",
+      status: "Active",
+      tasksCount: 1,
+      budget: "",
+      description: group.description || "",
+      stages: [
+        {
+          id: `stg-${Date.now()}-0`,
+          name: `Triển khai kế hoạch ${group.id}`,
+          dept: group.id,
+          depts: partDepts,
+          due: defaultDue,
+          assignee: allGroupAssignees,
+          status: "pending" as const,
+          estimatedDays: 5,
+          tasks: [
+            {
+              id: `stgtask-${Date.now()}-0-0`,
+              title: "",
+              dept: group.id,
+              assignee: allGroupAssignees,
+              due: defaultDue,
+              status: "pending" as const
+            }
+          ]
+        }
+      ]
+    });
+    setIsFunctionalGroupModalOpen(false);
+    setIsLabProjectModalOpen(true);
+  };
 
   // Kiểm tra 1 Công việc (Portal hoặc Kỹ thuật) có giao cho nhân sự staffName hay không
   const taskBelongsToStaff = useCallback((t: any, staffName: string): boolean => {
@@ -9952,10 +10478,30 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   <optgroup label="🏛️ Ban Lãnh Đạo" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
                     <option value="Ban Giám Đốc">🏛️ Ban Giám Đốc (BOD)</option>
                   </optgroup>
+                  {functionalGroups.length > 0 && (
+                    <optgroup label="🏛️ Ban / Nhóm Chức Năng & Tổ Hợp Phòng Ban" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                      {functionalGroups.map((fg) => (
+                        <option key={fg.id} value={fg.id}>
+                          {fg.icon || "🏛️"} {fg.name || fg.id}
+                          {fg.combinedDepts?.length ? ` (${fg.combinedDepts.join(" + ")})` : ""}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
                 <Filter className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500" />
                 <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" />
               </div>
+
+              <button
+                type="button"
+                onClick={() => openFunctionalGroupModal()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-extrabold bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/70 dark:hover:bg-amber-900 text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-700 cursor-pointer transition-all shadow-2xs shrink-0"
+                title="Tạo thêm Ban chức năng (VD: BAN ISO, BAN ĐÀO TẠO), gộp Tổ hợp các phòng ban và giao việc trong nhóm"
+              >
+                <span>🏛️ Ban / Nhóm chức năng ({functionalGroups.length})</span>
+                <span className="px-1.5 py-0.2 rounded bg-amber-600 text-white text-[10px] font-black">+ Tạo / Giao việc</span>
+              </button>
             </div>
           )}
 
@@ -15322,23 +15868,57 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Phòng ban</label>
+              <div className="flex items-center justify-between gap-1 mb-1">
+                <label className="block font-bold text-slate-700 dark:text-slate-300">
+                  Phòng ban / Ban chức năng
+                </label>
+                {rolePerspective !== "staff" && (
+                  <button
+                    type="button"
+                    onClick={() => openFunctionalGroupModal()}
+                    className="text-[10px] font-extrabold text-amber-700 dark:text-amber-300 hover:underline cursor-pointer"
+                    title="Tạo thêm Ban chức năng (VD: BAN ISO, BAN ĐÀO TẠO) hoặc Tổ hợp các phòng ban"
+                  >
+                    + Tạo Ban / Nhóm mới
+                  </button>
+                )}
+              </div>
               <select
                 value={taskForm.department}
                 onChange={(e) => {
                   const newDept = e.target.value;
+                  const matchedFg = functionalGroups.find((g) => g.id === newDept);
+                  const defaultCat =
+                    matchedFg?.categories?.[0] ||
+                    DEPARTMENT_CATEGORIES[newDept]?.[0] ||
+                    "Công việc nhóm chức năng";
+                  const fgMembers = matchedFg
+                    ? Array.from(new Set([matchedFg.lead, ...(matchedFg.members || [])].filter(Boolean))).join(", ")
+                    : "";
                   setTaskForm({
                     ...taskForm,
                     department: newDept,
-                    task_category: DEPARTMENT_CATEGORIES[newDept]?.[0] || "Chung"
+                    task_category: defaultCat,
+                    assignee_name: fgMembers || taskForm.assignee_name
                   });
                 }}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-semibold"
               >
+                {functionalGroups.length > 0 && (
+                  <optgroup label="🏛️ Ban / Nhóm Chức Năng & Tổ Hợp Phòng Ban">
+                    {functionalGroups.map((fg) => (
+                      <option key={fg.id} value={fg.id}>
+                        {fg.icon || "🏛️"} {fg.name || fg.id}
+                        {fg.combinedDepts?.length ? ` [Tổ hợp: ${fg.combinedDepts.join(" + ")}]` : ""}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
                 <optgroup label="🏢 Khối Kinh Doanh & Văn Phòng">
                   <option value="Kinh Doanh">Kinh Doanh (Sales)</option>
                   <option value="Sales Admin">Sales Admin</option>
                   <option value="Application">Application (Lab Ứng Dụng KD)</option>
+                  <option value="IT">Phòng IT (Công nghệ thông tin &amp; Phần mềm)</option>
                   <option value="Kho & Vận Hành">Kho Kinh Doanh &amp; Vận Hành (Thương Mại)</option>
                   <option value="Cung Ứng">Cung Ứng Kinh Doanh (Mua Hàng Thương Mại)</option>
                   <option value="PM">Quản Lý Sản Phẩm (PM)</option>
@@ -15361,7 +15941,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   <option value="Ban Giám Đốc">Ban Giám Đốc (BOD)</option>
                 </optgroup>
                 {taskForm.department &&
-                  !DEPARTMENTS.some((d) => d.id === taskForm.department) && (
+                  !DEPARTMENTS.some((d) => d.id === taskForm.department) &&
+                  !functionalGroups.some((g) => g.id === taskForm.department) && (
                     <option value={taskForm.department}>{taskForm.department}</option>
                   )}
               </select>
@@ -15374,18 +15955,70 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 onChange={(e) => setTaskForm({ ...taskForm, task_category: e.target.value })}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-semibold"
               >
-                {(DEPARTMENT_CATEGORIES[taskForm.department] || DEPARTMENT_CATEGORIES[normalizeWorkspaceDept(taskForm.department)] || ["Phối hợp liên phòng ban", "Khác"]).map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat}
-                  </option>
-                ))}
-                {taskForm.task_category &&
-                  !(DEPARTMENT_CATEGORIES[taskForm.department] || DEPARTMENT_CATEGORIES[normalizeWorkspaceDept(taskForm.department)] || ["Phối hợp liên phòng ban", "Khác"]).includes(taskForm.task_category) && (
-                    <option value={taskForm.task_category}>{taskForm.task_category}</option>
-                  )}
+                {(() => {
+                  const matchedFg = functionalGroups.find((g) => g.id === taskForm.department);
+                  const catList =
+                    (matchedFg?.categories && matchedFg.categories.length > 0 ? matchedFg.categories : null) ||
+                    DEPARTMENT_CATEGORIES[taskForm.department] ||
+                    DEPARTMENT_CATEGORIES[normalizeWorkspaceDept(taskForm.department)] ||
+                    ["Công việc nhóm chức năng", "Phối hợp liên phòng ban", "Khác"];
+                  return (
+                    <>
+                      {catList.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat}
+                        </option>
+                      ))}
+                      {taskForm.task_category && !catList.includes(taskForm.task_category) && (
+                        <option value={taskForm.task_category}>{taskForm.task_category}</option>
+                      )}
+                    </>
+                  );
+                })()}
               </select>
             </div>
           </div>
+
+          {(() => {
+            const activeFg = functionalGroups.find((g) => g.id === taskForm.department);
+            if (!activeFg) return null;
+            const fgMembers = Array.from(new Set([activeFg.lead, ...(activeFg.members || [])].filter(Boolean)));
+            return (
+              <div className="p-2.5 rounded-xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/80 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                <div className="space-y-0.5">
+                  <div className="font-extrabold text-amber-900 dark:text-amber-200">
+                    {activeFg.icon || "🏛️"} Đang giao việc trong nhóm chức năng: {activeFg.name || activeFg.id}
+                  </div>
+                  <div className="text-[10px] text-amber-800/90 dark:text-amber-300">
+                    {activeFg.combinedDepts?.length > 0
+                      ? `🏢 Tổ hợp phòng ban: ${activeFg.combinedDepts.join(" + ")}`
+                      : "Chưa giới hạn phòng ban"}
+                    {fgMembers.length > 0
+                      ? ` • 👥 Thành viên nhóm (${fgMembers.length}): ⭐ ${activeFg.lead || fgMembers[0]}${fgMembers.length > 1 ? `, ${fgMembers.slice(1).join(", ")}` : ""}`
+                      : " • Bạn có thể chọn nhân sự từ các phòng trong tổ hợp bên dưới"}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {fgMembers.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setTaskForm({ ...taskForm, assignee_name: fgMembers.join(", ") })}
+                      className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-[10px] cursor-pointer"
+                    >
+                      ⚡ Giao cho cả nhóm ({fgMembers.length} TV)
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => openFunctionalGroupModal(activeFg)}
+                    className="px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-200 font-bold text-[10px] hover:bg-amber-100 cursor-pointer"
+                  >
+                    ✏️ Cấu hình thành viên nhóm
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
 
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -15398,6 +16031,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 onChange={(val) => setTaskForm({ ...taskForm, assignee_name: val })}
                 personnelList={personnelList}
                 filterDepartments={rolePerspective === "manager" ? taskForm.department : (taskForm.department !== "all" ? taskForm.department : undefined)}
+                functionalGroups={functionalGroups}
                 placeholder="Click chọn người chịu trách nhiệm chính & các thành viên..."
               />
             </div>
@@ -19587,6 +20221,16 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   <optgroup label="🏛️ Ban Lãnh Đạo">
                     <option value="Ban Giám Đốc">🏛️ Ban Giám Đốc</option>
                   </optgroup>
+                  {functionalGroups.length > 0 && (
+                    <optgroup label="🏛️ Ban / Nhóm Chức Năng & Tổ Hợp Phòng Ban">
+                      {functionalGroups.map((fg) => (
+                        <option key={fg.id} value={fg.id}>
+                          {fg.icon || "🏛️"} {fg.name || fg.id}
+                          {fg.combinedDepts?.length ? ` (${fg.combinedDepts.join(" + ")})` : ""}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
               </div>
 
@@ -19620,15 +20264,17 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             {/* Multi-select Participating Departments (Dropdown with checkboxes) */}
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                🏢 Các phòng ban cùng tham gia dự án (Bấm vào nút xổ để tích chọn 1 hoặc nhiều phòng ban):
+                🏢 Các phòng ban / Ban chức năng cùng tham gia dự án (Bấm vào nút xổ để tích chọn hoặc tạo thêm Ban / Tổ hợp phòng):
               </label>
               <MultiDepartmentDropdownSelect
                 selectedDepts={Array.isArray(labProjectForm.participatingDepts) ? labProjectForm.participatingDepts : []}
                 onChange={(next) => setLabProjectForm({ ...labProjectForm, participatingDepts: next })}
-                departments={DEPARTMENTS}
-                placeholder="Bấm để xổ chọn các phòng ban tham gia dự án..."
+                departments={allDepartmentsWithGroups}
+                placeholder="Bấm để xổ chọn các phòng ban / Ban chức năng tham gia dự án..."
                 minSelected={0}
                 accentColor="purple"
+                onCreateCustomDept={handleQuickCreateFunctionalGroup}
+                onOpenManageGroups={() => openFunctionalGroupModal()}
               />
             </div>
           </div>
@@ -20005,11 +20651,12 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             };
                             setLabProjectForm({ ...labProjectForm, stages: updated });
                           }}
-                          departments={DEPARTMENTS}
-                          placeholder={`Chọn phòng ban phối hợp GĐ ${sIdx + 1}...`}
+                          departments={allDepartmentsWithGroups}
+                          placeholder={`Chọn phòng ban / Ban chức năng phối hợp GĐ ${sIdx + 1}...`}
                           minSelected={1}
                           compact
                           accentColor="indigo"
+                          onCreateCustomDept={handleQuickCreateFunctionalGroup}
                         />
                       </div>
                     </div>
@@ -20084,11 +20731,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                 updated[sIdx] = { ...updated[sIdx], tasks: nextTasks };
                                 setLabProjectForm({ ...labProjectForm, stages: updated });
                               }}
-                              title="Phòng ban cụ thể phụ trách công việc này"
-                              className="px-1.5 py-1 rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-[10px] font-bold cursor-pointer"
+                              title="Phòng ban / Ban chức năng cụ thể phụ trách công việc này"
+                              className="px-1.5 py-1 rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-[10px] font-bold cursor-pointer max-w-[180px]"
                             >
-                              {DEPARTMENTS.filter((d) => d.id !== "all").map((d) => (
-                                <option key={d.id} value={d.id}>🏢 {d.name}</option>
+                              {allDepartmentsWithGroups.filter((d) => d.id !== "all").map((d: any) => (
+                                <option key={d.id} value={d.id}>{d.isFunctionalGroup ? d.name : `🏢 ${d.name}`}</option>
                               ))}
                             </select>
 
@@ -20104,6 +20751,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               }}
                               personnelList={personnelList}
                               filterDepartments={taskSpecificDept}
+                              functionalGroups={functionalGroups}
                               placeholder="Người chính & TV..."
                               popoverAlign="right"
                             />
@@ -20178,6 +20826,284 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* ==================== MODAL 5B: QUẢN LÝ BAN / NHÓM CHỨC NĂNG & TỔ HỢP PHÒNG BAN (BAN ISO, BAN ĐÀO TẠO...) ==================== */}
+      <Modal
+        isOpen={isFunctionalGroupModalOpen}
+        onClose={() => setIsFunctionalGroupModalOpen(false)}
+        title="🏛️ TẠO & QUẢN LÝ BAN / NHÓM CHỨC NĂNG & TỔ HỢP PHÒNG BAN (BAN ISO, BAN ĐÀO TẠO...)"
+        size="lg"
+      >
+        <div className="space-y-4 p-1 text-xs">
+          {/* Hướng dẫn nhanh */}
+          <div className="p-3 rounded-xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/70 text-[11px] text-amber-900 dark:text-amber-200">
+            <strong>💡 Hướng dẫn cho Ban Giám Đốc / Quản lý:</strong> Bạn có thể tạo thêm <strong>Ban chức năng mới</strong> (ví dụ: <strong>BAN ISO</strong>, <strong>BAN ĐÀO TẠO</strong>, <strong>BAN ĐẤU THẦU</strong>...) hoặc <strong>Tổ hợp nhiều phòng ban</strong> bất kỳ, chỉ định <strong>⭐ Trưởng ban (Chịu trách nhiệm chính)</strong> và <strong>👥 Các thành viên trong nhóm</strong> để <strong>giao việc trực tiếp trong nhóm</strong> hoặc <strong>lọc Bảng việc theo nhóm</strong>.
+          </div>
+
+          {/* Form Tạo / Cập nhật Ban hoặc Nhóm chức năng */}
+          <form
+            onSubmit={handleSaveFunctionalGroup}
+            className="p-3.5 rounded-2xl border-2 border-indigo-200/80 dark:border-indigo-800/70 bg-slate-50/80 dark:bg-slate-950/60 space-y-3"
+          >
+            <div className="flex items-center justify-between">
+              <h4 className="font-extrabold text-slate-900 dark:text-white text-xs flex items-center gap-1.5">
+                <span>{editingFunctionalGroupId ? `✏️ Chỉnh sửa: ${editingFunctionalGroupId}` : "➕ Tạo Ban / Nhóm Chức Năng Hoặc Tổ Hợp Phòng Mới"}</span>
+              </h4>
+              {editingFunctionalGroupId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingFunctionalGroupId(null);
+                    setFunctionalGroupForm({
+                      id: "",
+                      name: "",
+                      icon: "🏛️",
+                      combinedDepts: [],
+                      assigneesComma: currentStaffName || "",
+                      categoriesText: "Họp & Triển khai kế hoạch nhóm, Soạn thảo quy trình / Tài liệu, Kiểm tra & Đánh giá nội bộ, Khác",
+                      description: ""
+                    });
+                  }}
+                  className="text-[11px] font-bold text-slate-500 hover:text-rose-600 cursor-pointer"
+                >
+                  ↺ Hủy sửa (Chuyển sang tạo mới)
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+              <div className="sm:col-span-2">
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Biểu tượng</label>
+                <select
+                  value={functionalGroupForm.icon}
+                  onChange={(e) => setFunctionalGroupForm({ ...functionalGroupForm, icon: e.target.value })}
+                  className="w-full px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 font-bold text-center cursor-pointer"
+                >
+                  <option value="🏛️">🏛️ Ban</option>
+                  <option value="🛡️">🛡️ ISO/QA</option>
+                  <option value="🎓">🎓 Đào tạo</option>
+                  <option value="⚡">⚡ Đặc nhiệm</option>
+                  <option value="🎯">🎯 Dự án</option>
+                  <option value="🔬">🔬 Chuyên môn</option>
+                  <option value="📋">📋 Tổ hợp</option>
+                </select>
+              </div>
+
+              <div className="sm:col-span-4">
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Mã / Tên ngắn của Ban hoặc Nhóm *
+                </label>
+                <FastInput
+                  type="text"
+                  required
+                  value={functionalGroupForm.id}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setFunctionalGroupForm((prev) => ({
+                      ...prev,
+                      id: v,
+                      name: !prev.name || prev.name === prev.id ? v : prev.name
+                    }));
+                  }}
+                  placeholder="VD: BAN ISO, BAN ĐÀO TẠO..."
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-extrabold uppercase"
+                />
+              </div>
+
+              <div className="sm:col-span-6">
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Tên hiển thị đầy đủ (Hoặc tên tổ hợp phòng)
+                </label>
+                <FastInput
+                  type="text"
+                  value={functionalGroupForm.name}
+                  onChange={(e) => setFunctionalGroupForm({ ...functionalGroupForm, name: e.target.value })}
+                  placeholder="VD: BAN ISO (Hệ thống Quản lý Chất lượng) hoặc Tổ hợp R&D - QA/QC"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold"
+                />
+              </div>
+            </div>
+
+            {/* Chọn Tổ hợp các phòng ban */}
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                🏢 Tổ hợp các phòng ban tham gia trong Ban / Nhóm này (Click nút xổ để tích chọn các phòng ban muốn gộp):
+              </label>
+              <MultiDepartmentDropdownSelect
+                selectedDepts={functionalGroupForm.combinedDepts}
+                onChange={(nextDepts) => setFunctionalGroupForm({ ...functionalGroupForm, combinedDepts: nextDepts })}
+                departments={DEPARTMENTS}
+                placeholder="Bấm để xổ & tích chọn tổ hợp các phòng ban..."
+                minSelected={0}
+                accentColor="indigo"
+              />
+            </div>
+
+            {/* Chọn Trưởng ban (Người chịu trách nhiệm chính) & Thành viên trong nhóm */}
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                ⭐ Trưởng ban (Chịu trách nhiệm chính) &amp; 👥 Thành viên tham gia trong nhóm:
+              </label>
+              <MultiPersonnelWithLeadSelect
+                value={functionalGroupForm.assigneesComma}
+                onChange={(nextComma) => setFunctionalGroupForm({ ...functionalGroupForm, assigneesComma: nextComma })}
+                personnelList={personnelList}
+                filterDepartments={functionalGroupForm.combinedDepts.length > 0 ? functionalGroupForm.combinedDepts : undefined}
+                placeholder="Click để xổ chọn Trưởng ban (⭐ Chính) & các thành viên trong Ban/Nhóm..."
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Các phân loại đầu việc của Ban / Nhóm (cách nhau dấu phẩy)
+                </label>
+                <FastInput
+                  type="text"
+                  value={functionalGroupForm.categoriesText}
+                  onChange={(e) => setFunctionalGroupForm({ ...functionalGroupForm, categoriesText: e.target.value })}
+                  placeholder="VD: Soạn thảo SOP, Đánh giá nội bộ, Đào tạo chuyên môn..."
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Mô tả chức năng / Nhiệm vụ của nhóm
+                </label>
+                <FastInput
+                  type="text"
+                  value={functionalGroupForm.description}
+                  onChange={(e) => setFunctionalGroupForm({ ...functionalGroupForm, description: e.target.value })}
+                  placeholder="Mô tả ngắn mục tiêu hoặc phạm vi phụ trách của Ban/Nhóm..."
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="submit"
+                className="px-4 py-2 rounded-xl font-extrabold bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm cursor-pointer flex items-center gap-1.5"
+              >
+                <Check className="w-4 h-4" />
+                <span>{editingFunctionalGroupId ? "Lưu Cập Nhật Ban / Nhóm" : "+ Lưu & Tạo Ban / Nhóm Chức Năng"}</span>
+              </button>
+            </div>
+          </form>
+
+          {/* Danh sách các Ban / Nhóm chức năng hiện có & nút Giao việc nhanh trong nhóm */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h4 className="font-extrabold text-slate-800 dark:text-slate-200 text-xs">
+                📋 Danh sách Ban / Nhóm Chức Năng &amp; Tổ Hợp Phòng Ban hiện có ({functionalGroups.length} nhóm):
+              </h4>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2.5 max-h-80 overflow-y-auto pr-1">
+              {functionalGroups.map((fg) => {
+                const allMembers = Array.from(new Set([fg.lead, ...(fg.members || [])].filter(Boolean)));
+                return (
+                  <div
+                    key={fg.id}
+                    className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs hover:border-indigo-300 transition-all"
+                  >
+                    <div className="space-y-1 min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="px-2 py-0.5 rounded-lg bg-amber-100 dark:bg-amber-950/80 text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-700 font-extrabold text-xs">
+                          {fg.icon || "🏛️"} {fg.id}
+                        </span>
+                        <span className="font-bold text-slate-900 dark:text-white text-xs">
+                          {fg.name}
+                        </span>
+                      </div>
+
+                      {fg.description && (
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                          {fg.description}
+                        </p>
+                      )}
+
+                      <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-[10px]">
+                        {Array.isArray(fg.combinedDepts) && fg.combinedDepts.length > 0 && (
+                          <span className="px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-bold">
+                            🏢 Tổ hợp phòng ({fg.combinedDepts.length}): {fg.combinedDepts.join(" + ")}
+                          </span>
+                        )}
+                        {fg.lead && (
+                          <span className="px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800 font-bold">
+                            ⭐ Trưởng nhóm: {fg.lead}
+                          </span>
+                        )}
+                        {allMembers.length > 0 ? (
+                          <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold">
+                            👥 Thành viên ({allMembers.length}): {allMembers.join(", ")}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 italic">
+                            (Chưa gán thành viên cố định — Bấm &ldquo;Sửa&rdquo; để tích chọn thành viên vào nhóm)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => openAssignTaskToFunctionalGroup(fg)}
+                        className="px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-[11px] cursor-pointer shadow-2xs flex items-center gap-1"
+                        title={`Tạo công việc mới và giao cho nhóm ${fg.id}`}
+                      >
+                        <span>⚡ Giao việc trong nhóm</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => openCreateProjectForFunctionalGroup(fg)}
+                        className="px-2.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-[11px] cursor-pointer shadow-2xs flex items-center gap-1"
+                        title={`Tạo Dự án / Kế hoạch nhiều giai đoạn cho ${fg.id}`}
+                      >
+                        <span>🚀 Tạo dự án nhóm</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedDept(fg.id);
+                          setActiveSubTab("tasks");
+                          setIsFunctionalGroupModalOpen(false);
+                        }}
+                        className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-[11px] cursor-pointer"
+                        title={`Lọc Bảng công việc theo ${fg.id}`}
+                      >
+                        🔍 Xem việc nhóm
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => openFunctionalGroupModal(fg)}
+                        className="p-1.5 rounded-lg bg-slate-100 hover:bg-amber-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-amber-700 cursor-pointer"
+                        title="Sửa thông tin, tổ hợp phòng ban và thành viên của nhóm"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteFunctionalGroup(fg.id)}
+                        className="p-1.5 rounded-lg bg-slate-100 hover:bg-rose-100 dark:bg-slate-800 text-slate-500 hover:text-rose-600 cursor-pointer"
+                        title="Xóa Ban / Nhóm chức năng này"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       </Modal>
 
       {/* ==================== MODAL 6: ĐẶT MỤC TIÊU DOANH SỐ KINH DOANH ==================== */}
