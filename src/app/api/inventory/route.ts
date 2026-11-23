@@ -1641,6 +1641,9 @@ export async function POST(req: NextRequest) {
         const targetOldLot = old_lot_number ? String(old_lot_number).trim() : "";
         const newLot = lot_number !== undefined ? (String(lot_number).trim() || "NO-LOT") : null;
         const newExp = expiry_date !== undefined ? (normalizeExcelDateToISO(expiry_date, String(expiry_date).trim()) || null) : null;
+        // Xóa trống ô Hạn dùng = lô không có hạn dùng (vật tư nhựa, dụng cụ...). Trước đây giá trị rỗng bị bỏ qua nên không
+        // gỡ được hạn dùng đã lỡ nhập (BLN / TR 09-11-2026, NLD197 14.10.2026) và lô bị coi là hết hạn, không xuất được.
+        const clearExp = expiry_date !== undefined && expiry_date !== null && String(expiry_date).trim() === "";
         const newLoc = warehouse_location ? String(warehouse_location).trim() : null;
         const newUnitCost = cost_price !== undefined && cost_price !== null && String(cost_price) !== "" ? Number(cost_price) : null;
 
@@ -1660,22 +1663,22 @@ export async function POST(req: NextRequest) {
           if (conflictRow) {
             await c.query(
               `UPDATE inventory_lots
-                  SET expiry_date = CASE WHEN $1::text IS NOT NULL THEN $1::text ELSE expiry_date END,
+                  SET expiry_date = CASE WHEN $4::boolean THEN NULL WHEN $1::text IS NOT NULL THEN $1::text ELSE expiry_date END,
                       unit_cost = CASE WHEN $2::numeric IS NOT NULL AND $2::numeric >= 0 THEN $2::numeric ELSE unit_cost END,
                       last_updated = CURRENT_TIMESTAMP
                 WHERE id = $3`,
-              [newExp, newUnitCost, conflictRow.id]
+              [newExp, newUnitCost, conflictRow.id, clearExp]
             );
           } else {
             await c.query(
               `UPDATE inventory_lots
                   SET lot_number = COALESCE($1, lot_number),
-                      expiry_date = CASE WHEN $2::text IS NOT NULL THEN $2::text ELSE expiry_date END,
+                      expiry_date = CASE WHEN $6::boolean THEN NULL WHEN $2::text IS NOT NULL THEN $2::text ELSE expiry_date END,
                       warehouse_location = COALESCE($3, warehouse_location),
                       unit_cost = CASE WHEN $4::numeric IS NOT NULL AND $4::numeric >= 0 THEN $4::numeric ELSE unit_cost END,
                       last_updated = CURRENT_TIMESTAMP
                 WHERE id = $5`,
-              [newLot, newExp, newLoc, newUnitCost, matchedLotRow.id]
+              [newLot, newExp, newLoc, newUnitCost, matchedLotRow.id, clearExp]
             );
           }
         } else if (newLot && newLot !== "NO-LOT") {

@@ -2297,6 +2297,14 @@ export function SalesFullABT() {
                                 // Máy chủ đã hủy kết quả duyệt (đơn bị sửa sau khi duyệt): hiển thị chờ duyệt lại
                                 merged.status = "Pending";
                             }
+                            // Trạng thái giao do máy chủ tính theo số lượng thực đã giao: đơn còn hàng chưa giao không được hiện
+                            // "Đã giao hoàn tất" (trước đây phiếu "Giao toàn bộ" đặt cả đơn Delivered và lưu lại ở đây).
+                            const dbDel = String(raw.delivery_status || "").toUpperCase();
+                            if (merged.status === "Delivered" && (dbDel === "PARTIALLY_DELIVERED" || dbDel === "SHIPPED" || dbDel === "PENDING")) {
+                                merged.status = dbDel === "PARTIALLY_DELIVERED" ? "Partially Delivered" : "Approved";
+                            } else if (dbDel === "DELIVERED" && (merged.status === "Partially Delivered" || merged.status === "Approved" || merged.status === "Ready")) {
+                                merged.status = "Delivered";
+                            }
                         }
                         orderMap.set(k, merged);
                     });
@@ -14661,7 +14669,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     // Số lượng theo từng mặt hàng: đặt / đã lập phiếu / đã giao (xác nhận) / còn lại chưa lập phiếu
     const getOrderQtyProgress = (ord: any, excludeSlipId?: string) => {
         const fo = resolveFactoryOrder(ord);
-        const items: any[] = fo?.items || ord?.items || [];
+        // Dòng đã "Hủy dòng" không còn phải giao (trước đây vẫn tính là còn lại nên đơn không bao giờ hoàn tất)
+        const items: any[] = (fo?.items || ord?.items || []).filter((it: any) => String(it?.status || "").toUpperCase() !== "CANCELLED");
         const slips = getOrderSlips(ord, false).filter((s: any) => s.id !== excludeSlipId);
         const newSlips = slips.filter((s: any) => s.deliveryStatus);
         const legacySlips = slips.filter((s: any) => !s.deliveryStatus);
@@ -16743,7 +16752,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             }
         }
 
-        const sourceItems: any[] = fo?.items || target.items || [];
+        // Không đưa dòng SO đã hủy vào phiếu giao
+        const sourceItems: any[] = (fo?.items || target.items || []).filter((it: any) => String(it?.status || "").toUpperCase() !== "CANCELLED");
         if (sourceItems.length === 0) {
             showToast("Đơn hàng chưa có mặt hàng nào để lập phiếu giao!", "warning");
             return;
@@ -16762,6 +16772,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return acc;
         }, {});
         const otherActiveSlips = getOrderSlips(target, false).filter((s: any) => s.id !== editSlip?.id);
+        // Các dòng SO giống hệt nhau (cùng khóa nhận diện) được gộp thành MỘT dòng phiếu với TỔNG số lượng
+        // (trước đây dòng sau bị bỏ: SO26-TC-1001 2 dòng PRI-02.100 -> phiếu chỉ còn SL 1)
+        const identicalLineQty: Record<string, number> = {};
+        sourceItems.forEach((it: any, lineIdx: number) => {
+            const code = getItemCode(it);
+            if (!code) return;
+            const isGiftItem = Boolean(it.isGift || it.is_gift || Number(it.unitPrice ?? it.price ?? 0) === 0);
+            const hasDistinctLines = (sameCodeCountInOrder[code] || 0) > 1;
+            const seqOrNote = String(itemSequence(it) || it.notes || "").trim().toLowerCase();
+            const uPrice = Number(it.unitPrice ?? it.price ?? 0);
+            const key = hasDistinctLines
+                ? `${code}__${String(it.specification || "").trim().toLowerCase()}__${isGiftItem ? "gift" : "paid"}__${uPrice}__${seqOrNote || `line${lineIdx}`}`
+                : `${code}__${String(it.specification || "").trim().toLowerCase()}__${isGiftItem ? "gift" : "paid"}`;
+            identicalLineQty[key] = (identicalLineQty[key] || 0) + (Number(it.quantity) || 1);
+        });
         sourceItems.forEach((it: any, lineIdx: number) => {
             const code = getItemCode(it);
             if (!code) return;
@@ -16776,7 +16801,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             if (seen.has(specKey)) return;
             seen.add(specKey);
             const prod = allSalesProducts.find(p => p.code === code);
-            const ordered = Number(it.quantity) || 1;
+            const ordered = hasDistinctLines ? (identicalLineQty[specKey] || Number(it.quantity) || 1) : (Number(it.quantity) || 1);
             const matchesDistinctLine = (x: any) => {
                 if (getItemCode(x) !== code) return false;
                 if (!hasDistinctLines) return true;
@@ -17564,10 +17589,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 fo.order_code === slip.orderCode ||
                 fo.linkedSalesOrderId === slip.orderCode;
             if (!isMatch) return fo;
+            // Tạm hiện "giao một phần"; máy chủ tính lại theo số lượng thực của mọi phiếu và trả về trạng thái đúng bên dưới
             return {
                 ...fo,
-                status: isFullMode ? "Delivered" : (fo.status === "Delivered" ? "Delivered" : "Partially Delivered"),
-                deliveryStatus: isFullMode ? "FULLY_DELIVERED" : "PARTIALLY_DELIVERED",
+                status: fo.status === "Delivered" ? "Delivered" : "Partially Delivered",
+                deliveryStatus: "PARTIALLY_DELIVERED",
                 deliveredAt: fo.deliveredAt || slipIsoDate
             };
         }));
@@ -17580,7 +17606,23 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 delivery_status: isFullMode ? "DELIVERED" : "PARTIALLY_DELIVERED",
                 delivered_at: slipIsoDate
             })
-        }).catch(err => console.error("Error updating shipping status to DB:", err));
+        })
+            .then(r => r.json())
+            .then(d => {
+                const st = String(d?.delivery_status || "").toUpperCase();
+                if (st !== "DELIVERED" && st !== "PARTIALLY_DELIVERED") return;
+                setFactoryOrders(prev => prev.map(fo => {
+                    const isMatch = String(fo.id) === String(slip.orderId) || fo.order_code === slip.orderCode || fo.linkedSalesOrderId === slip.orderCode;
+                    if (!isMatch) return fo;
+                    return {
+                        ...fo,
+                        status: st === "DELIVERED" ? "Delivered" : "Partially Delivered",
+                        deliveryStatus: st === "DELIVERED" ? "FULLY_DELIVERED" : "PARTIALLY_DELIVERED",
+                        delivery_status: st
+                    };
+                }));
+            })
+            .catch(err => console.error("Error updating shipping status to DB:", err));
 
         showToast(`🚚 Kho (${staffName}) đã xác nhận xuất giao hàng cho phiếu ${slip.id}! Đơn đã sẵn sàng bên Quản lý hóa đơn.`, "success");
     };
@@ -26042,6 +26084,27 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             📝 {req.orderNotes || req.order_notes}
                                                                         </div>
                                                                     )}
+                                                                    {(() => {
+                                                                        // Ghi chú từng dòng của NVKD (vd mã trình tự oligo E-ASO1, OS1...) hiện ngay trên thẻ SO để
+                                                                        // Cung ứng / Kho thấy mà không phải mở đơn. Bỏ các ghi chú tự sinh (thời gian giao, thẻ quy cách).
+                                                                        const lineNotes = (Array.isArray(req.items) ? req.items : [])
+                                                                            .map((it: any) => ({
+                                                                                code: String(it.productCode || it.product_code || it.code || "").trim(),
+                                                                                note: String(it.notes || "").replace(/^\s*\[Dạng:[^\]]*\]\s*/u, "").trim()
+                                                                            }))
+                                                                            .filter((x: any) => x.note && !/^Hàng (đặt|có sẵn|đang về)/i.test(x.note));
+                                                                        if (lineNotes.length === 0) return null;
+                                                                        const full = lineNotes.map((x: any) => `${x.code}: ${x.note}`).join("\n");
+                                                                        return (
+                                                                            <div className="text-[10px] text-amber-100/90 text-left border-t border-slate-800/60 pt-0.5 mt-0.5 w-full" title={full}>
+                                                                                <span className="text-amber-300 font-semibold">📌 Ghi chú dòng:</span>{" "}
+                                                                                <span className="line-clamp-2">
+                                                                                    {lineNotes.slice(0, 6).map((x: any) => x.note).join(" · ")}
+                                                                                    {lineNotes.length > 6 ? ` · +${lineNotes.length - 6}` : ""}
+                                                                                </span>
+                                                                            </div>
+                                                                        );
+                                                                    })()}
                                                                     {(req.invoiceNotes || req.invoice_notes) && (
                                                                         <div className="text-[10px] text-sky-300/95 text-left border-t border-slate-800/60 pt-0.5 mt-0.5 w-full line-clamp-2" title={`Ghi chú xuất HĐ (Kế toán): ${req.invoiceNotes || req.invoice_notes}`}>
                                                                             🧾 Ghi chú HĐ: {req.invoiceNotes || req.order_invoice_notes || req.invoice_notes}
@@ -36556,7 +36619,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                                                                 {filteredProductLots.length === 0 && filteredOtherLots.length === 0 && (
                                                                                     <div className="p-4 text-center text-xs text-slate-400 italic">
-                                                                                        Không tìm thấy lô khớp từ khóa "{deliveryLotSearchQueries[idx]}". Bạn có thể nhập trực tiếp số lô vào ô trên.
+                                                                                        {String(deliveryLotSearchQueries[idx] || "").trim() ? `Không tìm thấy lô khớp từ khóa "${deliveryLotSearchQueries[idx]}".` : "Không có lô phù hợp để chọn."} Bạn có thể nhập trực tiếp số lô vào ô trên.
                                                                                     </div>
                                                                                 )}
                                                                             </div>

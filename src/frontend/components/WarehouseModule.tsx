@@ -655,7 +655,30 @@ export const WarehouseModule: React.FC = () => {
       setTimeout(() => {
         handleOpenEditInboundTx(target);
       }, 50);
+      return;
     }
+    // Danh sách tải sẵn chỉ có 100 giao dịch gần nhất: PNK cũ hơn (vd PNK26-KH-1102 bấm từ PO) không có trong đó,
+    // trước đây màn hình dừng ở Thẻ kho. Tìm riêng phiếu theo mã rồi mở.
+    const code = pendingEditInboundCode;
+    let cancelled = false;
+    fetch(`/api/inventory?action=transactions&type=INBOUND&page_size=20&q=${encodeURIComponent(code)}`)
+      .then(r => r.json())
+      .then(d => {
+        if (cancelled) return;
+        const found = (Array.isArray(d?.transactions) ? d.transactions : []).find(
+          (t: any) => String(t.transaction_code || "").trim().toUpperCase() === code.toUpperCase()
+        );
+        setPendingEditInboundCode("");
+        if (typeof window !== "undefined") sessionStorage.removeItem("tbr_open_edit_inbound");
+        setSubTab("transactions");
+        if (found) {
+          setTimeout(() => handleOpenEditInboundTx(found), 50);
+        } else {
+          alert(`Không tìm thấy phiếu nhập kho ${code}.`);
+        }
+      })
+      .catch(err => console.error("[warehouse] Không tải được phiếu nhập", code, err));
+    return () => { cancelled = true; };
   }, [pendingEditInboundCode, transactions]);
 
   // O(1) lookup maps for 5,000+ products and BOM components to avoid O(N^2) main-thread freezes
@@ -11030,15 +11053,29 @@ export const WarehouseModule: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Hạn dùng (Expiry Date)
+                  <label className="flex items-center justify-between font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    <span>Hạn dùng (Expiry Date)</span>
+                    {/* Vật tư không có hạn dùng (nhựa, dụng cụ...): gỡ hạn dùng đã lỡ nhập để lô không bị coi là hết hạn */}
+                    <button
+                      type="button"
+                      onClick={() => setEditStockForm({ ...editStockForm, expiry_date: "" })}
+                      className="text-[10px] font-bold text-amber-600 hover:underline cursor-pointer"
+                      title="Lô này không có hạn dùng"
+                    >
+                      Không HSD
+                    </button>
                   </label>
                   <input
                     type="date"
-                    value={editStockForm.expiry_date}
+                    value={/^\d{4}-\d{2}-\d{2}$/.test(String(editStockForm.expiry_date || "")) ? editStockForm.expiry_date : ""}
                     onChange={(e) => setEditStockForm({ ...editStockForm, expiry_date: e.target.value })}
                     className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono"
                   />
+                  <p className="mt-1 text-[10px] text-slate-500">
+                    {String(editStockForm.expiry_date || "").trim()
+                      ? `Đang lưu: ${editStockForm.expiry_date}`
+                      : "Không có hạn dùng (để trống)"}
+                  </p>
                 </div>
               </div>
 

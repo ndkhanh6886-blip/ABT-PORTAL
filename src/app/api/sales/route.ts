@@ -270,6 +270,65 @@ function itemHasZeroPrice(it: any): boolean {
 // FINITE STATE MACHINE (FSM) HIERARCHIES & MONOTONIC PROCESS GUARD
 // Chốt chặn ngăn chặn triệt để tình trạng lùi bước / tụt trạng thái tiến trình
 // ==========================================
+/** Số lượng đặt theo mã hàng của đơn (bỏ dòng đã hủy). */
+function orderedQtyByCode(items: any[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const it of items) {
+    if (String(it?.status || "").toUpperCase() === "CANCELLED") continue;
+    const code = String(it?.productCode || it?.product_code || it?.code || "").trim();
+    if (!code) continue;
+    m.set(code, (m.get(code) || 0) + (Number(it?.quantity) || 0));
+  }
+  return m;
+}
+
+function slipExtraOf(row: any): any {
+  let ex = row?.extra_data;
+  if (typeof ex === "string") { try { ex = JSON.parse(ex || "{}"); } catch { ex = {}; } }
+  return ex && typeof ex === "object" ? ex : {};
+}
+
+function slipIsDelivered(row: any): boolean {
+  if (String(row?.status || "").toUpperCase() === "CANCELLED") return false;
+  const ex = slipExtraOf(row);
+  const st = String(ex.deliveryStatus || "").toUpperCase();
+  // Phiếu cũ (lập trước khi có các bước chờ giao / đã giao) không ghi deliveryStatus: phiếu chưa hủy = đã giao
+  if (!st && ex.isDelivered === undefined) return true;
+  return ex.isDelivered === true || ex.isDelivered === "true" || st === "WAREHOUSE_DELIVERED" || st === "DELIVERED";
+}
+
+/**
+ * Trạng thái giao THỰC của đơn tính từ các phiếu giao: đủ số lượng mọi mã -> DELIVERED, có giao một phần -> PARTIALLY_DELIVERED.
+ * Trước đây một phiếu "Giao toàn bộ" được xác nhận là cả đơn thành "Đã giao hoàn tất" dù phiếu chỉ có vài mã
+ * (SO26-CP-1164, SO26-TL-1109, SO26-TL-1110, SO26-MD-1104), nên không lập được phiếu đợt tiếp.
+ */
+async function computeOrderDeliveryFromSlips(db: { query: (sql: string, params?: any[]) => Promise<any> }, orderCode: string): Promise<{
+  hasSlips: boolean; status: "DELIVERED" | "PARTIALLY_DELIVERED" | "SHIPPED" | "PENDING"; remaining: Record<string, number>;
+} | null> {
+  const ordRes = await db.query("SELECT items FROM sales_orders WHERE order_code = $1 ORDER BY id LIMIT 1", [orderCode]);
+  if (ordRes.rows.length === 0) return null;
+  const ordered = orderedQtyByCode(parseJsonArray(ordRes.rows[0].items));
+  if (ordered.size === 0) return null;
+  const slipRes = await db.query("SELECT slip_code, status, items, extra_data FROM sales_delivery_slips WHERE order_code = $1", [orderCode]);
+  const active = slipRes.rows.filter((r: any) => String(r.status || "").toUpperCase() !== "CANCELLED");
+  const delivered = new Map<string, number>();
+  for (const r of active.filter(slipIsDelivered)) {
+    for (const it of parseJsonArray(r.items)) {
+      const code = String(it?.productCode || it?.product_code || it?.code || "").trim();
+      if (code) delivered.set(code, (delivered.get(code) || 0) + (Number(it?.quantity) || 0));
+    }
+  }
+  const remaining: Record<string, number> = {};
+  let anyDelivered = false;
+  for (const [code, qty] of ordered) {
+    const d = delivered.get(code) || 0;
+    if (d > 0) anyDelivered = true;
+    if (d + 1e-9 < qty) remaining[code] = qty - d;
+  }
+  const status = Object.keys(remaining).length === 0 ? "DELIVERED" : anyDelivered ? "PARTIALLY_DELIVERED" : active.length > 0 ? "SHIPPED" : "PENDING";
+  return { hasSlips: slipRes.rows.length > 0, status, remaining };
+}
+
 const DELIVERY_STATUS_HIERARCHY: Record<string, number> = {
   "PENDING": 0,
   "PROCESSING": 1,
@@ -1437,6 +1496,9 @@ export async function POST(req: NextRequest) {
       const crName = creator_name || creatorName || null;
       const invNo = invoice_number || invoiceNumber || null;
       const invDate = invoice_date || invoiceDate || null;
+      const isCancellingSlip =
+        String(status || "").toUpperCase() === "CANCELLED" ||
+        String(body.deliveryStatus || "").toUpperCase() === "CANCELLED";
       const slipStatus = status || "COMPLETED";
 
       const itemsArr = Array.isArray(items) ? items : (typeof items === 'string' ? JSON.parse(items || '[]') : []);
@@ -1493,6 +1555,55 @@ export async function POST(req: NextRequest) {
               return forbiddenResponse("Phiếu giao hàng đã hoàn tất xác nhận giao — chỉ Quản trị viên, Ban Giám Đốc, Quản lý/Sale Admin, Kế toán hoặc Kho Vận mới có quyền chỉnh sửa ngày giao hoặc mặt hàng!");
             }
           }
+        }
+      }
+
+      // Không cho tổng số lượng các phiếu giao (chưa hủy) vượt số lượng đặt của từng mã trên SO.
+      // Trước đây lưu 2 lần cùng một đợt tạo 2 phiếu trùng (PX2611-0321 / 0322, SO26-TL-1110) và xuất kho vượt SO.
+      if (!isCancellingSlip && oCode && items !== undefined && itemsArr.length > 0) {
+        const overMsg = await withTransaction(async (c) => {
+          // Khóa đơn để hai lần lưu đồng thời không cùng vượt qua kiểm tra
+          const ordRow = (await c.query("SELECT items FROM sales_orders WHERE order_code = $1 ORDER BY id LIMIT 1 FOR UPDATE", [String(oCode).trim()])).rows[0];
+          if (!ordRow) return null;
+          const ordered = orderedQtyByCode(parseJsonArray(ordRow.items));
+          if (ordered.size === 0) return null;
+          const others = (await c.query(
+            "SELECT items FROM sales_delivery_slips WHERE order_code = $1 AND slip_code <> $2 AND COALESCE(UPPER(status), '') <> 'CANCELLED'",
+            [String(oCode).trim(), finalCode]
+          )).rows;
+          const allocated = new Map<string, number>();
+          for (const r of others) for (const it of parseJsonArray(r.items)) {
+            const code = String(it?.productCode || it?.product_code || it?.code || "").trim();
+            if (code) allocated.set(code, (allocated.get(code) || 0) + (Number(it?.quantity) || 0));
+          }
+          const thisSlip = new Map<string, number>();
+          for (const it of itemsArr) {
+            const code = String(it?.productCode || it?.product_code || it?.code || "").trim();
+            if (code) thisSlip.set(code, (thisSlip.get(code) || 0) + (Number(it?.quantity) || 0));
+          }
+          // Phiếu đang sửa: chỉ chặn khi số lượng của mã TĂNG so với bản đã lưu (đổi bước, ngày giao... không bị chặn
+          // với các đơn cũ đã lỡ vượt số lượng)
+          const savedQty = new Map<string, number>();
+          const savedRow = (await c.query("SELECT items FROM sales_delivery_slips WHERE slip_code = $1", [finalCode])).rows[0];
+          for (const it of parseJsonArray(savedRow?.items)) {
+            const code = String(it?.productCode || it?.product_code || it?.code || "").trim();
+            if (code) savedQty.set(code, (savedQty.get(code) || 0) + (Number(it?.quantity) || 0));
+          }
+          const over: string[] = [];
+          for (const [code, qty] of thisSlip) {
+            if (!ordered.has(code)) continue; // mã không có trên SO (hàng bù / đổi mã): không chặn
+            if (savedRow && qty <= (savedQty.get(code) || 0)) continue;
+            const prev = allocated.get(code) || 0;
+            const max = ordered.get(code) || 0;
+            if (prev + qty > max + 1e-9) over.push(`${code}: SO đặt ${max}, các phiếu khác đã lập ${prev}, phiếu này ${qty}`);
+          }
+          return over.length > 0 ? over : null;
+        });
+        if (overMsg) {
+          await logAudit("GUARD", "DELIVERY_SLIP", `Chặn lưu phiếu ${finalCode} (đơn ${oCode}) vượt số lượng SO: ${overMsg.join("; ")}`).catch(() => {});
+          return NextResponse.json({
+            error: `Phiếu giao vượt số lượng đặt trên SO ${oCode}:\n${overMsg.join("\n")}\nCó thể đợt này đã được lập (bấm lưu 2 lần hoặc người khác vừa lập). Vui lòng tải lại trang để xem các phiếu hiện có.`
+          }, { status: 409 });
         }
       }
 
@@ -1577,36 +1688,27 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Đồng bộ lại ngày giao thực tế (delivered_at) và trạng thái giao của đơn hàng gốc theo ngày giao của phiếu
-      // (Khi Kho xác nhận đã giao [WAREHOUSE_DELIVERED] hoặc Đã nhận [DELIVERED] là hoàn tất xuất kho & kích hoạt yêu cầu xuất HĐ)
-      if (oCode && dDate) {
+      // Đồng bộ trạng thái giao của đơn gốc theo số lượng THỰC đã giao trên các phiếu (kể cả khi hủy phiếu: đơn mở lại)
+      if (oCode) {
         try {
-          const parsedSlipDate = parseSqlDate(dDate);
-          const upperSt = String(body.deliveryStatus || "").toUpperCase();
-          if (["WAREHOUSE_DELIVERED", "DELIVERED"].includes(upperSt) || body.isDelivered === true) {
-            const targetOrderDelStatus = String(body.deliveryMode || "").toUpperCase() === "PARTIAL" ? "PARTIALLY_DELIVERED" : "DELIVERED";
+          const actual = await computeOrderDeliveryFromSlips({ query }, String(oCode).trim());
+          if (actual) {
+            const parsedSlipDate = dDate && !isCancellingSlip ? parseSqlDate(dDate) : null;
             await query(
               `UPDATE sales_orders
-                  SET delivered_at = $1::date,
-                      delivery_status = CASE
-                        WHEN delivery_status = 'DELIVERED' THEN 'DELIVERED'
-                        ELSE $3
+                  SET delivery_status = $2::text,
+                      delivered_at = CASE
+                        WHEN $2::text IN ('DELIVERED', 'PARTIALLY_DELIVERED') THEN COALESCE($3::date, delivered_at)
+                        ELSE delivered_at
                       END
-                WHERE order_code = $2
-                  AND COALESCE(UPPER(delivery_status), '') <> 'CANCELLED'`,
-              [parsedSlipDate, String(oCode).trim(), targetOrderDelStatus]
-            );
-          } else {
-            await query(
-              `UPDATE sales_orders
-                  SET delivered_at = $1::date
-                WHERE order_code = $2
-                  AND delivery_status IN ('DELIVERED', 'PARTIALLY_DELIVERED', 'SHIPPED')`,
-              [parsedSlipDate, String(oCode).trim()]
+                WHERE order_code = $1
+                  AND COALESCE(UPPER(delivery_status), '') <> 'CANCELLED'
+                  AND COALESCE(UPPER(delivery_status), '') IS DISTINCT FROM $2::text`,
+              [String(oCode).trim(), actual.status, parsedSlipDate]
             );
           }
         } catch (err) {
-          console.error("Failed to sync sales_orders.delivered_at from delivery_slip:", err);
+          console.error("Failed to sync sales_orders delivery status from delivery slips:", err);
         }
       }
 
@@ -2284,7 +2386,14 @@ export async function POST(req: NextRequest) {
         }, { status: 400 });
       }
 
-      const safeDelStatus = resolveMonotonicStatus(ord.delivery_status, delivery_status, DELIVERY_STATUS_HIERARCHY, isRollback);
+      let safeDelStatus = resolveMonotonicStatus(ord.delivery_status, delivery_status, DELIVERY_STATUS_HIERARCHY, isRollback);
+      // Đơn có phiếu giao: "Đã giao" chỉ khi các phiếu đã giao đủ số lượng mọi mã, còn lại là giao một phần
+      if (!isRollback && ["DELIVERED", "PARTIALLY_DELIVERED"].includes(String(safeDelStatus || "").toUpperCase())) {
+        const actual = await computeOrderDeliveryFromSlips({ query }, ord.order_code).catch(() => null);
+        if (actual?.hasSlips && (actual.status === "DELIVERED" || actual.status === "PARTIALLY_DELIVERED")) {
+          safeDelStatus = actual.status;
+        }
+      }
       const safeInvStatus = invoice_status ? resolveMonotonicStatus(ord.invoice_status, invoice_status, INVOICE_STATUS_HIERARCHY, isRollback) : ord.invoice_status;
 
       const deliveredDate = delivered_at ? parseSqlDate(delivered_at) : null;
@@ -3335,6 +3444,19 @@ export async function POST(req: NextRequest) {
       });
 
       await logAudit("CANCEL_ORDER_ITEM", "SALES_ORDER", `Hủy mặt hàng ${product_code} trong đơn ${order_code}: ${reason}`);
+      // Hủy dòng cuối cùng còn chờ giao -> đơn thành "Đã giao hoàn tất" (tính lại theo số đã giao thực trên các phiếu)
+      try {
+        const actual = await computeOrderDeliveryFromSlips({ query }, String(order_code || "").trim());
+        if (actual?.hasSlips && (actual.status === "DELIVERED" || actual.status === "PARTIALLY_DELIVERED")) {
+          await query(
+            `UPDATE sales_orders SET delivery_status = $2::text
+              WHERE order_code = $1 AND COALESCE(UPPER(delivery_status), '') NOT IN ('CANCELLED', $2::text)`,
+            [String(order_code).trim(), actual.status]
+          );
+        }
+      } catch (err) {
+        console.error("[cancel_order_item] Không tính lại được trạng thái giao:", err);
+      }
       return NextResponse.json({ success: true, updated_items: result.updatedItems, new_total: result.newTotal });
     }
 
