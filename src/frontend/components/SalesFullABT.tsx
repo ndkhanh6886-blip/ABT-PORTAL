@@ -5198,7 +5198,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [filterOrderMonth, setFilterOrderMonth] = useState("");
     const [filterOrderDateFrom, setFilterOrderDateFrom] = useState("");
     const [filterOrderDateTo, setFilterOrderDateTo] = useState("");
-    const [filterOrderApprovalStatus, setFilterOrderApprovalStatus] = useState<"all" | "pending_any" | "pending_zero_price" | "pending_credit" | "zero_price" | "approved" | "ready_to_deliver" | "overdue_delivery" | "rejected">("all");
+    const [filterOrderApprovalStatus, setFilterOrderApprovalStatus] = useState<"all" | "pending_any" | "pending_zero_price" | "pending_credit" | "zero_price" | "approved" | "ready_to_deliver" | "overdue_delivery" | "stock_order" | "rejected">("all");
 
     // Thông tin Người liên hệ & Địa chỉ giao/nhận hàng trên Đơn hàng SO
     const [factoryOrderContactPerson, setFactoryOrderContactPerson] = useState("");
@@ -15563,11 +15563,17 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         let readyToDeliverValue = 0;
         let overdueDeliveryCount = 0;
         let overdueDeliveryValue = 0;
+        let stockOrderCount = 0;
+        let stockOrderValue = 0;
         let rejectedCount = 0;
 
         baseFilteredOrders.forEach(req => {
             const c = classMap.get(req)!;
             const val = Number(req.totalAmount) || (req.items || []).reduce((s: number, it: any) => s + ((Number(it.quantity) || 1) * (Number(it.unitPrice ?? it.price) || 0)), 0);
+            if (c.isPureStock && !c.isCancelledOrRejected) {
+                stockOrderCount++;
+                stockOrderValue += val;
+            }
             if (c.isPendingAny) {
                 pendingAnyCount++;
                 pendingAnyValue += val;
@@ -15611,6 +15617,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             readyToDeliverValue,
             overdueDeliveryCount,
             overdueDeliveryValue,
+            stockOrderCount,
+            stockOrderValue,
             rejectedCount
         };
 
@@ -15625,6 +15633,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 if (deferredOrderApprovalStatus === "approved") return c.isApproved;
                 if (deferredOrderApprovalStatus === "ready_to_deliver") return c.isReadyToDeliver;
                 if (deferredOrderApprovalStatus === "overdue_delivery") return c.isOverdueDelivery;
+                if (deferredOrderApprovalStatus === "stock_order") return c.isPureStock && !c.isCancelledOrRejected;
                 if (deferredOrderApprovalStatus === "rejected") return c.isCancelledOrRejected;
                 return true;
             });
@@ -15651,6 +15660,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 all: "Tat-ca",
                 ready_to_deliver: "San-sang-giao",
                 overdue_delivery: "Tre-han-giao",
+                stock_order: "SO-Stock",
                 pending_any: "Cho-duyet",
                 pending_zero_price: "Cho-duyet-gia-0d",
                 pending_credit: "Cho-duyet-cong-no",
@@ -25240,6 +25250,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         🚨 {orderApprovalStats.overdueDeliveryCount} đơn trễ hạn giao
                                     </span>
                                 )}
+                                <span
+                                    onClick={() => setFilterOrderApprovalStatus(prev => prev === "stock_order" ? "all" : "stock_order")}
+                                    className={cn(
+                                        "text-[10px] px-2.5 py-0.5 rounded-full font-mono font-bold cursor-pointer border transition-colors",
+                                        filterOrderApprovalStatus === "stock_order"
+                                            ? "bg-cyan-600 text-white border-cyan-400 shadow-sm"
+                                            : "bg-cyan-950 text-cyan-300 border-cyan-700 hover:bg-cyan-900"
+                                    )}
+                                    title="Nhấn để lọc các đơn hàng SO Stock (dự trữ / lưu kho gối đầu)"
+                                >
+                                    📦 {orderApprovalStats.stockOrderCount} đơn SO Stock
+                                </span>
                             </div>
                             
                             {/* Factory Orders Search Bar & Excel Export */}
@@ -25513,6 +25535,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     >
                                         🚨 Trễ hạn giao ({orderApprovalStats.overdueDeliveryCount})
                                     </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFilterOrderApprovalStatus(prev => prev === "stock_order" ? "all" : "stock_order")}
+                                        className={cn(
+                                            "px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer border",
+                                            filterOrderApprovalStatus === "stock_order"
+                                                ? "bg-cyan-600 text-white border-cyan-400 shadow-sm"
+                                                : orderApprovalStats.stockOrderCount > 0
+                                                    ? "bg-cyan-950/60 text-cyan-300 border-cyan-700/80 hover:bg-cyan-900/60"
+                                                    : "bg-slate-900 text-slate-400 border-slate-800 hover:bg-slate-800"
+                                        )}
+                                        title="Lọc các đơn hàng SO Stock (đặt hàng lưu kho / dự trữ nội bộ)"
+                                    >
+                                        📦 SO Stock ({orderApprovalStats.stockOrderCount})
+                                    </button>
                                 </div>
                                 <div className="flex items-center gap-2.5 flex-wrap">
                                     {(filterOrderRep !== "all" || filterOrderCustomer !== "all" || filterOrderDateMode !== "all" || filterOrderApprovalStatus !== "all" || searchFactoryOrderQuery) && (
@@ -25586,6 +25623,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <option value="all">🛡️ Trạng thái duyệt & giao: Tất cả ({orderApprovalStats.total})</option>
                                         <option value="ready_to_deliver">🟢 Đủ hàng / Sẵn sàng giao ({orderApprovalStats.readyToDeliverCount})</option>
                                         <option value="overdue_delivery">🚨 Trễ hạn giao so với dự kiến ({orderApprovalStats.overdueDeliveryCount})</option>
+                                        <option value="stock_order">📦 Đơn hàng SO Stock ({orderApprovalStats.stockOrderCount})</option>
                                         <option value="pending_any">⏳ Chờ duyệt: Tất cả ({orderApprovalStats.pendingAnyCount})</option>
                                         <option value="pending_zero_price">🎁 Chờ duyệt giá 0đ / Hàng tặng ({orderApprovalStats.pendingZeroPriceCount})</option>
                                         <option value="pending_credit">🔒 Chờ Kế toán duyệt công nợ ({orderApprovalStats.pendingCreditCount})</option>
