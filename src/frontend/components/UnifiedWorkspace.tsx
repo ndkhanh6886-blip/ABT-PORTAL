@@ -1937,6 +1937,463 @@ const MultiDepartmentDropdownSelect: React.FC<MultiDepartmentDropdownSelectProps
   );
 };
 
+export function parseAssigneeWithLead(rawValue: string | string[] | null | undefined): {
+  lead: string;
+  members: string[];
+  all: string[];
+} {
+  const rawList = Array.isArray(rawValue)
+    ? rawValue
+    : String(rawValue || "")
+        .split(/[,;\n]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+  const all: string[] = [];
+  rawList.forEach((item) => {
+    const clean = String(item || "")
+      .replace(/^⭐\s*(Chính:\s*)?/i, "")
+      .replace(/^👥\s*/i, "")
+      .replace(/\s*\(.*?\)/g, "")
+      .trim();
+    if (clean && !all.some((existing) => sameStaffName(existing, clean))) {
+      all.push(clean);
+    }
+  });
+  return {
+    lead: all[0] || "",
+    members: all.slice(1),
+    all
+  };
+}
+
+interface MultiPersonnelWithLeadSelectProps {
+  value: string;
+  onChange: (nextCommaSeparated: string) => void;
+  personnelList: any[];
+  filterDepartments?: string | string[];
+  placeholder?: string;
+  compact?: boolean;
+  membersOnly?: boolean;
+  disabled?: boolean;
+  popoverAlign?: "left" | "right";
+}
+
+const MultiPersonnelWithLeadSelect: React.FC<MultiPersonnelWithLeadSelectProps> = ({
+  value,
+  onChange,
+  personnelList,
+  filterDepartments,
+  placeholder = "Chọn người chính & thành viên...",
+  compact = false,
+  membersOnly = false,
+  disabled = false,
+  popoverAlign = "left"
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [showAllCompany, setShowAllCompany] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, []);
+
+  const parsed = useMemo(() => parseAssigneeWithLead(value), [value]);
+
+  const activeFilterDepts = useMemo(() => {
+    if (!filterDepartments) return [];
+    const arr = Array.isArray(filterDepartments) ? filterDepartments : [filterDepartments];
+    return arr
+      .map((d) => String(d || "").trim())
+      .filter((d) => d && d !== "all" && d !== "Liên Phòng Ban");
+  }, [filterDepartments]);
+
+  const fullCompanyStaff = useMemo(() => {
+    const list: any[] = Array.isArray(personnelList) ? [...personnelList] : [];
+    Object.entries(DEPARTMENT_STAFF).forEach(([dKey, names]) => {
+      (names || []).forEach((rawName) => {
+        const cleanName = rawName.replace(/\s*\(.*?\)/, "").trim();
+        const posMatch = rawName.match(/\((.*?)\)/);
+        if (cleanName && !list.some((p) => sameStaffName(p.full_name, cleanName))) {
+          list.push({
+            full_name: cleanName,
+            employee_code: "",
+            position: posMatch ? posMatch[1] : `Nhân sự ${dKey}`,
+            department: dKey
+          });
+        }
+      });
+    });
+    return list;
+  }, [personnelList]);
+
+  const deptMatchedStaff = useMemo(() => {
+    if (activeFilterDepts.length === 0) return fullCompanyStaff;
+    return fullCompanyStaff.filter((p) =>
+      activeFilterDepts.some((d) => isSameWorkspaceDept(p.department, d))
+    );
+  }, [fullCompanyStaff, activeFilterDepts]);
+
+  const displayedList = useMemo(() => {
+    const base =
+      showAllCompany || activeFilterDepts.length === 0 || deptMatchedStaff.length === 0
+        ? fullCompanyStaff
+        : deptMatchedStaff;
+    const q = search.trim().toLowerCase();
+    const filtered = !q
+      ? base
+      : base.filter(
+          (p) =>
+            String(p.full_name || "").toLowerCase().includes(q) ||
+            String(p.employee_code || "").toLowerCase().includes(q) ||
+            String(p.department || "").toLowerCase().includes(q) ||
+            String(p.position || "").toLowerCase().includes(q)
+        );
+    // Đưa những người đã được chọn lên đầu danh sách để dễ nhìn
+    return [...filtered].sort((a, b) => {
+      const aLead = parsed.lead && sameStaffName(a.full_name, parsed.lead) ? -2 : 0;
+      const bLead = parsed.lead && sameStaffName(b.full_name, parsed.lead) ? -2 : 0;
+      if (aLead !== bLead) return aLead - bLead;
+      const aPicked = parsed.all.some((n) => sameStaffName(n, a.full_name)) ? -1 : 0;
+      const bPicked = parsed.all.some((n) => sameStaffName(n, b.full_name)) ? -1 : 0;
+      if (aPicked !== bPicked) return aPicked - bPicked;
+      return String(a.full_name || "").localeCompare(String(b.full_name || ""), "vi");
+    });
+  }, [fullCompanyStaff, deptMatchedStaff, activeFilterDepts, showAllCompany, search, parsed]);
+
+  const commitNames = (names: string[]) => {
+    onChange(names.join(", "));
+  };
+
+  const togglePerson = (rawName: string) => {
+    const clean = String(rawName || "").replace(/\s*\(.*?\)/g, "").trim();
+    if (!clean) return;
+    const exists = parsed.all.some((n) => sameStaffName(n, clean));
+    if (exists) {
+      commitNames(parsed.all.filter((n) => !sameStaffName(n, clean)));
+    } else {
+      commitNames([...parsed.all, clean]);
+    }
+  };
+
+  const setAsPrimaryLead = (rawName: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const clean = String(rawName || "").replace(/\s*\(.*?\)/g, "").trim();
+    if (!clean) return;
+    const others = parsed.all.filter((n) => !sameStaffName(n, clean));
+    commitNames([clean, ...others]);
+  };
+
+  if (disabled) {
+    return (
+      <div className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 text-slate-500 font-bold cursor-not-allowed text-xs truncate">
+        {parsed.lead
+          ? membersOnly
+            ? `👥 ${parsed.all.join(", ")}`
+            : `⭐ Chính: ${parsed.lead}${parsed.members.length > 0 ? ` (+${parsed.members.length}: ${parsed.members.join(", ")})` : ""}`
+          : placeholder}
+      </div>
+    );
+  }
+
+  return (
+    <div ref={containerRef} className={`relative text-xs ${compact ? "w-48 sm:w-52 shrink-0" : "w-full"}`}>
+      {/* Nút bấm xổ danh sách */}
+      <button
+        type="button"
+        onClick={() => setIsOpen((prev) => !prev)}
+        title={
+          parsed.all.length === 0
+            ? placeholder
+            : membersOnly
+            ? `Thành viên tham gia (${parsed.all.length}): ${parsed.all.join(", ")}`
+            : `⭐ Chịu trách nhiệm chính: ${parsed.lead}${
+                parsed.members.length > 0 ? `\n👥 Thành viên cùng tham gia (${parsed.members.length}): ${parsed.members.join(", ")}` : ""
+              }`
+        }
+        className={`w-full flex items-center justify-between gap-1.5 border bg-white dark:bg-slate-900 text-slate-900 dark:text-white transition-all text-left cursor-pointer ${
+          compact ? "px-2 py-1 rounded-lg text-[11px]" : "px-3 py-2 rounded-xl text-xs"
+        } ${
+          isOpen
+            ? "border-indigo-500 ring-2 ring-indigo-500/20"
+            : "border-slate-200 dark:border-slate-800 hover:border-indigo-400"
+        }`}
+      >
+        <div className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
+          {parsed.all.length === 0 ? (
+            <>
+              <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <span className="text-slate-400 font-medium truncate">{placeholder}</span>
+            </>
+          ) : membersOnly ? (
+            <>
+              <span className="px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 font-extrabold text-[10px] shrink-0">
+                👥 {parsed.all.length} TV
+              </span>
+              <span className="font-bold text-slate-800 dark:text-slate-100 truncate">
+                {parsed.all.join(", ")}
+              </span>
+            </>
+          ) : (
+            <>
+              <span
+                className="px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300/80 dark:border-amber-700 font-extrabold text-[10px] shrink-0"
+                title={`Người chịu trách nhiệm chính: ${parsed.lead}`}
+              >
+                ⭐ Chính
+              </span>
+              <span className="font-bold text-slate-900 dark:text-white truncate">
+                {parsed.lead}
+              </span>
+              {parsed.members.length > 0 && (
+                <span
+                  className="px-1.5 py-0.2 rounded-full bg-indigo-100 dark:bg-indigo-950/90 text-indigo-700 dark:text-indigo-300 font-extrabold text-[10px] shrink-0 border border-indigo-200 dark:border-indigo-800"
+                  title={`Thành viên cùng thực hiện: ${parsed.members.join(", ")}`}
+                >
+                  👥 +{parsed.members.length}
+                </span>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="flex items-center gap-0.5 shrink-0">
+          {parsed.all.length > 0 && (
+            <span
+              role="button"
+              tabIndex={-1}
+              onClick={(e) => {
+                e.stopPropagation();
+                onChange("");
+              }}
+              className="p-0.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-400 hover:text-rose-500"
+              title="Xóa chọn tất cả"
+            >
+              <X className="w-3 h-3" />
+            </span>
+          )}
+          <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+        </div>
+      </button>
+
+      {/* Hiển thị dải chip thành viên ở chế độ đầy đủ (Form Công việc / Dự án) */}
+      {!compact && parsed.all.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+          {parsed.all.map((personName, idx) => {
+            const isPrimary = !membersOnly && idx === 0;
+            return (
+              <span
+                key={personName}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-bold border ${
+                  isPrimary
+                    ? "bg-amber-50 dark:bg-amber-950/60 text-amber-900 dark:text-amber-200 border-amber-300 dark:border-amber-700"
+                    : "bg-indigo-50/80 dark:bg-indigo-950/50 text-indigo-800 dark:text-indigo-200 border-indigo-200 dark:border-indigo-800"
+                }`}
+              >
+                {isPrimary ? (
+                  <span className="text-[10px] font-extrabold text-amber-700 dark:text-amber-300">⭐ Chính:</span>
+                ) : !membersOnly ? (
+                  <button
+                    type="button"
+                    onClick={() => setAsPrimaryLead(personName)}
+                    className="text-[10px] text-slate-400 hover:text-amber-600 cursor-pointer"
+                    title={`Bấm để đặt ${personName} làm Người chịu trách nhiệm chính`}
+                  >
+                    ⭐
+                  </button>
+                ) : (
+                  <span className="text-[10px]">👥</span>
+                )}
+                <span>{personName}</span>
+                <button
+                  type="button"
+                  onClick={() => togglePerson(personName)}
+                  className="text-slate-400 hover:text-rose-600 font-bold ml-0.5 cursor-pointer"
+                  title="Bỏ thành viên này"
+                >
+                  ×
+                </button>
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Khung Popover xổ xuống: tích chọn nhiều người & phân công người chịu trách nhiệm chính */}
+      {isOpen && (
+        <div
+          className={`absolute z-50 mt-1 w-80 sm:w-96 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl overflow-hidden ${
+            popoverAlign === "right" ? "right-0" : "left-0"
+          }`}
+        >
+          {/* Thanh tiêu đề & nút chuyển đổi lọc Phòng ban <-> Toàn công ty */}
+          <div className="px-2.5 py-1.5 bg-slate-100/90 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-1.5 flex-wrap">
+            <span className="text-[10px] font-extrabold text-slate-700 dark:text-slate-300">
+              {membersOnly
+                ? `👥 Đã chọn ${parsed.all.length} thành viên`
+                : parsed.lead
+                ? `⭐ Chính: ${parsed.lead} ${parsed.members.length > 0 ? `(+${parsed.members.length} TV)` : ""}`
+                : "Chọn 1 người chính & các thành viên"}
+            </span>
+
+            {activeFilterDepts.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowAllCompany((prev) => !prev)}
+                className={`px-2 py-0.5 rounded-md text-[10px] font-bold border cursor-pointer transition-colors ${
+                  showAllCompany
+                    ? "bg-purple-600 text-white border-purple-600"
+                    : "bg-white dark:bg-slate-800 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-700 hover:bg-indigo-50"
+                }`}
+                title="Chuyển đổi giữa danh sách nhân sự trong phòng ban đang chọn và toàn bộ nhân sự công ty"
+              >
+                {showAllCompany
+                  ? `🌐 Toàn công ty (${fullCompanyStaff.length})`
+                  : `🏢 Theo phòng (${deptMatchedStaff.length}) • Xem tất cả`}
+              </button>
+            )}
+          </div>
+
+          {/* Ô tìm kiếm nhân viên */}
+          <div className="p-2 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2 bg-slate-50/60 dark:bg-slate-950/60">
+            <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <FastInput
+              type="text"
+              autoFocus
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Gõ tìm tên nhân viên, mã NV, phòng ban..."
+              className="w-full bg-transparent outline-none text-xs text-slate-900 dark:text-white placeholder-slate-400"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                className="text-[10px] text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                Xóa
+              </button>
+            )}
+          </div>
+
+          {!membersOnly && (
+            <div className="px-2.5 py-1 bg-amber-50/70 dark:bg-amber-950/30 border-b border-amber-200/60 dark:border-amber-900/50 text-[10px] text-amber-800 dark:text-amber-300 flex items-center justify-between">
+              <span>💡 Tích chọn nhiều người • Bấm <strong>⭐ Chính</strong> để chỉ định người chịu trách nhiệm chính</span>
+            </div>
+          )}
+
+          {/* Danh sách nhân sự có ô tích chọn */}
+          <div className="max-h-60 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/60 p-1">
+            {displayedList.length === 0 ? (
+              <div className="p-3 text-center text-slate-400 text-[11px] space-y-1.5">
+                <div>Không tìm thấy nhân sự khớp từ khóa</div>
+                {activeFilterDepts.length > 0 && !showAllCompany && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllCompany(true)}
+                    className="px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-300 font-bold text-[10px] cursor-pointer"
+                  >
+                    🌐 Mở rộng tìm trong toàn công ty ({fullCompanyStaff.length} người)
+                  </button>
+                )}
+              </div>
+            ) : (
+              displayedList.map((p) => {
+                const cleanName = String(p.full_name || "").trim();
+                const isPicked = parsed.all.some((n) => sameStaffName(n, cleanName));
+                const isLead = !membersOnly && Boolean(parsed.lead) && sameStaffName(parsed.lead, cleanName);
+                return (
+                  <div
+                    key={p.employee_code || cleanName}
+                    onClick={() => togglePerson(cleanName)}
+                    className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors ${
+                      isLead
+                        ? "bg-amber-50/90 dark:bg-amber-950/50 text-amber-950 dark:text-amber-100 font-bold"
+                        : isPicked
+                        ? "bg-indigo-50/80 dark:bg-indigo-950/50 text-indigo-900 dark:text-indigo-200 font-semibold"
+                        : "hover:bg-slate-50 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-300"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <input
+                        type="checkbox"
+                        checked={isPicked}
+                        readOnly
+                        className="w-4 h-4 rounded accent-indigo-600 cursor-pointer shrink-0"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="truncate text-xs">{cleanName}</span>
+                          {p.employee_code && (
+                            <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
+                              {p.employee_code}
+                            </span>
+                          )}
+                        </div>
+                        {(p.department || p.position) && (
+                          <div className="text-[10px] text-slate-400 truncate">
+                            {p.department || ""}
+                            {p.department && p.position ? " • " : ""}
+                            {p.position || ""}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Nút phân công Người chịu trách nhiệm chính */}
+                    {!membersOnly && (
+                      <div className="shrink-0">
+                        {isLead ? (
+                          <span className="px-2 py-0.5 rounded-md bg-amber-500 text-white text-[10px] font-extrabold shadow-2xs">
+                            ⭐ Chịu TN chính
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={(e) => setAsPrimaryLead(cleanName, e)}
+                            className={`px-2 py-0.5 rounded-md text-[10px] font-bold border cursor-pointer transition-colors ${
+                              isPicked
+                                ? "bg-white dark:bg-slate-800 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700 hover:bg-amber-500 hover:text-white"
+                                : "bg-slate-50 dark:bg-slate-800/70 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:border-amber-400 hover:text-amber-700"
+                            }`}
+                            title={`Đặt ${cleanName} làm Người chịu trách nhiệm chính`}
+                          >
+                            ⭐ Đặt làm chính
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Footer đóng nhanh */}
+          <div className="px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
+            <span className="text-[10px] text-slate-500">
+              Đã chọn: <strong>{parsed.all.length}</strong> người
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] cursor-pointer"
+            >
+              ✓ Xong
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 /**
  * Tính trạng thái hạn chót (Deadline) của công việc:
  * - isOverdue: Trễ hạn (status !== DONE / CANCELLED và deadlineIso < todayIso)
@@ -7628,7 +8085,7 @@ export const UnifiedWorkspace: React.FC = () => {
       : [targetDept];
     const defaultLead = selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__"
       ? selectedAssignee
-      : (departmentStaffList[0]?.full_name || currentStaffName);
+      : (currentStaffName || departmentStaffList[0]?.full_name || "");
     const defaultDue = toVNDateString(new Date(Date.now() + 14 * 86400000));
 
     const customStarterStages = [
@@ -7997,10 +8454,13 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       ...(labProjectForm.participatingDepts || []),
       ...stageDepts
     ]));
-    const stageAssignees = stagesList.flatMap((s: any) => [
-      s.assignee,
-      ...(Array.isArray(s.tasks) ? s.tasks.map((t: any) => t.assignee) : [])
-    ]).filter(Boolean);
+    const stageAssignees = stagesList
+      .flatMap((s: any) => [
+        s.assignee,
+        ...(Array.isArray(s.tasks) ? s.tasks.map((t: any) => t.assignee) : [])
+      ])
+      .flatMap((raw: any) => parseAssigneeWithLead(raw).all)
+      .filter(Boolean);
     const mergedCollaborators = Array.from(new Set([
       ...(labProjectForm.collaborators || []),
       ...stageAssignees
@@ -12484,11 +12944,18 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                                     🏢 {dName}
                                                   </span>
                                                 ))}
-                                                {stg.assignee && (
-                                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-                                                    👤 {stg.assignee}
-                                                  </span>
-                                                )}
+                                                {stg.assignee && (() => {
+                                                  const parsedStgAssignee = parseAssigneeWithLead(stg.assignee);
+                                                  return (
+                                                    <span
+                                                      className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
+                                                      title={`⭐ Chịu trách nhiệm chính: ${parsedStgAssignee.lead}${parsedStgAssignee.members.length > 0 ? `\n👥 Thành viên cùng tham gia: ${parsedStgAssignee.members.join(", ")}` : ""}`}
+                                                    >
+                                                      ⭐ {parsedStgAssignee.lead}
+                                                      {parsedStgAssignee.members.length > 0 ? ` (+${parsedStgAssignee.members.length} TV)` : ""}
+                                                    </span>
+                                                  );
+                                                })()}
                                                 {stageTasks.length > 0 && (
                                                   <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-purple-100/80 dark:bg-purple-950 text-purple-700 dark:text-purple-300">
                                                     {doneCount}/{stageTasks.length} việc
@@ -12571,11 +13038,18 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                                         {stTask.dept}
                                                       </span>
                                                     )}
-                                                    {stTask.assignee && (
-                                                      <span className="px-1.5 py-0.2 rounded text-[9px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                                                        👤 {stTask.assignee}
-                                                      </span>
-                                                    )}
+                                                    {stTask.assignee && (() => {
+                                                      const parsedSubAssignee = parseAssigneeWithLead(stTask.assignee);
+                                                      return (
+                                                        <span
+                                                          className="px-1.5 py-0.2 rounded text-[9px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
+                                                          title={`⭐ Chịu trách nhiệm chính: ${parsedSubAssignee.lead}${parsedSubAssignee.members.length > 0 ? `\n👥 Thành viên cùng tham gia: ${parsedSubAssignee.members.join(", ")}` : ""}`}
+                                                        >
+                                                          ⭐ {parsedSubAssignee.lead}
+                                                          {parsedSubAssignee.members.length > 0 ? ` (+${parsedSubAssignee.members.length} TV)` : ""}
+                                                        </span>
+                                                      );
+                                                    })()}
                                                     {stTask.due && (
                                                       <span className="text-[9px] font-mono text-slate-400">
                                                         {String(stTask.due).slice(8, 10)}/{String(stTask.due).slice(5, 7)}
@@ -12628,12 +13102,13 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                                   <option key={d.id} value={d.id}>🏢 {d.id}</option>
                                                 ))}
                                               </select>
-                                              <FastInput
-                                                type="text"
+                                              <MultiPersonnelWithLeadSelect
+                                                compact
                                                 value={quickStageTaskForm.assignee}
-                                                onChange={(e) => setQuickStageTaskForm({ ...quickStageTaskForm, assignee: e.target.value })}
-                                                placeholder="Người thực hiện..."
-                                                className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-[11px]"
+                                                onChange={(nextVal) => setQuickStageTaskForm({ ...quickStageTaskForm, assignee: nextVal })}
+                                                personnelList={personnelList}
+                                                filterDepartments={quickStageTaskForm.dept}
+                                                placeholder="Người chính & TV..."
                                               />
                                               <DateInputVN
                                                 value={quickStageTaskForm.due}
@@ -14915,15 +15390,15 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                Người phụ trách
-                {rolePerspective === "staff" && <span className="text-emerald-600 dark:text-emerald-400 text-[10px] ml-1 font-semibold">(Cá nhân)</span>}
+                Người chịu trách nhiệm chính &amp; Thành viên tham gia
+                {rolePerspective === "staff" && <span className="text-emerald-600 dark:text-emerald-400 text-[10px] ml-1 font-semibold">(Cá nhân / Nhóm)</span>}
               </label>
-              <SearchablePersonnelSelect
+              <MultiPersonnelWithLeadSelect
                 value={taskForm.assignee_name}
                 onChange={(val) => setTaskForm({ ...taskForm, assignee_name: val })}
                 personnelList={personnelList}
-                filterDepartment={rolePerspective === "manager" ? taskForm.department : undefined}
-                placeholder="Tìm & chọn nhân sự phụ trách..."
+                filterDepartments={rolePerspective === "manager" ? taskForm.department : (taskForm.department !== "all" ? taskForm.department : undefined)}
+                placeholder="Click chọn người chịu trách nhiệm chính & các thành viên..."
               />
             </div>
 
@@ -19260,7 +19735,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Chủ nhiệm dự án (PM / Lead) *
+                  ⭐ Chủ nhiệm dự án / Chịu trách nhiệm chính (PM / Lead) *
                 </label>
                 <SearchablePersonnelSelect
                   value={labProjectForm.lead}
@@ -19271,6 +19746,29 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 />
               </div>
 
+              <div className="sm:col-span-2">
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  👥 Thành viên tham gia dự án / Nhóm công việc (Click xổ để tích chọn nhiều người)
+                </label>
+                <MultiPersonnelWithLeadSelect
+                  value={Array.isArray(labProjectForm.collaborators) ? labProjectForm.collaborators.join(", ") : ""}
+                  onChange={(nextComma) => {
+                    const nextList = parseAssigneeWithLead(nextComma).all;
+                    setLabProjectForm({ ...labProjectForm, collaborators: nextList });
+                  }}
+                  personnelList={personnelList}
+                  filterDepartments={
+                    labProjectForm.dept === "Liên Phòng Ban"
+                      ? labProjectForm.participatingDepts
+                      : [labProjectForm.dept, ...(labProjectForm.participatingDepts || [])]
+                  }
+                  membersOnly
+                  placeholder="Bấm để xổ & tích chọn các thành viên cùng tham gia dự án..."
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   🔗 Khách hàng / Mã liên kết nghiệp vụ
@@ -19429,25 +19927,19 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       </div>
 
                       <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap shrink-0">
-                        <input
-                          type="text"
-                          list={`stg-staff-list-${sIdx}`}
+                        <MultiPersonnelWithLeadSelect
+                          compact
                           value={stg.assignee || ""}
-                          onChange={(e) => {
+                          onChange={(nextVal) => {
                             const updated = [...labProjectForm.stages];
-                            updated[sIdx] = { ...updated[sIdx], assignee: e.target.value };
+                            updated[sIdx] = { ...updated[sIdx], assignee: nextVal };
                             setLabProjectForm({ ...labProjectForm, stages: updated });
                           }}
-                          placeholder="Đầu mối GĐ..."
-                          className="w-28 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-[11px]"
+                          personnelList={personnelList}
+                          filterDepartments={stgDepts}
+                          placeholder="Chọn người chính & TV..."
+                          popoverAlign="right"
                         />
-                        <datalist id={`stg-staff-list-${sIdx}`}>
-                          {personnelList
-                            .filter((p: any) => stgDepts.length === 0 || stgDepts.some((d) => isSameWorkspaceDept(p.department, d)))
-                            .map((p: any) => (
-                              <option key={p.employee_code || p.full_name} value={p.full_name} />
-                            ))}
-                        </datalist>
 
                         <div className="flex items-center gap-1" title="Ngày hoàn thành (Deadline) của giai đoạn này">
                           <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 shrink-0">📅 Hạn GĐ:</span>
@@ -19600,27 +20092,21 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               ))}
                             </select>
 
-                            <input
-                              type="text"
-                              list={`stg-task-staff-list-${sIdx}-${tIdx}`}
+                            <MultiPersonnelWithLeadSelect
+                              compact
                               value={taskItem.assignee || ""}
-                              onChange={(e) => {
+                              onChange={(nextVal) => {
                                 const updated = [...labProjectForm.stages];
                                 const nextTasks = [...(updated[sIdx].tasks || [])];
-                                nextTasks[tIdx] = { ...nextTasks[tIdx], assignee: e.target.value };
+                                nextTasks[tIdx] = { ...nextTasks[tIdx], assignee: nextVal };
                                 updated[sIdx] = { ...updated[sIdx], tasks: nextTasks };
                                 setLabProjectForm({ ...labProjectForm, stages: updated });
                               }}
-                              placeholder="Người thực hiện..."
-                              className="w-28 px-2 py-1 rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-[10px]"
+                              personnelList={personnelList}
+                              filterDepartments={taskSpecificDept}
+                              placeholder="Người chính & TV..."
+                              popoverAlign="right"
                             />
-                            <datalist id={`stg-task-staff-list-${sIdx}-${tIdx}`}>
-                              {personnelList
-                                .filter((p: any) => !taskSpecificDept || isSameWorkspaceDept(p.department, taskSpecificDept))
-                                .map((p: any) => (
-                                  <option key={p.employee_code || p.full_name} value={p.full_name} />
-                                ))}
-                            </datalist>
 
                             <DateInputVN
                               value={taskItem.due || stgDue}
@@ -20990,11 +21476,28 @@ const TaskCard: React.FC<{
       )}
 
       <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-100 dark:border-slate-700/60">
-        {cleanWorkspaceAssignee(task.assignee_name) ? (
-          <span className="font-semibold text-slate-700 dark:text-slate-300 truncate max-w-[140px]">
-            👤 {cleanWorkspaceAssignee(task.assignee_name)}
-          </span>
-        ) : (
+        {cleanWorkspaceAssignee(task.assignee_name) ? (() => {
+          const parsedAssignee = parseAssigneeWithLead(cleanWorkspaceAssignee(task.assignee_name));
+          return (
+            <div
+              className="flex items-center gap-1 min-w-0 max-w-[195px]"
+              title={`⭐ Người chịu trách nhiệm chính: ${parsedAssignee.lead}${
+                parsedAssignee.members.length > 0
+                  ? `\n👥 Thành viên cùng thực hiện (${parsedAssignee.members.length}): ${parsedAssignee.members.join(", ")}`
+                  : ""
+              }`}
+            >
+              <span className="font-semibold text-slate-700 dark:text-slate-300 truncate">
+                {parsedAssignee.members.length > 0 ? "⭐" : "👤"} {parsedAssignee.lead}
+              </span>
+              {parsedAssignee.members.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 font-extrabold text-[9px] shrink-0 border border-indigo-200 dark:border-indigo-800">
+                  👥 +{parsedAssignee.members.length}
+                </span>
+              )}
+            </div>
+          );
+        })() : (
           <button
             type="button"
             onClick={() => (task.isHubItem && task.hubTargetTab ? onNavigateTab?.(task.hubTargetTab) : onEdit(task))}
