@@ -1765,6 +1765,56 @@ export async function POST(req: NextRequest) {
         }
         // Đơn đang có: loại đơn theo dữ liệu đã lưu, không theo cờ client gửi lên
         isStockOrder = String(existing.order_code || "").includes("STOCK") || String(existing.applied_price_policy || "").toUpperCase() === "STOCK";
+
+        // Khóa chỉnh sửa đơn hàng đã giao, giao 1 phần hoặc đã xuất hóa đơn
+        const isFullOrderEdit = Boolean(
+          has("customer_name") ||
+          has("order_date") ||
+          has("order_notes") ||
+          has("invoice_notes") ||
+          has("invoiceNotes") ||
+          has("vat_requested") ||
+          has("contact_person") ||
+          has("delivery_address")
+        );
+        const itemsCommercialChanged = has("items") && orderCommercialSignature(parseJsonArray(existing.items)) !== orderCommercialSignature(itemsArr);
+        if ((isFullOrderEdit || itemsCommercialChanged) && !isRollback) {
+          const existingDelSt = String(existing.delivery_status || "").trim().toUpperCase();
+          const existingInvSt = String(existing.invoice_status || "").trim().toUpperCase();
+          const existingInvSlips = parseJsonArray(existing.invoiced_delivery_slips);
+          const hasInvoicedRecord = Boolean(String(existing.invoice_no || "").trim())
+            || ["ISSUED", "INVOICED", "PARTIALLY_INVOICED"].includes(existingInvSt)
+            || existingInvSlips.some((s: any) => s && String(s.invoice_no || "").trim());
+          if (hasInvoicedRecord) {
+            return NextResponse.json({
+              error: `Đơn ${existing.order_code} đã xuất hóa đơn nên không được phép chỉnh sửa nữa!`,
+              locked: true
+            }, { status: 409 });
+          }
+          const slipRows = (await query(
+            "SELECT status, extra_data FROM sales_delivery_slips WHERE LOWER(TRIM(order_code)) = LOWER(TRIM($1))",
+            [String(existing.order_code || "").trim()]
+          )).rows;
+          const hasDeliveredSlip = slipRows.some((r: any) => {
+            if (String(r?.status || "").toUpperCase() === "CANCELLED") return false;
+            let ex = r?.extra_data;
+            if (typeof ex === "string") { try { ex = JSON.parse(ex || "{}"); } catch { ex = {}; } }
+            const st = String(ex?.deliveryStatus || "").toUpperCase();
+            if (!st && ex?.isDelivered === undefined) return true;
+            return ex?.isDelivered === true || ex?.isDelivered === "true" || st === "WAREHOUSE_DELIVERED" || st === "DELIVERED";
+          });
+          const isDeliveredOrPartial =
+            ["DELIVERED", "PARTIALLY_DELIVERED"].includes(existingDelSt) || hasDeliveredSlip;
+          if (isDeliveredOrPartial) {
+            const label = existingDelSt === "PARTIALLY_DELIVERED"
+              ? "đã giao hàng 1 phần"
+              : "đã giao hàng";
+            return NextResponse.json({
+              error: `Đơn ${existing.order_code} ${label} nên không được phép chỉnh sửa nữa!`,
+              locked: true
+            }, { status: 409 });
+          }
+        }
         if (has("items") && !isStockOrder) {
           for (const it of itemsArr) {
             if (it?.status === "CANCELLED") continue;

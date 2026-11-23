@@ -13439,11 +13439,65 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return Boolean(latest && (String(latest.status || "").toUpperCase() === "CANCELLED" || String(latest.delivery_status || "").toUpperCase() === "CANCELLED"));
     };
 
+    // Kiểm tra đơn hàng đã giao, giao 1 phần hoặc đã xuất hóa đơn: khóa chỉnh sửa đơn hàng
+    const getFactoryOrderEditLockReason = (req: any): string | null => {
+        if (!req) return null;
+        const latest = (factoryOrders || []).find((o: any) =>
+            o.id === req.id ||
+            (req.order_code && (o.order_code === req.order_code || o.id === req.order_code)) ||
+            (req.order_id && o.id === req.order_id)
+        ) || req;
+
+        const invStatus = String(latest.invoiceStatus || latest.invoice_status || req.invoiceStatus || req.invoice_status || "").toUpperCase();
+        const hasInvoiceNo = Boolean(String(latest.invoiceNo || latest.invoice_no || req.invoiceNo || req.invoice_no || "").trim());
+        let invSlips: any = latest.invoiced_delivery_slips ?? req.invoiced_delivery_slips;
+        if (typeof invSlips === "string") { try { invSlips = JSON.parse(invSlips); } catch { invSlips = []; } }
+        const hasInvoicedSlip = Array.isArray(invSlips) && invSlips.some((s: any) => s && String(s.invoice_no || "").trim());
+        const slips = getOrderSlips(latest, false);
+        const hasSlipWithInv = slips.some((s: any) => Boolean(String(s?.invoiceNo || s?.invoiceNumber || s?.invoice_number || "").trim()));
+        if (hasInvoiceNo || hasInvoicedSlip || hasSlipWithInv || ["ISSUED", "INVOICED", "PARTIALLY_INVOICED"].includes(invStatus)) {
+            return "đã xuất hóa đơn";
+        }
+
+        const st = String(latest.status || req.status || "").toUpperCase();
+        const delSt = String(latest.delivery_status || latest.deliveryStatus || req.delivery_status || req.deliveryStatus || "").toUpperCase();
+        if (
+            ["DELIVERED", "COMPLETED", "PARTIALLY DELIVERED", "PARTIALLY_DELIVERED"].includes(st) ||
+            ["DELIVERED", "FULLY_DELIVERED", "PARTIALLY_DELIVERED"].includes(delSt)
+        ) {
+            return (st.includes("PARTIAL") || delSt.includes("PARTIAL")) ? "đã giao hàng 1 phần" : "đã giao hàng";
+        }
+
+        const deliveredSlips = slips.filter((s: any) => {
+            const step = getSlipStep(s, latest);
+            return step === "DELIVERED" || step === "WAREHOUSE_DELIVERED";
+        });
+        if (deliveredSlips.length > 0) {
+            const analysis = computeOrderStockAnalysis(latest);
+            return analysis.isFullyDelivered ? "đã giao hàng" : "đã giao hàng 1 phần";
+        }
+
+        const analysis = computeOrderStockAnalysis(latest);
+        if (analysis.isFullyDelivered) return "đã giao hàng";
+        if (analysis.isPartiallyDelivered) return "đã giao hàng 1 phần";
+
+        return null;
+    };
+
+    const isFactoryOrderEditLocked = (req: any): boolean => Boolean(getFactoryOrderEditLockReason(req));
+
     const handleEditFactoryOrder = (req: any, opts?: { forCopy?: boolean }) => {
         // Đơn đã hủy không được sửa (sửa xong máy chủ từng đưa đơn về "Chờ giao" trong khi màn hình vẫn hiện đã hủy)
         if (!opts?.forCopy && isFactoryOrderCancelled(req)) {
             showToast(`Đơn ${req.order_code || req.id} đã bị hủy nên không thể sửa. Nếu khách vẫn đặt hàng, hãy dùng nút Copy để tạo đơn mới.`, "warning");
             return;
+        }
+        if (!opts?.forCopy) {
+            const lockReason = getFactoryOrderEditLockReason(req);
+            if (lockReason) {
+                showToast(`Đơn ${req.order_code || req.id} ${lockReason} nên đã khóa chỉnh sửa!`, "warning");
+                return;
+            }
         }
         setEditingFactoryOrderId(req.id);
         setFactoryOrderNotes(String(req.orderNotes || req.order_notes || ""));
@@ -13878,6 +13932,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         if (editingFactoryOrderId) {
             const targetOrdBeforeEdit = factoryOrders.find(o => o.id === editingFactoryOrderId);
+            const editLockReason = getFactoryOrderEditLockReason(targetOrdBeforeEdit);
+            if (editLockReason) {
+                showToast(`Đơn ${editingFactoryOrderId} ${editLockReason} nên không được phép chỉnh sửa nữa!`, "warning");
+                return;
+            }
             const alreadyInvoicedEdit = Boolean(
                 targetOrdBeforeEdit?.invoiceNo ||
                 (targetOrdBeforeEdit as any)?.invoice_no ||
@@ -22771,7 +22830,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                             <Truck className="w-3 h-3 text-indigo-400" />
                                                                                             <span>Tab Đơn</span>
                                                                                         </button>
-                                                                                        {!isCancelled && ord.raw_order && (!isWarehouseStaff || hasSalesEditPerm) && (
+                                                                                        {!isCancelled && !isCompleted && ord.status !== "PARTIALLY_DELIVERED" && ord.raw_order && !isFactoryOrderEditLocked(ord.raw_order) && (!isWarehouseStaff || hasSalesEditPerm) && (
                                                                                             <button
                                                                                                 onClick={() => handleEditFactoryOrder(ord.raw_order)}
                                                                                                 className="bg-amber-950/80 hover:bg-amber-900 text-amber-200 border border-amber-500/50 text-[10px] px-2 py-1 rounded-lg font-bold flex items-center gap-1 cursor-pointer transition-colors"
@@ -26371,7 +26430,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         );
                                                                     })()}
                                                                     {/* 3. Nút Sửa, Nút Hủy đơn & Nút Xóa */}
-                                                                    {!isCancelledOrder && canUserAct && (
+                                                                    {!isCancelledOrder && canUserAct && !isFactoryOrderEditLocked(req) && (
                                                                         <button
                                                                             type="button"
                                                                             onClick={() => handleEditFactoryOrder(req)}
@@ -33983,7 +34042,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     </strong>
                                 </div>
                                 {!isWarehouseStaff || hasSalesEditPerm ? (
-                                    viewingFactoryOrderItems.status !== "Cancelled" && viewingFactoryOrderItems.status !== "CANCELLED" && (
+                                    viewingFactoryOrderItems.status !== "Cancelled" && viewingFactoryOrderItems.status !== "CANCELLED" && !isFactoryOrderEditLocked(viewingFactoryOrderItems) && (
                                     <button
                                         type="button"
                                         onClick={() => {
@@ -34783,7 +34842,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     <td className="py-2.5 px-3 text-right font-mono font-semibold text-slate-200">
                                                         {unitPrice > 0 ? (
                                                             `${unitPrice.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ`
-                                                        ) : (!isWarehouseStaff || hasSalesEditPerm) && !Boolean(it?.isGift || it?.is_gift) ? (
+                                                        ) : (!isWarehouseStaff || hasSalesEditPerm) && !Boolean(it?.isGift || it?.is_gift) && !isFactoryOrderEditLocked(viewingFactoryOrderItems) ? (
                                                             <button
                                                                 type="button"
                                                                 onClick={() => {
@@ -34819,7 +34878,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             </span>
                                                         ) : (
                                                             <div className="flex items-center justify-center gap-1.5">
-                                                                {(!isWarehouseStaff || hasSalesEditPerm) && (
+                                                                {(!isWarehouseStaff || hasSalesEditPerm) && !isFactoryOrderEditLocked(viewingFactoryOrderItems) && (
                                                                     <button
                                                                         type="button"
                                                                         onClick={() => {
@@ -34897,7 +34956,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </button>
                             </div>
                             <div className="flex items-center gap-2">
-                                {(!isWarehouseStaff || hasSalesEditPerm) && viewingFactoryOrderItems.status !== "Cancelled" && viewingFactoryOrderItems.status !== "CANCELLED" && (
+                                {(!isWarehouseStaff || hasSalesEditPerm) && viewingFactoryOrderItems.status !== "Cancelled" && viewingFactoryOrderItems.status !== "CANCELLED" && !isFactoryOrderEditLocked(viewingFactoryOrderItems) && (
                                     <button
                                         type="button"
                                         onClick={() => {
