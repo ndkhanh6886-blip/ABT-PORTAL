@@ -27,7 +27,7 @@ type SlipStatus = "PENDING" | "DELIVERED" | "CANCELLED";
 /** Ngày giao của phiếu về dạng "YYYY-MM-DD" (phiếu lưu ngày kiểu "16/10/2026" hoặc ISO). */
 export function slipDateISO(slip: any): string {
   const raw = String(slip?.deliveryDate || slip?.delivery_date || "").trim();
-  const vi = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  const vi = raw.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})/);
   if (vi) return `${vi[3]}-${vi[2].padStart(2, "0")}-${vi[1].padStart(2, "0")}`;
   if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
   if (raw) {
@@ -37,7 +37,7 @@ export function slipDateISO(slip: any): string {
   return slip?.createdAt ? toVNDateString(slip.createdAt) : "";
 }
 
-const fmtVN = (iso: string) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "—");
+const fmtVN = (iso: string) => (iso ? `${iso.slice(8, 10)}-${iso.slice(5, 7)}-${iso.slice(0, 4)}` : "—");
 
 const addDays = (iso: string, n: number) => {
   const d = new Date(`${iso}T00:00:00Z`);
@@ -107,6 +107,9 @@ export function DeliverySlipListView({
   canEditSlip,
   getFinance,
   onCollectPayment,
+  onBatchCollectPayment,
+  getSalesRepName,
+  onIssueInvoice,
   rmaList = [],
   onCreateRma,
   onOpenRmaList,
@@ -128,6 +131,10 @@ export function DeliverySlipListView({
   getFinance?: (slip: any) => { amount: number; invoiceNo: string; invoiceDate?: string; paid: number; orderPaid?: number; orderTotal?: number };
   /** Mở cửa sổ thu tiền / thu cọc cho Phiếu giao hàng (kể cả khi đang Chờ giao) */
   onCollectPayment?: (slip: any, order: any) => void;
+  /** Mở cửa sổ thu tiền gộp cho nhiều Phiếu giao hàng / nhiều đơn SO đã tích chọn */
+  onBatchCollectPayment?: (items: { slip: any; order: any }[]) => void;
+  getSalesRepName?: (slip: any) => string;
+  onIssueInvoice?: (slip: any) => void;
   /** Danh sách phiếu trả hàng (RMA) & các hàm thao tác trả hàng ngay tại Phiếu giao hàng */
   rmaList?: any[];
   onCreateRma?: (ord: any, slip?: any) => void;
@@ -148,23 +155,69 @@ export function DeliverySlipListView({
   const [selectedSOCode, setSelectedSOCode] = useState<string>("all");
   // Lọc theo khách hàng: xem toàn bộ nhật ký giao hàng của 1 khách (mọi ngày, mọi SO)
   const [selectedCustomer, setSelectedCustomer] = useState<string>("all");
+  // Lọc theo nhân viên sale (NVKD phụ trách đơn SO của phiếu giao)
+  const [selectedSalesRep, setSelectedSalesRep] = useState<string>("all");
   const [expandedSOs, setExpandedSOs] = useState<Record<string, boolean>>({});
+  const [selectedSlipIds, setSelectedSlipIds] = useState<string[]>([]);
+
+  const isSlipCollectable = (slip: any, st: SlipStatus) => {
+    if (!getFinance || st === "CANCELLED") return false;
+    const f = getFinance(slip);
+    const orderFullPaid = (f.orderTotal || 0) > 0 && (f.orderPaid || 0) >= (f.orderTotal || 0) - 0.5;
+    const paidFull = (f.amount > 0 && f.paid >= f.amount - 0.5) || orderFullPaid;
+    return !paidFull && (f.amount > 0 || (f.orderTotal || 0) > 0);
+  };
+
+  const toggleSlipSelect = (slipId: string) => {
+    setSelectedSlipIds((prev) =>
+      prev.includes(slipId) ? prev.filter((id) => id !== slipId) : [...prev, slipId]
+    );
+  };
 
   // Danh sách toàn bộ phiếu hợp lệ (không phải bản nháp xem trước)
   const allValidSlips = useMemo(() => {
     return (slips || [])
       .filter((s) => s && !s.isDraftPreview)
-      .map((s) => ({
-        slip: s,
-        date: slipDateISO(s),
-        status: getStatus(s),
-      }));
-  }, [slips, getStatus]);
+      .map((s) => {
+        const ord = resolveOrder ? resolveOrder(s) : null;
+        const salesRep = String(
+          (getSalesRepName ? getSalesRepName(s) : "") ||
+          ord?.salesRepName || ord?.sales_rep_name || s.salesRepName || s.sales_rep_name || ""
+        ).trim();
+        return {
+          slip: s,
+          date: slipDateISO(s),
+          status: getStatus(s),
+          salesRep,
+        };
+      });
+  }, [slips, getStatus, resolveOrder]);
+
+  // Danh sách nhân viên sale có phiếu giao
+  const NO_REP = "__none__";
+  const allSalesReps = useMemo(() => {
+    const map = new Map<string, { name: string; slipCount: number; customers: Set<string> }>();
+    allValidSlips.forEach(({ slip, salesRep }) => {
+      const key = salesRep || NO_REP;
+      const cur = map.get(key) || { name: key, slipCount: 0, customers: new Set<string>() };
+      cur.slipCount += 1;
+      const cn = String(slip.customerName || "").trim();
+      if (cn) cur.customers.add(cn);
+      map.set(key, cur);
+    });
+    return Array.from(map.values()).sort((a, b) =>
+      a.name === NO_REP ? 1 : b.name === NO_REP ? -1 : a.name.localeCompare(b.name, "vi")
+    );
+  }, [allValidSlips]);
+  const matchesRep = (r: { salesRep: string }) =>
+    selectedSalesRep === "all" || (r.salesRep || NO_REP) === selectedSalesRep;
 
   // Danh sách tất cả các Mã đơn SO có phiếu giao để hiển thị trong Dropdown chọn nhanh Mã SO
   const allCustomers = useMemo(() => {
     const map = new Map<string, { name: string; slipCount: number; soCodes: Set<string> }>();
-    allValidSlips.forEach(({ slip }) => {
+    allValidSlips.forEach((r) => {
+      if (!matchesRep(r)) return;
+      const { slip } = r;
       const name = String(slip.customerName || "").trim();
       if (!name) return;
       const cur = map.get(name) || { name, slipCount: 0, soCodes: new Set<string>() };
@@ -174,11 +227,14 @@ export function DeliverySlipListView({
       map.set(name, cur);
     });
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "vi"));
-  }, [allValidSlips]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allValidSlips, selectedSalesRep]);
 
   const allSOCodes = useMemo(() => {
     const map = new Map<string, { code: string; customerName: string; slipCount: number }>();
-    allValidSlips.forEach(({ slip }) => {
+    allValidSlips.forEach((r) => {
+      if (!matchesRep(r)) return;
+      const { slip } = r;
       const code = String(slip.orderCode || slip.orderId || "").trim();
       if (!code) return;
       const existing = map.get(code);
@@ -193,7 +249,8 @@ export function DeliverySlipListView({
       }
     });
     return Array.from(map.values()).sort((a, b) => b.code.localeCompare(a.code));
-  }, [allValidSlips]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allValidSlips, selectedSalesRep]);
 
   // Dữ liệu lọc theo điều kiện (Khi đã chọn 1 Mã SO cụ thể, tự động lấy tất cả các đợt của SO đó để không bị sót đợt cũ ngoài khoảng ngày)
   const rows = useMemo(() => {
@@ -201,6 +258,7 @@ export function DeliverySlipListView({
     const fold = (v: any) => String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase();
     const kw = fold(q.trim());
     return allValidSlips
+      .filter(matchesRep)
       .filter((r) => {
         if (selectedSOCode !== "all") {
           return String(r.slip.orderCode || r.slip.orderId || "").trim() === selectedSOCode;
@@ -231,7 +289,8 @@ export function DeliverySlipListView({
       .sort((a, b) =>
         a.date === b.date ? String(b.slip.id).localeCompare(String(a.slip.id)) : b.date.localeCompare(a.date)
       );
-  }, [allValidSlips, from, to, status, q, selectedSOCode, selectedCustomer, payFilter, getFinance]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allValidSlips, from, to, status, q, selectedSOCode, selectedCustomer, selectedSalesRep, payFilter, getFinance]);
 
   const counts = useMemo(() => {
     const c = { all: rows.length, PENDING: 0, DELIVERED: 0, CANCELLED: 0 } as Record<string, number>;
@@ -426,7 +485,7 @@ export function DeliverySlipListView({
     return expandedSOs[orderCode] !== false; // Mặc định mở sẵn để nhìn thấy ngay các đợt giao & SL còn lại
   };
 
-  const filterResetKey = `${from}|${to}|${status}|${payFilter}|${q}|${selectedSOCode}|${selectedCustomer}|${viewMode}`;
+  const filterResetKey = `${from}|${to}|${status}|${payFilter}|${q}|${selectedSOCode}|${selectedCustomer}|${selectedSalesRep}|${viewMode}`;
   const soGroupsPage = usePaged(soGroups, 20, filterResetKey);
   const rowsPage = usePaged(rows, 20, filterResetKey);
 
@@ -649,6 +708,31 @@ export function DeliverySlipListView({
 
       {/* Filter Toolbar */}
       <div className="flex flex-wrap items-end gap-3 p-3 rounded-xl border border-slate-800 bg-slate-900/60 text-xs">
+        {/* Lọc theo nhân viên sale: danh sách khách hàng / mã SO bên cạnh chỉ còn của sale này */}
+        <div className="min-w-[200px]">
+          <label className="block text-[10px] font-bold uppercase text-amber-300 mb-1">
+            Lọc theo nhân viên sale
+          </label>
+          <select
+            value={selectedSalesRep}
+            onChange={(e) => {
+              setSelectedSalesRep(e.target.value);
+              // Khách hàng / SO đang chọn có thể không thuộc sale mới → bỏ chọn
+              setSelectedCustomer("all");
+              setSelectedSOCode("all");
+            }}
+            title="Chọn nhân viên sale để chỉ xem phiếu giao và khách hàng do sale đó phụ trách"
+            className="w-full bg-slate-950 border border-slate-700 hover:border-amber-500/60 rounded-lg px-2.5 py-1.5 text-white font-bold cursor-pointer outline-none"
+          >
+            <option value="all">-- Tất cả sale ({allSalesReps.filter((r) => r.name !== NO_REP).length}) --</option>
+            {allSalesReps.map((r) => (
+              <option key={r.name} value={r.name}>
+                {r.name === NO_REP ? "(Chưa gán sale)" : r.name} ({r.customers.size} KH · {r.slipCount} phiếu)
+              </option>
+            ))}
+          </select>
+        </div>
+
         {/* Dropdown chọn nhanh theo từng Mã SO */}
         <div className="min-w-[210px]">
           <label className="block text-[10px] font-bold uppercase text-indigo-300 mb-1">
@@ -780,6 +864,95 @@ export function DeliverySlipListView({
         </div>
       </div>
 
+      {/* Thanh tổng hợp giá trị & Nút thu tiền gộp cho nhiều phiếu / nhiều đơn SO đã chọn */}
+      {getFinance && (() => {
+        const fmtNum = (n: number) => new Intl.NumberFormat("vi-VN").format(Math.round(n || 0));
+        const activeRows = rows.filter((r) => r.status !== "CANCELLED");
+        const finSummary = activeRows.reduce(
+          (acc, r) => {
+            const f = getFinance(r.slip);
+            const amt = Math.max(0, Number(f.amount) || 0);
+            const orderFullPaid = (f.orderTotal || 0) > 0 && (f.orderPaid || 0) >= (f.orderTotal || 0) - 0.5;
+            const paid = orderFullPaid ? amt : Math.min(amt, Math.max(0, Number(f.paid) || 0));
+            const rem = Math.max(0, amt - paid);
+            return {
+              total: acc.total + amt,
+              delivered: acc.delivered + (r.status === "DELIVERED" ? amt : 0),
+              paid: acc.paid + paid,
+              remaining: acc.remaining + rem,
+            };
+          },
+          { total: 0, delivered: 0, paid: 0, remaining: 0 }
+        );
+
+        const selectedRows = allValidSlips.filter(
+          (r) => selectedSlipIds.includes(String(r.slip.id)) && isSlipCollectable(r.slip, r.status)
+        );
+        const selectedOrderSet = new Set(
+          selectedRows.map((r) => String(r.slip.orderCode || r.slip.orderId || "").trim()).filter(Boolean)
+        );
+        const selectedRemainingSum = selectedRows.reduce((s, r) => {
+          const f = getFinance(r.slip);
+          return s + Math.max(0, (Number(f.amount) || 0) - (Number(f.paid) || 0));
+        }, 0);
+
+        return (
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs px-3.5 py-2.5 rounded-xl bg-slate-900/70 border border-slate-800">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <span className="text-slate-300">
+                Tổng phiếu: <b className="font-mono text-white">{fmtNum(finSummary.total)} VNĐ</b>
+              </span>
+              <span className="text-slate-300" title="Giá trị các phiếu đã xác nhận giao hàng">
+                Đã giao: <b className="font-mono text-sky-300">{fmtNum(finSummary.delivered)} VNĐ</b>
+              </span>
+              <span className="text-slate-300">
+                Đã thu: <b className="font-mono text-emerald-400">{fmtNum(finSummary.paid)} VNĐ</b>
+              </span>
+              <span className="text-slate-300">
+                Còn phải thu: <b className="font-mono text-rose-400">{fmtNum(finSummary.remaining)} VNĐ</b>
+              </span>
+              {selectedRows.length > 0 && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-950/80 border border-emerald-600/60 text-emerald-300 font-bold">
+                  <span>
+                    Đã chọn {selectedRows.length} phiếu ({selectedOrderSet.size} đơn SO) • Cần thu:{" "}
+                    <b className="font-mono text-white">{fmtNum(selectedRemainingSum)} đ</b>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSlipIds([])}
+                    className="ml-1 text-[10px] text-rose-300 hover:text-rose-200 underline cursor-pointer"
+                  >
+                    Bỏ chọn
+                  </button>
+                </span>
+              )}
+            </div>
+
+            {onBatchCollectPayment && (
+              <button
+                type="button"
+                disabled={selectedRows.length === 0}
+                onClick={() => {
+                  onBatchCollectPayment(
+                    selectedRows.map((r) => ({
+                      slip: r.slip,
+                      order: resolveOrder ? resolveOrder(r.slip) : null,
+                    }))
+                  );
+                }}
+                className="px-3.5 py-1.5 rounded-xl font-bold bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-40 cursor-pointer flex items-center gap-1.5 shadow-sm transition-colors"
+                title="Tích chọn các Phiếu giao hàng của 1 hoặc nhiều đơn SO ở cột đầu tiên để ghi nhận thu tiền gộp một lần"
+              >
+                <span>
+                  💰 Thu tiền cho {selectedRows.length} phiếu đã chọn
+                  {selectedOrderSet.size > 1 ? ` (${selectedOrderSet.size} đơn SO)` : ""}
+                </span>
+              </button>
+            )}
+          </div>
+        );
+      })()}
+
       {/* =====================================================================
           CHẾ ĐỘ 1: HIỂN THỊ THEO TỪNG MÃ ĐƠN SO (ĐỢT GIAO & SL CÒN LẠI CHƯA GIAO)
          ===================================================================== */}
@@ -810,6 +983,36 @@ export function DeliverySlipListView({
                     className="px-3 py-2 bg-slate-900/90 flex flex-wrap items-center gap-x-3 gap-y-1.5 cursor-pointer hover:bg-slate-800/60 transition-colors"
                   >
                     <div className="flex items-center gap-2 min-w-0 flex-1 basis-64">
+                      {onBatchCollectPayment && (() => {
+                        const groupCollectableIds = group.allSlips
+                          .filter((s) => isSlipCollectable(s.slip, s.status))
+                          .map((s) => String(s.slip.id));
+                        const allGroupChecked =
+                          groupCollectableIds.length > 0 &&
+                          groupCollectableIds.every((id) => selectedSlipIds.includes(id));
+                        return (
+                          <input
+                            type="checkbox"
+                            disabled={groupCollectableIds.length === 0}
+                            checked={allGroupChecked}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setSelectedSlipIds((prev) =>
+                                checked
+                                  ? Array.from(new Set([...prev, ...groupCollectableIds]))
+                                  : prev.filter((id) => !groupCollectableIds.includes(id))
+                              );
+                            }}
+                            className="w-4 h-4 accent-emerald-500 cursor-pointer disabled:opacity-30 shrink-0"
+                            title={
+                              groupCollectableIds.length > 0
+                                ? `Chọn tất cả ${groupCollectableIds.length} phiếu chưa thu đủ của đơn ${group.orderCode}`
+                                : "Đơn này đã thu đủ tiền"
+                            }
+                          />
+                        );
+                      })()}
                       {expanded ? (
                         <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
                       ) : (
@@ -1001,8 +1204,21 @@ export function DeliverySlipListView({
                               key={slip.id}
                               onClick={() => onView(slip)}
                               title={itemsTip}
-                              className="px-2 py-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] hover:bg-slate-900/60 cursor-pointer"
+                              className={`px-2 py-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] hover:bg-slate-900/60 cursor-pointer ${
+                                selectedSlipIds.includes(String(slip.id)) ? "bg-emerald-950/25" : ""
+                              }`}
                             >
+                              {onBatchCollectPayment && (
+                                <input
+                                  type="checkbox"
+                                  disabled={!isSlipCollectable(slip, st)}
+                                  checked={selectedSlipIds.includes(String(slip.id))}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={() => toggleSlipSelect(String(slip.id))}
+                                  className="w-3.5 h-3.5 accent-emerald-500 cursor-pointer disabled:opacity-30 shrink-0"
+                                  title="Chọn phiếu giao này để thu tiền gộp"
+                                />
+                              )}
                               <span className="text-[10px] font-bold text-indigo-300 shrink-0">Đợt {batchNo}</span>
                               <span className="font-mono font-bold text-white shrink-0">{slip.id}</span>
                               <span className="font-mono text-slate-400 shrink-0">{fmtVN(date)}</span>
@@ -1113,6 +1329,35 @@ export function DeliverySlipListView({
           <table className="w-full text-left text-xs min-w-[1200px]">
             <thead>
               <tr className="bg-slate-900 text-slate-400 font-bold text-[11px]">
+                {onBatchCollectPayment && (
+                  <th className="p-2.5 w-9 text-center">
+                    {(() => {
+                      const collectableIds = rows
+                        .filter((r) => isSlipCollectable(r.slip, r.status))
+                        .map((r) => String(r.slip.id));
+                      const allChecked =
+                        collectableIds.length > 0 &&
+                        collectableIds.every((id) => selectedSlipIds.includes(id));
+                      return (
+                        <input
+                          type="checkbox"
+                          disabled={collectableIds.length === 0}
+                          checked={allChecked}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setSelectedSlipIds((prev) =>
+                              checked
+                                ? Array.from(new Set([...prev, ...collectableIds]))
+                                : prev.filter((id) => !collectableIds.includes(id))
+                            );
+                          }}
+                          className="w-4 h-4 accent-emerald-500 cursor-pointer disabled:opacity-30"
+                          title="Chọn / Bỏ chọn tất cả các phiếu chưa thu đủ đang hiển thị"
+                        />
+                      );
+                    })()}
+                  </th>
+                )}
                 <th className="p-2.5 whitespace-nowrap">Mã phiếu / Ngày giao</th>
                 <th className="p-2.5">Khách hàng / Đơn SO · Đợt · SL</th>
                 {getFinance && (
@@ -1132,7 +1377,7 @@ export function DeliverySlipListView({
             <tbody className="divide-y divide-slate-800">
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={getFinance ? 11 : 8} className="p-6 text-center text-slate-500">
+                  <td colSpan={(getFinance ? 11 : 8) + (onBatchCollectPayment ? 1 : 0)} className="p-6 text-center text-slate-500">
                     Không có phiếu giao nào trong khoảng đã chọn.
                   </td>
                 </tr>
@@ -1143,13 +1388,36 @@ export function DeliverySlipListView({
                   const soGroup = soGroups.find(
                     (g) => g.orderCode === String(slip.orderCode || slip.orderId || "").trim()
                   );
+                  const isChecked = selectedSlipIds.includes(String(slip.id));
+                  const canCollectRow = isSlipCollectable(slip, st);
                   return (
                     <tr
                       key={slip.id}
-                      className="hover:bg-slate-900/50 cursor-pointer"
+                      className={`hover:bg-slate-900/50 cursor-pointer transition-colors ${
+                        isChecked ? "bg-emerald-950/25" : ""
+                      }`}
                       onClick={() => onView(slip)}
                       title="Bấm để xem / in phiếu"
                     >
+                      {onBatchCollectPayment && (
+                        <td
+                          className="p-2.5 text-center align-top"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            disabled={!canCollectRow}
+                            checked={isChecked}
+                            onChange={() => toggleSlipSelect(String(slip.id))}
+                            className="w-4 h-4 accent-emerald-500 cursor-pointer disabled:opacity-30 mt-0.5"
+                            title={
+                              canCollectRow
+                                ? `Tích chọn phiếu ${slip.id} (${slip.orderCode}) để thu tiền gộp nhiều đơn`
+                                : "Phiếu này đã thu đủ hoặc đã hủy"
+                            }
+                          />
+                        </td>
+                      )}
                       <td className="p-2.5 whitespace-nowrap align-top">
                         <div className="font-mono font-bold text-indigo-300">{slip.id}</div>
                         <div className="font-mono text-[11px] text-slate-400 mt-0.5">
@@ -1193,8 +1461,36 @@ export function DeliverySlipListView({
                         return (
                           <>
                             <td className="p-2.5 text-right font-mono font-bold text-white">{f.amount > 0 ? fmt(f.amount) : "—"}</td>
-                            <td className="p-2.5 font-mono text-slate-200" title={f.invoiceDate ? `Ngày HĐ: ${f.invoiceDate}` : undefined}>
-                              {f.invoiceNo || <span className="text-slate-600">Chưa xuất</span>}
+                            <td
+                              className="p-2.5 font-mono text-slate-200"
+                              title={f.invoiceDate ? `Ngày HĐ: ${f.invoiceDate}` : undefined}
+                              onClick={(e) => { if (onIssueInvoice) e.stopPropagation(); }}
+                            >
+                              {f.invoiceNo ? (
+                                onIssueInvoice ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => onIssueInvoice(slip)}
+                                    className="text-orange-300 hover:underline font-bold cursor-pointer"
+                                    title={`Ngày HĐ: ${f.invoiceDate || "—"} • Bấm để sửa hóa đơn`}
+                                  >
+                                    {f.invoiceNo}
+                                  </button>
+                                ) : (
+                                  f.invoiceNo
+                                )
+                              ) : onIssueInvoice && st !== "CANCELLED" ? (
+                                <button
+                                  type="button"
+                                  onClick={() => onIssueInvoice(slip)}
+                                  className="text-[10px] px-2 py-0.5 rounded bg-orange-600/90 hover:bg-orange-500 text-white font-sans font-bold cursor-pointer"
+                                  title="Xuất hóa đơn cho phiếu giao này"
+                                >
+                                  🧾 Xuất HĐ
+                                </button>
+                              ) : (
+                                <span className="text-slate-600">Chưa xuất</span>
+                              )}
                             </td>
                             <td className="p-2.5 text-center" onClick={(e) => { if (onCollectPayment && st !== "CANCELLED" && !paidFull) e.stopPropagation(); }}>
                               {st === "CANCELLED" ? (

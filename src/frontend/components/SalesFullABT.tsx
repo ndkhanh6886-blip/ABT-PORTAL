@@ -17673,6 +17673,103 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         customerPaymentRequestId.current = `${orderCode}-${Date.now()}`;
     };
 
+    const [batchCustomerPaymentItems, setBatchCustomerPaymentItems] = useState<Array<{
+        slip_id: string;
+        batch_number: number;
+        delivery_date: string;
+        status: string;
+        invoice_no: string;
+        order_code: string;
+        raw_code: string;
+        customer_name: string;
+        slip_value: number;
+        slip_paid: number;
+        slip_remaining: number;
+        order_total: number;
+        order_paid: number;
+        order_remaining: number;
+        collect_amount: number;
+    }> | null>(null);
+    const [batchCustomerPaymentDate, setBatchCustomerPaymentDate] = useState(() => todayVN());
+    const [batchCustomerPaymentMethod, setBatchCustomerPaymentMethod] = useState("Chuyển khoản");
+    const [batchCustomerPaymentRef, setBatchCustomerPaymentRef] = useState("");
+    const [isSubmittingBatchCustomerPayment, setIsSubmittingBatchCustomerPayment] = useState(false);
+    const batchCustomerPaymentReqId = useRef("");
+
+    const openBatchCustomerPaymentModal = (entries: { slip: any; order: any }[]) => {
+        if (!Array.isArray(entries) || entries.length === 0) return;
+        const orderRemainBudgets: Record<string, number> = {};
+        const items: Array<{
+            slip_id: string;
+            batch_number: number;
+            delivery_date: string;
+            status: string;
+            invoice_no: string;
+            order_code: string;
+            raw_code: string;
+            customer_name: string;
+            slip_value: number;
+            slip_paid: number;
+            slip_remaining: number;
+            order_total: number;
+            order_paid: number;
+            order_remaining: number;
+            collect_amount: number;
+        }> = [];
+
+        for (const entry of entries) {
+            const s = entry.slip;
+            if (!s || !s.id) continue;
+            const fo = resolveFactoryOrder(entry.order || { order_id: s.orderId, raw_code: s.orderCode }) || entry.order;
+            const orderCode = String(fo?.linkedSalesOrderId || fo?.order_code || s.orderCode || fo?.id || s.orderId || "").trim();
+            const rawCode = String(fo?.order_code || fo?.linkedSalesOrderId || s.orderCode || fo?.id || orderCode).trim();
+            const slipValue = Math.round(getSlipValue(s, fo) || 0);
+            const slipPaid = Math.round(slipPaidMap[s.id] || 0);
+            const orderTotal = Math.round(getOrderTotalValue(fo) || slipValue);
+            const orderPaid = Math.round(getOrderPaidAmount(fo) || 0);
+            const orderRemaining = Math.max(0, orderTotal - orderPaid);
+            const rawSlipRem = Math.max(0, slipValue - slipPaid);
+            if (orderRemainBudgets[orderCode] === undefined) {
+                orderRemainBudgets[orderCode] = orderRemaining > 0 ? orderRemaining : rawSlipRem;
+            }
+            const budgetLeft = orderRemainBudgets[orderCode];
+            const slipRemaining = Math.max(0, Math.min(rawSlipRem, budgetLeft > 0 ? budgetLeft : rawSlipRem));
+            orderRemainBudgets[orderCode] = Math.max(0, budgetLeft - slipRemaining);
+            const invInfo = getSlipInvoice(s);
+            const st = getSlipStatus(s, fo);
+
+            items.push({
+                slip_id: String(s.id),
+                batch_number: Number(s.batchNumber) || 1,
+                delivery_date: String(s.deliveryDate || s.delivery_date || ""),
+                status: st,
+                invoice_no: invInfo.invoiceNo || "",
+                order_code: orderCode,
+                raw_code: rawCode,
+                customer_name: String(s.customerName || fo?.customerName || fo?.customer_name || "Khách hàng").trim(),
+                slip_value: slipValue,
+                slip_paid: slipPaid,
+                slip_remaining: slipRemaining,
+                order_total: orderTotal,
+                order_paid: orderPaid,
+                order_remaining: orderRemaining,
+                collect_amount: slipRemaining
+            });
+        }
+
+        const actionable = items.filter(it => it.slip_remaining > 0 || it.order_remaining > 0);
+        if (actionable.length === 0) {
+            showToast("Các phiếu giao đã chọn đều đã thu đủ hoặc có giá trị 0đ.", "warning");
+            return;
+        }
+        const distinctOrders = Array.from(new Set(actionable.map(x => x.order_code)));
+        setBatchCustomerPaymentItems(actionable);
+        setBatchCustomerPaymentDate(todayVN());
+        setBatchCustomerPaymentMethod("Chuyển khoản");
+        setBatchCustomerPaymentRef(`Thu tiền ${actionable.length} phiếu giao (${distinctOrders.join(", ")})`);
+        batchCustomerPaymentReqId.current = `BATCH-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    };
+
     // Danh sách tất cả phiếu giao (các đợt) của 1 đơn + trạng thái 3 bước (Slide 2) + thao tác. Dùng chung Tab Đơn hàng & Tab Khách hàng
     const renderOrderSlipList = (ord: any, opts?: { compact?: boolean }) => {
         const fo = resolveFactoryOrder(ord);
@@ -27395,6 +27492,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         };
                     }}
                     onCollectPayment={canViewCustomerDebt ? (s: any, ord: any) => openCustomerPaymentModalForOrder(ord || { order_code: s?.orderCode, id: s?.orderId, customerName: s?.customerName }, s) : undefined}
+                    onBatchCollectPayment={canViewCustomerDebt ? (items: { slip: any; order: any }[]) => openBatchCustomerPaymentModal(items) : undefined}
                     rmaList={rmaList}
                     onCreateRma={(ord: any, slip?: any) => handleOpenCreateRmaModal(ord, slip)}
                     onOpenRmaList={(orderCode?: string) => {
@@ -37390,6 +37488,333 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                     </form>
                 )}
+            </>)}</Modal>
+
+            {/* THU TIỀN GỘP NHIỀU PHIẾU GIAO HÀNG / NHIỀU ĐƠN SO */}
+            <Modal
+                isOpen={!!batchCustomerPaymentItems && batchCustomerPaymentItems.length > 0}
+                onClose={() => setBatchCustomerPaymentItems(null)}
+                title={`💰 GHI NHẬN THU TIỀN NHIỀU PHIẾU GIAO HÀNG / NHIỀU ĐƠN SO (${batchCustomerPaymentItems?.length || 0} PHIẾU)`}
+                size="2xl"
+            >{() => (<>
+                {batchCustomerPaymentItems && batchCustomerPaymentItems.length > 0 && (() => {
+                    const fmt = (n: number) => new Intl.NumberFormat("vi-VN").format(Math.round(n || 0));
+                    const customerNames = Array.from(new Set(batchCustomerPaymentItems.map(it => it.customer_name).filter(Boolean)));
+                    const orderCodes = Array.from(new Set(batchCustomerPaymentItems.map(it => it.order_code).filter(Boolean)));
+                    const totalSlipValue = batchCustomerPaymentItems.reduce((s, it) => s + it.slip_value, 0);
+                    const totalSlipPaid = batchCustomerPaymentItems.reduce((s, it) => s + it.slip_paid, 0);
+                    const totalSlipRemaining = batchCustomerPaymentItems.reduce((s, it) => s + it.slip_remaining, 0);
+                    const totalCollectNow = batchCustomerPaymentItems.reduce((s, it) => s + (Number(it.collect_amount) || 0), 0);
+
+                    return (
+                        <form
+                            className="space-y-3.5 p-1 text-xs text-slate-100"
+                            onSubmit={async (e) => {
+                                e.preventDefault();
+                                const activeAlloc = batchCustomerPaymentItems.filter(it => (Number(it.collect_amount) || 0) > 0);
+                                if (activeAlloc.length === 0) {
+                                    showToast("Vui lòng nhập số tiền thu (> 0đ) cho ít nhất 1 phiếu giao hàng.", "warning");
+                                    return;
+                                }
+                                for (const it of activeAlloc) {
+                                    if (it.collect_amount > it.slip_remaining + 5) {
+                                        showToast(`Phiếu ${it.slip_id}: số tiền thu (${fmt(it.collect_amount)} đ) vượt số còn phải thu của phiếu (${fmt(it.slip_remaining)} đ).`, "warning");
+                                        return;
+                                    }
+                                }
+
+                                // Nhóm các phiếu được thu theo từng đơn SO để gọi API record_customer_payment cho từng đơn
+                                const byOrder = new Map<string, { order_code: string; raw_code: string; totalAmount: number; slips: { delivery_slip_code: string; amount: number }[] }>();
+                                for (const it of activeAlloc) {
+                                    const key = it.order_code;
+                                    const cur = byOrder.get(key) || {
+                                        order_code: it.order_code,
+                                        raw_code: it.raw_code,
+                                        totalAmount: 0,
+                                        slips: []
+                                    };
+                                    cur.totalAmount += Math.round(Number(it.collect_amount) || 0);
+                                    cur.slips.push({
+                                        delivery_slip_code: it.slip_id,
+                                        amount: Math.round(Number(it.collect_amount) || 0)
+                                    });
+                                    byOrder.set(key, cur);
+                                }
+
+                                setIsSubmittingBatchCustomerPayment(true);
+                                let successOrders = 0;
+                                let successSlips = 0;
+                                let totalCollectedDone = 0;
+                                const errors: string[] = [];
+
+                                try {
+                                    for (const grp of Array.from(byOrder.values())) {
+                                        const targetCode = grp.raw_code && String(grp.raw_code).startsWith("SO") ? grp.raw_code : grp.order_code;
+                                        const res = await fetch("/api/sales?action=record_customer_payment", {
+                                            method: "POST",
+                                            headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({
+                                                order_code: targetCode,
+                                                amount: grp.totalAmount,
+                                                allocations: grp.slips,
+                                                payment_date: batchCustomerPaymentDate,
+                                                reference: batchCustomerPaymentRef.trim() || null,
+                                                method: batchCustomerPaymentMethod || "Chuyển khoản",
+                                                request_id: `${batchCustomerPaymentReqId.current}-${grp.order_code}`
+                                            })
+                                        });
+                                        const data = await res.json().catch(() => ({}));
+                                        if (!res.ok) {
+                                            errors.push(`${grp.order_code}: ${data.error || "Lỗi ghi nhận"}`);
+                                            continue;
+                                        }
+                                        successOrders += 1;
+                                        successSlips += grp.slips.length;
+                                        totalCollectedDone += grp.totalAmount;
+
+                                        const code = grp.order_code;
+                                        const raw = grp.raw_code;
+                                        setFactoryOrders(prev => prev.map(f => (f.id === code || f.order_code === code || f.linkedSalesOrderId === code || f.id === raw || f.order_code === raw || f.linkedSalesOrderId === raw)
+                                            ? { ...f, amountPaid: data.amount_paid, payment_status: data.payment_status }
+                                            : f));
+                                        setOrderPaidMap(prev => ({
+                                            ...prev,
+                                            [code]: Number(data.amount_paid) || 0,
+                                            ...(raw ? { [raw]: Number(data.amount_paid) || 0 } : {})
+                                        }));
+                                        setSlipPaidMap(prev => {
+                                            const next = { ...prev };
+                                            grp.slips.forEach(sl => {
+                                                next[sl.delivery_slip_code] = (next[sl.delivery_slip_code] || 0) + (Number(sl.amount) || 0);
+                                            });
+                                            return next;
+                                        });
+                                    }
+
+                                    if (successOrders > 0) {
+                                        showToast(
+                                            `💰 Đã ghi nhận thu tổng cộng ${fmt(totalCollectedDone)} đ cho ${successSlips} phiếu giao (${successOrders} đơn SO)!`,
+                                            "success"
+                                        );
+                                        setDebtRefreshKey(k => k + 1);
+                                    }
+                                    if (errors.length > 0) {
+                                        showToast(`Một số đơn chưa ghi nhận được: ${errors.join("; ")}`, "warning");
+                                    } else {
+                                        setBatchCustomerPaymentItems(null);
+                                    }
+                                } catch {
+                                    showToast("Không kết nối được máy chủ khi ghi nhận thu tiền gộp.", "error");
+                                } finally {
+                                    setIsSubmittingBatchCustomerPayment(false);
+                                }
+                            }}
+                        >
+                            {/* Thông tin tổng quan phiếu thu gộp */}
+                            <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-1.5">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div>
+                                        <span className="text-slate-400">Khách hàng: </span>
+                                        <strong className="text-white text-sm">{customerNames.join(" • ")}</strong>
+                                    </div>
+                                    <span className="px-2.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-700/60 font-mono font-bold text-[11px]">
+                                        {batchCustomerPaymentItems.length} phiếu giao • {orderCodes.length} đơn SO
+                                    </span>
+                                </div>
+                                {customerNames.length > 1 && (
+                                    <div className="text-[11px] text-amber-300 bg-amber-950/50 border border-amber-700/50 px-2.5 py-1 rounded-lg">
+                                        ⚠️ Lưu ý: Bạn đang chọn các phiếu giao thuộc <b>{customerNames.length} khách hàng khác nhau</b>. Hệ thống vẫn phân bổ khoản thu chính xác vào từng đơn SO tương ứng.
+                                    </div>
+                                )}
+                                <div className="flex flex-wrap items-center gap-x-5 gap-y-1 pt-1 border-t border-slate-800 font-mono text-[11px]">
+                                    <span>Tổng giá trị phiếu: <b className="text-white">{fmt(totalSlipValue)} đ</b></span>
+                                    <span>Đã thu trước đó: <b className="text-emerald-400">{fmt(totalSlipPaid)} đ</b></span>
+                                    <span>Tổng còn phải thu: <b className="text-amber-300">{fmt(totalSlipRemaining)} đ</b></span>
+                                </div>
+                            </div>
+
+                            {/* Bảng phân bổ số tiền thu cho từng Phiếu giao hàng / Đơn SO */}
+                            <div className="border border-slate-800 rounded-xl overflow-hidden">
+                                <div className="px-3 py-2 bg-slate-900 flex flex-wrap items-center justify-between gap-2 border-b border-slate-800">
+                                    <span className="text-[11px] font-bold uppercase text-slate-300">
+                                        Chi tiết phân bổ thu tiền theo từng Phiếu giao &amp; Đơn SO
+                                    </span>
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                        {[30, 50, 70].map((pct) => (
+                                            <button
+                                                key={pct}
+                                                type="button"
+                                                onClick={() => {
+                                                    setBatchCustomerPaymentItems(prev =>
+                                                        prev
+                                                            ? prev.map(it => ({
+                                                                  ...it,
+                                                                  collect_amount: Math.min(it.slip_remaining, Math.round((it.slip_value * pct) / 100))
+                                                              }))
+                                                            : null
+                                                    );
+                                                }}
+                                                className="px-2 py-0.5 rounded bg-purple-950/80 hover:bg-purple-900 text-purple-300 border border-purple-700/60 text-[10px] font-bold cursor-pointer"
+                                            >
+                                                Cọc {pct}%
+                                            </button>
+                                        ))}
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setBatchCustomerPaymentItems(prev =>
+                                                    prev ? prev.map(it => ({ ...it, collect_amount: it.slip_remaining })) : null
+                                                );
+                                            }}
+                                            className="px-2 py-0.5 rounded bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 text-[10px] font-bold cursor-pointer"
+                                        >
+                                            Thu 100% còn lại
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="max-h-64 overflow-y-auto">
+                                    <table className="w-full text-[11px]">
+                                        <thead className="bg-slate-950 text-slate-400 sticky top-0">
+                                            <tr>
+                                                <th className="p-2 text-left">Phiếu giao hàng</th>
+                                                <th className="p-2 text-left">Mã đơn SO</th>
+                                                <th className="p-2 text-center">Trạng thái</th>
+                                                <th className="p-2 text-right">Giá trị phiếu</th>
+                                                <th className="p-2 text-right">Đã thu</th>
+                                                <th className="p-2 text-right">Còn phải thu</th>
+                                                <th className="p-2 text-right w-36">Thu lần này (đ)</th>
+                                                <th className="p-2 w-7"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-800/80">
+                                            {batchCustomerPaymentItems.map((it, idx) => (
+                                                <tr key={it.slip_id} className="hover:bg-slate-900/40">
+                                                    <td className="p-2">
+                                                        <div className="font-mono font-bold text-indigo-300">{it.slip_id}</div>
+                                                        <div className="text-[10px] text-slate-500">
+                                                            Đợt {it.batch_number}
+                                                            {it.invoice_no ? ` • HĐ ${it.invoice_no}` : ""}
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-2 font-mono font-bold text-white">{it.order_code}</td>
+                                                    <td className="p-2 text-center">
+                                                        <span className={cn(
+                                                            "text-[9px] px-1.5 py-0.5 rounded-full border font-bold",
+                                                            it.status === "DELIVERED"
+                                                                ? "bg-emerald-950/60 text-emerald-300 border-emerald-600/50"
+                                                                : "bg-amber-950/60 text-amber-300 border-amber-600/50"
+                                                        )}>
+                                                            {it.status === "DELIVERED" ? "✅ Đã giao" : "⏳ Chờ giao"}
+                                                        </span>
+                                                    </td>
+                                                    <td className="p-2 text-right font-mono">{fmt(it.slip_value)}</td>
+                                                    <td className="p-2 text-right font-mono text-slate-400">{fmt(it.slip_paid)}</td>
+                                                    <td className="p-2 text-right font-mono font-bold text-amber-300">{fmt(it.slip_remaining)}</td>
+                                                    <td className="p-2 text-right">
+                                                        <MoneyInput
+                                                            value={it.collect_amount}
+                                                            onValueChange={(v) => {
+                                                                setBatchCustomerPaymentItems(prev =>
+                                                                    prev
+                                                                        ? prev.map((row, rIdx) =>
+                                                                              rIdx === idx
+                                                                                  ? { ...row, collect_amount: Math.min(Math.max(0, v), row.slip_remaining) }
+                                                                                  : row
+                                                                          )
+                                                                        : null
+                                                                );
+                                                            }}
+                                                            className="w-32 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-right font-mono font-bold text-white"
+                                                        />
+                                                    </td>
+                                                    <td className="p-2 text-center">
+                                                        {batchCustomerPaymentItems.length > 1 && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setBatchCustomerPaymentItems(prev =>
+                                                                        prev ? prev.filter((_, rIdx) => rIdx !== idx) : null
+                                                                    );
+                                                                }}
+                                                                className="text-slate-500 hover:text-rose-400 cursor-pointer font-bold"
+                                                                title="Bỏ phiếu này khỏi danh sách thu gộp"
+                                                            >
+                                                                ✕
+                                                            </button>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                        <tfoot>
+                                            <tr className="bg-slate-900/90 font-bold border-t border-slate-800">
+                                                <td colSpan={6} className="p-2.5 text-right uppercase text-slate-300">
+                                                    Tổng tiền thu đợt này ({batchCustomerPaymentItems.filter(x => x.collect_amount > 0).length} phiếu):
+                                                </td>
+                                                <td className="p-2.5 text-right font-mono text-sm text-emerald-400">
+                                                    {fmt(totalCollectNow)} đ
+                                                </td>
+                                                <td></td>
+                                            </tr>
+                                        </tfoot>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                <label className="block text-[11px] font-bold text-slate-400">
+                                    Phương thức thanh toán
+                                    <select
+                                        value={batchCustomerPaymentMethod}
+                                        onChange={(e) => setBatchCustomerPaymentMethod(e.target.value)}
+                                        className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-semibold cursor-pointer"
+                                    >
+                                        <option value="Chuyển khoản">Chuyển khoản ngân hàng</option>
+                                        <option value="Tiền mặt">Tiền mặt</option>
+                                        <option value="Bù trừ công nợ">Bù trừ công nợ</option>
+                                    </select>
+                                </label>
+                                <label className="block text-[11px] font-bold text-slate-400">
+                                    Ngày thu *
+                                    <DateInputVN
+                                        value={batchCustomerPaymentDate}
+                                        onChange={(e) => setBatchCustomerPaymentDate(e.target.value)}
+                                        className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono"
+                                    />
+                                </label>
+                                <label className="block text-[11px] font-bold text-slate-400">
+                                    Số chứng từ / UNC / Ghi chú
+                                    <input
+                                        type="text"
+                                        value={batchCustomerPaymentRef}
+                                        onChange={(e) => setBatchCustomerPaymentRef(e.target.value)}
+                                        placeholder="VD: UNC 0125 thanh toán gộp các đơn"
+                                        className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white"
+                                    />
+                                </label>
+                            </div>
+
+                            <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+                                <button
+                                    type="button"
+                                    onClick={() => setBatchCustomerPaymentItems(null)}
+                                    className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold cursor-pointer"
+                                >
+                                    Hủy
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={isSubmittingBatchCustomerPayment || totalCollectNow <= 0}
+                                    className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer disabled:opacity-50 shadow-md shadow-emerald-950"
+                                >
+                                    {isSubmittingBatchCustomerPayment
+                                        ? "Đang ghi nhận..."
+                                        : `✓ Xác nhận đã thu ${fmt(totalCollectNow)} đ (${batchCustomerPaymentItems.filter(x => x.collect_amount > 0).length} phiếu)`}
+                                </button>
+                            </div>
+                        </form>
+                    );
+                })()}
             </>)}</Modal>
 
             {/* 8. CONFIRM DELIVERY & PROOF OF DELIVERY (POD) MODAL */}

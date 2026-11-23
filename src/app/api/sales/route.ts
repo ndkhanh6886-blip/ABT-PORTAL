@@ -2411,18 +2411,26 @@ export async function POST(req: NextRequest) {
         if (slipCodes.length > 0) {
           const slipRows = (await c.query("SELECT slip_code, order_code, items FROM sales_delivery_slips WHERE slip_code = ANY($1::text[])", [slipCodes])).rows;
           const oItems = parseJsonArray((await c.query("SELECT items FROM sales_orders WHERE id = $1", [ord.id])).rows[0]?.items);
-          const unitOf = (code: string) => { const it = oItems.find((x: any) => String(x?.productCode || x?.product_code || "") === code); return Number(it?.unitPrice ?? it?.price) || 0; };
+          const unitOf = (code: string) => { const it = oItems.find((x: any) => String(x?.productCode || x?.product_code || "").trim().toUpperCase() === code.trim().toUpperCase()); return Number(it?.unitPrice ?? it?.price) || 0; };
           for (const a of alloc) {
             if (!a.slip) continue;
             const sr = slipRows.find((r: any) => r.slip_code === a.slip);
-            if (!sr || String(sr.order_code || "") !== String(ord.order_code)) throw new HttpError(400, `Phiếu giao ${a.slip} không thuộc đơn ${ord.order_code}`);
-            const value = Math.round(parseJsonArray(sr.items).reduce((s: number, it: any) => {
-              const code = String(it?.productCode || it?.product_code || "");
-              return s + (Number(it?.quantity) || 0) * (Number(it?.unitPrice ?? it?.price) || unitOf(code));
-            }, 0));
-            const paidSlip = Number((await c.query("SELECT COALESCE(SUM(amount), 0) AS s FROM sales_payments WHERE order_id = $1 AND delivery_slip_code = $2 AND voided_at IS NULL", [ord.id, a.slip])).rows[0]?.s) || 0;
-            if (value > 0 && paidSlip + a.amount > value + 0.5) {
-              throw new HttpError(409, `Phiếu ${a.slip}: giá trị ${value.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ, đã thu ${paidSlip.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ — không thu vượt.`);
+            const srOrderUpper = String(sr?.order_code || "").trim().toUpperCase();
+            const ordCodeUpper = String(ord.order_code || "").trim().toUpperCase();
+            const lookupUpper = String(lookupCode || "").trim().toUpperCase();
+            if (sr && srOrderUpper && srOrderUpper !== ordCodeUpper && (!lookupUpper || srOrderUpper !== lookupUpper)) {
+              throw new HttpError(400, `Phiếu giao ${a.slip} không thuộc đơn ${ord.order_code}`);
+            }
+            if (sr) {
+              const value = Math.round(parseJsonArray(sr.items).reduce((s: number, it: any) => {
+                const code = String(it?.productCode || it?.product_code || "");
+                const price = Math.round((Number(it?.unitPrice ?? it?.price) || unitOf(code)) * 1000) / 1000;
+                return s + Math.round((Number(it?.quantity) || 0) * price);
+              }, 0));
+              const paidSlip = Number((await c.query("SELECT COALESCE(SUM(amount), 0) AS s FROM sales_payments WHERE order_id = $1 AND delivery_slip_code = $2 AND voided_at IS NULL", [ord.id, a.slip])).rows[0]?.s) || 0;
+              if (value > 0 && paidSlip + a.amount > value + 5) {
+                throw new HttpError(409, `Phiếu ${a.slip}: giá trị ${value.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ, đã thu ${paidSlip.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ — không thu vượt.`);
+              }
             }
           }
         }
