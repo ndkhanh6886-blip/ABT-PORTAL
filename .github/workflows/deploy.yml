@@ -110,7 +110,7 @@ jobs:
               touch .env.local
               # Ứng dụng không còn mật khẩu / tên CSDL mặc định khi chạy production: thiếu biến thì dừng deploy, bản đang chạy giữ nguyên
               for v in PGPASSWORD PGDATABASE; do
-                if ! grep -q "^${v}=.\+" .env.local && [ -z "${!v}" ]; then
+                if ! grep -q "^${v}=.\+" .env.local && [ -z "${!v:-}" ]; then
                   echo "::error::.env.local thiếu ${v} — dừng deploy, bản đang chạy giữ nguyên. Thêm ${v}=... vào .env.local rồi chạy lại deploy."
                   exit 1
                 fi
@@ -184,7 +184,7 @@ jobs:
             touch .env.local
             # Ứng dụng không còn mật khẩu / tên CSDL mặc định khi chạy production: thiếu biến thì dừng deploy, bản đang chạy giữ nguyên
             for v in PGPASSWORD PGDATABASE; do
-              if ! grep -q "^${v}=.\+" .env.local && [ -z "${!v}" ]; then
+              if ! grep -q "^${v}=.\+" .env.local && [ -z "${!v:-}" ]; then
                 echo "::error::.env.local thiếu ${v} — dừng deploy, bản đang chạy giữ nguyên. Thêm ${v}=... vào .env.local rồi chạy lại deploy."
                 exit 1
               fi
