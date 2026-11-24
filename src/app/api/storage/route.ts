@@ -19,6 +19,7 @@ import {
 } from "@/backend/services/proposalStoreGuard";
 import type { AuthorizedUser } from "@/backend/services/authz";
 import { syncCatalogSuppliersAndProducts } from "@/backend/services/supplierCatalogSync";
+import { withoutDeletedOrders } from "@/backend/services/deletedOrders";
 
 /** Keys holding secrets or per-user permissions: readable / writable by administrators only. */
 function isSensitiveKey(key: string) {
@@ -269,6 +270,12 @@ export async function POST(request: NextRequest) {
         let droppedDeletes = 0;
         if (patch.kind === "array") {
           patch.upserts = await enforceApprovalGuards(key, current, patch.upserts || [], me);
+          // Đơn đã xóa không được thêm lại (tab mở từ trước vẫn giữ đơn trong bộ nhớ)
+          if (key === "sales_factory_orders") {
+            const { items, dropped } = await withoutDeletedOrders(c, patch.upserts || []);
+            patch.upserts = items;
+            if (dropped.length) console.warn(`[storage] Bỏ ${dropped.length} đơn đã xóa khỏi lần lưu của ${me.username}: ${dropped.join(", ")}`);
+          }
           if (hideCost) patch.upserts = keepStoredCosts(current, patch.upserts);
           // Danh sách đơn từ: không cho một lần lưu xóa hàng loạt đơn (trình duyệt có danh sách sai đã xóa sạch đơn thật)
           if (key === PROTECTED_PROPOSAL_KEY) {
@@ -368,6 +375,11 @@ export async function POST(request: NextRequest) {
     }
     if (Array.isArray(data)) {
       data = await enforceApprovalGuards(key, stored, data, me);
+      if (key === "sales_factory_orders") {
+        const { items, dropped } = await withoutDeletedOrders({ query }, data);
+        data = items;
+        if (dropped.length) console.warn(`[storage] Bỏ ${dropped.length} đơn đã xóa khỏi lần ghi đè của ${me.username}: ${dropped.join(", ")}`);
+      }
     }
 
     // Ghi đè cả khối mà không kèm phiên bản: không cho một lần lưu làm mất quá nửa danh sách đang có
