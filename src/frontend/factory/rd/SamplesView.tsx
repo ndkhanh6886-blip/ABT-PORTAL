@@ -25,6 +25,7 @@ import {
 import { api } from "../api";
 import { Empty } from "../ui";
 
+import { todayVN } from "@/backend/services/dates";
 const apiGet = <T,>(path: string) => api<T>(path);
 const apiPost = <T,>(path: string, payload: unknown) => api<T>(path, { method: "POST", json: payload });
 
@@ -133,7 +134,7 @@ function mapRowToSample(r: any): NormalizedSample {
     ? String(r.collected_at).slice(0, 10)
     : r.created_at
       ? String(r.created_at).slice(0, 10)
-      : new Date().toISOString().slice(0, 10);
+      : todayVN();
 
   const history: SampleGrowthHistoryItem[] =
     Array.isArray(meta.growthHistory) && meta.growthHistory.length > 0
@@ -331,7 +332,7 @@ Hệ thống Quản trị R&D & Biobank ABT - Xác nhận điện tử.`;
       const ws = XLSX.utils.json_to_sheet(exportData);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Danh_Sach_Mau");
-      XLSX.writeFile(wb, `Danh_Sach_Nguon_Mau_RD_${new Date().toISOString().substring(0, 10)}.xlsx`);
+      XLSX.writeFile(wb, `Danh_Sach_Nguon_Mau_RD_${todayVN()}.xlsx`);
       showToast("Đã xuất danh sách nguồn mẫu ra file Excel thành công!");
     } catch {
       showToast("Có lỗi xảy ra khi xuất file Excel.", "err");
@@ -462,7 +463,7 @@ Hệ thống Quản trị R&D & Biobank ABT - Xác nhận điện tử.`;
           const unit = row["Đơn Vị"] || row["Unit"] || "ml";
           const location = row["Vị Trí Bảo Quản"] || row["Vị Trí"] || row["Location"] || "Chưa phân bổ";
           const source = row["Nguồn Gốc"] || row["Nguồn"] || row["Source"] || "Không rõ";
-          const date = row["Ngày Thu Nhận"] || row["Ngày"] || row["Date"] || new Date().toISOString().substring(0, 10);
+          const date = row["Ngày Thu Nhận"] || row["Ngày"] || row["Date"] || todayVN();
           const status = row["Trạng Thái QC"] || row["Trạng Thái"] || row["Status"] || (volume <= 0 ? "Hết mẫu" : "Đạt tiêu chuẩn");
           const growthStatus = row["Trạng Thái Sinh Trưởng"] || "Stock";
 
@@ -577,7 +578,7 @@ Hệ thống Quản trị R&D & Biobank ABT - Xác nhận điện tử.`;
     const newConcentration = (formData.get("newConcentration") as string) || activeSampleDetail.concentration;
     const conditions = (formData.get("conditions") as string) || "";
     const performer = (formData.get("performer") as string) || "Nghiên cứu viên R&D";
-    const date = (formData.get("date") as string) || new Date().toISOString().substring(0, 10);
+    const date = (formData.get("date") as string) || todayVN();
 
     await eventMut.mutateAsync({
       dbId: activeSampleDetail.dbId,
@@ -604,7 +605,7 @@ Hệ thống Quản trị R&D & Biobank ABT - Xác nhận điện tử.`;
     const projectUse = (formData.get("projectUse") as string) || "";
     const purpose = (formData.get("purpose") as string) || "";
     const performer = (formData.get("performer") as string) || "Nghiên cứu viên R&D";
-    const date = (formData.get("date") as string) || new Date().toISOString().substring(0, 10);
+    const date = (formData.get("date") as string) || todayVN();
     const isQuantitative = formData.get("isQuantitative") === "on";
     const experimentId = (formData.get("experimentId") as string) || null;
 
@@ -664,7 +665,7 @@ Hệ thống Quản trị R&D & Biobank ABT - Xác nhận điện tử.`;
         child_concentration: formData.get("childConcentration") as string,
         child_location: formData.get("childLocation") as string,
         performer: (formData.get("performer") as string) || "Nghiên cứu viên R&D",
-        date: (formData.get("date") as string) || new Date().toISOString().substring(0, 10),
+        date: (formData.get("date") as string) || todayVN(),
       },
     });
 
@@ -749,7 +750,7 @@ Hệ thống Quản trị R&D & Biobank ABT - Xác nhận điện tử.`;
         performer: (formData.get("performer") as string) || "Nghiên cứu viên R&D",
         project_use: (formData.get("projectUse") as string) || "",
         purpose: (formData.get("purpose") as string) || "",
-        date: (formData.get("date") as string) || new Date().toISOString().substring(0, 10),
+        date: (formData.get("date") as string) || todayVN(),
       },
     });
     setIsConsumeSpecimenModalOpen(false);
@@ -1991,7 +1992,7 @@ Hệ thống Quản trị R&D & Biobank ABT - Xác nhận điện tử.`;
                   name="date"
                   type="date"
                   required
-                  defaultValue={new Date().toISOString().substring(0, 10)}
+                  defaultValue={todayVN()}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 outline-none focus:border-blue-500"
                 />
               </div>
@@ -2138,7 +2139,7 @@ Hệ thống Quản trị R&D & Biobank ABT - Xác nhận điện tử.`;
                   name="date"
                   type="date"
                   required
-                  defaultValue={new Date().toISOString().substring(0, 10)}
+                  defaultValue={todayVN()}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 outline-none focus:border-blue-500"
                 />
               </div>
@@ -2374,7 +2375,7 @@ Hệ thống Quản trị R&D & Biobank ABT - Xác nhận điện tử.`;
                     name="date"
                     type="date"
                     required
-                    defaultValue={new Date().toISOString().substring(0, 10)}
+                    defaultValue={todayVN()}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 outline-none focus:border-blue-500"
                   />
                 </div>
@@ -2701,7 +2702,7 @@ Hệ thống Quản trị R&D & Biobank ABT - Xác nhận điện tử.`;
                   name="date"
                   type="date"
                   required
-                  defaultValue={new Date().toISOString().substring(0, 10)}
+                  defaultValue={todayVN()}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 outline-none focus:border-blue-500"
                 />
               </div>

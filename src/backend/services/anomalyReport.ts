@@ -297,6 +297,31 @@ export async function buildAnomalyReport(days = 7): Promise<AnomalyReport> {
     });
   }
 
+  // 11. Lỗi hệ thống được ghi lại trong kỳ: đồng bộ CSDL -> bản sao màn hình lỗi, lần lưu bị chặn
+  //     (hai bản dữ liệu lệch nhau là gốc của đơn "ma", phiếu hủy vẫn bị tính, đơn khóa nợ hiện "Đã duyệt")
+  {
+    const rows = await safeRows(
+      `SELECT action, module, details, actor_name, created_at
+         FROM audit_logs
+        WHERE created_at >= ${since}
+          AND (action = 'SYNC_ERROR' OR (action = 'GUARD' AND module = 'STORAGE'))
+        ORDER BY created_at DESC LIMIT ${MAX_ROWS}`
+    );
+    sections.push({
+      key: "system_errors",
+      title: "Lỗi lưu / đồng bộ dữ liệu",
+      severity: "high",
+      why: "Máy chủ không đồng bộ được dữ liệu hoặc đã chặn một lần lưu bất thường: màn hình và cơ sở dữ liệu có thể đang lệch nhau.",
+      fix: "Mở chứng từ liên quan kiểm tra lại; lỗi lặp lại thì báo Quản trị viên kèm thời điểm để xem nhật ký máy chủ.",
+      rows: rows.map(r => ({
+        ref: r.action === "SYNC_ERROR" ? "Đồng bộ" : "Chặn lưu",
+        detail: String(r.details || "").slice(0, 300),
+        actor: r.actor_name,
+        at: fmt(r.created_at),
+      })),
+    });
+  }
+
   const now = new Date();
   const from = new Date(now.getTime() - d * 86400000);
   const order = { high: 0, medium: 1, low: 2 } as const;

@@ -7,6 +7,23 @@ import { hydrateServerBackedKeys } from "@/frontend/utils/storageSync";
  * Loads the server copy of shared data that modules read from localStorage before those modules
  * mount, and warns the user when a save was rejected because someone else changed the same data.
  */
+const STORAGE_KEY_LABELS: Record<string, string> = {
+  sales_factory_orders: "Đơn hàng (SO)",
+  sales_delivery_slips: "Phiếu giao hàng",
+  sales_quotations: "Báo giá",
+  sales_contracts: "Hợp đồng",
+  sales_customers: "Khách hàng",
+  sales_tasks: "Công việc Kinh doanh",
+  sales_plans: "Kế hoạch Kinh doanh",
+  sales_daily_logs: "Nhật ký Kinh doanh",
+  sales_commercial_products: "Danh mục sản phẩm",
+  workspace_proposals: "Đề xuất / phê duyệt",
+  tbr_activity_notifications: "Thông báo",
+};
+function storageKeyLabel(key: string): string {
+  return STORAGE_KEY_LABELS[key] || key;
+}
+
 export function DataSyncGate({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState<boolean>(() => {
     if (typeof window !== "undefined") {
@@ -22,6 +39,8 @@ export function DataSyncGate({ children }: { children: React.ReactNode }) {
   });
   const [offline, setOffline] = useState(false);
   const [conflictKey, setConflictKey] = useState<string | null>(null);
+  // Các khối dữ liệu lưu lên máy chủ thất bại (chưa có lần lưu thành công sau đó)
+  const [saveFailures, setSaveFailures] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -40,6 +59,28 @@ export function DataSyncGate({ children }: { children: React.ReactNode }) {
     const onConflict = (e: any) => setConflictKey(e?.detail?.key || "dữ liệu");
     window.addEventListener("tbr:storage-conflict", onConflict);
     return () => window.removeEventListener("tbr:storage-conflict", onConflict);
+  }, []);
+
+  useEffect(() => {
+    const onFailed = (e: any) => {
+      const key = String(e?.detail?.key || "dữ liệu");
+      setSaveFailures(prev => ({ ...prev, [key]: String(e?.detail?.message || "Lỗi không xác định") }));
+    };
+    const onOk = (e: any) => {
+      const key = String(e?.detail?.key || "");
+      setSaveFailures(prev => {
+        if (!(key in prev)) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    };
+    window.addEventListener("tbr:storage-save-failed", onFailed);
+    window.addEventListener("tbr:storage-save-ok", onOk);
+    return () => {
+      window.removeEventListener("tbr:storage-save-failed", onFailed);
+      window.removeEventListener("tbr:storage-save-ok", onOk);
+    };
   }, []);
 
   if (!ready) {
@@ -64,6 +105,18 @@ export function DataSyncGate({ children }: { children: React.ReactNode }) {
         <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800 dark:border-red-700 dark:bg-red-950 dark:text-red-200">
           <span>Thay đổi gần nhất của bạn ({conflictKey}) chưa được lưu vì dữ liệu vừa được người khác cập nhật. Vui lòng tải lại trang và thao tác lại.</span>
           <button className="shrink-0 rounded border border-red-300 px-2 py-1 font-semibold" onClick={() => window.location.reload()}>Tải lại</button>
+        </div>
+      )}
+      {Object.keys(saveFailures).length > 0 && (
+        <div role="alert" className="mb-3 flex items-start justify-between gap-3 rounded-lg border border-red-400 bg-red-50 px-3 py-2 text-xs text-red-800 dark:border-red-700 dark:bg-red-950 dark:text-red-200">
+          <div className="space-y-1">
+            <div className="font-bold">⚠ Có thay đổi CHƯA được lưu lên máy chủ — hiện chỉ có trên máy này, người khác không thấy:</div>
+            {Object.entries(saveFailures).map(([key, msg]) => (
+              <div key={key}>• <b>{storageKeyLabel(key)}</b>: {msg}</div>
+            ))}
+            <div>Không đóng trang. Kiểm tra lại thao tác (quyền, dữ liệu) rồi lưu lại; nếu vẫn lỗi, chụp màn hình gửi Quản trị viên.</div>
+          </div>
+          <button className="shrink-0 rounded border border-red-300 px-2 py-1 font-semibold" onClick={() => setSaveFailures({})}>Đã hiểu</button>
         </div>
       )}
       {children}

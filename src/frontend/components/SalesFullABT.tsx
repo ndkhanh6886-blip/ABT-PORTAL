@@ -17250,13 +17250,27 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }
     };
 
-    const persistDeliverySlip = (slip: any) => {
+    /** Lưu phiếu giao lên máy chủ; trả về true khi máy chủ đã nhận. Lỗi được báo cho người dùng (trước đây bỏ qua im lặng). */
+    const persistDeliverySlip = async (slip: any): Promise<boolean> => {
         const { isDraftPreview, ...payload } = slip || {};
-        return fetch("/api/sales?action=delivery_slip", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-        }).catch(err => console.error("Failed to save delivery slip to PostgreSQL:", err));
+        try {
+            const res = await fetch("/api/sales?action=delivery_slip", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                console.error("Lưu phiếu giao lỗi:", slip?.id, res.status, err);
+                showToast(`Chưa lưu được phiếu giao ${slip?.id || ""} lên máy chủ: ${err.error || `lỗi ${res.status}`}`, "error");
+                return false;
+            }
+            return true;
+        } catch (err) {
+            console.error("Failed to save delivery slip to PostgreSQL:", err);
+            showToast(`Không kết nối được máy chủ để lưu phiếu giao ${slip?.id || ""}. Vui lòng thử lại.`, "error");
+            return false;
+        }
     };
 
     const isCreatingDeliverySlipRef = useRef(false);
@@ -17446,7 +17460,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     return;
                 }
             } else {
-                await persistDeliverySlip(newSlip);
+                // Máy chủ từ chối (vượt SL đặt, không có quyền...) thì dừng: không đổi phiếu trên màn hình, không nhập / xuất kho
+                if (!(await persistDeliverySlip(newSlip))) return;
             }
             setDeliverySlips(prev => editSlip ? prev.map(s => s.id === editSlip.id ? newSlip : s) : [newSlip, ...prev]);
 
@@ -17650,7 +17665,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     };
 
     // Hủy phiếu giao đang chờ giao -> nhập lại kho, trả lại số lượng còn lại cho đơn
-    const handleCancelDeliverySlip = (slip: any) => {
+    const handleCancelDeliverySlip = async (slip: any) => {
         const fo = resolveFactoryOrder({ order_id: slip.orderId, raw_code: slip.orderCode });
         const step = getSlipStep(slip, fo);
         if (step === "CANCELLED" || step === "DELIVERED") {
@@ -17672,10 +17687,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             cancelledBy: staffName,
             cancelReason: reason.trim()
         };
+        // Lưu hủy lên máy chủ trước; chỉ khi thành công mới đổi màn hình và nhập lại kho
+        // (trước đây nhập lại kho dù máy chủ chưa ghi nhận hủy -> phiếu vẫn hiệu lực trong CSDL, kho bị cộng thừa)
+        if (!(await persistDeliverySlip(updated))) return;
         setDeliverySlips(prev => prev.map(s => s.id === slip.id ? updated : s));
         if (selectedViewDeliverySlip?.id === slip.id) setSelectedViewDeliverySlip(updated);
-        persistDeliverySlip(updated);
-        applySlipStockMovement(slip, slip.items || [], true, "-HUY", `Nhập lại kho do hủy Phiếu giao hàng ${slip.id}${reason.trim() ? ` - Lý do: ${reason.trim()}` : ""}`);
+        await applySlipStockMovement(slip, slip.items || [], true, "-HUY", `Nhập lại kho do hủy Phiếu giao hàng ${slip.id}${reason.trim() ? ` - Lý do: ${reason.trim()}` : ""}`);
         showToast(`Đã hủy Phiếu giao hàng ${slip.id} và nhập lại kho.`, "success");
     };
 

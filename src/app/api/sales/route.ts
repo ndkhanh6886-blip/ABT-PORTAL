@@ -313,6 +313,13 @@ function slipRowIsCancelled(r: any): boolean {
 }
 const SQL_SLIP_NOT_CANCELLED = "COALESCE(UPPER(status), '') <> 'CANCELLED' AND COALESCE(UPPER(extra_data->>'deliveryStatus'), '') <> 'CANCELLED' AND COALESCE(extra_data->>'cancelledAt', '') = ''";
 
+/** Lỗi đồng bộ bảng CSDL -> bản sao màn hình (app_storage): ghi log + nhật ký để quản trị phát hiện hai bản bị lệch. */
+function logStorageSyncError(what: string, err: any) {
+  const msg = err?.message || String(err);
+  console.error(`[sales] Đồng bộ ${what} sang app_storage lỗi:`, msg);
+  logAudit("SYNC_ERROR", "SALES", `Đồng bộ ${what} sang bản sao màn hình lỗi: ${msg}`.slice(0, 500)).catch(() => {});
+}
+
 async function computeOrderDeliveryFromSlips(db: { query: (sql: string, params?: any[]) => Promise<any> }, orderCode: string): Promise<{
   hasSlips: boolean; status: "DELIVERED" | "PARTIALLY_DELIVERED" | "SHIPPED" | "PENDING"; remaining: Record<string, number>;
 } | null> {
@@ -2873,7 +2880,9 @@ export async function POST(req: NextRequest) {
             }
           });
         }
-      } catch {}
+      } catch (err) {
+        logStorageSyncError(`kết quả duyệt giá đơn ${String(body.order_code || order_id || "")}`, err);
+      }
       if (upd.rowCount === 0 && !updatedInStorage) {
         return NextResponse.json({ error: "Không tìm thấy đơn hàng trong CSDL" }, { status: 404 });
       }
@@ -2982,6 +2991,17 @@ export async function POST(req: NextRequest) {
         if (q < 0 || p < 0) {
           return NextResponse.json({ error: "Số lượng và đơn giá mặt hàng trong báo giá không được là số âm." }, { status: 400 });
         }
+      }
+      // Tổng tiền báo giá do màn hình gửi: đối chiếu với Σ SL × giá sau VAT của các dòng (giá báo khách là giá sau VAT).
+      // Lệch > 1.000đ thì ghi nhật ký (hiện trong Báo cáo bất thường) thay vì âm thầm lưu số sai.
+      const itemsGross = items.reduce((sum: number, it: any) => {
+        const q = Number(it.quantity ?? it.qty ?? 0) || 0;
+        const p = Number(it.price ?? it.unitPrice ?? it.unit_price ?? 0) || 0;
+        return sum + q * p;
+      }, 0);
+      if (items.length > 0 && Math.abs(Math.round(itemsGross) - totalAmount) > 1000) {
+        console.warn(`[sales] Báo giá ${code || "(mới)"}: tổng tiền gửi lên ${totalAmount} lệch Σ dòng hàng ${Math.round(itemsGross)}`);
+        await logAudit("SYNC_ERROR", "SALES", `Báo giá ${code || "(mới)"}: tổng tiền ${totalAmount.toLocaleString("vi-VN")} đ lệch tổng các dòng ${Math.round(itemsGross).toLocaleString("vi-VN")} đ`).catch(() => {});
       }
 
       let finalCode = (code && /^BG\d{2}-[A-Z0-9]{2}-\d{4}$/.test(code))
@@ -3095,7 +3115,9 @@ export async function POST(req: NextRequest) {
            ON CONFLICT (key) DO UPDATE SET data = $2, version = COALESCE(app_storage.version, 1) + 1, updated_at = CURRENT_TIMESTAMP`,
           ["sales_quotations", JSON.stringify(normalizedList)]
         );
-      } catch (err) {}
+      } catch (err) {
+        logStorageSyncError("danh sách báo giá", err);
+      }
 
       return NextResponse.json({ success: true });
     }
@@ -3380,7 +3402,9 @@ export async function POST(req: NextRequest) {
            ON CONFLICT (key) DO UPDATE SET data = $2, version = COALESCE(app_storage.version, 1) + 1, updated_at = CURRENT_TIMESTAMP`,
           ["sales_contracts", JSON.stringify(mergedList)]
         );
-      } catch (err) {}
+      } catch (err) {
+        logStorageSyncError("danh sách hợp đồng", err);
+      }
 
       return NextResponse.json({ success: true });
     }

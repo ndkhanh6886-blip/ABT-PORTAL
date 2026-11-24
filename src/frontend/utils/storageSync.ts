@@ -181,6 +181,37 @@ function notifyConflict(key: string) {
   window.dispatchEvent(new CustomEvent("tbr:storage-conflict", { detail: { key } }));
 }
 
+/**
+ * Lần lưu bị máy chủ từ chối (403 không có quyền, 409 chặn xóa hàng loạt, 4xx/5xx) hoặc mất kết nối: báo cho người dùng.
+ * Trước đây chỉ xử lý 401 / 409 do reset dữ liệu, còn lại im lặng: thay đổi chỉ nằm trên màn hình người đó
+ * (5 đơn SO26-STOCK-1101..1106 hiện "Đã duyệt" nhưng không có trong CSDL).
+ */
+async function notifySaveFailed(key: string, res: Response | null, networkError?: unknown) {
+  let message = "";
+  if (res) {
+    const json = await res.clone().json().catch(() => ({} as any));
+    if (json?.stale_epoch) return; // đã có luồng tải lại riêng
+    message = String(json?.error || json?.message || `Lỗi máy chủ (${res.status})`);
+  } else {
+    message = "Không kết nối được máy chủ" + (networkError instanceof Error && networkError.message ? ` (${networkError.message})` : "");
+  }
+  console.error(`[storageSync] Không lưu được "${key}": ${message}`);
+  window.dispatchEvent(new CustomEvent("tbr:storage-save-failed", { detail: { key, status: res?.status ?? 0, message } }));
+}
+
+function notifySaveOk(key: string) {
+  window.dispatchEvent(new CustomEvent("tbr:storage-save-ok", { detail: { key } }));
+}
+
+async function postStorage(f: typeof fetch, key: string, body: string): Promise<Response> {
+  try {
+    return await f("/api/storage", { method: "POST", headers: storageWriteHeaders(), body });
+  } catch (err) {
+    await notifySaveFailed(key, null, err);
+    throw err;
+  }
+}
+
 async function saveKey(key: string, nextData: any): Promise<Response> {
   const f = originalFetch!;
   const base = bases.get(key);
@@ -191,18 +222,16 @@ async function saveKey(key: string, nextData: any): Promise<Response> {
       if (!base) recordBase(key, nextData, null);
       return jsonResponse({ success: true, version: base?.version ?? null, skipped: true });
     }
-    const res = await f("/api/storage", {
-      method: "POST",
-      headers: storageWriteHeaders(),
-      body: JSON.stringify({ key, patch }),
-    });
+    const res = await postStorage(f, key, JSON.stringify({ key, patch }));
     if (res.ok) {
       const json = await res.clone().json().catch(() => ({}));
       recordBase(key, nextData, json.version);
-    } else if (res.status === 409) {
-      await handleStaleEpoch(res);
+      notifySaveOk(key);
     } else if (res.status === 401) {
       window.dispatchEvent(new Event("tbr:unauthorized"));
+    } else {
+      if (res.status === 409) await handleStaleEpoch(res);
+      await notifySaveFailed(key, res);
     }
     return res;
   }
@@ -210,20 +239,26 @@ async function saveKey(key: string, nextData: any): Promise<Response> {
   // Not patchable (e.g. array of primitives): full replace guarded by the known version
   const body: any = { key, data: nextData };
   if (base && base.version !== null) body.expectedVersion = base.version;
-  const res = await f("/api/storage", {
-    method: "POST",
-    headers: storageWriteHeaders(),
-    body: JSON.stringify(body),
-  });
+  const res = await postStorage(f, key, JSON.stringify(body));
   if (res.ok) {
     const json = await res.clone().json().catch(() => ({}));
     recordBase(key, nextData, json.version);
+    notifySaveOk(key);
   } else if (res.status === 409) {
     await handleStaleEpoch(res);
-    console.error(`[storageSync] Xung đột khi lưu "${key}": dữ liệu đã được người khác cập nhật.`);
-    notifyConflict(key);
+    const json = await res.clone().json().catch(() => ({} as any));
+    if (json?.stale_epoch) {
+      // đã xử lý ở handleStaleEpoch
+    } else if (String(json?.error || "").includes("bản ghi")) {
+      await notifySaveFailed(key, res); // chặn xóa hàng loạt
+    } else {
+      console.error(`[storageSync] Xung đột khi lưu "${key}": dữ liệu đã được người khác cập nhật.`);
+      notifyConflict(key);
+    }
   } else if (res.status === 401) {
     window.dispatchEvent(new Event("tbr:unauthorized"));
+  } else {
+    await notifySaveFailed(key, res);
   }
   return res;
 }

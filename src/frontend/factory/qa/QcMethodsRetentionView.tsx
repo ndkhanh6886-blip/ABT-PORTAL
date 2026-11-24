@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, fmtDate, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 
+import { todayVN } from "@/backend/services/dates";
 const METHOD_CATEGORY_LABEL: Record<string, string> = {
   QPCR_ASSAY: "Sinh học phân tử — Real-time qPCR / PCR",
   HPLC_CHROMATOGRAPHY: "Sắc ký lỏng hiệu năng cao (RP-HPLC / IEX)",
@@ -83,7 +84,7 @@ export function QcMethodsRetentionView() {
             lod_value: mLod,
             specificity_pct: "100%",
             linearity_r2: "0.998",
-            validated_date: new Date().toISOString().slice(0, 10),
+            validated_date: todayVN(),
           },
           status: "EFFECTIVE",
         },
