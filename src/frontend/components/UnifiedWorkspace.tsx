@@ -97,6 +97,7 @@ import {
 } from "@/frontend/components/ProposalsApprovalView";
 import { Pager, usePaged } from "@/frontend/components/Pager";
 import type { HubProject, HubWeeklyPlanEvent, HubWorkItem } from "@/factory/workhub/service";
+import { reportWriteResult } from "@/frontend/utils/storageSync";
 
 export const SCHEDULE_VALID_CATEGORIES = [
   "Application",
@@ -8905,11 +8906,11 @@ Phòng ban tham gia: ${(prj.participatingDepts || [itemDept]).join(", ")}`,
             attachments: existingTask?.attachments || []
           };
           try {
-            await fetch("/api/workflows?action=task", {
+            await reportWriteResult(fetch("/api/workflows?action=task", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(payload)
-            });
+            }), `Công việc dự án ${prjId}`);
           } catch {}
         }
       } else {
@@ -8937,11 +8938,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           attachments: existingTask?.attachments || []
         };
         try {
-          await fetch("/api/workflows?action=task", {
+          await reportWriteResult(fetch("/api/workflows?action=task", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
-          });
+          }), `Công việc dự án ${prjId}`);
         } catch {}
       }
     }

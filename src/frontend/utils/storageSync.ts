@@ -199,6 +199,21 @@ async function notifySaveFailed(key: string, res: Response | null, networkError?
   window.dispatchEvent(new CustomEvent("tbr:storage-save-failed", { detail: { key, status: res?.status ?? 0, message } }));
 }
 
+/**
+ * Lệnh ghi "bắn rồi quên" lên API (màn hình đã cập nhật trước): nếu máy chủ từ chối hoặc mất kết nối thì báo băng đỏ
+ * "chưa lưu lên máy chủ" như khi lưu dữ liệu chung, thay vì nuốt lỗi bằng .catch(() => {}) (màn hình và CSDL lệch nhau).
+ */
+export async function reportWriteResult(request: Promise<Response>, label: string): Promise<Response | undefined> {
+  try {
+    const res = await request;
+    if (!res.ok && res.status !== 401) await notifySaveFailed(label, res);
+    return res;
+  } catch (err) {
+    await notifySaveFailed(label, null, err);
+    return undefined;
+  }
+}
+
 function notifySaveOk(key: string) {
   window.dispatchEvent(new CustomEvent("tbr:storage-save-ok", { detail: { key } }));
 }
@@ -435,6 +450,12 @@ export function installStorageSync() {
       return f(input as any, init);
     }
     const method = (init?.method || (typeof input === "object" && "method" in (input as any) ? (input as Request).method : "GET")).toUpperCase();
+
+    // API MES cũ (/api/v1/...): chỉ gọi khi đã cấu hình NEXT_PUBLIC_MES_API_URL (khi đó URL trỏ ra máy chủ khác, không vào đây).
+    // Chưa cấu hình thì URL thành /api/v1/... trên chính portal — route không tồn tại, mỗi thao tác bắn một yêu cầu 404 vô ích.
+    if (url.pathname.startsWith("/api/v1/")) {
+      return jsonResponse({ error: "Chưa cấu hình máy chủ MES (NEXT_PUBLIC_MES_API_URL)", mes_disabled: true }, 404);
+    }
 
     if (method !== "GET") {
       const isHeartbeat = url.pathname === "/api/auth" && typeof init?.body === "string" && init.body.includes('"heartbeat"');
