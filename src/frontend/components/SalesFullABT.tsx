@@ -22057,6 +22057,29 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     ) : (
                                                         <>
                                                             <button
+                                                                onClick={async () => {
+                                                                    const code = String(selectedCustomer.customer_code || "").trim();
+                                                                    if (!code) { showToast("Khách hàng chưa có mã khách hàng.", "warning"); return; }
+                                                                    if (!window.confirm(`Cấp Mã truy cập Cổng khách hàng cho ${selectedCustomer.name} (${code})?\n\nNếu khách đã có mã, mã cũ sẽ hết hiệu lực.`)) return;
+                                                                    try {
+                                                                        const res = await fetch("/api/sales?action=portal_access_code", {
+                                                                            method: "POST",
+                                                                            headers: { "Content-Type": "application/json" },
+                                                                            body: JSON.stringify({ customer_code: code })
+                                                                        });
+                                                                        const data = await res.json().catch(() => ({}));
+                                                                        if (!res.ok) { showToast(data.error || `Không cấp được mã (lỗi ${res.status})`, "error"); return; }
+                                                                        window.prompt(`Mã truy cập Cổng khách hàng của ${selectedCustomer.name} — chỉ hiện MỘT lần, sao chép gửi khách (đăng nhập = Mã KH ${code} + mã này):`, data.code);
+                                                                    } catch {
+                                                                        showToast("Không kết nối được máy chủ.", "error");
+                                                                    }
+                                                                }}
+                                                                className="flex items-center gap-1 border border-slate-800 hover:border-teal-700 text-teal-300 hover:text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                                                                title="Cấp / cấp lại mã truy cập Cổng khách hàng (Mã KH + Mã truy cập)"
+                                                            >
+                                                                🔑 Mã cổng KH
+                                                            </button>
+                                                            <button
                                                                 onClick={() => openEditCustomerModal(selectedCustomer)}
                                                                 className="flex items-center gap-1 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
                                                             >
