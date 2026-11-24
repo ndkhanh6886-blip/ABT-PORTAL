@@ -67,7 +67,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
   } | null>(null);
 
   const [loginCode, setLoginCode] = useState("");
-  const [loginPhone, setLoginPhone] = useState("");
+  const [loginAccess, setLoginAccess] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [demoAccounts, setDemoAccounts] = useState<any[]>([]);
@@ -334,12 +334,12 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
     }
   };
 
-  const handleCustomerLogin = async (codeToSubmit?: string, phoneToSubmit?: string) => {
+  const handleCustomerLogin = async (codeToSubmit?: string, accessToSubmit?: string) => {
     const targetCode = (codeToSubmit ?? loginCode).trim();
-    const targetPhone = (phoneToSubmit ?? loginPhone).trim();
+    const targetAccess = (accessToSubmit ?? loginAccess).trim();
 
-    if (!targetCode || !targetPhone) {
-      setLoginError("Vui lòng nhập đầy đủ Mã khách hàng và Số điện thoại đăng ký");
+    if (!targetCode || !targetAccess) {
+      setLoginError("Vui lòng nhập đầy đủ Mã khách hàng và Mã truy cập");
       return;
     }
 
@@ -350,7 +350,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
       const res = await fetch("/api/portal/customer?action=login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ customer_code: targetCode, phone: targetPhone })
+        body: JSON.stringify({ customer_code: targetCode, access_code: targetAccess })
       });
       const data = await res.json();
 
@@ -371,7 +371,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
 
         fetchOrders(data.customer.id, data.customer.customer_code, "");
       } else {
-        setLoginError(data.error || "Mã khách hàng hoặc Số điện thoại không chính xác.");
+        setLoginError(data.error || "Mã khách hàng hoặc Mã truy cập không chính xác.");
       }
     } catch (e: any) {
       setLoginError("Lỗi kết nối máy chủ: " + e.message);
@@ -584,7 +584,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
                 Xác Thực Khách Hàng Y Tế
               </h2>
               <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-                Để bảo mật thông tin đơn hàng, nhiệt độ chuỗi lạnh và chứng chỉ COA, Quý Bệnh viện / Viện nghiên cứu vui lòng xác thực bằng <strong className="text-teal-300">Mã Khách Hàng</strong> và <strong className="text-teal-300">Số Điện Thoại</strong> đã đăng ký.
+                Để bảo mật thông tin đơn hàng, nhiệt độ chuỗi lạnh và chứng chỉ COA, Quý Bệnh viện / Viện nghiên cứu vui lòng xác thực bằng <strong className="text-teal-300">Mã Khách Hàng</strong> và <strong className="text-teal-300">Mã Truy Cập</strong> do Nhân viên kinh doanh cung cấp.
               </p>
             </div>
 
@@ -614,18 +614,19 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
 
               <div className="space-y-1.5">
                 <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
-                  <Phone className="w-3.5 h-3.5 text-teal-400" />
-                  <span>SỐ ĐIỆN THOẠI ĐĂNG KÝ (*)</span>
+                  <KeyRound className="w-3.5 h-3.5 text-teal-400" />
+                  <span>MÃ TRUY CẬP (*)</span>
                 </label>
                 <input
-                  type="tel"
+                  type="text"
                   required
-                  value={loginPhone}
-                  onChange={(e) => setLoginPhone(e.target.value)}
-                  placeholder="Ví dụ: 0912345678"
+                  autoComplete="off"
+                  value={loginAccess}
+                  onChange={(e) => setLoginAccess(e.target.value.toUpperCase())}
+                  placeholder="Ví dụ: K7QM-3XPA"
                   className="w-full px-4 py-3 bg-slate-950 border border-slate-800 focus:border-teal-500 rounded-xl text-sm font-mono font-bold text-white placeholder-slate-600 focus:outline-none transition-all"
                 />
-                <p className="text-[10px] text-slate-500">Số điện thoại phụ trách mua sắm vật tư hoặc Trưởng phòng xét nghiệm.</p>
+                <p className="text-[10px] text-slate-500">Mã 8 ký tự do Nhân viên kinh doanh phụ trách cung cấp. Chưa có mã hoặc mất mã: liên hệ NVKD để được cấp lại.</p>
               </div>
 
               <button

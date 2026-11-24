@@ -5,7 +5,9 @@ import { query, logAudit } from "@/backend/db/db";
 import { createSessionToken, verifySessionToken, sessionCookieOptions } from "@/backend/services/session";
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse } from "@/backend/services/authz";
 import { hasPermission } from "@/backend/services/permissions";
-import { clientIp, hitRateLimit } from "@/backend/services/rateLimit";
+import { clientIp, hitRateLimit, isRateLimited, resetRateLimit } from "@/backend/services/rateLimit";
+import { verifyPassword } from "@/backend/services/passwords";
+import { ensurePortalAccessColumns, normalizePortalAccessCode } from "@/backend/services/customerPortalAccess";
 
 /** Public portal endpoints are rate limited per IP (anti-spam / anti-enumeration). */
 function tooMany(req: NextRequest, bucket: string, limit: number, windowMs: number) {
@@ -155,45 +157,45 @@ export async function POST(req: NextRequest) {
     if (action === "login") {
       const limitedLogin = tooMany(req, "login", 10, 15 * 60 * 1000);
       if (limitedLogin) return limitedLogin;
-      const { customer_code, phone } = body;
-      const cleanCode = (customer_code || "").trim();
-      const cleanPhone = (phone || "").replace(/[\s\-\.]/g, "").trim();
-
-      if (!cleanCode || !cleanPhone || cleanPhone.length < 8) {
+      // Đăng nhập = Mã khách hàng + Mã truy cập (8 ký tự do NVKD cấp trong hồ sơ khách). Trước đây là Mã KH + Số điện thoại:
+      // hai thông tin in sẵn trên chứng từ, người ngoài biết là xem được đơn hàng / giá trị đơn của khách.
+      const cleanCode = String(body?.customer_code || "").trim();
+      const cleanAccess = normalizePortalAccessCode(body?.access_code);
+      if (!cleanCode || cleanAccess.length < 8) {
         return NextResponse.json(
-          { error: "Vui lòng nhập đầy đủ Mã khách hàng và Số điện thoại đăng ký" },
+          { error: "Vui lòng nhập Mã khách hàng và Mã truy cập (8 ký tự) do Nhân viên kinh doanh phụ trách cung cấp." },
           { status: 400 }
         );
       }
-
-      // Tra cứu bảng sales_customers
+      // Khóa theo từng mã khách: 5 lần sai / 30 phút (chống dò mã truy cập từ nhiều IP)
+      const lockKey = `portal-login:${cleanCode.toLowerCase()}`;
+      if (isRateLimited(lockKey, 5)) {
+        return NextResponse.json({ error: "Đăng nhập sai quá nhiều lần với mã khách hàng này. Vui lòng thử lại sau 30 phút hoặc liên hệ Nhân viên kinh doanh." }, { status: 429 });
+      }
+      await ensurePortalAccessColumns();
       const custRes = await query(
-        `SELECT id, customer_code, name, phone, email, tax_code, address
+        `SELECT id, customer_code, name, phone, email, tax_code, address, portal_access_hash
          FROM sales_customers
          WHERE LOWER(TRIM(customer_code)) = LOWER($1)
-           AND (
-             REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '.', '') = $2
-             OR RIGHT(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '.', ''), 9) = RIGHT($2, 9)
-           )
          LIMIT 1`,
-        [cleanCode, cleanPhone]
+        [cleanCode]
       );
-
-      if (custRes.rows.length === 0) {
+      const row = custRes.rows[0];
+      if (!row || !row.portal_access_hash || !verifyPassword(cleanAccess, row.portal_access_hash)) {
+        hitRateLimit(lockKey, 5, 30 * 60 * 1000);
+        await logAudit("CUSTOMER_LOGIN_FAILED", "Portal_Customer", `Đăng nhập cổng khách hàng sai: mã KH ${cleanCode} (IP ${clientIp(req)})`, `customer:${cleanCode}`, cleanCode).catch(() => {});
         return NextResponse.json(
-          { 
-            error: "Mã khách hàng hoặc Số điện thoại không khớp với hồ sơ y tế tại ABT. Quý Viện vui lòng kiểm tra lại hoặc liên hệ Hotline hỗ trợ." 
-          },
+          { error: "Mã khách hàng hoặc Mã truy cập không đúng. Nếu chưa có Mã truy cập, vui lòng liên hệ Nhân viên kinh doanh phụ trách." },
           { status: 401 }
         );
       }
-
-      const customer = custRes.rows[0];
+      resetRateLimit(lockKey);
+      const { portal_access_hash: _hash, ...customer } = row;
 
       await logAudit(
         "CUSTOMER_LOGIN",
         "Portal_Customer",
-        `Khách hàng [${customer.customer_code}] ${customer.name} xác thực thành công qua SĐT ${customer.phone}`,
+        `Khách hàng [${customer.customer_code}] ${customer.name} đăng nhập cổng bằng mã truy cập`,
         customer.customer_code,
         customer.name
       );

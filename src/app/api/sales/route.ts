@@ -8,6 +8,7 @@ import { getAuthorizedUser, unauthorizedResponse, forbiddenResponse, isAdminUser
 import { hasPermission } from "@/backend/services/permissions";
 import { stripCostFields } from "@/backend/services/costVisibility";
 import { canApproveSalesOrders } from "@/backend/services/approvalGuard";
+import { issuePortalAccessCode } from "@/backend/services/customerPortalAccess";
 import { todayVN, toVNDateString, parseVNDateToISO } from "@/backend/services/dates";
 import { mergeCatalogFields } from "@/backend/services/catalogStore";
 import { notifyZaloProactiveEvent } from "@/backend/services/zaloEngine";
@@ -1387,6 +1388,19 @@ export async function POST(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const action = searchParams.get("action");
     const body = await req.json();
+
+    // Cấp / cấp lại Mã truy cập Cổng khách hàng (mã gốc chỉ trả về một lần; mã cũ hết hiệu lực)
+    if (action === "portal_access_code") {
+      if (!isAdminUser(authUser) && !canApproveSalesOrders(authUser) && !hasPermission(authUser, "sales.edit")) {
+        return forbiddenResponse("Chỉ NVKD có quyền sửa khách hàng, Trưởng / Phó phòng Kinh doanh hoặc Quản trị viên được cấp mã truy cập cổng khách hàng.");
+      }
+      const custCode = String(body.customer_code || "").trim();
+      if (!custCode) return NextResponse.json({ error: "Thiếu mã khách hàng" }, { status: 400 });
+      const issued = await issuePortalAccessCode(custCode, authUser.full_name || authUser.username);
+      if (!issued) return NextResponse.json({ error: `Không tìm thấy khách hàng ${custCode} trong CSDL (lưu hồ sơ khách trước).` }, { status: 404 });
+      await logAudit("PORTAL_ACCESS_CODE", "SALES", `Cấp mã truy cập Cổng khách hàng cho [${custCode}] ${issued.name}`);
+      return NextResponse.json({ success: true, code: issued.code, customer_name: issued.name });
+    }
 
     if (action === "customer") {
       const { id, customer_code, name, customer_name, contact_person, contact_position, phone, email, address, tax_code, sales_rep_id, sales_rep_name, classification, industry, payment_terms, notes, credit_limit, credit_term_days, customer_type, special_price_list, region, province } = body;
