@@ -30,7 +30,9 @@ export function setAuditActorContext(actor: { username: string; fullName: string
 // "tbrs_portal" (CSDL của TBRs, sót lại do sao chép mã giữa các dự án): thiếu biến môi trường là ABT ghi nhầm sang CSDL khác.
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 for (const envName of ["PGPASSWORD", "PGDATABASE"]) {
-  if (IS_PRODUCTION && !process.env[envName]) {
+  // Bỏ qua lúc "next build" (NEXT_PHASE = phase-production-build): khi build image Docker / build sang thư mục riêng
+  // chưa có biến môi trường lúc chạy, cảnh báo ở đây chỉ gây hiểu nhầm. Khi ứng dụng chạy thật vẫn báo.
+  if (IS_PRODUCTION && process.env.NEXT_PHASE !== "phase-production-build" && !process.env[envName]) {
     console.error(`❌ CẤU HÌNH: thiếu biến môi trường ${envName} trong .env.local — không thể kết nối đúng cơ sở dữ liệu.`);
   }
 }
