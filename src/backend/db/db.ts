@@ -25,17 +25,22 @@ export function setAuditActorContext(actor: { username: string; fullName: string
   auditActorStore.enterWith(actor);
 }
 
-// Global database connection pool for TBRs Portal (PostgreSQL 18)
-if (process.env.NODE_ENV === "production" && !process.env.PGPASSWORD) {
-  console.warn("⚠️ CẢNH BÁO AN NINH: Biến môi trường PGPASSWORD chưa được thiết lập trong môi trường Production!");
+// Global database connection pool for ABT Portal (PostgreSQL 18)
+// Production: KHÔNG dùng giá trị mặc định cho mật khẩu / tên CSDL. Trước đây mặc định là "12345678" và
+// "tbrs_portal" (CSDL của TBRs, sót lại do sao chép mã giữa các dự án): thiếu biến môi trường là ABT ghi nhầm sang CSDL khác.
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+for (const envName of ["PGPASSWORD", "PGDATABASE"]) {
+  if (IS_PRODUCTION && !process.env[envName]) {
+    console.error(`❌ CẤU HÌNH: thiếu biến môi trường ${envName} trong .env.local — không thể kết nối đúng cơ sở dữ liệu.`);
+  }
 }
 
 const pool = new Pool({
   host: process.env.PGHOST || "127.0.0.1",
   port: parseInt(process.env.PGPORT || "5432"),
   user: process.env.PGUSER || "postgres",
-  password: process.env.PGPASSWORD || "12345678",
-  database: process.env.PGDATABASE || "tbrs_portal",
+  password: process.env.PGPASSWORD || (IS_PRODUCTION ? undefined : "12345678"),
+  database: process.env.PGDATABASE || (IS_PRODUCTION ? undefined : "abt_portal"),
   max: 25,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,

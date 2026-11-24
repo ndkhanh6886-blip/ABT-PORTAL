@@ -119,6 +119,7 @@ import { CustomerActivityTimeline } from "@/frontend/components/CustomerActivity
 import { useFormDraft, DraftBanner } from "@/frontend/utils/useFormDraft";
 import { Pager, buildPaged, useDebouncedValue } from "@/frontend/components/Pager";
 import { DateInputVN } from "@/frontend/components/DateInputVN";
+import { CURRENT_YEAR_VN, isPlanInWeek } from "@/frontend/utils/currentYear";
 // Ô chọn sản phẩm: chỉ vẽ 60 kết quả đầu (danh mục hàng nghìn mã vẽ hết sẽ làm khung chọn đứng hình).
 const PICKER_LIMIT = 60;
 function pickerRows<T>(list: T[], render: (p: T, i: number) => React.ReactNode): React.ReactNode[] {
@@ -460,7 +461,7 @@ const FormattedNumberInput: React.FC<FormattedNumberInputProps> = ({
 };
 
 // Helper to get dates range for weeks in 2026
-function getWeekDateRangeStr(weekNum: number, year: number = 2026): string {
+function getWeekDateRangeStr(weekNum: number, year: number = CURRENT_YEAR_VN): string {
     const simple = new Date(year, 0, 1 + (weekNum - 1) * 7);
     const dayOfWeek = simple.getDay();
     const ISOweekStart = new Date(simple);
@@ -756,7 +757,8 @@ export function SalesFullABT() {
     const getApiBase = () => getMesApiBase();
 
     const apiBase = getApiBase();
-    const token = user?.token || (typeof window !== "undefined" ? (localStorage.getItem("token") || localStorage.getItem("access_token") || "token_sso_active") : "token_sso_active");
+    // Token cho API MES bên ngoài (chỉ dùng khi đặt NEXT_PUBLIC_MES_API_URL). Trước đây có giá trị giả "token_sso_active".
+    const token = user?.token || (typeof window !== "undefined" ? (localStorage.getItem("token") || localStorage.getItem("access_token") || "") : "");
 
     const [productCustomizations, setProductCustomizations] = useState<Record<string, { price?: number; priceDealer1?: number; priceDealer2?: number; category?: string; category2?: string; specification?: string; registrationNo?: string; notes?: string }>>(() => {
         if (typeof window !== "undefined") {
@@ -1610,7 +1612,7 @@ export function SalesFullABT() {
         if (!Array.isArray(rawContracts)) return [];
         return rawContracts.map(c => {
             if (!c) return c;
-            let code = c.contract_code || (typeof c.id === "string" && c.id.trim() ? c.id : `CTR-2026-${String(c.id || 1).padStart(3, '0')}`);
+            let code = c.contract_code || (typeof c.id === "string" && c.id.trim() ? c.id : `CTR-${CURRENT_YEAR_VN}-${String(c.id || 1).padStart(3, '0')}`);
             const custName = (c.customerName || c.customer_name || "").trim();
             if (code && code.includes("-XX-") && custName) {
                 const tag = getShortCustCodeClient(custName, c.customerCode || c.customer_code, "KH");
@@ -5782,7 +5784,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }
         if (!apiBase) return;
         try {
-            const res = await fetch(`${apiBase}/api/v1/sales-ops/plans?week_number=${selectedWeek}&year=2026`, {
+            const res = await fetch(`${apiBase}/api/v1/sales-ops/plans?week_number=${selectedWeek}&year=${CURRENT_YEAR_VN}`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             if (res.ok) {
@@ -6621,7 +6623,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             plan_id: Date.now(),
             id: Date.now(),
             week_number: selectedWeek,
-            year: 2026,
+            year: CURRENT_YEAR_VN,
             day_of_week: planDay,
             time_slot: planTimeSlot === "Tự nhập khoảng thời gian (Khác)" ? (customTime.trim() || "Linh hoạt") : planTimeSlot.split(" (")[0],
             project_name: planProjectName.trim() || (planWorkSource === "assigned_task" ? "Nhiệm vụ trọng tâm" : planWorkSource === "specialized_plan" ? "Kế hoạch chuyên đề" : "Công việc chung"),
@@ -6702,14 +6704,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     };
 
     const getWeeklyApproval = (week: number, repId: string): WeeklyApprovalRecord => {
-        const id = `2026-W${week}-${repId}`;
-        const existing = weeklyApprovals.find(a => a.id === id || (a.week === week && a.salesRepId === repId));
+        const id = `${CURRENT_YEAR_VN}-W${week}-${repId}`;
+        const existing = weeklyApprovals.find(a => a.id === id || (a.week === week && a.salesRepId === repId && (!a.year || Number(a.year) === CURRENT_YEAR_VN)));
         if (existing) return existing;
         const rep = salesPersonnel.find(p => p.employee_id === repId);
         return {
             id,
             week,
-            year: 2026,
+            year: CURRENT_YEAR_VN,
             salesRepId: repId,
             salesRepName: rep ? rep.full_name : repId,
             status: "DRAFT"
@@ -6717,17 +6719,17 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     };
 
     const handleSubmitWeeklyPlan = (week: number, repId: string) => {
-        const id = `2026-W${week}-${repId}`;
+        const id = `${CURRENT_YEAR_VN}-W${week}-${repId}`;
         const rep = salesPersonnel.find(p => p.employee_id === repId);
         const repName = rep ? rep.full_name : (loggedInStaff?.full_name || repId);
         const approver = getApproverTitle(repId);
         
         setWeeklyApprovals(prev => {
-            const index = prev.findIndex(a => a.id === id || (a.week === week && a.salesRepId === repId));
+            const index = prev.findIndex(a => a.id === id || (a.week === week && a.salesRepId === repId && (!a.year || Number(a.year) === CURRENT_YEAR_VN)));
             const updated: WeeklyApprovalRecord = {
                 id,
                 week,
-                year: 2026,
+                year: CURRENT_YEAR_VN,
                 salesRepId: repId,
                 salesRepName: repName,
                 status: "PENDING",
@@ -6772,7 +6774,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const isApproved = reviewDecision === "approve";
         
         setWeeklyApprovals(prev => {
-            const index = prev.findIndex(a => a.id === reviewingApproval.id || (a.week === reviewingApproval.week && a.salesRepId === reviewingApproval.salesRepId));
+            const index = prev.findIndex(a => a.id === reviewingApproval.id || (a.week === reviewingApproval.week && a.salesRepId === reviewingApproval.salesRepId && (!a.year || Number(a.year) === Number(reviewingApproval.year || CURRENT_YEAR_VN))));
             const updated: WeeklyApprovalRecord = {
                 ...reviewingApproval,
                 status: isApproved ? "APPROVED" : "REJECTED",
@@ -13761,8 +13763,22 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         showToast(`Đơn ${code} CHƯA được lưu vào cơ sở dữ liệu (${reason}). Vui lòng mở đơn và lưu lại.`, "error");
     };
 
+    // Chặn bấm "Gửi yêu cầu" / "Lưu" 2 lần liên tiếp: trước đây mỗi lần bấm tạo thêm một SO trùng
+    const factoryOrderSavingRef = useRef(false);
+    const [isSavingFactoryOrder, setIsSavingFactoryOrder] = useState(false);
     const handleCreateFactoryOrder = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (factoryOrderSavingRef.current) return;
+        factoryOrderSavingRef.current = true;
+        setIsSavingFactoryOrder(true);
+        try {
+            await handleCreateFactoryOrderInner();
+        } finally {
+            factoryOrderSavingRef.current = false;
+            setIsSavingFactoryOrder(false);
+        }
+    };
+    const handleCreateFactoryOrderInner = async () => {
         if (!factoryOrderCustomerName.trim()) {
             showToast("Vui lòng nhập tên khách hàng!", "warning");
             return;
@@ -19154,7 +19170,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         };
         const repId = loggedInStaff?.employee_id || (salesPersonnel.length > 0 ? salesPersonnel[0].employee_id : "KD-01");
         const repName = loggedInStaff?.full_name || user?.name || "NVKD";
-        const reqId = `REQ-APP-2026-${String(sharedAppRequests.length + 1).padStart(3, '0')}`;
+        const reqId = `REQ-APP-${CURRENT_YEAR_VN}-${String(sharedAppRequests.length + 1).padStart(3, '0')}`;
         const selectedCust = customers.find(c => String(c.id) === String(appReqCustomerId) || c.name === appReqCustomerName);
         const custName = selectedCust?.name || appReqCustomerName || "Khách hàng";
         const custCode = selectedCust?.customer_code || "KH-01";
@@ -19354,7 +19370,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const cleanedCusts = planCustomersList.filter(c => c.name.trim() !== "");
 
         const newPlan = {
-            id: `SPL-2026-${String(specializedPlans.length + 1).padStart(3, '0')}`,
+            id: `SPL-${CURRENT_YEAR_VN}-${String(specializedPlans.length + 1).padStart(3, '0')}`,
             type: planType,
             title: planTitle.trim(),
             salesRepId: repId,
@@ -20356,7 +20372,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         >
                                             &lt;
                                         </button>
-                                        <span className="text-xs font-bold px-3 font-mono">Tuần {selectedWeek} (2026)</span>
+                                        <span className="text-xs font-bold px-3 font-mono">Tuần {selectedWeek} ({CURRENT_YEAR_VN})</span>
                                         <button
                                             onClick={() => setSelectedWeek(prev => Math.min(52, prev + 1))}
                                             className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200 cursor-pointer"
@@ -20544,7 +20560,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                                                         {pendingReps.map(rep => {
                                                             const app = getWeeklyApproval(selectedWeek, rep.employee_id);
-                                                            const repPlansCount = plans.filter(p => p.week_number === selectedWeek && p.assignee_id === rep.employee_id).length;
+                                                            const repPlansCount = plans.filter(p => isPlanInWeek(p, selectedWeek) && p.assignee_id === rep.employee_id).length;
                                                             const canApprove = canApproveWeeklyPlan(rep.employee_id);
                                                             return (
                                                                 <div key={rep.employee_id} className="bg-slate-900/90 border border-amber-600/40 rounded-lg p-2.5 flex flex-col justify-between space-y-2">
@@ -20596,7 +20612,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-1">
                                                     {allowedPersonnelForWeeklyPlans.map(rep => {
                                                         const app = getWeeklyApproval(selectedWeek, rep.employee_id);
-                                                        const repPlansCount = plans.filter(p => p.week_number === selectedWeek && p.assignee_id === rep.employee_id).length;
+                                                        const repPlansCount = plans.filter(p => isPlanInWeek(p, selectedWeek) && p.assignee_id === rep.employee_id).length;
                                                         const canApprove = canApproveWeeklyPlan(rep.employee_id);
 
                                                         return (
@@ -21122,7 +21138,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     {(() => {
                         const allowedIds = visibleSalesPersonnel.map(p => p.employee_id);
                         const weekPlans = plans.filter(p => {
-                            if (Number(p.week_number) !== Number(selectedWeek)) return false;
+                            if (!isPlanInWeek(p, selectedWeek)) return false;
                             if (isViewerDirector) {
                                 return selectedAssigneeFilter === "all" || p.assignee_id === selectedAssigneeFilter;
                             }
@@ -21167,7 +21183,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         {["Tất cả", "Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7"].map(day => {
                             const allowedIds = visibleSalesPersonnel.map(p => p.employee_id);
                             const countForDay = plans.filter(p => {
-                                if (Number(p.week_number) !== Number(selectedWeek)) return false;
+                                if (!isPlanInWeek(p, selectedWeek)) return false;
                                 if (day !== "Tất cả" && p.day_of_week !== day) return false;
                                 if (isViewerDirector) {
                                     return selectedAssigneeFilter === "all" || p.assignee_id === selectedAssigneeFilter;
@@ -21214,7 +21230,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         {(() => {
                             const allowedIds = visibleSalesPersonnel.map(p => p.employee_id);
                             const filteredPlans = plans.filter(p => {
-                                if (Number(p.week_number) !== Number(selectedWeek)) return false;
+                                if (!isPlanInWeek(p, selectedWeek)) return false;
                                 if (selectedDay !== "Tất cả" && p.day_of_week !== selectedDay) return false;
                                 if (isViewerDirector) {
                                     return selectedAssigneeFilter === "all" || p.assignee_id === selectedAssigneeFilter;
@@ -33585,9 +33601,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </button>
                         <button
                             type="submit"
-                            className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg font-bold text-xs"
+                            disabled={isSavingFactoryOrder}
+                            className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg font-bold text-xs disabled:opacity-60 disabled:cursor-wait"
                         >
-                            {editingFactoryOrderId ? "Lưu Thay Đổi" : "Gửi Yêu Cầu Đặt Hàng"}
+                            {isSavingFactoryOrder ? "Đang lưu..." : editingFactoryOrderId ? "Lưu Thay Đổi" : "Gửi Yêu Cầu Đặt Hàng"}
                         </button>
                     </div>
                 </form>
@@ -40693,7 +40710,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                             <div className="flex justify-between">
                                 <span className="text-slate-400">Chu kỳ:</span>
-                                <span className="font-mono font-bold text-indigo-400">Tuần {reviewingApproval.week} / 2026</span>
+                                <span className="font-mono font-bold text-indigo-400">Tuần {reviewingApproval.week} / {reviewingApproval.year || CURRENT_YEAR_VN}</span>
                             </div>
                             <div className="flex justify-between">
                                 <span className="text-slate-400">Trạng thái hiện tại:</span>

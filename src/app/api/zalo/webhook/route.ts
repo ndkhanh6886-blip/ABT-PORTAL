@@ -15,70 +15,49 @@ import crypto from "crypto";
  *   biến môi trường `ZALO_OA_SECRET_KEY` (hoặc `webhook_verify_token` đang để mặc định), việc ép so khớp chữ ký
  *   với `secret_key` sẽ làm hỏng 100% sự kiện Webhook (trả về 401 khiến tin nhắn `LK-XXXXXX` bị chặn).
  */
+let warnedNoWebhookSecret = false;
+// Khóa mẫu từng phát hành trong mã / tài liệu: không bao giờ dùng để xác thực
+const PLACEHOLDER_ZALO_SECRETS = new Set(["tbr_webhook_token_2026", "tbr_webhook_verify_2026", "tbr_zalo_sec_89f0293a4bc"]);
+
+/**
+ * Chỉ nhận sự kiện có chữ ký hợp lệ: mac = sha256(appId + rawBody + timestamp + OA Secret Key).
+ * Trước đây gói tin KHÔNG có chữ ký vẫn được nhận nếu app_id / oa_id khớp cấu hình; hai mã này không bí mật,
+ * nên ai cũng giả được lệnh "Duyệt <mã>" gửi qua webhook.
+ * Khóa: biến môi trường ZALO_OA_SECRET_KEY, hoặc OA Secret Key nhập ở Cấu hình Zalo (webhook_verify_token / secret_key).
+ */
 async function verifyZaloSignature(req: NextRequest, rawBody: string, body: any): Promise<boolean> {
-  const envOaSecret = (process.env.ZALO_OA_SECRET_KEY || "").trim();
   const header = req.headers.get("x-zevent-signature") || "";
   const mac = header.replace(/^mac=/i, "").trim().toLowerCase();
 
-  const cfg = await getZaloConfig().catch(() => ({} as any));
-  const dbAppId = String(cfg?.app_id || "").trim();
-  const appId = String(body?.app_id || dbAppId || "").trim();
+  const cfg: any = await getZaloConfig().catch(() => ({}));
+  const appId = String(body?.app_id || cfg?.app_id || "").trim();
+  const keys = [
+    (process.env.ZALO_OA_SECRET_KEY || "").trim(),
+    String(cfg?.webhook_verify_token || "").trim(),
+    String(cfg?.secret_key || "").trim()
+  ].filter((k, i, arr) => k && !PLACEHOLDER_ZALO_SECRETS.has(k) && arr.indexOf(k) === i);
 
-  // Nếu có cấu hình cứng ZALO_OA_SECRET_KEY trên biến môi trường thì kiểm tra nghiêm ngặt theo khóa đó
-  if (envOaSecret) {
-    if (!mac) return false;
+  if (keys.length === 0) {
+    if (!warnedNoWebhookSecret) {
+      warnedNoWebhookSecret = true;
+      console.error("❌ AN NINH ZALO WEBHOOK: chưa cấu hình OA Secret Key (ZALO_OA_SECRET_KEY) — mọi sự kiện webhook đều bị từ chối.");
+    }
+    return false;
+  }
+  if (!mac || !appId) {
+    console.warn("⚠️ ZALO WEBHOOK: từ chối sự kiện thiếu chữ ký X-ZEvent-Signature hoặc app_id.");
+    return false;
+  }
+  for (const key of keys) {
     const expected = crypto
       .createHash("sha256")
-      .update(`${appId}${rawBody}${body?.timestamp ?? ""}${envOaSecret}`)
+      .update(`${appId}${rawBody}${body?.timestamp ?? ""}${key}`)
       .digest("hex");
-    return mac.length === expected.length && crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expected));
-  }
-
-  // Nếu có header X-ZEvent-Signature và người dùng đã nhập OA Secret Key vào webhook_verify_token hoặc secret_key
-  if (mac && appId) {
-    const candidates = [
-      String(cfg?.webhook_verify_token || "").trim(),
-      String(cfg?.secret_key || "").trim()
-    ].filter(
-      (k) =>
-        k &&
-        k !== "tbr_webhook_token_2026" &&
-        k !== "tbr_webhook_verify_2026" &&
-        k !== "tbr_zalo_sec_89f0293a4bc"
-    );
-
-    for (const key of candidates) {
-      const expected = crypto
-        .createHash("sha256")
-        .update(`${appId}${rawBody}${body?.timestamp ?? ""}${key}`)
-        .digest("hex");
-      if (mac.length === expected.length && crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expected))) {
-        return true;
-      }
-    }
-
-    // Trường hợp người dùng mới chỉ cấu hình App Secret Key (cho OAuth) mà chưa nhập OA Secret Key (của Webhook):
-    // Kiểm tra app_id hoặc oa_id của payload khớp với cấu hình hệ thống để không chặn nhầm tin nhắn thật từ Zalo.
-    const payloadOaId = String(body?.recipient?.id || body?.oa_id || body?.sender?.id || "").trim();
-    const cfgOaId = String(cfg?.oa_id || "").trim();
-    if (
-      (dbAppId && dbAppId !== "482910481920481" && body?.app_id && String(body.app_id).trim() === dbAppId) ||
-      (cfgOaId && cfgOaId !== "398247192834719" && payloadOaId && payloadOaId === cfgOaId)
-    ) {
+    if (mac.length === expected.length && crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expected))) {
       return true;
     }
   }
-
-  // Khi không gửi chữ ký X-ZEvent-Signature: chỉ chấp nhận nếu app_id hoặc oa_id trong gói tin khớp đúng cấu hình thực tế của OA
-  const payloadOaId = String(body?.recipient?.id || body?.oa_id || "").trim();
-  const cfgOaId = String(cfg?.oa_id || "").trim();
-  if (
-    (dbAppId && dbAppId !== "482910481920481" && body?.app_id && String(body.app_id).trim() === dbAppId) ||
-    (cfgOaId && cfgOaId !== "398247192834719" && payloadOaId && payloadOaId === cfgOaId)
-  ) {
-    return true;
-  }
-
+  console.warn("⚠️ ZALO WEBHOOK: chữ ký không khớp, đã từ chối sự kiện.");
   return false;
 }
 

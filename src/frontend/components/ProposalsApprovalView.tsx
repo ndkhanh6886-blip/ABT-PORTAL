@@ -48,6 +48,28 @@ import { DateInputVN, formatDayVN } from "@/frontend/components/DateInputVN";
 import { todayVN, nowVNDateTime, formatVNDateTime } from "@/backend/services/dates";
 import { Pager, usePaged } from "@/frontend/components/Pager";
 
+
+/** Mã hóa HTML cho một chuỗi (dùng khi ghi tài liệu in bằng document.write). */
+const escapeHtmlText = (v: any): string =>
+  String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+/** Bản sao đã mã hóa HTML mọi chuỗi bên trong (số, boolean giữ nguyên). */
+function escapeDeepHtml<T>(v: T): T {
+  if (typeof v === "string") return escapeHtmlText(v) as any;
+  if (Array.isArray(v)) return v.map(x => escapeDeepHtml(x)) as any;
+  if (v && typeof v === "object") {
+    const out: any = {};
+    for (const [k, x] of Object.entries(v as any)) out[k] = escapeDeepHtml(x);
+    return out;
+  }
+  return v;
+}
+
 export type ProposalCategoryKey =
   | "FINANCE"
   | "HR_ADMIN"
@@ -2913,8 +2935,11 @@ export function ProposalsApprovalView({
   };
 
   // In Phiếu Đề Xuất & Phê Duyệt chuẩn A4 (có dấu mọc Chữ ký số nội bộ)
-  const handlePrintProposal = (p: ProposalItem) => {
-    const tmpl = templates.find((t) => t.id === p.templateId);
+  const handlePrintProposal = (rawProposal: ProposalItem) => {
+    // Mọi chuỗi người dùng nhập (tiêu đề, nội dung, ý kiến duyệt, tên tệp...) được mã hóa HTML trước khi ghi vào
+    // trang in: trước đây chèn thẳng nên một đề xuất có mã <script> sẽ chạy dưới quyền người bấm In (XSS).
+    const p = escapeDeepHtml(rawProposal);
+    const tmpl = escapeDeepHtml(templates.find((t) => t.id === rawProposal.templateId));
     const win = window.open("", "_blank", "width=950,height=850");
     if (!win) {
       showToast("Vui lòng cho phép trình duyệt mở cửa sổ Pop-up để in phiếu!", "warning");

@@ -66,6 +66,7 @@ import { AttachmentPicker, type Attachment } from "./AttachmentPicker";
 import { TechCareLog } from "./TechCareLog";
 import { todayVN, toVNDateString } from "@/backend/services/dates";
 import { DateInputVN } from "@/frontend/components/DateInputVN";
+import { CURRENT_YEAR_VN, isPlanInWeek } from "@/frontend/utils/currentYear";
 
 // Allowed roles for access control
 const ALLOWED_ROLES = ["admin", "director", "vice_director", "manager", "head", "lead", "leader", "app_head", "app_deputy", "app_tech", "app_rep", "application", "engineer", "kỹ thuật", "ứng dụng", "giám đốc", "phó giám đốc", "quản lý", "trưởng phòng", "chuyên viên", "nhân viên"];
@@ -90,7 +91,7 @@ const PREDEFINED_PROJECTS = [
 ];
 
 // Helper to get dates range for weeks in 2026
-function getWeekDateRangeStr(weekNum: number, year: number = 2026): string {
+function getWeekDateRangeStr(weekNum: number, year: number = CURRENT_YEAR_VN): string {
     const simple = new Date(year, 0, 1 + (weekNum - 1) * 7);
     const dayOfWeek = simple.getDay();
     const ISOweekStart = new Date(simple);
@@ -1445,7 +1446,7 @@ export function ApplicationFullABT() {
 
     // Active plan matching employee, week and year
     const activePlan = useMemo(() => {
-        return plans.find(p => p.user_name === selectedEmployee && p.week_number === selectedWeek && p.year === 2026);
+        return plans.find(p => p.user_name === selectedEmployee && isPlanInWeek(p, selectedWeek));
     }, [plans, selectedEmployee, selectedWeek]);
 
     // Unique employees list from system
@@ -1570,7 +1571,7 @@ export function ApplicationFullABT() {
             id: `plan-${Date.now()}`,
             user_name: selectedEmployee,
             week_number: selectedWeek,
-            year: 2026,
+            year: CURRENT_YEAR_VN,
             status: "Draft",
             items: []
         };
@@ -3604,7 +3605,7 @@ export function ApplicationFullABT() {
                                             >
                                                 {weekOptions.map(opt => (
                                                     <option key={opt.week} value={opt.week} className="bg-slate-900 text-white">
-                                                        Tuần {opt.week} ({getWeekDateRangeStr(opt.week, 2026)}) {opt.count > 0 ? `• [${opt.count} việc]` : ""}
+                                                        Tuần {opt.week} ({getWeekDateRangeStr(opt.week, CURRENT_YEAR_VN)}) {opt.count > 0 ? `• [${opt.count} việc]` : ""}
                                                     </option>
                                                 ))}
                                             </select>
@@ -3651,7 +3652,7 @@ export function ApplicationFullABT() {
                             {/* Summary Stats for the selected week */}
                             {(() => {
                                 const matchingPlans = plans.filter(p => {
-                                    if (Number(p.week_number) !== Number(selectedWeek) || (p.year && Number(p.year) !== 2026)) return false;
+                                    if (Number(p.week_number) !== Number(selectedWeek) || (p.year && Number(p.year) !== CURRENT_YEAR_VN)) return false;
                                     if (selectedEmployee && selectedEmployee !== "" && selectedEmployee !== "Tất cả") {
                                         return p.user_name === selectedEmployee;
                                     }
@@ -3738,7 +3739,7 @@ export function ApplicationFullABT() {
                                 {(() => {
                                     // Get items matching selectedWeek and selectedEmployee
                                     const matchingPlans = plans.filter(p => {
-                                        if (Number(p.week_number) !== Number(selectedWeek) || (p.year && Number(p.year) !== 2026)) return false;
+                                        if (Number(p.week_number) !== Number(selectedWeek) || (p.year && Number(p.year) !== CURRENT_YEAR_VN)) return false;
                                         if (selectedEmployee && selectedEmployee !== "" && selectedEmployee !== "Tất cả") {
                                             return p.user_name === selectedEmployee;
                                         }

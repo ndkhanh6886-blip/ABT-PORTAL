@@ -28,20 +28,21 @@ export async function getAuthorizedUser(req: Request, opts: { allowPasswordChang
     }
     const mergedPerms: Record<string, boolean> = perms && typeof perms === "object" ? { ...perms } : {};
 
-    // Đồng bộ hợp nhất quyền từ các bản ghi tài khoản cùng nhân sự (VD: NV-TBR-016 vs TBR016 hoặc trùng Họ tên)
-    if (row.full_name || row.username) {
+    // Hợp nhất quyền từ tài khoản cùng MÃ NHÂN VIÊN (VD: NV-TBR-016 <-> TBR016) do Quản trị viên tạo.
+    // Không còn so theo Họ tên: hai người trùng tên (hoặc ai đổi được họ tên thành tên Giám đốc) từng được
+    // cộng toàn bộ quyền của người kia.
+    if (row.username) {
       const aliasRes = await query(
         `SELECT permissions FROM users
          WHERE id != $1
            AND permissions IS NOT NULL
+           AND COALESCE(is_active, true) = true
+           AND $2 <> ''
            AND (
-             ($2 <> '' AND LOWER(TRIM(full_name)) = LOWER(TRIM($2)))
-             OR ($3 <> '' AND (
-               LOWER(username) = LOWER(REGEXP_REPLACE($3, '^NV-(TBRS|TBR|VIA|ABT)-?', '\\1', 'i'))
-               OR LOWER(username) = LOWER(REGEXP_REPLACE($3, '^(TBRS|TBR|VIA|ABT)-?([0-9]+)$', 'NV-\\1-\\2', 'i'))
-             ))
+             LOWER(username) = LOWER(REGEXP_REPLACE($2, '^NV-(TBRS|TBR|VIA|ABT)-?', '\\1', 'i'))
+             OR LOWER(username) = LOWER(REGEXP_REPLACE($2, '^(TBRS|TBR|VIA|ABT)-?([0-9]+)$', 'NV-\\1-\\2', 'i'))
            )`,
-        [row.id, String(row.full_name || ""), String(row.username || "")]
+        [row.id, String(row.username || "")]
       ).catch(() => ({ rows: [] as any[] }));
       for (const aRow of aliasRes.rows) {
         let aPerms = aRow.permissions;
@@ -89,8 +90,8 @@ export function isAdminUser(user: AuthorizedUser | null): boolean {
 
 /**
  * Kế toán (or an administrator): may record / void customer and supplier payments, unblock credit,
- * change payment / invoice status. Decided by the role set by an administrator, never by the free-text
- * department name ("kế toán" in a department label used to be enough).
+ * change payment / invoice status. Decided by role, permission, or the department assigned to the account
+ * by an administrator (users.department — not editable by the user).
  */
 export function isAccountantUser(user: AuthorizedUser | null): boolean {
   if (!user) return false;

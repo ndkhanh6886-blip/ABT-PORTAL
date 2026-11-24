@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { apiErrorResponse } from "@/backend/services/apiErrors";
 import { getAuthorizedUser, unauthorizedResponse, setAuditActor } from "@/backend/services/authz";
 import fs from "fs";
+import { Readable } from "stream";
 import fsp from "fs/promises";
 import path from "path";
 import crypto from "crypto";
-import { Readable } from "stream";
 
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
 
@@ -57,6 +57,25 @@ function validateFileExtensionAndSize(originalName: string, totalSize: number): 
   }
 
   return null;
+}
+
+/** Xóa tệp tạm (.part_*) của các lượt tải bỏ dở quá 24 giờ để đĩa không đầy dần. */
+let lastPartCleanupAt = 0;
+function cleanupStalePartFiles() {
+  const now = Date.now();
+  if (now - lastPartCleanupAt < 60 * 60 * 1000) return;
+  lastPartCleanupAt = now;
+  try {
+    for (const name of fs.readdirSync(UPLOAD_DIR)) {
+      if (!name.startsWith(".part_")) continue;
+      const full = path.join(UPLOAD_DIR, name);
+      try {
+        if (now - fs.statSync(full).mtimeMs > 24 * 60 * 60 * 1000) fs.unlinkSync(full);
+      } catch {}
+    }
+  } catch (err: any) {
+    console.warn("[upload] Không dọn được tệp tạm:", err?.message || err);
+  }
 }
 
 function buildContentAddressedFileName(originalName: string, sha256Hex: string): string {
@@ -121,6 +140,7 @@ export async function POST(req: NextRequest) {
 
       // File tạm gắn với tài khoản: người khác không thể ghi chèn vào phần tải lên của mình
       const partPath = path.join(UPLOAD_DIR, `.part_${Number(authUser.id) || 0}_${uploadId}`);
+      if (chunkIndex === 0) cleanupStalePartFiles(); // dọn tệp tạm bỏ dở > 24 giờ
 
       // Nếu là chunk đầu tiên (0), xóa file tạm cũ nếu có
       if (chunkIndex === 0) {

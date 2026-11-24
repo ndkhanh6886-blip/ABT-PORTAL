@@ -1,5 +1,6 @@
 import crypto from "crypto";
-import { sessionSecret, getSessionFromRequest } from "@/backend/services/session";
+import { sessionSecret } from "@/backend/services/session";
+import { getAuthorizedUser } from "@/backend/services/authz";
 
 /**
  * Signed, expiring links for documents sent outside the portal (Zalo messages).
@@ -39,8 +40,9 @@ function validSignature(kind: DocumentKind, code: string, expRaw: string | null,
 export async function canAccessDocument(req: Request, kind: DocumentKind, code: string): Promise<boolean> {
   const { searchParams } = new URL(req.url);
   if (validSignature(kind, code, searchParams.get("exp"), searchParams.get("sig"))) return true;
-  const session = await getSessionFromRequest(req);
-  return Boolean(session && session.role !== "customer");
+  // Kiểm tra đầy đủ (tài khoản còn hoạt động, phiên chưa bị thu hồi) chứ không chỉ chữ ký cookie
+  const user = await getAuthorizedUser(req).catch(() => null);
+  return Boolean(user);
 }
 
 export function documentAccessDeniedResponse(): Response {

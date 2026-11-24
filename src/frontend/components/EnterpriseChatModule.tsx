@@ -1115,7 +1115,7 @@ export const EnterpriseChatModule: React.FC = () => {
       } catch (err) {
         // Silent sync error
       }
-    }, 3500);
+    }, 6000); // trước đây 3,5 giây: mỗi người mở chat tạo ~1 truy vấn nặng mỗi 3,5 giây
 
     return () => clearInterval(syncInterval);
   }, [currentUserName, activeChannel?.id, activeChannel?.channel_code, splitChannel?.id, splitChannel?.channel_code]);

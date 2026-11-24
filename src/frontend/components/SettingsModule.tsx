@@ -90,6 +90,14 @@ export {
   mergeStoredDepartmentPositions,
 };
 
+/** Mật khẩu tạm ngẫu nhiên cho tài khoản mới (trước đây mặc định "password123" — ai cũng đoán được). Server bắt đổi khi đăng nhập lần đầu. */
+function generateTempPassword(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+  const bytes = new Uint8Array(10);
+  try { crypto.getRandomValues(bytes); } catch { for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256); }
+  return "Abt-" + Array.from(bytes, b => chars[b % chars.length]).join("");
+}
+
 const ROLE_LABELS: Record<string, { label: string; color: string; desc: string }> = {
   admin: { label: "Giám Đốc (Director)", color: "bg-orange-100 dark:bg-orange-950/60 text-orange-700 dark:text-orange-400 border-orange-200 dark:border-orange-800", desc: "Toàn quyền quản trị, phê duyệt và giám sát toàn công ty" },
   director: { label: "Giám Đốc (Director)", color: "bg-orange-100 dark:bg-orange-950/60 text-orange-700 dark:text-orange-400 border-orange-200 dark:border-orange-800", desc: "Toàn quyền quản trị, phê duyệt và giám sát toàn công ty" },
@@ -1146,7 +1154,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
       setFormData({
         id: null,
         username: "",
-        password: "password123",
+        password: generateTempPassword(),
         full_name: "",
         email: "",
         department: "Kinh Doanh",
@@ -2279,7 +2287,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                               setFormData({
                                 id: null,
                                 username: p.email ? String(p.email).split("@")[0].replace(/[^a-zA-Z0-9_]/g, "") : `user_${String(p.employee_code || "staff").toLowerCase().replace(/[^a-z0-9]/g, "")}`,
-                                password: "password123",
+                                password: generateTempPassword(),
                                 full_name: p.full_name || "",
                                 role: autoRole,
                                 department: p.department || "",
@@ -2640,7 +2648,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                                               setFormData({
                                                 id: null,
                                                 username: p.email ? String(p.email).split("@")[0].replace(/[^a-zA-Z0-9_]/g, "") : `user_${String(p?.employee_code || "staff").toLowerCase().replace(/[^a-z0-9]/g, "")}`,
-                                                password: "password123",
+                                                password: generateTempPassword(),
                                                 full_name: p.full_name,
                                                 role: inferSystemRoleFromPosition(p.department, p.position),
                                                 department: p.department,
@@ -3672,7 +3680,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                       type="text"
                       value={formData.password}
                       onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                      placeholder="password123"
+                      placeholder="Mật khẩu tạm (người dùng phải đổi khi đăng nhập lần đầu)"
                       className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-900 dark:text-white"
                       required
                     />

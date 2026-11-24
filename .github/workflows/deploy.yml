@@ -108,6 +108,13 @@ jobs:
               export NVM_DIR="${NVM_DIR:-/root/.nvm}"
               [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" || true
               touch .env.local
+              # Ứng dụng không còn mật khẩu / tên CSDL mặc định khi chạy production: thiếu biến thì dừng deploy, bản đang chạy giữ nguyên
+              for v in PGPASSWORD PGDATABASE; do
+                if ! grep -q "^${v}=.\+" .env.local && [ -z "${!v:-}" ]; then
+                  echo "::error::.env.local thiếu ${v} — dừng deploy, bản đang chạy giữ nguyên. Thêm ${v}=... vào .env.local rồi chạy lại deploy."
+                  exit 1
+                fi
+              done
               if ! grep -q "^SESSION_SECRET=.\+" .env.local; then
                 echo "SESSION_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")" >> .env.local
               fi
@@ -175,6 +182,13 @@ jobs:
             export NVM_DIR="${NVM_DIR:-/root/.nvm}"
             [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" || true
             touch .env.local
+            # Ứng dụng không còn mật khẩu / tên CSDL mặc định khi chạy production: thiếu biến thì dừng deploy, bản đang chạy giữ nguyên
+            for v in PGPASSWORD PGDATABASE; do
+              if ! grep -q "^${v}=.\+" .env.local && [ -z "${!v:-}" ]; then
+                echo "::error::.env.local thiếu ${v} — dừng deploy, bản đang chạy giữ nguyên. Thêm ${v}=... vào .env.local rồi chạy lại deploy."
+                exit 1
+              fi
+            done
             if ! grep -q "^SESSION_SECRET=.\+" .env.local; then
               echo "SESSION_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")" >> .env.local
             fi
