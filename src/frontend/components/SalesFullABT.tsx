@@ -120,6 +120,7 @@ import { useFormDraft, DraftBanner } from "@/frontend/utils/useFormDraft";
 import { Pager, buildPaged, useDebouncedValue } from "@/frontend/components/Pager";
 import { DateInputVN } from "@/frontend/components/DateInputVN";
 import { CURRENT_YEAR_VN, isPlanInWeek } from "@/frontend/utils/currentYear";
+import { reportWriteResult } from "@/frontend/utils/storageSync";
 // Ô chọn sản phẩm: chỉ vẽ 60 kết quả đầu (danh mục hàng nghìn mã vẽ hết sẽ làm khung chọn đứng hình).
 const PICKER_LIMIT = 60;
 function pickerRows<T>(list: T[], render: (p: T, i: number) => React.ReactNode): React.ReactNode[] {
@@ -10382,11 +10383,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setSelectedQuoteIdsForExport(prev => prev.filter(id => !draftIds.has(id)));
         try { localStorage.setItem("sales_quotations", JSON.stringify(updatedQuotations)); } catch(e) {}
         draftQuotes.forEach(dq => {
-            fetch("/api/sales?action=delete_quotation", {
+            reportWriteResult(fetch("/api/sales?action=delete_quotation", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ quote_code: dq.id, id: dq.id })
-            }).catch(() => {});
+            }), `Xóa báo giá ${dq.id}`);
         });
         showToast(`Đã xóa thành công ${draftQuotes.length} báo giá nháp!`, "success");
     };
@@ -11602,11 +11603,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             try { localStorage.setItem("sales_quotations", JSON.stringify(updatedQuotes)); } catch(e) {}
             const matchedQuote = updatedQuotes.find(q => q.id && String(q.id).trim().toLowerCase() === String(quoteId).trim().toLowerCase());
             if (matchedQuote) {
-                fetch("/api/sales?action=quotation", {
+                reportWriteResult(fetch("/api/sales?action=quotation", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(matchedQuote)
-                }).catch(() => {});
+                }), `Báo giá ${matchedQuote.id}`);
             }
         }
 
@@ -11645,11 +11646,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setSelectedContractIdsForExport([]);
         try { localStorage.setItem("sales_contracts", JSON.stringify(updatedContracts)); } catch(e) {}
         deletedIds.forEach(cid => {
-            fetch("/api/sales?action=delete_contract", {
+            reportWriteResult(fetch("/api/sales?action=delete_contract", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ contract_code: cid, id: cid })
-            }).catch(() => {});
+            }), `Xóa hợp đồng ${cid}`);
         });
         showToast(`Đã xóa ${deletedIds.length} hợp đồng thành công!`, "success");
     };
@@ -13381,11 +13382,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             try { localStorage.setItem("sales_quotations", JSON.stringify(updatedQuotations)); } catch(e) {}
             const matchedQuote = updatedQuotations.find(q => q.id && String(q.id).trim().toLowerCase() === String(contractQuoteId).trim().toLowerCase());
             if (matchedQuote) {
-                fetch("/api/sales?action=quotation", {
+                reportWriteResult(fetch("/api/sales?action=quotation", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(matchedQuote)
-                }).catch(() => {});
+                }), `Báo giá ${matchedQuote.id}`);
             }
         }
 
@@ -16606,11 +16607,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return req;
         }));
         for (const req of selectedReqs) {
-            fetch("/api/sales?action=order", {
+            reportWriteResult(fetch("/api/sales?action=order", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ id: req.id, order_code: req.order_code || req.id, pr_code: combinedPrCode, procure_status: "PR_PENDING" })
-            }).catch(() => {});
+            }), `Đơn hàng ${req.order_code || req.id} (gắn PR)`);
         }
 
         showToast(`Đã gửi Đề xuất mua hàng gộp ${combinedPrCode} sang phòng Cung Ứng (${selectedReqs.length} đơn).`, "success");

@@ -322,6 +322,60 @@ export async function buildAnomalyReport(days = 7): Promise<AnomalyReport> {
     });
   }
 
+  // 12. Bản màn hình (app_storage) và CSDL lệch nhau — không phụ thuộc kỳ báo cáo.
+  //     Hai bản được cập nhật riêng rẽ; lệch nhau là gốc của: đơn chỉ có trên màn hình (SO26-STOCK-1101..1106),
+  //     đơn khóa công nợ hiện "Đã duyệt" (SO26-GS-1158..1163), phiếu đã hủy vẫn bị tính (PX2611-0063).
+  {
+    const rows = await safeRows(
+      `WITH scr AS (
+         SELECT COALESCE(NULLIF(x.e->>'order_code', ''), x.e->>'id') AS code, x.e->>'status' AS st,
+                COALESCE(x.e->>'customerName', x.e->>'customer_name') AS cust, COALESCE(x.e->>'salesRepName', '') AS rep
+           FROM app_storage a, jsonb_array_elements(CASE WHEN jsonb_typeof(a.data) = 'array' THEN a.data ELSE '[]'::jsonb END) x(e)
+          WHERE a.key = 'sales_factory_orders'
+       ), slip_scr AS (
+         SELECT x.e->>'id' AS code,
+                (UPPER(COALESCE(x.e->>'status', '')) = 'CANCELLED' OR UPPER(COALESCE(x.e->>'deliveryStatus', '')) = 'CANCELLED'
+                 OR COALESCE(x.e->>'cancelledAt', '') <> '') AS cancelled
+           FROM app_storage a, jsonb_array_elements(CASE WHEN jsonb_typeof(a.data) = 'array' THEN a.data ELSE '[]'::jsonb END) x(e)
+          WHERE a.key = 'sales_delivery_slips'
+       )
+       SELECT 'Đơn chỉ có trên màn hình, KHÔNG có trong CSDL' AS kind, scr.code AS ref,
+              COALESCE(scr.cust, '') || ' — trạng thái màn hình: ' || COALESCE(scr.st, '?') AS detail, scr.rep AS actor
+         FROM scr LEFT JOIN sales_orders o ON o.order_code = scr.code
+        WHERE o.id IS NULL AND scr.code ~ '^SO' AND COALESCE(scr.st, '') NOT IN ('Cancelled', 'CANCELLED', 'Rejected')
+       UNION ALL
+       SELECT 'Màn hình "đã duyệt" nhưng CSDL đang khóa công nợ / chờ duyệt giá', scr.code,
+              COALESCE(scr.cust, '') || ' — màn hình: ' || COALESCE(scr.st, '?') || ', CSDL: ' ||
+              CASE WHEN o.is_credit_blocked THEN 'khóa công nợ' ELSE 'chờ duyệt giá 0đ' END, scr.rep
+         FROM scr JOIN sales_orders o ON o.order_code = scr.code
+        WHERE scr.st IN ('Approved', 'Ready', 'Ordered')
+          AND UPPER(COALESCE(o.approval_status, '')) <> 'APPROVED'
+          AND (o.is_credit_blocked OR o.price_approval_status = 'PENDING_APPROVAL')
+       UNION ALL
+       SELECT 'CSDL đã hủy đơn nhưng màn hình vẫn còn hiệu lực', scr.code,
+              COALESCE(scr.cust, '') || ' — màn hình: ' || COALESCE(scr.st, '?'), scr.rep
+         FROM scr JOIN sales_orders o ON o.order_code = scr.code
+        WHERE (UPPER(COALESCE(o.delivery_status, '')) = 'CANCELLED' OR UPPER(COALESCE(o.approval_status, '')) = 'CANCELLED')
+          AND COALESCE(scr.st, '') NOT IN ('Cancelled', 'CANCELLED')
+       UNION ALL
+       SELECT 'Phiếu giao đã hủy trên màn hình nhưng CSDL còn hiệu lực', ss.code,
+              'Đơn ' || COALESCE(sl.order_code, '?') || ' — phiếu vẫn được tính là đã xuất / đã giao', sl.creator_name
+         FROM slip_scr ss JOIN sales_delivery_slips sl ON sl.slip_code = ss.code
+        WHERE ss.cancelled
+          AND NOT (UPPER(COALESCE(sl.status, '')) = 'CANCELLED' OR UPPER(COALESCE(sl.extra_data->>'deliveryStatus', '')) = 'CANCELLED'
+                   OR COALESCE(sl.extra_data->>'cancelledAt', '') <> '')
+       LIMIT ${MAX_ROWS}`
+    );
+    sections.push({
+      key: "screen_db_mismatch",
+      title: "Màn hình và CSDL lệch nhau",
+      severity: "high",
+      why: "Cùng một chứng từ nhưng màn hình và cơ sở dữ liệu ghi khác nhau: người xem màn hình thấy sai (đơn ma, đơn khóa nợ hiện đã duyệt, phiếu hủy vẫn tính).",
+      fix: "Đơn chỉ có trên màn hình: NVKD mở đơn bấm Lưu lại. Các trường hợp khác: tải lại trang Đơn hàng; vẫn còn thì báo Quản trị viên kèm mã chứng từ.",
+      rows: rows.map(r => ({ ref: r.ref, detail: `${r.kind}: ${r.detail}`, actor: r.actor || undefined })),
+    });
+  }
+
   const now = new Date();
   const from = new Date(now.getTime() - d * 86400000);
   const order = { high: 0, medium: 1, low: 2 } as const;

@@ -1050,6 +1050,18 @@ export async function POST(req: NextRequest) {
         return forbiddenResponse(slipMovementError);
       }
     }
+    // Tồn kho tính theo đơn vị hộp / kit (cột INTEGER): số lẻ / âm / không phải số bị từ chối bằng thông báo rõ ràng
+    // (trước đây lọt xuống CSDL và trả lỗi kỹ thuật "invalid input syntax for type integer").
+    if ((action === "inbound" || action === "outbound" || action === "update_inbound") && Array.isArray(body?.items)) {
+      for (const it of body.items) {
+        const raw = it?.quantity ?? it?.qty ?? 0;
+        const q = Number(raw === "" ? 0 : raw);
+        if (!Number.isFinite(q) || q < 0 || !Number.isInteger(q)) {
+          const code = String(it?.product_code || it?.productCode || "").trim();
+          return NextResponse.json({ error: `Số lượng của mã ${code || "(chưa có mã)"} phải là số nguyên không âm (tồn kho tính theo hộp / kit): "${raw}".` }, { status: 400 });
+        }
+      }
+    }
     // Người thực hiện được ghi theo phiên đăng nhập khi tạo phiếu mới (không ghi đè người nhập kho gốc khi sửa phiếu update_inbound)
     if (body && typeof body === "object" && !Array.isArray(body)) {
       const actorName = me.full_name || me.username;

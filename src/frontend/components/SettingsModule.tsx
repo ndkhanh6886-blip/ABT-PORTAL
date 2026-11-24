@@ -79,6 +79,7 @@ import {
   mergeStoredDepartmentPositions,
   stripOrgSchemaMetadata,
 } from "@/frontend/components/departmentPositions";
+import { reportWriteResult } from "@/frontend/utils/storageSync";
 
 export {
   ABT_ORG_SCHEMA_VERSION,
@@ -1025,7 +1026,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
 
     if (!appointModal.isConcurrent) {
       try {
-        await fetch("/api/settings?action=personnel", {
+        await reportWriteResult(fetch("/api/settings?action=personnel", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1033,7 +1034,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
             department: deptKey,
             position: posTitle
           })
-        });
+        }), `Bổ nhiệm ${emp?.full_name || ""}`.trim());
         fetchData();
       } catch (e) {}
     }
