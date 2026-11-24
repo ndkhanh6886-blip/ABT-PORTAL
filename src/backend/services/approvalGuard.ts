@@ -34,7 +34,33 @@ type GuardRule = {
   stamp?: (item: any, user: AuthorizedUser) => any;
   /** Trả về bản đã sửa nếu lần lưu đưa một quyết định đã có hiệu lực về trạng thái chờ (dữ liệu cũ), null nếu hợp lệ */
   keepDecision?: (item: any, prev: any) => Promise<any | null>;
+  /** Bản ghi khi quyết định bị từ chối (mặc định: giữ trạng thái cũ) */
+  revert?: (item: any, prev: any) => Promise<any>;
 };
+
+/** Đơn bị từ chối duyệt: trả về đúng kết luận của CSDL (khóa công nợ / chờ duyệt giá 0đ -> Pending kèm lý do). */
+async function revertOrderToDatabaseVerdict(item: any, prev: any): Promise<any> {
+  const fallback = { ...item, status: prev ? prev.status : "Pending" };
+  const code = String(item?.order_code || item?.id || "").trim();
+  if (!code) return fallback;
+  const row = (await query(
+    "SELECT approval_status, is_credit_blocked, credit_block_reason, price_approval_status FROM sales_orders WHERE order_code = $1 LIMIT 1",
+    [code]
+  )).rows[0];
+  if (!row || String(row.approval_status || "").toUpperCase() === "APPROVED") return fallback;
+  if (!row.is_credit_blocked && row.price_approval_status !== "PENDING_APPROVAL") return fallback;
+  const reason = row.is_credit_blocked ? String(row.credit_block_reason || "") : "";
+  return {
+    ...item,
+    status: "Pending",
+    isCreditBlocked: Boolean(row.is_credit_blocked),
+    is_credit_blocked: Boolean(row.is_credit_blocked),
+    creditBlockReason: reason,
+    credit_block_reason: reason,
+    priceApprovalStatus: row.price_approval_status ?? item.priceApprovalStatus,
+    price_approval_status: row.price_approval_status ?? item.price_approval_status,
+  };
+}
 
 /**
  * Tab mở lâu (dữ liệu cũ) lưu lại đơn với "Pending" trong khi CSDL ghi đơn đã duyệt và không cần duyệt lại:
@@ -98,6 +124,7 @@ const RULES: Record<string, GuardRule> = {
     pendingStatus: "Pending",
     verify: orderDecisionAllowed,
     keepDecision: keepApprovedOrder,
+    revert: revertOrderToDatabaseVerdict,
   },
   sales_specialized_plans: {
     decisions: new Set(["Approved", "Rejected"]),
@@ -145,7 +172,7 @@ export async function enforceApprovalGuards(key: string, current: any, incoming:
       result.push(rule.stamp && user ? rule.stamp(item, user) : item);
     } else {
       console.warn(`[approvalGuard] ${user?.username || "?"} tried to set ${key} ${id} -> ${nextStatus} without approval; reverted`);
-      result.push({ ...item, status: prev ? prev.status : rule.pendingStatus });
+      result.push(rule.revert ? await rule.revert(item, prev) : { ...item, status: prev ? prev.status : rule.pendingStatus });
     }
   }
   return result;

@@ -1786,7 +1786,7 @@ export function SalesFullABT() {
             const resolvedPriceApprovalStatus = isStock
                 ? "APPROVED"
                 : (o.priceApprovalStatus || o.price_approval_status || (hasZero ? "PENDING_APPROVAL" : "APPROVED"));
-            const autoApproved = (!hasZero || resolvedPriceApprovalStatus === "APPROVED") && !isBlocked && (o.status === "Pending" || o.status === "PENDING");
+            const autoApproved = (!hasZero || resolvedPriceApprovalStatus === "APPROVED") && !isBlocked && (o.status === "Pending" || o.status === "PENDING") && !o.dbSyncError;
 
             let normalizedStatus = o.status || (o.delivery_status === "DELIVERED" ? "Delivered" : (o.delivery_status === "CANCELLED" ? "Cancelled" : "Approved"));
             if (o.status === "Rejected") {
@@ -1996,53 +1996,10 @@ export function SalesFullABT() {
         return days > termDays ? days - termDays : 0;
     };
 
-    // Tự động gỡ khóa công nợ cho các đơn hàng cũ bị khóa theo công thức cũ (tính tổng SO chưa giao)
-    // khi khách hàng thực tế chưa có phiếu giao hàng nào vượt hạn mức hoặc quá hạn thanh toán.
-    useEffect(() => {
-        if (!isSalesDataLoaded || !Array.isArray(factoryOrders) || factoryOrders.length === 0) return;
-        const hasBlocked = factoryOrders.some(o => Boolean(o?.isCreditBlocked));
-        if (!hasBlocked) return;
-
-        let changed = false;
-        const nextOrders = factoryOrders.map(o => {
-            if (!o?.isCreditBlocked) return o;
-            const cName = String(o.customerName || o.customer_name || "").trim().toLowerCase();
-            const cCode = String(o.customerCode || o.customer_code || "").trim().toLowerCase();
-            const matchedCust = customers.find(c =>
-                (cCode && String(c.customer_code || "").trim().toLowerCase() === cCode) ||
-                (cName && String(c.name || "").trim().toLowerCase() === cName)
-            );
-            const creditLimit = matchedCust?.credit_limit !== undefined ? Number(matchedCust.credit_limit) : 100000000;
-            const creditTermDays = matchedCust?.credit_term_days !== undefined ? Number(matchedCust.credit_term_days) : 30;
-
-            const custOrders = factoryOrders.filter(uo => {
-                const uName = String(uo.customerName || uo.customer_name || "").trim().toLowerCase();
-                const uCode = String(uo.customerCode || uo.customer_code || "").trim().toLowerCase();
-                return (cCode && uCode === cCode) || (cName && uName === cName);
-            });
-            const currentCustDebt = custOrders.reduce((s, uo) => s + getOrderDeliveredDebtAmount(uo), 0);
-            const hasOverdue = custOrders.some(uo => getOverdueDays(uo, creditTermDays) > 0);
-
-            if (currentCustDebt <= creditLimit && !hasOverdue) {
-                changed = true;
-                const hasZero = Boolean(o.hasZeroPriceItems || (Array.isArray(o.items) && o.items.some((it: any) => Number(it.unitPrice ?? it.price ?? 0) === 0)));
-                const needsPriceAppr = hasZero && o.priceApprovalStatus !== "APPROVED";
-                return {
-                    ...o,
-                    isCreditBlocked: false,
-                    is_credit_blocked: false,
-                    creditBlockReason: "",
-                    credit_block_reason: "",
-                    status: (!needsPriceAppr && o.status === "Pending") ? "Approved" : o.status
-                };
-            }
-            return o;
-        });
-
-        if (changed) {
-            setFactoryOrders(nextOrders);
-        }
-    }, [factoryOrders, deliverySlips, customers, isSalesDataLoaded]);
+    // Gỡ khóa công nợ chỉ do MÁY CHỦ quyết định (khi tải dữ liệu, theo evaluateCredit và ghi vào sales_orders).
+    // Trước đây màn hình tự tính lại công nợ và tự gỡ khóa + đổi đơn thành "Đã duyệt"; máy chủ vẫn khóa nên chặn lại,
+    // nhưng bản sao màn hình đã mất cờ khóa -> đơn bị khóa công nợ hiện "Đã duyệt" cho Kho / Cung ứng
+    // (SO26-GS-1158..1163, SO26-CP-11108, SO26-NG-1137, SO26-NH-1113).
 
     useEffect(() => {
         if (!isSalesDataLoaded) return;
@@ -13455,6 +13412,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             (req.order_code && (o.order_code === req.order_code || o.id === req.order_code)) ||
             (req.order_id && o.id === req.order_id)
         ) || req;
+        // Đơn chưa có trong CSDL (máy chủ từ chối lúc tạo): phải mở được để "Lưu lại", nếu không đơn chỉ nằm trên màn hình mãi
+        if (latest.dbSyncError) return null;
 
         const invStatus = String(latest.invoiceStatus || latest.invoice_status || req.invoiceStatus || req.invoice_status || "").toUpperCase();
         const hasInvoiceNo = Boolean(String(latest.invoiceNo || latest.invoice_no || req.invoiceNo || req.invoice_no || "").trim());
@@ -14108,9 +14067,17 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 if (!res.ok) {
                     const err = await res.json().catch(() => ({}));
                     showToast(`Không lưu được thay đổi đơn ${editingFactoryOrderId} vào CSDL: ${err.error || res.status}`, "error");
+                    if (res.status !== 409) markOrderNotSaved(editingFactoryOrderId as string, err.error || `Lỗi ${res.status}`);
                     return;
                 }
                 const json = await res.json().catch(() => ({}));
+                // Lưu lại thành công: bỏ cảnh báo "chưa lưu vào CSDL" (đơn chưa có trong CSDL được tạo ở lần lưu này)
+                setFactoryOrders(prev => prev.map(o => (o.id === editingFactoryOrderId && o.dbSyncError) ? {
+                    ...o,
+                    dbSyncError: undefined,
+                    creditBlockReason: String(o.creditBlockReason || "").startsWith("Đơn chưa được lưu vào CSDL") ? undefined : o.creditBlockReason,
+                    status: o.status === "Pending" && !o.isCreditBlocked ? "Approved" : o.status
+                } : o));
                 if (json && (json.is_credit_blocked !== undefined || json.price_approval_status || json.approval_reset)) {
                     setFactoryOrders(prev => prev.map(o => o.id === editingFactoryOrderId ? {
                         ...o,
@@ -14288,7 +14255,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             linkedSalesOrderId: json.order_code || o.linkedSalesOrderId,
                             isCreditBlocked: blocked,
                             creditBlockReason: blockReason,
-                            status: blocked ? "Pending" : o.status
+                            status: blocked ? "Pending" : o.status,
+                            dbSyncError: undefined
                         };
                     }
                     return o;
@@ -26153,6 +26121,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             <td className="p-3 text-slate-300 font-semibold whitespace-nowrap">{req.salesRepName}</td>
                                                             <td className="p-3 whitespace-nowrap">
                                                                 <div className="flex flex-col gap-1">
+                                                                    {/* Đơn bị máy chủ từ chối lưu: chỉ có trên màn hình, chưa có trong CSDL */}
+                                                                    {req.dbSyncError && (
+                                                                        <span
+                                                                            className="text-[10px] font-bold px-2.5 py-1 rounded bg-rose-700 text-white border border-rose-300 inline-flex items-center gap-1 shadow-md cursor-help whitespace-normal max-w-[220px]"
+                                                                            title={`Lỗi lưu: ${req.dbSyncError}`}
+                                                                        >
+                                                                            ⚠ Chưa lưu vào CSDL — mở đơn, bấm Lưu lại
+                                                                        </span>
+                                                                    )}
                                                                     {/* Credit Lock Badge (Req 10 & 11) */}
                                                                     {isPendingCreditApproval && (
                                                                         <span 

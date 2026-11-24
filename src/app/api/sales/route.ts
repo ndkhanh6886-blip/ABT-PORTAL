@@ -53,7 +53,7 @@ async function firstDeliveryDates(orderCodes: string[]): Promise<Map<string, Dat
     if (typeof extra === "string") { try { extra = JSON.parse(extra); } catch { extra = {}; } }
     extra = extra && typeof extra === "object" ? extra : {};
     const st = String(extra.deliveryStatus || "").toUpperCase();
-    const cancelled = st === "CANCELLED" || String(r.status || "").toUpperCase() === "CANCELLED";
+    const cancelled = slipRowIsCancelled(r);
     const delivered = extra.isDelivered === true || extra.isDelivered === "true" || ["WAREHOUSE_DELIVERED", "SHIPPED", "DELIVERED", "FULLY_DELIVERED", "PARTIALLY_DELIVERED"].includes(st);
     if (!delivered || cancelled) continue;
     const d = parseLooseDate(r.delivery_date) || parseLooseDate(extra.deliveredAt);
@@ -302,6 +302,17 @@ function slipIsDelivered(row: any): boolean {
  * Trước đây một phiếu "Giao toàn bộ" được xác nhận là cả đơn thành "Đã giao hoàn tất" dù phiếu chỉ có vài mã
  * (SO26-CP-1164, SO26-TL-1109, SO26-TL-1110, SO26-MD-1104), nên không lập được phiếu đợt tiếp.
  */
+/** Phiếu giao đã hủy: cùng quy tắc với giao diện — cột status, extra_data.deliveryStatus hoặc extra_data.cancelledAt. */
+function slipRowIsCancelled(r: any): boolean {
+  let ex: any = r?.extra_data;
+  if (typeof ex === "string") { try { ex = JSON.parse(ex); } catch { ex = {}; } }
+  ex = ex && typeof ex === "object" ? ex : {};
+  return String(r?.status || "").toUpperCase() === "CANCELLED"
+    || String(ex.deliveryStatus || "").toUpperCase() === "CANCELLED"
+    || Boolean(ex.cancelledAt);
+}
+const SQL_SLIP_NOT_CANCELLED = "COALESCE(UPPER(status), '') <> 'CANCELLED' AND COALESCE(UPPER(extra_data->>'deliveryStatus'), '') <> 'CANCELLED' AND COALESCE(extra_data->>'cancelledAt', '') = ''";
+
 async function computeOrderDeliveryFromSlips(db: { query: (sql: string, params?: any[]) => Promise<any> }, orderCode: string): Promise<{
   hasSlips: boolean; status: "DELIVERED" | "PARTIALLY_DELIVERED" | "SHIPPED" | "PENDING"; remaining: Record<string, number>;
 } | null> {
@@ -310,7 +321,7 @@ async function computeOrderDeliveryFromSlips(db: { query: (sql: string, params?:
   const ordered = orderedQtyByCode(parseJsonArray(ordRes.rows[0].items));
   if (ordered.size === 0) return null;
   const slipRes = await db.query("SELECT slip_code, status, items, extra_data FROM sales_delivery_slips WHERE order_code = $1", [orderCode]);
-  const active = slipRes.rows.filter((r: any) => String(r.status || "").toUpperCase() !== "CANCELLED");
+  const active = slipRes.rows.filter((r: any) => !slipRowIsCancelled(r));
   const delivered = new Map<string, number>();
   for (const r of active.filter(slipIsDelivered)) {
     for (const it of parseJsonArray(r.items)) {
@@ -1568,7 +1579,7 @@ export async function POST(req: NextRequest) {
           const ordered = orderedQtyByCode(parseJsonArray(ordRow.items));
           if (ordered.size === 0) return null;
           const others = (await c.query(
-            "SELECT items FROM sales_delivery_slips WHERE order_code = $1 AND slip_code <> $2 AND COALESCE(UPPER(status), '') <> 'CANCELLED'",
+            `SELECT items FROM sales_delivery_slips WHERE order_code = $1 AND slip_code <> $2 AND ${SQL_SLIP_NOT_CANCELLED}`,
             [String(oCode).trim(), finalCode]
           )).rows;
           const allocated = new Map<string, number>();
@@ -1824,7 +1835,14 @@ export async function POST(req: NextRequest) {
       // Đơn STOCK (lưu kho gối đầu) không qua kiểm tra công nợ và duyệt giá 0đ: cờ này không được lấy từ client
       // cho người không có quyền duyệt đơn (trước đây chỉ cần gửi is_stock_order=true hoặc mã đơn chứa "STOCK").
       const stockRequested = Boolean(body.is_stock_order || body.isStockOrder || (order_code && String(order_code).includes("STOCK")));
-      const canCreateStockOrder = isAdminUser(authUser) || canApproveSalesOrders(authUser);
+      // NVKD (quyền tạo / sửa đơn Kinh doanh) được tạo đơn STOCK, nhưng chỉ cho chính công ty (lưu kho gối đầu) — không dùng
+      // cờ STOCK để bỏ qua kiểm tra công nợ / duyệt giá 0đ của đơn khách hàng. Trước đây chỉ Trưởng/Phó phòng KD hoặc
+      // Quản trị viên được tạo: đơn của NVKD bị máy chủ từ chối, chỉ nằm trên màn hình (SO26-STOCK-1101..1106).
+      const isInternalStockCustomer = /c[ôo]ng ngh[ệe] (tbr|via|abt)|kho l[ưu]u tr[ữu]|d[ựu] ph[òo]ng/i.test(String(customer_name || ""));
+      const canCreateStockOrder =
+        isAdminUser(authUser) ||
+        canApproveSalesOrders(authUser) ||
+        ((hasPermission(authUser, "sales.create") || hasPermission(authUser, "sales.edit")) && isInternalStockCustomer);
       let isStockOrder = stockRequested && canCreateStockOrder;
       const itemsArr = Array.isArray(items) ? items : [];
       const hasZeroPrice = itemsArr.some(itemHasZeroPrice);
@@ -2061,7 +2079,7 @@ export async function POST(req: NextRequest) {
 
       // ---- New order ----
       if (stockRequested && !isStockOrder) {
-        return forbiddenResponse("Chỉ Trưởng/Phó phòng Kinh doanh hoặc Quản trị viên được tạo đơn STOCK (lưu kho gối đầu, không kiểm tra công nợ).");
+        return forbiddenResponse("Đơn STOCK (lưu kho gối đầu) chỉ tạo cho chính công ty, bởi nhân viên có quyền tạo đơn Kinh doanh.");
       }
       if (!isStockOrder) {
         for (const it of itemsArr) {
@@ -3379,11 +3397,11 @@ export async function POST(req: NextRequest) {
 
         // Kiểm tra xem mặt hàng đã được xuất trên phiếu giao hàng chưa hủy hay chưa
         const slipsRes = await c.query(
-          "SELECT slip_code, status, items FROM sales_delivery_slips WHERE order_code = $1 OR ($2::int IS NOT NULL AND order_id = $2::text)",
+          "SELECT slip_code, status, items, extra_data FROM sales_delivery_slips WHERE order_code = $1 OR ($2::int IS NOT NULL AND order_id = $2::text)",
           [order_code, ord.id]
         );
         for (const slip of slipsRes.rows) {
-          if (String(slip.status || "").toUpperCase() === "CANCELLED") continue;
+          if (slipRowIsCancelled(slip)) continue;
           const slipItems = parseJsonArray(slip.items);
           const shippedQty = slipItems
             .filter((si: any) => (si.productCode || si.product_code || si.code) === product_code)
