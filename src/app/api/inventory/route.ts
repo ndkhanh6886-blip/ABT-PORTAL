@@ -9,6 +9,66 @@ import { todayVN, toVNDateString, normalizeExcelDateToISO, formatVNDate } from "
 import { normalizePersonText, personNameKey } from "@/backend/services/utils";
 
 /** Stock-changing actions and the permissions allowed to run them. */
+/**
+ * Biến động kho do phân hệ Kinh doanh gửi cho một Phiếu giao hàng (lập / sửa / hủy phiếu): mã phiếu kho
+ * PXK-<mã phiếu giao>[-HUY|-E…] / PNK-<…>. Theo sổ kho của chính phiếu đó, số đã xuất ròng của từng mã hàng phải nằm
+ * trong [0, SL trên phiếu] (phiếu đã hủy: về 0). Phiếu điều chuyển về "Kho Trung Tâm" đi chiều ngược lại (nhập là xuất).
+ * Trả về lý do từ chối, hoặc null nếu hợp lệ.
+ */
+async function checkSlipStockMovement(action: string, body: any): Promise<string | null> {
+  const tx = String(body?.transaction_code || "").trim();
+  const m = tx.match(/^(PXK|PNK)-(PX.+?)(-HUY|-E\d{1,12})?$/i);
+  if (!m) return "Chỉ được ghi kho theo Phiếu giao hàng (mã PXK- / PNK- + mã phiếu giao).";
+  if ((m[1].toUpperCase() === "PXK") !== (action === "outbound")) return "Loại phiếu kho không khớp thao tác nhập / xuất.";
+  const slipCode = m[2];
+  const slip = (await query(
+    "SELECT slip_code, customer_name, status, items, extra_data FROM sales_delivery_slips WHERE slip_code = $1 OR regexp_replace(slip_code, '[^A-Za-z0-9-]', '', 'g') = $1 LIMIT 1",
+    [slipCode]
+  )).rows[0];
+  if (!slip) return `Không tìm thấy phiếu giao ${slipCode} trên máy chủ (lưu phiếu trước khi ghi kho).`;
+  let ex: any = slip.extra_data;
+  if (typeof ex === "string") { try { ex = JSON.parse(ex); } catch { ex = {}; } }
+  ex = ex && typeof ex === "object" ? ex : {};
+  const cancelled = String(slip.status || "").toUpperCase() === "CANCELLED"
+    || String(ex.deliveryStatus || "").toUpperCase() === "CANCELLED" || Boolean(ex.cancelledAt);
+  const codeOf = (it: any) => String(it?.product_code || it?.productCode || it?.code || "").trim().toUpperCase();
+  const qtyOf = (it: any) => Number(it?.quantity ?? it?.qty ?? 0) || 0;
+  const asArray = (v: any) => { if (typeof v === "string") { try { v = JSON.parse(v); } catch { v = []; } } return Array.isArray(v) ? v : []; };
+
+  const allowed = new Map<string, number>();
+  if (!cancelled) for (const it of asArray(slip.items)) allowed.set(codeOf(it), (allowed.get(codeOf(it)) || 0) + qtyOf(it));
+
+  const is13B = String(slip.customer_name || "").trim() === "Kho Trung Tâm";
+  const issueType = is13B ? "INBOUND" : "OUTBOUND";
+  const esc = slipCode.replace(/[\\%_]/g, "\\$&");
+  const ledger = (await query(
+    "SELECT transaction_code, transaction_type, items FROM inventory_transactions WHERE transaction_code LIKE $1 OR transaction_code LIKE $2",
+    [`PXK-${esc}%`, `PNK-${esc}%`]
+  )).rows;
+  // Gửi lại đúng phiếu kho đã ghi: để bước ghi kho trả 409 như trước (không trừ / cộng lần nữa)
+  if (ledger.some((r: any) => String(r.transaction_code) === tx)) return null;
+  const net = new Map<string, number>();
+  for (const r of ledger) {
+    const sign = String(r.transaction_type).toUpperCase() === issueType ? 1 : -1;
+    for (const it of asArray(r.items)) net.set(codeOf(it), (net.get(codeOf(it)) || 0) + sign * qtyOf(it));
+  }
+  const thisSign = (action === "outbound") === !is13B ? 1 : -1;
+  for (const it of asArray(body?.items)) {
+    const code = codeOf(it);
+    const q = qtyOf(it);
+    if (!code || q <= 0) return "Dòng hàng thiếu mã hoặc số lượng không hợp lệ.";
+    const next = (net.get(code) || 0) + thisSign * q;
+    net.set(code, next);
+    if (next < -0.0001) return `Mã ${code}: nhập lại nhiều hơn số đã xuất theo phiếu giao ${slip.slip_code}.`;
+    if (next > (allowed.get(code) || 0) + 0.0001) {
+      return cancelled
+        ? `Phiếu giao ${slip.slip_code} đã hủy: không xuất thêm mã ${code}.`
+        : `Mã ${code}: vượt số lượng trên phiếu giao ${slip.slip_code} (${allowed.get(code) || 0}).`;
+    }
+  }
+  return null;
+}
+
 const WRITE_PERMISSIONS: Record<string, string[]> = {
   inbound: ["warehouse.inbound"],
   update_inbound: ["warehouse.edit_inbound", "warehouse.inbound"],
@@ -976,13 +1036,19 @@ export async function POST(req: NextRequest) {
     const isAccountantAllowed = action === "update_inbound" && isAccountantUser(me);
     if (needed && !isAdminUser(me) && !isAccountantAllowed && !needed.some(k => hasPermission(me, k))) {
       // Phiếu giao hàng lập / sửa / hủy ở phân hệ Kinh doanh xuất / nhập hoàn kho cho đơn hàng hoặc phiếu giao trong CSDL
-      const ref = String(body?.reference_code || "").trim();
-      const txCodeCheck = String(body?.transaction_code || "").trim();
-      const isSlipMovement = /^(PXK|PNK)-PX/i.test(txCodeCheck);
-      const isOrderMovement = (action === "inbound" || action === "outbound") &&
-        (hasPermission(me, "sales.view") || hasPermission(me, "sales.edit_delivery_slips") || hasPermission(me, "sales.delete")) &&
-        (isSlipMovement || (ref !== "" && (await query("SELECT 1 FROM sales_orders WHERE order_code = $1 UNION ALL SELECT 1 FROM sales_delivery_slips WHERE order_code = $1 OR slip_code = $1 LIMIT 1", [ref])).rows.length > 0));
-      if (!isOrderMovement) return forbiddenResponse("Bạn không có quyền thực hiện nghiệp vụ kho này.");
+      // Chỉ phiếu kho của Phiếu giao hàng (PXK-/PNK-<mã phiếu giao>), và số lượng phải khớp phiếu giao.
+      // Trước đây chỉ cần mã phiếu kho bắt đầu "PXK-PX"/"PNK-PX" (hoặc tham chiếu một mã đơn bất kỳ) là người có quyền
+      // xem Kinh doanh nhập / xuất được số lượng tùy ý.
+      const isSalesUser = hasPermission(me, "sales.view") || hasPermission(me, "sales.edit_delivery_slips") || hasPermission(me, "sales.delete");
+      if (!isSalesUser || (action !== "inbound" && action !== "outbound")) {
+        return forbiddenResponse("Bạn không có quyền thực hiện nghiệp vụ kho này.");
+      }
+      const slipMovementError = await checkSlipStockMovement(action, body);
+      if (slipMovementError) {
+        console.warn(`[inventory] Từ chối ${action} ${String(body?.transaction_code || "")} của ${me.username}: ${slipMovementError}`);
+        await logAudit("GUARD", "INVENTORY", `Chặn ${action} ${String(body?.transaction_code || "")}: ${slipMovementError}`, me.username, me.full_name).catch(() => {});
+        return forbiddenResponse(slipMovementError);
+      }
     }
     // Người thực hiện được ghi theo phiên đăng nhập khi tạo phiếu mới (không ghi đè người nhập kho gốc khi sửa phiếu update_inbound)
     if (body && typeof body === "object" && !Array.isArray(body)) {

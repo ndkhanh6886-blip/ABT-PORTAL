@@ -102,7 +102,18 @@ jobs:
                 fi
                 sleep 2
               done
-              [ -x scripts/backup_database.sh ] && bash scripts/backup_database.sh || echo "::warning::Không sao lưu được CSDL trước migration"
+              # Sao lưu CSDL portal + factory trong container trước migration (giữ 10 bản gần nhất mỗi CSDL)
+              mkdir -p /var/backups/abt_portal
+              for db in abt_factory abt_portal; do
+                f="/var/backups/abt_portal/${db}_before_deploy_$(date +%Y%m%d_%H%M%S).sql.gz"
+                if ( set -o pipefail; docker exec abt_postgres_db pg_dump -U postgres -d "$db" | gzip > "$f" ); then
+                  echo "Đã sao lưu $db: $f ($(du -h "$f" | cut -f1))"
+                  ls -1t /var/backups/abt_portal/${db}_before_deploy_*.sql.gz 2>/dev/null | tail -n +11 | xargs -r rm -f
+                else
+                  rm -f "$f"
+                  echo "::warning::Không sao lưu được CSDL $db trước migration"
+                fi
+              done
               if ! docker exec abt_portal_app npm run factory:migrate; then
                 echo "::error::factory:migrate lỗi trong container — kiểm tra 'docker logs abt_portal_app'"
                 exit 1
@@ -186,7 +197,18 @@ jobs:
               fi
               sleep 2
             done
-            [ -x scripts/backup_database.sh ] && bash scripts/backup_database.sh || echo "::warning::Không sao lưu được CSDL trước migration"
+            # Sao lưu CSDL portal + factory trong container trước migration (giữ 10 bản gần nhất mỗi CSDL)
+            mkdir -p /var/backups/abt_portal
+            for db in abt_factory abt_portal; do
+              f="/var/backups/abt_portal/${db}_before_deploy_$(date +%Y%m%d_%H%M%S).sql.gz"
+              if ( set -o pipefail; docker exec abt_postgres_db pg_dump -U postgres -d "$db" | gzip > "$f" ); then
+                echo "Đã sao lưu $db: $f ($(du -h "$f" | cut -f1))"
+                ls -1t /var/backups/abt_portal/${db}_before_deploy_*.sql.gz 2>/dev/null | tail -n +11 | xargs -r rm -f
+              else
+                rm -f "$f"
+                echo "::warning::Không sao lưu được CSDL $db trước migration"
+              fi
+            done
             if ! docker exec abt_portal_app npm run factory:migrate; then
               echo "::error::factory:migrate lỗi trong container — kiểm tra 'docker logs abt_portal_app'"
               exit 1
