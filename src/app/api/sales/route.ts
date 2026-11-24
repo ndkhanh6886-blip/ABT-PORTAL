@@ -313,6 +313,23 @@ function slipRowIsCancelled(r: any): boolean {
 }
 const SQL_SLIP_NOT_CANCELLED = "COALESCE(UPPER(status), '') <> 'CANCELLED' AND COALESCE(UPPER(extra_data->>'deliveryStatus'), '') <> 'CANCELLED' AND COALESCE(extra_data->>'cancelledAt', '') = ''";
 
+/**
+ * Hủy đơn / hủy dòng hàng: Quản trị viên, người duyệt đơn, hoặc người có quyền tạo / sửa đơn Kinh doanh khi đơn là của
+ * chính họ (hoặc chưa ghi NVKD cụ thể). Nhân viên chỉ có quyền Kho không hủy được đơn. Trả về lý do từ chối hoặc null.
+ */
+async function orderChangeDeniedReason(user: any, orderCode: string, verb: string): Promise<string | null> {
+  if (isAdminUser(user) || canApproveSalesOrders(user)) return null;
+  if (!hasPermission(user, "sales.edit") && !hasPermission(user, "sales.create")) {
+    return `Bạn không có quyền ${verb} (cần quyền tạo / sửa đơn Kinh doanh).`;
+  }
+  const row = (await query("SELECT sales_rep_name FROM sales_orders WHERE order_code = $1 LIMIT 1", [orderCode])).rows[0];
+  if (!row) return null; // đơn chỉ có trên màn hình (chưa vào CSDL)
+  const rep = String(row.sales_rep_name || "").trim().toLowerCase();
+  const me = String(user?.full_name || "").trim().toLowerCase();
+  if (!rep || rep === "bộ phận kho vận" || rep === "phòng kinh doanh" || (me && rep === me)) return null;
+  return `Đơn ${orderCode} do ${row.sales_rep_name} phụ trách: chỉ NVKD đó, Trưởng / Phó phòng Kinh doanh hoặc Quản trị viên được ${verb}.`;
+}
+
 /** Lỗi đồng bộ bảng CSDL -> bản sao màn hình (app_storage): ghi log + nhật ký để quản trị phát hiện hai bản bị lệch. */
 function logStorageSyncError(what: string, err: any) {
   const msg = err?.message || String(err);
@@ -2277,6 +2294,9 @@ export async function POST(req: NextRequest) {
       const code = String(body.order_code || body.id || "").trim();
       const reason = String(body.reason || "").trim();
       if (!code) return NextResponse.json({ error: "Thiếu mã đơn hàng cần hủy" }, { status: 400 });
+      // Hủy đơn: NVKD của chính đơn, người duyệt đơn hoặc Quản trị viên (trước đây mọi người dùng Kinh doanh / Kho đều hủy được)
+      const cancelDenied = await orderChangeDeniedReason(me, code, "hủy đơn hàng");
+      if (cancelDenied) return forbiddenResponse(cancelDenied);
       // Bắt buộc ghi lý do hủy thật (trước đây ô lý do điền sẵn câu mặc định nên dễ bấm OK nhầm)
       if (reason.length < 5) return NextResponse.json({ error: "Vui lòng nhập lý do hủy đơn (ít nhất 5 ký tự)." }, { status: 400 });
 
@@ -2387,6 +2407,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Không tìm thấy đơn hàng" }, { status: 404 });
       }
       const ord = orderRes.rows[0];
+      // Lùi trạng thái giao / hóa đơn: chỉ Quản trị viên (như luồng sửa đơn — canRollback); trước đây ai cũng gửi được force_rollback
+      if (force_rollback && !isAdminUser(authUser)) {
+        return forbiddenResponse("Chỉ Quản trị viên được lùi trạng thái giao hàng / hóa đơn.");
+      }
       const isRollback = Boolean(force_rollback);
       const targetUpper = String(delivery_status || "").toUpperCase();
 
@@ -2922,6 +2946,8 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "update_invoice") {
+      // Số / trạng thái hóa đơn do Kế toán ghi (như luồng sửa đơn); trước đây ai dùng Kinh doanh / Kho cũng ghi được
+      if (!isAccountantUser(authUser)) return forbiddenResponse("Chỉ Kế toán / Quản trị viên được cập nhật hóa đơn.");
       if (!orderInvoiceNotesColumnEnsured) {
         try {
           await query("ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS invoice_notes TEXT");
@@ -3411,7 +3437,11 @@ export async function POST(req: NextRequest) {
 
     // 3.2 Flexible Cancel Order Item (Requirement 15 - H5)
     if (action === "cancel_order_item") {
-      const { order_code, product_code, reason, canceled_by } = body;
+      const { order_code, product_code, reason } = body;
+      // Người hủy lấy theo phiên đăng nhập (trước đây lấy "canceled_by" do màn hình gửi lên — ghi tên ai cũng được)
+      const canceled_by = authUser.full_name || authUser.username;
+      const itemCancelDenied = await orderChangeDeniedReason(authUser, String(order_code || "").trim(), "hủy dòng hàng");
+      if (itemCancelDenied) return forbiddenResponse(itemCancelDenied);
       const result = await withTransaction(async (c) => {
         const ordRes = await c.query("SELECT * FROM sales_orders WHERE order_code = $1 FOR UPDATE", [order_code]);
         if (ordRes.rows.length === 0) {
