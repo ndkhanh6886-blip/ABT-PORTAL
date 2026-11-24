@@ -9,6 +9,7 @@ import { createStockDocument, stockDocumentMachine } from "@/factory/inv/documen
 import { lotMachine } from "@/factory/inv/lots";
 import { viewableWarehouses } from "@/factory/inv/queries";
 
+import { todayVN } from "@/backend/services/dates";
 /** A lot with the quality actions the user may run now and its QC history. */
 export const GET = factoryRoute(async (tx, { actor, params }) => {
   const lot = (
@@ -131,7 +132,7 @@ export const PATCH = factoryRoute(async (tx, { actor, params, body }) => {
   const nextExpDate = data.expiry_date !== undefined ? normDate(data.expiry_date) : lotBefore.expiry_date;
   const nextRecDate =
     data.received_date !== undefined
-      ? normDate(data.received_date) || new Date().toISOString().slice(0, 10)
+      ? normDate(data.received_date) || todayVN()
       : lotBefore.received_date;
 
   if (nextMfgDate && nextExpDate && nextExpDate < nextMfgDate) {

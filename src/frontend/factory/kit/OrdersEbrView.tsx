@@ -30,6 +30,7 @@ import { accessorySetsForProduct, findAccessorySet, isExtractionAccessoryProduct
 import { kitSpecOf, kitSpecToFactorySupplyAndTube, kitSpecLabel, hasKitSpec, hasPackagingSpec } from "@/frontend/utils/packagingForm";
 import { ProductionPlanView } from "./ProductionPlanView";
 
+import { todayVN } from "@/backend/services/dates";
 const SHIFT_LABELS: Record<string, string> = {
   CA_SANG: "🌅 Ca sáng (07:30–16:30)",
   CA_CHIEU: "🌇 Ca chiều (13:30–21:30)",
@@ -997,7 +998,7 @@ export function OrdersEbrView({
     const edit = operatorEdits[step.id] ?? {
       assigned_to_name: step.assigned_to_name ?? "",
       shift_code: step.shift_code ?? "CA_SANG",
-      planned_date: step.planned_date ? String(step.planned_date).slice(0, 10) : new Date().toISOString().slice(0, 10),
+      planned_date: step.planned_date ? String(step.planned_date).slice(0, 10) : todayVN(),
     };
     if (!edit.assigned_to_name.trim()) {
       setError(new Error("Vui lòng chọn hoặc nhập tên nhân viên phụ trách bước công đoạn trước khi lưu phân công."));

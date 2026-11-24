@@ -102,7 +102,11 @@ jobs:
                 fi
                 sleep 2
               done
-              docker exec abt_portal_app npm run factory:migrate || true
+              [ -x scripts/backup_database.sh ] && bash scripts/backup_database.sh || echo "::warning::Không sao lưu được CSDL trước migration"
+              if ! docker exec abt_portal_app npm run factory:migrate; then
+                echo "::error::factory:migrate lỗi trong container — kiểm tra 'docker logs abt_portal_app'"
+                exit 1
+              fi
             else
               echo "Deploying via Node.js & PM2..."
               export NVM_DIR="${NVM_DIR:-/root/.nvm}"
@@ -120,7 +124,13 @@ jobs:
               fi
               npm ci || npm install --no-audit --no-fund
               NEXT_DIST_DIR=.next_build npm run build
-              npm run factory:migrate || true
+              # Sao lưu CSDL trước migration (không có pg_dump: chỉ cảnh báo). Migration lỗi: dừng deploy, giữ bản đang chạy
+              npx tsx scripts/db-backup-before-migrate.ts || [ $? -eq 2 ] || { echo "::error::Sao lưu CSDL lỗi — dừng deploy"; rm -rf .next_build; exit 1; }
+              if ! npm run factory:migrate; then
+                echo "::error::factory:migrate lỗi — dừng deploy, bản đang chạy giữ nguyên (bản sao lưu ở /var/backups/abt_portal)"
+                rm -rf .next_build
+                exit 1
+              fi
               rm -rf .next_old
               [ -d .next ] && mv .next .next_old || true
               mv .next_build .next
@@ -176,7 +186,11 @@ jobs:
               fi
               sleep 2
             done
-            docker exec abt_portal_app npm run factory:migrate || true
+            [ -x scripts/backup_database.sh ] && bash scripts/backup_database.sh || echo "::warning::Không sao lưu được CSDL trước migration"
+            if ! docker exec abt_portal_app npm run factory:migrate; then
+              echo "::error::factory:migrate lỗi trong container — kiểm tra 'docker logs abt_portal_app'"
+              exit 1
+            fi
           else
             echo "Building & restarting via Node.js & PM2..."
             export NVM_DIR="${NVM_DIR:-/root/.nvm}"
@@ -194,7 +208,13 @@ jobs:
             fi
             npm ci || npm install --no-audit --no-fund
             NEXT_DIST_DIR=.next_build npm run build
-            npm run factory:migrate || true
+            # Sao lưu CSDL trước migration (không có pg_dump: chỉ cảnh báo). Migration lỗi: dừng deploy, giữ bản đang chạy
+            npx tsx scripts/db-backup-before-migrate.ts || [ $? -eq 2 ] || { echo "::error::Sao lưu CSDL lỗi — dừng deploy"; rm -rf .next_build; exit 1; }
+            if ! npm run factory:migrate; then
+              echo "::error::factory:migrate lỗi — dừng deploy, bản đang chạy giữ nguyên (bản sao lưu ở /var/backups/abt_portal)"
+              rm -rf .next_build
+              exit 1
+            fi
             rm -rf .next_old
             [ -d .next ] && mv .next .next_old || true
             mv .next_build .next

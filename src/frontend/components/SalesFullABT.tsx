@@ -1788,7 +1788,7 @@ export function SalesFullABT() {
             const resolvedPriceApprovalStatus = isStock
                 ? "APPROVED"
                 : (o.priceApprovalStatus || o.price_approval_status || (hasZero ? "PENDING_APPROVAL" : "APPROVED"));
-            const autoApproved = (!hasZero || resolvedPriceApprovalStatus === "APPROVED") && !isBlocked && (o.status === "Pending" || o.status === "PENDING");
+            const autoApproved = (!hasZero || resolvedPriceApprovalStatus === "APPROVED") && !isBlocked && (o.status === "Pending" || o.status === "PENDING") && !o.dbSyncError;
 
             let normalizedStatus = o.status || (o.delivery_status === "DELIVERED" ? "Delivered" : (o.delivery_status === "CANCELLED" ? "Cancelled" : "Approved"));
             if (o.status === "Rejected") {
@@ -1998,53 +1998,10 @@ export function SalesFullABT() {
         return days > termDays ? days - termDays : 0;
     };
 
-    // Tự động gỡ khóa công nợ cho các đơn hàng cũ bị khóa theo công thức cũ (tính tổng SO chưa giao)
-    // khi khách hàng thực tế chưa có phiếu giao hàng nào vượt hạn mức hoặc quá hạn thanh toán.
-    useEffect(() => {
-        if (!isSalesDataLoaded || !Array.isArray(factoryOrders) || factoryOrders.length === 0) return;
-        const hasBlocked = factoryOrders.some(o => Boolean(o?.isCreditBlocked));
-        if (!hasBlocked) return;
-
-        let changed = false;
-        const nextOrders = factoryOrders.map(o => {
-            if (!o?.isCreditBlocked) return o;
-            const cName = String(o.customerName || o.customer_name || "").trim().toLowerCase();
-            const cCode = String(o.customerCode || o.customer_code || "").trim().toLowerCase();
-            const matchedCust = customers.find(c =>
-                (cCode && String(c.customer_code || "").trim().toLowerCase() === cCode) ||
-                (cName && String(c.name || "").trim().toLowerCase() === cName)
-            );
-            const creditLimit = matchedCust?.credit_limit !== undefined ? Number(matchedCust.credit_limit) : 100000000;
-            const creditTermDays = matchedCust?.credit_term_days !== undefined ? Number(matchedCust.credit_term_days) : 30;
-
-            const custOrders = factoryOrders.filter(uo => {
-                const uName = String(uo.customerName || uo.customer_name || "").trim().toLowerCase();
-                const uCode = String(uo.customerCode || uo.customer_code || "").trim().toLowerCase();
-                return (cCode && uCode === cCode) || (cName && uName === cName);
-            });
-            const currentCustDebt = custOrders.reduce((s, uo) => s + getOrderDeliveredDebtAmount(uo), 0);
-            const hasOverdue = custOrders.some(uo => getOverdueDays(uo, creditTermDays) > 0);
-
-            if (currentCustDebt <= creditLimit && !hasOverdue) {
-                changed = true;
-                const hasZero = Boolean(o.hasZeroPriceItems || (Array.isArray(o.items) && o.items.some((it: any) => Number(it.unitPrice ?? it.price ?? 0) === 0)));
-                const needsPriceAppr = hasZero && o.priceApprovalStatus !== "APPROVED";
-                return {
-                    ...o,
-                    isCreditBlocked: false,
-                    is_credit_blocked: false,
-                    creditBlockReason: "",
-                    credit_block_reason: "",
-                    status: (!needsPriceAppr && o.status === "Pending") ? "Approved" : o.status
-                };
-            }
-            return o;
-        });
-
-        if (changed) {
-            setFactoryOrders(nextOrders);
-        }
-    }, [factoryOrders, deliverySlips, customers, isSalesDataLoaded]);
+    // Gỡ khóa công nợ chỉ do MÁY CHỦ quyết định (khi tải dữ liệu, theo evaluateCredit và ghi vào sales_orders).
+    // Trước đây màn hình tự tính lại công nợ và tự gỡ khóa + đổi đơn thành "Đã duyệt"; máy chủ vẫn khóa nên chặn lại,
+    // nhưng bản sao màn hình đã mất cờ khóa -> đơn bị khóa công nợ hiện "Đã duyệt" cho Kho / Cung ứng
+    // (SO26-GS-1158..1163, SO26-CP-11108, SO26-NG-1137, SO26-NH-1113).
 
     useEffect(() => {
         if (!isSalesDataLoaded) return;
@@ -13457,6 +13414,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             (req.order_code && (o.order_code === req.order_code || o.id === req.order_code)) ||
             (req.order_id && o.id === req.order_id)
         ) || req;
+        // Đơn chưa có trong CSDL (máy chủ từ chối lúc tạo): phải mở được để "Lưu lại", nếu không đơn chỉ nằm trên màn hình mãi
+        if (latest.dbSyncError) return null;
 
         const invStatus = String(latest.invoiceStatus || latest.invoice_status || req.invoiceStatus || req.invoice_status || "").toUpperCase();
         const hasInvoiceNo = Boolean(String(latest.invoiceNo || latest.invoice_no || req.invoiceNo || req.invoice_no || "").trim());
@@ -14124,9 +14083,17 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 if (!res.ok) {
                     const err = await res.json().catch(() => ({}));
                     showToast(`Không lưu được thay đổi đơn ${editingFactoryOrderId} vào CSDL: ${err.error || res.status}`, "error");
+                    if (res.status !== 409) markOrderNotSaved(editingFactoryOrderId as string, err.error || `Lỗi ${res.status}`);
                     return;
                 }
                 const json = await res.json().catch(() => ({}));
+                // Lưu lại thành công: bỏ cảnh báo "chưa lưu vào CSDL" (đơn chưa có trong CSDL được tạo ở lần lưu này)
+                setFactoryOrders(prev => prev.map(o => (o.id === editingFactoryOrderId && o.dbSyncError) ? {
+                    ...o,
+                    dbSyncError: undefined,
+                    creditBlockReason: String(o.creditBlockReason || "").startsWith("Đơn chưa được lưu vào CSDL") ? undefined : o.creditBlockReason,
+                    status: o.status === "Pending" && !o.isCreditBlocked ? "Approved" : o.status
+                } : o));
                 if (json && (json.is_credit_blocked !== undefined || json.price_approval_status || json.approval_reset)) {
                     setFactoryOrders(prev => prev.map(o => o.id === editingFactoryOrderId ? {
                         ...o,
@@ -14304,7 +14271,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             linkedSalesOrderId: json.order_code || o.linkedSalesOrderId,
                             isCreditBlocked: blocked,
                             creditBlockReason: blockReason,
-                            status: blocked ? "Pending" : o.status
+                            status: blocked ? "Pending" : o.status,
+                            dbSyncError: undefined
                         };
                     }
                     return o;
@@ -17298,13 +17266,27 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }
     };
 
-    const persistDeliverySlip = (slip: any) => {
+    /** Lưu phiếu giao lên máy chủ; trả về true khi máy chủ đã nhận. Lỗi được báo cho người dùng (trước đây bỏ qua im lặng). */
+    const persistDeliverySlip = async (slip: any): Promise<boolean> => {
         const { isDraftPreview, ...payload } = slip || {};
-        return fetch("/api/sales?action=delivery_slip", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-        }).catch(err => console.error("Failed to save delivery slip to PostgreSQL:", err));
+        try {
+            const res = await fetch("/api/sales?action=delivery_slip", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                console.error("Lưu phiếu giao lỗi:", slip?.id, res.status, err);
+                showToast(`Chưa lưu được phiếu giao ${slip?.id || ""} lên máy chủ: ${err.error || `lỗi ${res.status}`}`, "error");
+                return false;
+            }
+            return true;
+        } catch (err) {
+            console.error("Failed to save delivery slip to PostgreSQL:", err);
+            showToast(`Không kết nối được máy chủ để lưu phiếu giao ${slip?.id || ""}. Vui lòng thử lại.`, "error");
+            return false;
+        }
     };
 
     const isCreatingDeliverySlipRef = useRef(false);
@@ -17494,7 +17476,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     return;
                 }
             } else {
-                await persistDeliverySlip(newSlip);
+                // Máy chủ từ chối (vượt SL đặt, không có quyền...) thì dừng: không đổi phiếu trên màn hình, không nhập / xuất kho
+                if (!(await persistDeliverySlip(newSlip))) return;
             }
             setDeliverySlips(prev => editSlip ? prev.map(s => s.id === editSlip.id ? newSlip : s) : [newSlip, ...prev]);
 
@@ -17698,7 +17681,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     };
 
     // Hủy phiếu giao đang chờ giao -> nhập lại kho, trả lại số lượng còn lại cho đơn
-    const handleCancelDeliverySlip = (slip: any) => {
+    const handleCancelDeliverySlip = async (slip: any) => {
         const fo = resolveFactoryOrder({ order_id: slip.orderId, raw_code: slip.orderCode });
         const step = getSlipStep(slip, fo);
         if (step === "CANCELLED" || step === "DELIVERED") {
@@ -17720,10 +17703,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             cancelledBy: staffName,
             cancelReason: reason.trim()
         };
+        // Lưu hủy lên máy chủ trước; chỉ khi thành công mới đổi màn hình và nhập lại kho
+        // (trước đây nhập lại kho dù máy chủ chưa ghi nhận hủy -> phiếu vẫn hiệu lực trong CSDL, kho bị cộng thừa)
+        if (!(await persistDeliverySlip(updated))) return;
         setDeliverySlips(prev => prev.map(s => s.id === slip.id ? updated : s));
         if (selectedViewDeliverySlip?.id === slip.id) setSelectedViewDeliverySlip(updated);
-        persistDeliverySlip(updated);
-        applySlipStockMovement(slip, slip.items || [], true, "-HUY", `Nhập lại kho do hủy Phiếu giao hàng ${slip.id}${reason.trim() ? ` - Lý do: ${reason.trim()}` : ""}`);
+        await applySlipStockMovement(slip, slip.items || [], true, "-HUY", `Nhập lại kho do hủy Phiếu giao hàng ${slip.id}${reason.trim() ? ` - Lý do: ${reason.trim()}` : ""}`);
         showToast(`Đã hủy Phiếu giao hàng ${slip.id} và nhập lại kho.`, "success");
     };
 
@@ -26169,6 +26154,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             <td className="p-3 text-slate-300 font-semibold whitespace-nowrap">{req.salesRepName}</td>
                                                             <td className="p-3 whitespace-nowrap">
                                                                 <div className="flex flex-col gap-1">
+                                                                    {/* Đơn bị máy chủ từ chối lưu: chỉ có trên màn hình, chưa có trong CSDL */}
+                                                                    {req.dbSyncError && (
+                                                                        <span
+                                                                            className="text-[10px] font-bold px-2.5 py-1 rounded bg-rose-700 text-white border border-rose-300 inline-flex items-center gap-1 shadow-md cursor-help whitespace-normal max-w-[220px]"
+                                                                            title={`Lỗi lưu: ${req.dbSyncError}`}
+                                                                        >
+                                                                            ⚠ Chưa lưu vào CSDL — mở đơn, bấm Lưu lại
+                                                                        </span>
+                                                                    )}
                                                                     {/* Credit Lock Badge (Req 10 & 11) */}
                                                                     {isPendingCreditApproval && (
                                                                         <span 

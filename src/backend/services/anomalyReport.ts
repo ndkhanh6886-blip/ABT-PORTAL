@@ -18,6 +18,10 @@ export type AnomalyReport = { from: string; to: string; days: number; generatedA
 
 const SO_CODE_RE = "SO[0-9]{2}-[A-Z0-9]+-[0-9]+";
 const MAX_ROWS = 50;
+/** Phiếu giao đã hủy: cùng quy tắc với giao diện (status / deliveryStatus / cancelledAt). Phiếu hủy trước đây có thể chỉ
+ *  ghi hủy trong extra_data, cột status vẫn "COMPLETED" -> bị tính như phiếu còn hiệu lực (SO26-NG-1101, PX2611-0063). */
+const slipCancelled = (a: string) =>
+  `(UPPER(COALESCE(${a}.status, '')) = 'CANCELLED' OR UPPER(COALESCE(${a}.extra_data->>'deliveryStatus', '')) = 'CANCELLED' OR COALESCE(${a}.extra_data->>'cancelledAt', '') <> '')`;
 
 const fmt = (d: any) => {
   if (!d) return "";
@@ -92,7 +96,7 @@ export async function buildAnomalyReport(days = 7): Promise<AnomalyReport> {
          SELECT s.order_code, COALESCE(it->>'productCode', it->>'product_code') AS code, SUM(COALESCE((it->>'quantity')::numeric, 0)) AS slipped,
                 string_agg(DISTINCT s.slip_code, ', ') AS slips, MAX(s.created_at) AS last_at
            FROM sales_delivery_slips s, jsonb_array_elements(CASE WHEN jsonb_typeof(s.items) = 'array' THEN s.items ELSE '[]'::jsonb END) it
-          WHERE UPPER(COALESCE(s.status, '')) <> 'CANCELLED'
+          WHERE NOT ${slipCancelled("s")}
           GROUP BY 1, 2
        )
        SELECT slip.order_code, slip.code, ord.ordered, slip.slipped, slip.slips, slip.last_at
@@ -114,7 +118,7 @@ export async function buildAnomalyReport(days = 7): Promise<AnomalyReport> {
   {
     const rows = await safeRows(
       `SELECT a.order_code, a.slip_code AS slip_a, b.slip_code AS slip_b, a.creator_name, b.created_at,
-              UPPER(COALESCE(b.status, '')) = 'CANCELLED' OR UPPER(COALESCE(a.status, '')) = 'CANCELLED' AS da_huy
+              ${slipCancelled("a")} OR ${slipCancelled("b")} AS da_huy
          FROM sales_delivery_slips a
          JOIN sales_delivery_slips b ON b.order_code = a.order_code AND b.id > a.id
           AND b.created_at BETWEEN a.created_at AND a.created_at + INTERVAL '5 minutes'
@@ -138,7 +142,7 @@ export async function buildAnomalyReport(days = 7): Promise<AnomalyReport> {
       `SELECT s.slip_code, s.order_code, COALESCE(s.extra_data->>'cancelledBy', s.creator_name) AS nguoi,
               COALESCE(s.extra_data->>'cancelReason', '') AS ly_do, s.updated_at
          FROM sales_delivery_slips s
-        WHERE UPPER(COALESCE(s.status, '')) = 'CANCELLED' AND s.updated_at >= ${since}
+        WHERE ${slipCancelled("s")} AND s.updated_at >= ${since}
         ORDER BY s.updated_at DESC LIMIT ${MAX_ROWS}`
     );
     sections.push({
@@ -162,7 +166,7 @@ export async function buildAnomalyReport(days = 7): Promise<AnomalyReport> {
        ), dlv AS (
          SELECT s.order_code, COALESCE(it->>'productCode', it->>'product_code') AS code, SUM(COALESCE((it->>'quantity')::numeric, 0)) AS delivered
            FROM sales_delivery_slips s, jsonb_array_elements(CASE WHEN jsonb_typeof(s.items) = 'array' THEN s.items ELSE '[]'::jsonb END) it
-          WHERE UPPER(COALESCE(s.status, '')) <> 'CANCELLED'
+          WHERE NOT ${slipCancelled("s")}
             AND (s.extra_data->>'isDelivered' = 'true'
                  OR UPPER(COALESCE(s.extra_data->>'deliveryStatus', '')) IN ('WAREHOUSE_DELIVERED', 'DELIVERED')
                  OR (COALESCE(s.extra_data->>'deliveryStatus', '') = '' AND s.extra_data->>'isDelivered' IS NULL))
@@ -290,6 +294,31 @@ export async function buildAnomalyReport(days = 7): Promise<AnomalyReport> {
       why: "Nhiều dòng cùng mã, cùng giá, cùng ghi chú (thường là oligo chưa nhập trình tự): khó phân biệt khi giao và mua hàng.",
       fix: "Mỗi trình tự một dòng, nhập vào ô trình tự; cùng một hàng thì để 1 dòng và tăng số lượng.",
       rows: rows.map(r => ({ ref: r.order_code, detail: `${r.code}: ${r.so_dong} dòng giống hệt`, actor: r.sales_rep_name, at: fmt(r.created_at) })),
+    });
+  }
+
+  // 11. Lỗi hệ thống được ghi lại trong kỳ: đồng bộ CSDL -> bản sao màn hình lỗi, lần lưu bị chặn
+  //     (hai bản dữ liệu lệch nhau là gốc của đơn "ma", phiếu hủy vẫn bị tính, đơn khóa nợ hiện "Đã duyệt")
+  {
+    const rows = await safeRows(
+      `SELECT action, module, details, actor_name, created_at
+         FROM audit_logs
+        WHERE created_at >= ${since}
+          AND (action = 'SYNC_ERROR' OR (action = 'GUARD' AND module = 'STORAGE'))
+        ORDER BY created_at DESC LIMIT ${MAX_ROWS}`
+    );
+    sections.push({
+      key: "system_errors",
+      title: "Lỗi lưu / đồng bộ dữ liệu",
+      severity: "high",
+      why: "Máy chủ không đồng bộ được dữ liệu hoặc đã chặn một lần lưu bất thường: màn hình và cơ sở dữ liệu có thể đang lệch nhau.",
+      fix: "Mở chứng từ liên quan kiểm tra lại; lỗi lặp lại thì báo Quản trị viên kèm thời điểm để xem nhật ký máy chủ.",
+      rows: rows.map(r => ({
+        ref: r.action === "SYNC_ERROR" ? "Đồng bộ" : "Chặn lưu",
+        detail: String(r.details || "").slice(0, 300),
+        actor: r.actor_name,
+        at: fmt(r.created_at),
+      })),
     });
   }
 

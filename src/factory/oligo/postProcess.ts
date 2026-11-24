@@ -12,6 +12,7 @@ import { recomputeOrdersOf, visibleOligoUnits } from "./orders";
 import { freezeWorkflowById, stepLogs, workflowFor } from "./postSop";
 import { sequenceMachine } from "./sequences";
 
+import { todayVN } from "@/backend/services/dates";
 registerPermissions([{ code: "oligo.post.manage", description: "Hậu tổng hợp Oligo: cắt, khử bảo vệ, tinh sạch, đo OD, hoàn nguyên / chia ống, gửi QC" }]);
 
 /** Quantification as in OligoFlow: OD × nmol/OD and µg/OD of the sequence; volume (µL) = nmol / µM × 1000. */
@@ -72,7 +73,7 @@ export async function startPostProcess(tx: Tx, actor: AuthzActor, seqId: string)
     purification: s.purification,
     format: s.format,
     scale_code: s.scale_code,
-    mfg_date: batch?.batch_mfg_date ?? new Date().toISOString().slice(0, 10),
+    mfg_date: batch?.batch_mfg_date ?? todayVN(),
   });
   await writeAudit(tx, actor, { entityType: "oligo_post_process", entityId: rec.id, action: "create", changes: { sequence: [null, s.code] } });
   return rec;

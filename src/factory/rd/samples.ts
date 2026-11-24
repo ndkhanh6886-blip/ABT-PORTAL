@@ -7,6 +7,7 @@ import { nextNumber } from "../core/numbering";
 import { insertRecord, parseInput } from "../core/records";
 import "./permissions";
 
+import { todayVN } from "@/backend/services/dates";
 export type SampleStatus = "STORED" | "IN_USE" | "DEPLETED" | "DISPOSED" | "TRANSFERRED";
 
 export interface ClinicalSpecimenItem {
@@ -248,7 +249,7 @@ export async function createSample(
       const collectedAt =
         typeof item.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.date)
           ? item.date
-          : new Date().toISOString().slice(0, 10);
+          : todayVN();
 
       const meta: SampleMetadata = {
         category,
@@ -314,7 +315,7 @@ export async function createSample(
     (specimens.length > 0 ? `Lô ${specimens.length} mẫu bệnh phẩm` : d.reference_ct != null ? `Ct = ${d.reference_ct}` : "Chưa xác định");
   const refCt = parseReferenceCt(concentration, d.reference_ct ?? null);
   const qcStatus = d.qc_status || "Đạt tiêu chuẩn";
-  const collectedAt = d.collected_at || new Date().toISOString().slice(0, 10);
+  const collectedAt = d.collected_at || todayVN();
   const code = d.custom_code?.trim() || (await nextNumber(tx, "RD_SAMPLE"));
 
   const performerRes = await tx.query(`SELECT display_name FROM core.user_profile WHERE user_id = $1`, [actor.userId]);
@@ -475,7 +476,7 @@ export async function recordSampleEvent(tx: Tx, actor: AuthzActor, sampleId: str
 
   const performerRes = await tx.query(`SELECT display_name FROM core.user_profile WHERE user_id = $1`, [actor.userId]);
   const performerName = d.performer?.trim() || performerRes.rows[0]?.display_name || "Nghiên cứu viên R&D";
-  const actionDate = d.date || new Date().toISOString().slice(0, 10);
+  const actionDate = d.date || todayVN();
 
   const meta: SampleMetadata = {
     category: mapSampleTypeToCategory(s.sample_type, s.metadata?.category),

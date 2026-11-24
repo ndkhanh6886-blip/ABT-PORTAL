@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, RefreshCw, Download } from "lucide-react";
 
+import { todayVN } from "@/backend/services/dates";
 type Row = { ref: string; detail: string; actor?: string; at?: string };
 type Section = { key: string; title: string; severity: "high" | "medium" | "low"; why: string; fix: string; rows: Row[] };
 type Report = { from: string; to: string; days: number; generatedAt: string; total: number; sections: Section[] };
@@ -58,7 +59,7 @@ export function AnomalyReportView() {
     const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `bao-cao-bat-thuong-${new Date().toISOString().slice(0, 10)}.txt`;
+    a.download = `bao-cao-bat-thuong-${todayVN()}.txt`;
     a.click();
     URL.revokeObjectURL(a.href);
   };
