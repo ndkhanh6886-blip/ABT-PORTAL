@@ -132,7 +132,8 @@ export async function proxy(request: NextRequest) {
   }
 
   const session = await getSessionFromRequest(request);
-  if (!session) {
+  // Phiên Cổng khách hàng (role "customer") không được gọi API nội bộ, kể cả khi gửi kèm qua header Authorization
+  if (!session || session.role === "customer") {
     return apiResponse(
       NextResponse.json(
         { error: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn. Vui lòng đăng nhập lại.", unauthorized: true },

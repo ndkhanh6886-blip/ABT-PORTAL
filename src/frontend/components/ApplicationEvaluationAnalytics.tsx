@@ -31,6 +31,7 @@ import {
     HelpCircle
 } from "lucide-react";
 import * as XLSX from "xlsx";
+import { CURRENT_YEAR_VN, isPlanInWeek } from "@/frontend/utils/currentYear";
 
 export interface ApplicationEvaluationAnalyticsProps {
     tasks?: any[];
@@ -55,7 +56,7 @@ export interface AppStaffInfo {
 
 export const DEFAULT_APP_PERSONNEL: AppStaffInfo[] = [];
 
-function getWeekDateRange(weekNum: number, year: number = 2026): string {
+function getWeekDateRange(weekNum: number, year: number = CURRENT_YEAR_VN): string {
     const simple = new Date(year, 0, 1 + (weekNum - 1) * 7);
     const dayOfWeek = simple.getDay();
     const ISOweekStart = new Date(simple);
@@ -167,7 +168,7 @@ export const ApplicationEvaluationAnalytics: React.FC<ApplicationEvaluationAnaly
         });
 
         if (viewScope === "week") {
-            empPlans = empPlans.filter(p => Number(p.week_number || p.week) === Number(selectedWeek));
+            empPlans = empPlans.filter(p => isPlanInWeek(p, selectedWeek));
         }
 
         let totalPlanItems = 0;

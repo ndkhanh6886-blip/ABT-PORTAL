@@ -77,14 +77,14 @@ async function hmacKey(): Promise<CryptoKey> {
   return key;
 }
 
-export async function createSessionToken(user: Omit<SessionUser, "exp">): Promise<string> {
+export async function createSessionToken(user: Omit<SessionUser, "exp">, ttlSeconds: number = SESSION_MAX_AGE_SECONDS): Promise<string> {
   const payload: SessionUser = {
     id: Number(user.id) || 0,
     username: String(user.username || ""),
     role: String(user.role || ""),
     department: String(user.department || ""),
     full_name: String(user.full_name || ""),
-    exp: Math.floor(Date.now() / 1000) + SESSION_MAX_AGE_SECONDS,
+    exp: Math.floor(Date.now() / 1000) + Math.max(60, Math.floor(ttlSeconds)),
     sv: Number(user.sv) || 0,
     mcp: Boolean(user.mcp),
   };

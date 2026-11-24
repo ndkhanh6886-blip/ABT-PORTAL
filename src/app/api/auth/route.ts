@@ -4,7 +4,7 @@ import { query, logAudit } from "@/backend/db/db";
 import { hashPassword, verifyPassword, needsRehash } from "@/backend/services/passwords";
 import { createSessionToken, getSessionFromRequest, SESSION_COOKIE, sessionCookieOptions } from "@/backend/services/session";
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse, setAuditActor } from "@/backend/services/authz";
-import { clientIp, hitRateLimit, isRateLimited } from "@/backend/services/rateLimit";
+import { clientIp, hitRateLimit, isRateLimited, isSharedIp } from "@/backend/services/rateLimit";
 import { describeUserAgent } from "@/backend/services/userAgent";
 
 const USER_LOOKUP_WHERE = `
@@ -106,7 +106,8 @@ export async function POST(req: NextRequest) {
     // Thiết bị / trình duyệt của lần đăng nhập, đổi mật khẩu: phân biệt các máy, phát hiện công cụ tự động trong nhật ký
     const userAgent = req.headers.get("user-agent") || "";
     const device = describeUserAgent(userAgent);
-    const ipKey = `login-fail:${ip}`;
+    // IP dùng chung (loopback sau tunnel / không rõ): không khóa theo IP, chỉ khóa theo tài khoản
+    const ipKey = isSharedIp(ip) ? `login-fail:shared:${String(username || "").toLowerCase()}:${ip}` : `login-fail:${ip}`;
 
     // Heartbeat / presence: only for the signed-in user, never for an arbitrary account named in the body
     if (action === "heartbeat" || action === "presence") {

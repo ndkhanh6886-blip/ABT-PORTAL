@@ -80,6 +80,9 @@ function allowedBy(me: AuthorizedUser, perms: string[] | null) {
   return perms.some(k => hasPermission(me, k));
 }
 
+/** Danh sách được phép xóa nhiều trong một lần (VD: "Xóa tất cả thông báo"). */
+const BULK_DELETE_ALLOWED_KEYS = new Set(["tbr_activity_notifications"]);
+
 /** Collections that carry purchase / cost prices (hidden from users without "warehouse.view_cost_price"). */
 const COST_BEARING_KEYS = new Set(["sales_commercial_products"]);
 function canSeeCost(me: AuthorizedUser) {
@@ -272,6 +275,18 @@ export async function POST(request: NextRequest) {
             patch.upserts = preserveRedactedProposalFields(current, patch.upserts || [], me);
             droppedDeletes = limitProposalDeletes(patch);
           }
+          // Một lần lưu không được xóa quá nửa danh sách (>= 10 bản ghi): thường do tab cũ / dữ liệu tải lỗi
+          else if (!BULK_DELETE_ALLOWED_KEYS.has(key) && Array.isArray(current) && current.length >= 10) {
+            const dels = Array.isArray(patch.deletes) ? patch.deletes.length : 0;
+            if (dels >= 10 && dels >= current.length * 0.5) {
+              await logAudit(
+                "GUARD", "STORAGE",
+                `${key}: chặn lần lưu xóa ${dels}/${current.length} bản ghi.`,
+                me.username, me.full_name
+              ).catch(() => {});
+              throw new HttpError(409, `Lần lưu này sẽ xóa ${dels}/${current.length} bản ghi nên đã bị chặn. Vui lòng tải lại trang rồi thao tác lại.`);
+            }
+          }
         }
         let next = applyStoragePatch(current, patch);
         if (key === "sales_contracts") next = stripNestedContractExtra(next);
@@ -353,6 +368,27 @@ export async function POST(request: NextRequest) {
     }
     if (Array.isArray(data)) {
       data = await enforceApprovalGuards(key, stored, data, me);
+    }
+
+    // Ghi đè cả khối mà không kèm phiên bản: không cho một lần lưu làm mất quá nửa danh sách đang có
+    // (tab cũ / dữ liệu rỗng do lỗi tải từng có thể xóa sạch cả khối). Kèm đúng phiên bản thì vẫn được ghi.
+    if (ev === null && Array.isArray(data)) {
+      const curRes = await query(
+        "SELECT CASE WHEN jsonb_typeof(data) = 'array' THEN jsonb_array_length(data) ELSE 0 END AS n FROM app_storage WHERE key = $1",
+        [key]
+      );
+      const curLen = Number(curRes.rows[0]?.n) || 0;
+      if (curLen >= 10 && data.length < curLen * 0.5) {
+        await logAudit(
+          "GUARD", "STORAGE",
+          `${key}: chặn lần ghi đè làm giảm ${curLen} -> ${data.length} bản ghi (không kèm phiên bản dữ liệu).`,
+          me.username, me.full_name
+        ).catch(() => {});
+        return NextResponse.json({
+          error: `Lần lưu này sẽ xóa ${curLen - data.length}/${curLen} bản ghi nên đã bị chặn. Vui lòng tải lại trang rồi thao tác lại.`,
+          conflict: true
+        }, { status: 409 });
+      }
     }
 
     const updateRes = await query(

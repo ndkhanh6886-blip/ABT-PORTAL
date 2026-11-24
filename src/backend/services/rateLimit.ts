@@ -15,12 +15,27 @@ export function clientIp(req: Request): string {
     if (realIp && realIp.trim()) return realIp.trim();
   }
   const fwd = req.headers.get("x-forwarded-for") || "";
+  let ip = "";
   if (fwd.trim()) {
     const parts = fwd.split(",").map(s => s.trim()).filter(Boolean);
-    if (parts.length > 0) return parts[parts.length - 1];
+    if (parts.length > 0) ip = parts[parts.length - 1];
   }
-  const fallback = req.headers.get("x-real-ip") || req.headers.get("cf-connecting-ip") || "";
-  return fallback.split(",")[0].trim() || "unknown";
+  if (!ip) ip = (req.headers.get("x-real-ip") || "").split(",")[0].trim();
+  // Chạy sau Cloudflare Tunnel (cloudflared trên chính máy chủ): mọi yêu cầu đều đến từ 127.0.0.1, nên giới hạn theo IP
+  // trở thành giới hạn chung cho cả công ty (vài người gõ sai là khóa đăng nhập của tất cả). Khi kết nối đến từ máy
+  // chủ nội bộ thì dùng IP thật Cloudflare chuyển kèm (cf-connecting-ip).
+  const cfIp = (req.headers.get("cf-connecting-ip") || "").trim();
+  if (cfIp && (!ip || isLoopbackIp(ip))) return cfIp;
+  return ip || cfIp || "unknown";
+}
+
+function isLoopbackIp(ip: string): boolean {
+  return ip === "::1" || ip === "127.0.0.1" || ip.startsWith("127.") || ip === "::ffff:127.0.0.1" || ip === "localhost";
+}
+
+/** IP không phân biệt được người dùng (loopback / không rõ): không dùng để khóa theo IP. */
+export function isSharedIp(ip: string): boolean {
+  return !ip || ip === "unknown" || isLoopbackIp(ip);
 }
 
 /** Counts one hit for `key`; returns false (and the seconds to wait) when the limit is exceeded. */

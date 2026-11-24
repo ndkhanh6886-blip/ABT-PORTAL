@@ -135,7 +135,8 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
         .catch(() => {});
     };
     loadChannels();
-    const interval = setInterval(loadChannels, 6000);
+    // Chỉ để cập nhật số tin chưa đọc khi khung chat đóng: 15 giây là đủ (trước đây 6 giây, chạy song song với trang Chat)
+    const interval = setInterval(loadChannels, 15000);
     return () => clearInterval(interval);
   }, [currentUserName, activeTab, isOpen]);
 
@@ -188,7 +189,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
           }
         })
         .catch(() => {});
-    }, 4000);
+    }, 6000);
     return () => clearInterval(interval);
   }, [isOpen, activeChannelId, currentUserName, channels]);
 

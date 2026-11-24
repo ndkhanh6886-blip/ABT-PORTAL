@@ -675,6 +675,10 @@ export const RfidControlHub: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* Phần đối chiếu quét khi xuất kho đang là MÔ PHỎNG (dữ liệu quét mẫu, chưa nối đầu đọc RFID thật): nói rõ để không ai dùng làm căn cứ xuất hàng */}
+      <div className="rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-700 px-4 py-2.5 text-xs font-semibold text-amber-800 dark:text-amber-200">
+        ⚠️ Chế độ thử nghiệm: phần "Đối chiếu quét xuất kho" đang dùng dữ liệu MÔ PHỎNG, chưa kết nối đầu đọc RFID thật. Không dùng kết quả này làm căn cứ xuất hàng.
+      </div>
       {/* ========================================================================= */}
       {/* 1. TOP BANNER & HARDWARE STATUS HEADER */}
       {/* ========================================================================= */}

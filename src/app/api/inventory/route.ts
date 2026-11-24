@@ -49,6 +49,11 @@ import {
   LOT_EXPIRY_ISO_SQL
 } from "@/backend/services/inventoryLedger";
 
+/** Lỗi của các bước tự đồng bộ khi mở Kho: ghi log thay vì nuốt im lặng. */
+const logOverviewSyncError = (step: string) => (err: any) => {
+  console.error(`[inventory overview] Bước tự đồng bộ "${step}" lỗi:`, err?.message || err);
+};
+
 let lastOverviewSyncAt = 0;
 let defaultKitBomSynced = false;
 
@@ -421,14 +426,16 @@ export async function GET(req: NextRequest) {
     if (action === "overview") {
       await ensureDefaultKitBomComponents();
       // Đối soát PO ↔ phiếu nhập đọc toàn bộ PO, phiếu nhập và nhật ký: chạy nền, không bắt màn hình Kho chờ
-      void reconcileHistoricalPOsWithInbound(query).catch(() => {});
+      void reconcileHistoricalPOsWithInbound(query).catch(logOverviewSyncError("đồng bộ tồn kho"));
       // Đồng bộ tự động 2 chiều giữa products / inventory_lots và inventory_items:
       // Chỉ chạy tối đa 5 phút / lần trên GET (và reset ngay khi có POST nhập/xuất kho) để tránh ghi bảng trên mọi lần mở trang
       if (Date.now() - lastOverviewSyncAt > 5 * 60_000) {
         lastOverviewSyncAt = Date.now();
         await query(`
           DELETE FROM inventory_lots
-           WHERE UPPER(TRIM(product_code)) IN ('DVSC', 'OLIGO-SVC')
+           WHERE COALESCE(quantity_on_hand, 0) = 0
+             AND (
+              UPPER(TRIM(product_code)) IN ('DVSC', 'OLIGO-SVC')
               OR UPPER(TRIM(product_code)) LIKE 'DV-%'
               OR UPPER(TRIM(product_code)) LIKE 'SVC-%'
               OR product_code IN (
@@ -437,29 +444,44 @@ export async function GET(req: NextRequest) {
                     OR name ILIKE 'Dịch vụ%'
                     OR name ILIKE '%dịch vụ sửa chữa%'
               )
-        `).catch(() => {});
+             )
+        `).catch(logOverviewSyncError("xóa lô rỗng của mã dịch vụ"));
 
+        // Chỉ dọn dòng tồn RỖNG của mã dịch vụ / oligo. Trước đây mã xếp nhóm "Dịch vụ" bị xóa dòng tồn dù còn hàng.
         await query(`
-          DELETE FROM inventory_items
-           WHERE UPPER(TRIM(product_code)) IN ('DVSC', 'OLIGO-SVC')
-              OR UPPER(TRIM(product_code)) LIKE 'DV-%'
-              OR UPPER(TRIM(product_code)) LIKE 'SVC-%'
-              OR product_name ILIKE 'Dịch vụ%'
-              OR product_name ILIKE '%dịch vụ sửa chữa%'
-              OR product_code IN (
+          DELETE FROM inventory_items i
+           WHERE COALESCE(i.quantity_on_hand, 0) <= 0
+             AND COALESCE(i.quantity_allocated, 0) <= 0
+             AND NOT EXISTS (SELECT 1 FROM inventory_lots l WHERE l.product_code = i.product_code AND l.quantity_on_hand > 0)
+             AND (
+              UPPER(TRIM(i.product_code)) IN ('DVSC', 'OLIGO-SVC')
+              OR UPPER(TRIM(i.product_code)) LIKE 'DV-%'
+              OR UPPER(TRIM(i.product_code)) LIKE 'SVC-%'
+              OR i.product_name ILIKE 'Dịch vụ%'
+              OR i.product_name ILIKE '%dịch vụ sửa chữa%'
+              OR i.product_code IN (
                 SELECT code FROM products
                  WHERE category ILIKE '%Dịch vụ%'
                     OR name ILIKE 'Dịch vụ%'
                     OR name ILIKE '%dịch vụ sửa chữa%'
+                    OR LOWER(TRIM(COALESCE(category, ''))) = 'oligo'
               )
-              OR (
-                COALESCE(quantity_on_hand, 0) <= 0
-                AND COALESCE(quantity_allocated, 0) <= 0
-                AND product_code IN (
-                  SELECT code FROM products WHERE LOWER(TRIM(COALESCE(category, ''))) = 'oligo'
-                )
-              )
-        `).catch(() => {});
+             )
+        `).catch(logOverviewSyncError("xóa dòng tồn rỗng của mã dịch vụ"));
+        // Mã dịch vụ mà vẫn còn tồn > 0: không tự xóa, chỉ cảnh báo
+        await query(`
+          SELECT l.product_code, SUM(l.quantity_on_hand)::numeric AS qty
+            FROM inventory_lots l
+            JOIN products p ON p.code = l.product_code
+           WHERE l.quantity_on_hand > 0
+             AND (p.category ILIKE '%Dịch vụ%' OR p.name ILIKE 'Dịch vụ%' OR p.name ILIKE '%dịch vụ sửa chữa%'
+                  OR UPPER(TRIM(l.product_code)) IN ('DVSC', 'OLIGO-SVC') OR UPPER(TRIM(l.product_code)) LIKE 'DV-%' OR UPPER(TRIM(l.product_code)) LIKE 'SVC-%')
+           GROUP BY l.product_code
+        `).then(r => {
+          if (r.rows.length > 0) {
+            console.warn(`[inventory] ${r.rows.length} mã thuộc nhóm "Dịch vụ" vẫn còn tồn kho (không tự xóa): ${r.rows.slice(0, 10).map((x: any) => `${x.product_code}=${x.qty}`).join(", ")}`);
+          }
+        }).catch(logOverviewSyncError("kiểm tra mã dịch vụ còn tồn"));
 
         // Đồng bộ các mã sản phẩm mới tạo trong Danh mục hàng hóa (catalog_items) sang bảng products của Kho
         await query(`
@@ -484,7 +506,7 @@ export async function GET(req: NextRequest) {
              AND COALESCE(ci.data->>'name', '') NOT ILIKE '%dịch vụ sửa chữa%'
              AND NOT EXISTS (SELECT 1 FROM products p WHERE UPPER(TRIM(p.code)) = UPPER(TRIM(ci.code)))
           ON CONFLICT (code) DO NOTHING
-        `).catch(() => {});
+        `).catch(logOverviewSyncError("đồng bộ tồn kho"));
 
         // Đảm bảo mọi mã SKU cha có trong product_components đều có dòng tương ứng trong bảng products
         await query(`
@@ -530,7 +552,7 @@ export async function GET(req: NextRequest) {
              AND COALESCE(p.name, '') NOT ILIKE 'Dịch vụ%'
              AND COALESCE(p.name, '') NOT ILIKE '%dịch vụ sửa chữa%'
           ON CONFLICT (product_code) DO NOTHING
-        `).catch(() => {});
+        `).catch(logOverviewSyncError("đồng bộ tồn kho"));
 
         await query(`
           INSERT INTO inventory_items (product_code, product_name, quantity_on_hand, quantity_allocated, warehouse_location, shelf_position)
@@ -547,7 +569,7 @@ export async function GET(req: NextRequest) {
              AND NOT EXISTS (SELECT 1 FROM inventory_items i WHERE i.product_code = l.product_code)
            GROUP BY l.product_code
           ON CONFLICT (product_code) DO NOTHING
-        `).catch(() => {});
+        `).catch(logOverviewSyncError("đồng bộ tồn kho"));
 
         // Tự động chuyển tồn kho lô bị kẹt ở mã hàng cũ sang mã hàng mới khi phiếu nhập kho (PNK) đã được chỉnh sửa mã hàng
         await query(`
@@ -597,7 +619,7 @@ export async function GET(req: NextRequest) {
             RETURNING product_code
           )
           DELETE FROM inventory_lots WHERE id IN (SELECT old_lot_id FROM orphaned)
-        `).catch(() => {});
+        `).catch(logOverviewSyncError("đồng bộ tồn kho"));
 
         // Tự động hoàn trả tồn kho cho các Phiếu giao hàng (PX) đã HỦY có phiếu xuất PXK-<slip_code> nhưng chưa có phiếu nhập hoàn PNK-<slip_code>-HUY
         try {
@@ -678,9 +700,9 @@ export async function GET(req: NextRequest) {
             ) s
            WHERE i.product_code = s.product_code
              AND (COALESCE(i.quantity_on_hand, -1) <> COALESCE(s.total_qty, 0) OR (i.lot_number IS NULL AND s.earliest_lot IS NOT NULL))
-        `).catch(() => {});
+        `).catch(logOverviewSyncError("đồng bộ tồn kho"));
 
-        await reconcileHistoricalPOsWithInbound(query).catch(() => {});
+        await reconcileHistoricalPOsWithInbound(query).catch(logOverviewSyncError("đồng bộ tồn kho"));
       }
 
       // Chạy theo 2 đợt nhỏ thay vì bắn 12 câu lệnh song song cùng lúc để tránh nghẽn connection pool (max 25)
@@ -2135,8 +2157,14 @@ export async function POST(req: NextRequest) {
           );
 
           if (isSvc) {
-            await query("DELETE FROM inventory_lots WHERE product_code = $1", [pCode]).catch(() => {});
-            await query("DELETE FROM inventory_items WHERE product_code = $1", [pCode]).catch(() => {});
+            // Mã dịch vụ không giữ tồn kho: chỉ dọn lô / dòng tồn đang bằng 0 (không xóa tồn thật nếu mã bị xếp nhầm nhóm)
+            await query("DELETE FROM inventory_lots WHERE product_code = $1 AND COALESCE(quantity_on_hand, 0) = 0", [pCode])
+              .catch((e) => console.error("[inventory] Dọn lô mã dịch vụ lỗi:", pCode, e?.message || e));
+            await query(
+              `DELETE FROM inventory_items i WHERE i.product_code = $1 AND COALESCE(i.quantity_on_hand, 0) = 0
+                 AND NOT EXISTS (SELECT 1 FROM inventory_lots l WHERE l.product_code = i.product_code AND l.quantity_on_hand > 0)`,
+              [pCode]
+            ).catch((e) => console.error("[inventory] Dọn dòng tồn mã dịch vụ lỗi:", pCode, e?.message || e));
           } else if (isOligo) {
             await query(
               "DELETE FROM inventory_items WHERE product_code = $1 AND COALESCE(quantity_on_hand, 0) <= 0 AND COALESCE(quantity_allocated, 0) <= 0",

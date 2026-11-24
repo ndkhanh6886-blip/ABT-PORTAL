@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import crypto from "crypto";
 import { apiErrorResponse } from "@/backend/services/apiErrors";
 import { query, logAudit } from "@/backend/db/db";
 import { createSessionToken, verifySessionToken, sessionCookieOptions } from "@/backend/services/session";
@@ -13,6 +14,8 @@ function tooMany(req: NextRequest, bucket: string, limit: number, windowMs: numb
 }
 
 // Phiên của khách hàng (tách biệt hoàn toàn với phiên nhân viên)
+// Phiên khách hàng (đăng nhập bằng mã KH + SĐT): 1 ngày thay vì 7 ngày như phiên nhân viên
+const CUSTOMER_SESSION_SECONDS = 24 * 60 * 60;
 const CUSTOMER_COOKIE = "abt_customer_session";
 
 async function getCustomerSession(req: NextRequest) {
@@ -201,13 +204,13 @@ export async function POST(req: NextRequest) {
         role: "customer",
         department: "",
         full_name: customer.name,
-      });
+      }, CUSTOMER_SESSION_SECONDS);
       const response = NextResponse.json({
         success: true,
         message: "Xác thực danh tính khách hàng thành công!",
         customer
       });
-      response.cookies.set(CUSTOMER_COOKIE, token, sessionCookieOptions(req));
+      response.cookies.set(CUSTOMER_COOKIE, token, { ...sessionCookieOptions(req), maxAge: CUSTOMER_SESSION_SECONDS });
       return response;
     }
 
@@ -291,7 +294,8 @@ export async function POST(req: NextRequest) {
       }
 
       const currentYear = new Date().getFullYear();
-      const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+      // Mã tra cứu công khai: 8 ký tự ngẫu nhiên (trước đây 4 chữ số, dò được trong ~9.000 lần thử)
+      const randomSuffix = crypto.randomBytes(6).toString("base64url").replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 8).padEnd(8, "X");
       const incidentCode = `INC-${currentYear}-${randomSuffix}`;
 
       await query(`

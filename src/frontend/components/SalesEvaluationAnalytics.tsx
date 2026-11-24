@@ -27,6 +27,7 @@ import {
     Layers
 } from "lucide-react";
 import * as XLSX from "xlsx";
+import { CURRENT_YEAR_VN, isPlanInWeek } from "@/frontend/utils/currentYear";
 
 export interface SalesEvaluationAnalyticsProps {
     tasks: any[];
@@ -41,7 +42,7 @@ export interface SalesEvaluationAnalyticsProps {
 }
 
 // Helper to format week range string
-function getWeekDateRange(weekNum: number, year: number = 2026): string {
+function getWeekDateRange(weekNum: number, year: number = CURRENT_YEAR_VN): string {
     const simple = new Date(year, 0, 1 + (weekNum - 1) * 7);
     const dayOfWeek = simple.getDay();
     const ISOweekStart = new Date(simple);
@@ -146,7 +147,7 @@ export const SalesEvaluationAnalytics: React.FC<SalesEvaluationAnalyticsProps> =
         // 2. Plans
         let empPlans = plans.filter(p => p.assignee_id === empId);
         if (viewScope === "week") {
-            empPlans = empPlans.filter(p => Number(p.week_number) === Number(selectedWeek));
+            empPlans = empPlans.filter(p => isPlanInWeek(p, selectedWeek));
         }
         const totalPlans = empPlans.length;
         const completedPlans = empPlans.filter(p => {
