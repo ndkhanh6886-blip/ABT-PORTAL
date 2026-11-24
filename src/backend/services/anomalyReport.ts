@@ -329,7 +329,10 @@ export async function buildAnomalyReport(days = 7): Promise<AnomalyReport> {
     const rows = await safeRows(
       `WITH scr AS (
          SELECT COALESCE(NULLIF(x.e->>'order_code', ''), x.e->>'id') AS code, x.e->>'status' AS st,
-                COALESCE(x.e->>'customerName', x.e->>'customer_name') AS cust, COALESCE(x.e->>'salesRepName', '') AS rep
+                COALESCE(x.e->>'customerName', x.e->>'customer_name') AS cust, COALESCE(x.e->>'salesRepName', '') AS rep,
+                NULLIF(x.e->>'linkedSalesOrderId', '') AS linked,
+                COALESCE(x.e->>'isCreditBlocked', x.e->>'is_credit_blocked', 'false') = 'true' AS blk,
+                COALESCE(x.e->>'priceApprovalStatus', x.e->>'price_approval_status', '') AS price_st
            FROM app_storage a, jsonb_array_elements(CASE WHEN jsonb_typeof(a.data) = 'array' THEN a.data ELSE '[]'::jsonb END) x(e)
           WHERE a.key = 'sales_factory_orders'
        ), slip_scr AS (
@@ -341,7 +344,7 @@ export async function buildAnomalyReport(days = 7): Promise<AnomalyReport> {
        )
        SELECT 'Đơn chỉ có trên màn hình, KHÔNG có trong CSDL' AS kind, scr.code AS ref,
               COALESCE(scr.cust, '') || ' — trạng thái màn hình: ' || COALESCE(scr.st, '?') AS detail, scr.rep AS actor
-         FROM scr LEFT JOIN sales_orders o ON o.order_code = scr.code
+         FROM scr LEFT JOIN sales_orders o ON o.order_code = scr.code OR o.order_code = scr.linked
         WHERE o.id IS NULL AND scr.code ~ '^SO' AND COALESCE(scr.st, '') NOT IN ('Cancelled', 'CANCELLED', 'Rejected')
        UNION ALL
        SELECT 'Màn hình "đã duyệt" nhưng CSDL đang khóa công nợ / chờ duyệt giá', scr.code,
@@ -350,7 +353,9 @@ export async function buildAnomalyReport(days = 7): Promise<AnomalyReport> {
          FROM scr JOIN sales_orders o ON o.order_code = scr.code
         WHERE scr.st IN ('Approved', 'Ready', 'Ordered')
           AND UPPER(COALESCE(o.approval_status, '')) <> 'APPROVED'
-          AND (o.is_credit_blocked OR o.price_approval_status = 'PENDING_APPROVAL')
+          -- Chỉ khi màn hình KHÔNG biết đơn đang bị chặn (màn hình có cờ khóa thì vẫn hiện "Khóa nợ" đúng, dù trạng thái lưu là Ready)
+          AND ((o.is_credit_blocked AND NOT scr.blk)
+               OR (o.price_approval_status = 'PENDING_APPROVAL' AND scr.price_st <> 'PENDING_APPROVAL'))
        UNION ALL
        SELECT 'CSDL đã hủy đơn nhưng màn hình vẫn còn hiệu lực', scr.code,
               COALESCE(scr.cust, '') || ' — màn hình: ' || COALESCE(scr.st, '?'), scr.rep
