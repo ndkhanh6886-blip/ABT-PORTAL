@@ -12,6 +12,7 @@ import { issuePortalAccessCode } from "@/backend/services/customerPortalAccess";
 import { todayVN, toVNDateString, parseVNDateToISO } from "@/backend/services/dates";
 import { mergeCatalogFields } from "@/backend/services/catalogStore";
 import { notifyZaloProactiveEvent } from "@/backend/services/zaloEngine";
+import { forgetDeletedOrder } from "@/backend/services/deletedOrders";
 
 const DEFAULT_CREDIT_LIMIT = 100000000;
 const DEFAULT_CREDIT_TERM_DAYS = 30;
@@ -2277,7 +2278,8 @@ export async function POST(req: NextRequest) {
 
       const result = await withTransaction(async (c) => {
         const rows = (await c.query("SELECT * FROM sales_orders WHERE order_code = $1 FOR UPDATE", [code])).rows;
-        if (rows.length === 0) return { deleted: 0 };
+        // Đơn chỉ có trên màn hình: vẫn bỏ khỏi bản màn hình + ghi vào danh sách đã xóa
+        if (rows.length === 0) return { deleted: 0, removed: await forgetDeletedOrder(c, code) };
         for (const ord of rows) {
           const delivered = (DELIVERY_STATUS_HIERARCHY[String(ord.delivery_status || "").toUpperCase()] ?? 0) >= 3;
           const invoiced = (INVOICE_STATUS_HIERARCHY[String(ord.invoice_status || "").toUpperCase()] ?? 0) > 0 || parseJsonArray(ord.invoiced_delivery_slips).length > 0;
@@ -2294,9 +2296,10 @@ export async function POST(req: NextRequest) {
           if (r.product_code) await releaseReservationsFor(c, code, r.product_code, ` • [Tự động nhả do xóa đơn ${code}]`);
         }
         await c.query("DELETE FROM sales_orders WHERE order_code = $1", [code]);
-        return { deleted: rows.length };
+        // Xóa luôn trên bản màn hình và ghi mã vào danh sách đã xóa: tab khác mở từ trước không thêm lại được
+        return { deleted: rows.length, removed: await forgetDeletedOrder(c, code) };
       });
-      await logAudit("DELETE", "SALES_ORDER", `Xóa đơn hàng ${code} (${result.deleted} bản ghi CSDL)`, me.username, me.full_name);
+      await logAudit("DELETE", "SALES_ORDER", `Xóa đơn hàng ${code} (${result.deleted} bản ghi CSDL, ${result.removed} trên màn hình)`, me.username, me.full_name);
       return NextResponse.json({ success: true, deleted: result.deleted });
     }
 
