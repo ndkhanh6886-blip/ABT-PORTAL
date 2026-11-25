@@ -8,12 +8,21 @@ import {
   createTransferFromProjectBom,
   getProjectOpsOverview,
   issueMaterialForProject,
+  listAllProjectWbsTasks,
   saveProjectTask,
   savePrototypeBom,
 } from "@/factory/rd/projectOps";
 
 export const GET = factoryRoute(async (tx, { actor, url }) => {
+  const op = url.searchParams.get("op");
   const projectId = url.searchParams.get("project_id");
+  if (op === "all_wbs_tasks") {
+    return listAllProjectWbsTasks(tx, actor, {
+      domain: url.searchParams.get("domain"),
+      excludeDomain: url.searchParams.get("exclude_domain"),
+      projectId,
+    });
+  }
   if (!projectId) throw invalid("Thiếu project_id");
   return getProjectOpsOverview(tx, actor, projectId);
 });

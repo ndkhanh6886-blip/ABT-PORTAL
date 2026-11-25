@@ -3331,6 +3331,32 @@ export function ProjectsView({
   const [addingMode, setAddingMode] = useState<"NEW_PRODUCT" | "IMPROVEMENT" | null>(null);
   const [showGateTemplateManager, setShowGateTemplateManager] = useState(false);
 
+  // Master WBS View & Inline WBS Expansion across projects without opening individual project detail
+  const [viewMode, setViewMode] = useState<"PROJECTS" | "WBS_BY_PROJECT">("PROJECTS");
+  const [expandedWbsProjects, setExpandedWbsProjects] = useState<Record<string, boolean>>({});
+  const [wbsProjectFilter, setWbsProjectFilter] = useState<string>("WITH_WBS");
+  const [wbsGateFilterMaster, setWbsGateFilterMaster] = useState<string>("");
+  const [wbsStatusFilterMaster, setWbsStatusFilterMaster] = useState<string>("");
+  const [wbsGroupByProject, setWbsGroupByProject] = useState<boolean>(true);
+  const [quickWbsProjectId, setQuickWbsProjectId] = useState<string>("");
+  const [quickWbsGate, setQuickWbsGate] = useState<string>("1");
+  const [quickWbsTitle, setQuickWbsTitle] = useState<string>("");
+  const [quickWbsAssignee, setQuickWbsAssignee] = useState<string>("");
+  const [quickWbsDue, setQuickWbsDue] = useState<string>("");
+  const [quickWbsNotice, setQuickWbsNotice] = useState<string | null>(null);
+  const [editingMasterTask, setEditingMasterTask] = useState<any | null>(null);
+  const [mResStatus, setMResStatus] = useState<"TODO" | "IN_PROGRESS" | "DONE" | "BLOCKED">("DONE");
+  const [mResProgress, setMResProgress] = useState("100");
+  const [mResVerdict, setMResVerdict] = useState<"PENDING" | "PASS" | "OPTIMIZE" | "FAIL">("PASS");
+  const [mResProtocol, setMResProtocol] = useState("");
+  const [mResSummary, setMResSummary] = useState("");
+  const [mResNextSteps, setMResNextSteps] = useState("");
+  const [mResAssignee, setMResAssignee] = useState("");
+  const [mResMetrics, setMResMetrics] = useState<{ label: string; value: string; unit?: string | null; target?: string | null }[]>([
+    { label: "Giới hạn phát hiện (LoD95)", value: "", unit: "copies/rxn", target: "≤ 10 copies/rxn" },
+    { label: "Giá trị Ct trung bình", value: "", unit: "Ct", target: "≤ 32.0" },
+  ]);
+
   const [name, setName] = useState("");
   const [targetDomain, setTargetDomain] = useState(isSoftwareMode ? "SOFTWARE" : "KIT");
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
@@ -3391,6 +3417,83 @@ export function ProjectsView({
         params.set("exclude_domain", "SOFTWARE");
       }
       return api<any[]>(`/api/factory/rd/projects?${params.toString()}`);
+    },
+  });
+
+  const allWbsQuery = useQuery({
+    queryKey: ["factory", "rd", "all-wbs-tasks", domain, isSoftwareMode ? "SW" : "RD"],
+    queryFn: () => {
+      const params = new URLSearchParams({ op: "all_wbs_tasks" });
+      if (isSoftwareMode) {
+        params.set("domain", "SOFTWARE");
+      } else if (domain) {
+        params.set("domain", domain);
+      } else {
+        params.set("exclude_domain", "SOFTWARE");
+      }
+      return api<{ tasks: any[] }>(`/api/factory/rd/project-ops?${params.toString()}`);
+    },
+  });
+
+  const openMasterResultDrawer = (task: any) => {
+    setEditingMasterTask(task);
+    setMResStatus(task.status === "TODO" ? "DONE" : task.status);
+    setMResProgress(String(task.status === "TODO" ? 100 : task.progress_pct || 100));
+    setMResVerdict(task.outcome_verdict && task.outcome_verdict !== "PENDING" ? task.outcome_verdict : "PASS");
+    setMResProtocol(task.protocol_summary || "");
+    setMResSummary(task.result_summary || "");
+    setMResNextSteps(task.next_steps || "");
+    setMResAssignee(task.assignee_name || task.project_leader_name || "");
+    setMResMetrics(
+      Array.isArray(task.key_metrics_json) && task.key_metrics_json.length > 0
+        ? task.key_metrics_json.map((m: any) => ({
+            label: m.label || "",
+            value: m.value || "",
+            unit: m.unit || "",
+            target: m.target || "",
+          }))
+        : [
+            { label: "Giới hạn phát hiện (LoD95)", value: "", unit: "copies/rxn", target: "≤ 10 copies/rxn" },
+            { label: "Giá trị Ct trung bình", value: "", unit: "Ct", target: "≤ 32.0" },
+          ]
+    );
+  };
+
+  const masterSaveTaskMut = useMutation({
+    mutationFn: (payload: Record<string, unknown>) =>
+      api("/api/factory/rd/project-ops", {
+        method: "POST",
+        json: { op: "save_task", ...payload },
+      }),
+    onSuccess: (_res, vars) => {
+      if (!vars.task_id) {
+        setQuickWbsTitle("");
+        setQuickWbsDue("");
+        setQuickWbsNotice("✅ Đã giao công việc WBS mới vào dự án!");
+      } else {
+        setEditingMasterTask(null);
+        setQuickWbsNotice("✅ Đã cập nhật tiến độ & kết quả thực nghiệm công việc WBS!");
+      }
+      qc.invalidateQueries({ queryKey: ["factory", "rd", "all-wbs-tasks"] });
+      qc.invalidateQueries({ queryKey: ["factory", "rd", "projects"] });
+      if (vars.project_id) {
+        qc.invalidateQueries({ queryKey: ["factory", "rd", "project-ops", String(vars.project_id)] });
+      }
+    },
+  });
+
+  const masterCreateExpMut = useMutation({
+    mutationFn: (payload: { project_id: string; task_id: string }) =>
+      api<{ experiment_code: string; task_code: string }>("/api/factory/rd/project-ops", {
+        method: "POST",
+        json: { op: "create_task_experiment", ...payload },
+      }),
+    onSuccess: (res, vars) => {
+      setQuickWbsNotice(`🧪 Đã khởi tạo & liên kết bài Sổ thí nghiệm ${res.experiment_code} cho công việc ${res.task_code}`);
+      qc.invalidateQueries({ queryKey: ["factory", "rd", "all-wbs-tasks"] });
+      qc.invalidateQueries({ queryKey: ["factory", "rd", "projects"] });
+      qc.invalidateQueries({ queryKey: ["factory", "rd", "experiments"] });
+      qc.invalidateQueries({ queryKey: ["factory", "rd", "project-ops", vars.project_id] });
     },
   });
 
@@ -3621,7 +3724,57 @@ export function ProjectsView({
           </div>
         }
       >
-        <ErrorNote error={list.error ?? createMut.error} />
+        <ErrorNote error={list.error ?? createMut.error ?? allWbsQuery.error ?? masterSaveTaskMut.error ?? masterCreateExpMut.error} />
+
+        {/* View Mode Switcher: Danh sách Dự án vs. Danh sách Công việc WBS theo Dự án */}
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3 p-2 rounded-xl border border-indigo-200/80 dark:border-indigo-900/60 bg-indigo-50/40 dark:bg-indigo-950/20">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setViewMode("PROJECTS")}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 ${
+                viewMode === "PROJECTS"
+                  ? "bg-sky-600 text-white shadow-sm"
+                  : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:border-sky-400"
+              }`}
+            >
+              <span>📁 1. Danh sách Dự án Stage-Gate</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[11px] ${viewMode === "PROJECTS" ? "bg-sky-700 text-white" : "bg-slate-100 dark:bg-slate-800 text-sky-700 dark:text-sky-300"}`}>
+                {filteredProjects.length} dự án
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("WBS_BY_PROJECT")}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 ${
+                viewMode === "WBS_BY_PROJECT"
+                  ? "bg-indigo-600 text-white shadow-sm"
+                  : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:border-indigo-400"
+              }`}
+            >
+              <span>📋 2. Xem &amp; Giao Công việc WBS theo Dự án (Không cần mở từng dự án)</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[11px] ${viewMode === "WBS_BY_PROJECT" ? "bg-indigo-700 text-white" : "bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300"}`}>
+                {(allWbsQuery.data?.tasks ?? []).length} việc WBS
+              </span>
+            </button>
+          </div>
+          <div className="text-[11px] text-slate-600 dark:text-slate-400">
+            {viewMode === "PROJECTS" ? (
+              <span>💡 Bấm nút <b>&ldquo;📋 Xem WBS ▼&rdquo;</b> trên từng dòng dự án để xổ xem ngay danh sách việc WBS hoặc chuyển sang tab <b>2. Xem &amp; Giao Công việc WBS theo Dự án</b>.</span>
+            ) : (
+              <span>💡 Xem, lọc, giao việc mới và ghi nhận kết quả thực nghiệm 4 lớp trực tiếp trên tất cả dự án cùng lúc.</span>
+            )}
+          </div>
+        </div>
+
+        {quickWbsNotice && (
+          <div className="mb-3 p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 text-xs font-semibold flex items-center justify-between">
+            <span>{quickWbsNotice}</span>
+            <button type="button" className="text-xs underline ml-2 cursor-pointer" onClick={() => setQuickWbsNotice(null)}>
+              Đóng
+            </button>
+          </div>
+        )}
 
         {/* Quick R&D Researcher Workload Filter Bar */}
         {staffOptions.length > 0 && (
@@ -3759,14 +3912,642 @@ export function ProjectsView({
           </form>
         )}
 
-        {filteredProjects.length === 0 && <Empty>Chưa có dự án R&D nào khớp điều kiện lọc.</Empty>}
-        {filteredProjects.length > 0 && (
+        {/* Structured Result Drawer for Master / Inline WBS Task */}
+        {editingMasterTask && (
+          <form
+            className="mb-3 p-4 rounded-2xl border-2 border-indigo-500/80 dark:border-indigo-500/70 bg-indigo-50/30 dark:bg-slate-900 shadow-lg flex flex-col gap-3 text-xs"
+            onSubmit={(e) => {
+              e.preventDefault();
+              masterSaveTaskMut.mutate({
+                project_id: editingMasterTask.project_id,
+                task_id: editingMasterTask.id,
+                gate_no: editingMasterTask.gate_no,
+                title: editingMasterTask.title,
+                assignee_name: mResAssignee || editingMasterTask.assignee_name || editingMasterTask.project_leader_name,
+                due_date: editingMasterTask.due_date ? String(editingMasterTask.due_date).slice(0, 10) : null,
+                status: mResStatus,
+                progress_pct: Number(mResProgress || 100),
+                protocol_summary: mResProtocol || null,
+                result_summary: mResSummary || null,
+                key_metrics_json: mResMetrics.filter((m) => m.label.trim() !== "" || m.value.trim() !== ""),
+                outcome_verdict: mResVerdict,
+                next_steps: mResNextSteps || null,
+                sync_to_eln: true,
+              });
+            }}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-200 dark:border-slate-800 pb-2.5">
+              <div>
+                <div className="text-sm font-bold text-indigo-900 dark:text-indigo-300">
+                  📝 Ghi Nhận Kết Quả &amp; Tiến Độ Công Việc WBS:{" "}
+                  <span className="font-mono">{editingMasterTask.code}</span> (Cổng G{editingMasterTask.gate_no}) · Dự án{" "}
+                  <span className="font-mono text-sky-700 dark:text-sky-400">{editingMasterTask.project_code}</span> — {editingMasterTask.project_name}
+                </div>
+                <div className="text-xs font-semibold text-slate-700 dark:text-slate-200 mt-0.5">{editingMasterTask.title}</div>
+              </div>
+              <Button type="button" variant="ghost" onClick={() => setEditingMasterTask(null)}>
+                Đóng phiếu
+              </Button>
+            </div>
+            <div className="grid gap-2.5 sm:grid-cols-4">
+              <Field label="Nghiên cứu viên thực hiện *">
+                <input
+                  list="master-rd-staff-datalist"
+                  className={inputClass}
+                  value={mResAssignee}
+                  onChange={(e) => setMResAssignee(e.target.value)}
+                  required
+                />
+              </Field>
+              <Field label="Trạng thái công việc">
+                <select className={inputClass} value={mResStatus} onChange={(e) => setMResStatus(e.target.value as any)}>
+                  <option value="IN_PROGRESS">Đang thực hiện</option>
+                  <option value="DONE">Hoàn thành (100%)</option>
+                  <option value="BLOCKED">Vướng mắc kỹ thuật</option>
+                  <option value="TODO">Chưa làm</option>
+                </select>
+              </Field>
+              <Field label="Tiến độ (%)">
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  className={inputClass}
+                  value={mResProgress}
+                  onChange={(e) => setMResProgress(e.target.value)}
+                />
+              </Field>
+              <Field label="Đánh giá kết luận (Verdict) *">
+                <select className={inputClass} value={mResVerdict} onChange={(e) => setMResVerdict(e.target.value as any)}>
+                  <option value="PASS">✅ ĐẠT MỤC TIÊU (PASS)</option>
+                  <option value="OPTIMIZE">🔧 CẦN TỐI ƯU THÊM (OPTIMIZE)</option>
+                  <option value="FAIL">❌ KHÔNG ĐẠT (FAIL)</option>
+                  <option value="PENDING">⏳ ĐANG ĐÁNH GIÁ</option>
+                </select>
+              </Field>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="1. Phương pháp, Quy trình & Điều kiện thực nghiệm (Protocol & Conditions)">
+                <textarea
+                  rows={2}
+                  className={inputClass}
+                  value={mResProtocol}
+                  onChange={(e) => setMResProtocol(e.target.value)}
+                  placeholder="Mô tả công thức phối trộn, điều kiện chạy mẫu, thiết bị, cỡ mẫu..."
+                />
+              </Field>
+              <Field label="2. Tóm tắt Kết quả chính & Nhận xét chuyên môn *">
+                <textarea
+                  rows={2}
+                  className={inputClass}
+                  value={mResSummary}
+                  onChange={(e) => setMResSummary(e.target.value)}
+                  placeholder="VD: Đạt tín hiệu tốt, đường chuẩn R² = 0.998, đạt chỉ tiêu đề ra..."
+                  required
+                />
+              </Field>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 items-end">
+              <Field label="3. Đề xuất bước tiếp theo / Khuyến nghị kỹ thuật">
+                <input
+                  className={inputClass}
+                  value={mResNextSteps}
+                  onChange={(e) => setMResNextSteps(e.target.value)}
+                  placeholder="VD: Chốt thông số chuyển sang bước thẩm định tiếp theo..."
+                />
+              </Field>
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="ghost" onClick={() => setEditingMasterTask(null)}>
+                  Hủy
+                </Button>
+                <Button type="submit" disabled={masterSaveTaskMut.isPending}>
+                  💾 Lưu Kết Quả &amp; Cập Nhật WBS
+                </Button>
+              </div>
+            </div>
+          </form>
+        )}
+
+        <datalist id="master-rd-staff-datalist">
+          {staffOptions.map((st) => (
+            <option key={st} value={st} />
+          ))}
+        </datalist>
+
+        {viewMode === "WBS_BY_PROJECT" && (() => {
+          const allTasks = allWbsQuery.data?.tasks ?? [];
+          const tasksByProjectId = new Map<string, any[]>();
+          for (const t of allTasks) {
+            const listForProj = tasksByProjectId.get(t.project_id) ?? [];
+            listForProj.push(t);
+            tasksByProjectId.set(t.project_id, listForProj);
+          }
+
+          const filteredWbsTasks = allTasks.filter((t) => {
+            if (wbsProjectFilter && wbsProjectFilter !== "ALL" && wbsProjectFilter !== "WITH_WBS" && t.project_id !== wbsProjectFilter) {
+              return false;
+            }
+            if (stageFilter) {
+              const proj = allProjects.find((p) => p.id === t.project_id);
+              const pStage = matchStageKey(t.project_stage || proj?.current_stage || "", t.project_status || proj?.status || "", Number(proj?.passed_gates || 0));
+              if (pStage !== stageFilter) return false;
+            }
+            if (staffFilter) {
+              const nStaff = staffFilter.trim().replace(/\s+/g, " ").toLowerCase();
+              const nAssign = String(t.assignee_name || "").trim().replace(/\s+/g, " ").toLowerCase();
+              const nLead = String(t.project_leader_name || "").trim().replace(/\s+/g, " ").toLowerCase();
+              const matchAssignee = nAssign === nStaff || nLead === nStaff;
+              if (!matchAssignee) return false;
+            }
+            if (wbsGateFilterMaster && String(t.gate_no) !== wbsGateFilterMaster) return false;
+            if (wbsStatusFilterMaster) {
+              if (["TODO", "IN_PROGRESS", "DONE", "BLOCKED"].includes(wbsStatusFilterMaster) && t.status !== wbsStatusFilterMaster) return false;
+              if (["PASS", "OPTIMIZE", "FAIL"].includes(wbsStatusFilterMaster) && t.outcome_verdict !== wbsStatusFilterMaster) return false;
+              if (wbsStatusFilterMaster === "HAS_RESULT" && !t.result_summary && (!Array.isArray(t.key_metrics_json) || t.key_metrics_json.length === 0)) return false;
+            }
+            if (searchQuery.trim() !== "") {
+              const q = searchQuery.toLowerCase();
+              const hay = `${t.code || ""} ${t.title || ""} ${t.project_code || ""} ${t.project_name || ""} ${t.assignee_name || ""} ${t.result_summary || ""}`.toLowerCase();
+              if (!hay.includes(q)) return false;
+            }
+            return true;
+          });
+
+          const projectsToDisplay = filteredProjects.filter((p) => {
+            if (wbsProjectFilter && wbsProjectFilter !== "ALL" && wbsProjectFilter !== "WITH_WBS") {
+              return p.id === wbsProjectFilter;
+            }
+            if (wbsProjectFilter === "WITH_WBS") {
+              return (tasksByProjectId.get(p.id)?.length ?? 0) > 0;
+            }
+            return true;
+          });
+
+          return (
+            <div className="flex flex-col gap-3">
+              {/* Quick Add WBS Task Bar across any project */}
+              {canManage && (
+                <form
+                  className="grid gap-2 sm:grid-cols-12 items-end p-3 rounded-xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/30 dark:bg-slate-900/60 text-xs"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const targetProjId = quickWbsProjectId || filteredProjects[0]?.id;
+                    if (!targetProjId) return;
+                    const targetProj = allProjects.find((p) => p.id === targetProjId);
+                    masterSaveTaskMut.mutate({
+                      project_id: targetProjId,
+                      gate_no: Number(quickWbsGate),
+                      title: quickWbsTitle,
+                      assignee_name: quickWbsAssignee || targetProj?.leader_name || null,
+                      due_date: quickWbsDue || null,
+                      status: "TODO",
+                      progress_pct: 0,
+                    });
+                  }}
+                >
+                  <div className="sm:col-span-3">
+                    <Field label="Chọn Dự án cần giao việc WBS *">
+                      <select
+                        className={inputClass}
+                        value={quickWbsProjectId || filteredProjects[0]?.id || ""}
+                        onChange={(e) => setQuickWbsProjectId(e.target.value)}
+                        required
+                      >
+                        {allProjects.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.code} — {p.name} ({Number(p.wbs_done ?? 0)}/{Number(p.wbs_total ?? 0)} việc)
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Field label="Cổng Gate">
+                      <select className={inputClass} value={quickWbsGate} onChange={(e) => setQuickWbsGate(e.target.value)}>
+                        <option value="0">G0 — Khảo sát &amp; TPP</option>
+                        <option value="1">G1 — Khả thi (Feasibility)</option>
+                        <option value="2">G2 — Tối ưu hóa</option>
+                        <option value="3">G3 — Thẩm định (V&amp;V)</option>
+                        <option value="4">G4 — Chuyển giao SX</option>
+                      </select>
+                    </Field>
+                  </div>
+                  <div className="sm:col-span-3">
+                    <Field label="Nội dung công việc / Thực nghiệm WBS *">
+                      <input
+                        className={inputClass}
+                        value={quickWbsTitle}
+                        onChange={(e) => setQuickWbsTitle(e.target.value)}
+                        placeholder="VD: Khảo sát nhiệt độ bắt cặp mồi 56–62°C..."
+                        required
+                      />
+                    </Field>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Field label="NCV phụ trách">
+                      <input
+                        list="master-rd-staff-datalist"
+                        className={inputClass}
+                        value={quickWbsAssignee}
+                        onChange={(e) => setQuickWbsAssignee(e.target.value)}
+                        placeholder="Chọn / nhập tên NCV..."
+                      />
+                    </Field>
+                  </div>
+                  <div className="sm:col-span-2 flex items-end gap-1.5">
+                    <div className="flex-1">
+                      <Field label="Hạn chót">
+                        <input type="date" className={inputClass} value={quickWbsDue} onChange={(e) => setQuickWbsDue(e.target.value)} />
+                      </Field>
+                    </div>
+                    <Button type="submit" disabled={masterSaveTaskMut.isPending} className="whitespace-nowrap">
+                      + Giao việc
+                    </Button>
+                  </div>
+                </form>
+              )}
+
+              {/* Filter & Grouping Toolbar for Master WBS View */}
+              <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-bold text-slate-700 dark:text-slate-200">🔎 Lọc WBS theo Dự án:</span>
+                  <select className={`${inputClass} w-64`} value={wbsProjectFilter} onChange={(e) => setWbsProjectFilter(e.target.value)}>
+                    <option value="WITH_WBS">
+                      📂 Các dự án đã có công việc WBS ({allProjects.filter((p) => (tasksByProjectId.get(p.id)?.length ?? 0) > 0).length} dự án)
+                    </option>
+                    <option value="ALL">📁 Tất cả dự án (kể cả dự án chưa tạo WBS: {allProjects.length})</option>
+                    {allProjects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.code} — {p.name} ({tasksByProjectId.get(p.id)?.length ?? 0} việc)
+                      </option>
+                    ))}
+                  </select>
+                  <select className={`${inputClass} w-40`} value={wbsGateFilterMaster} onChange={(e) => setWbsGateFilterMaster(e.target.value)}>
+                    <option value="">Mọi cổng Gate (G0–G4)</option>
+                    <option value="0">Cổng G0 (Khảo sát &amp; TPP)</option>
+                    <option value="1">Cổng G1 (Feasibility)</option>
+                    <option value="2">Cổng G2 (Optimization)</option>
+                    <option value="3">Cổng G3 (Validation V&amp;V)</option>
+                    <option value="4">Cổng G4 (Transfer SX)</option>
+                  </select>
+                  <select className={`${inputClass} w-48`} value={wbsStatusFilterMaster} onChange={(e) => setWbsStatusFilterMaster(e.target.value)}>
+                    <option value="">Mọi trạng thái &amp; kết luận</option>
+                    <option value="TODO">⏳ Chưa làm (TODO)</option>
+                    <option value="IN_PROGRESS">🔄 Đang thực hiện</option>
+                    <option value="DONE">✅ Đã hoàn thành (100%)</option>
+                    <option value="BLOCKED">⚠️ Vướng mắc kỹ thuật</option>
+                    <option value="PASS">🏆 Kết luận: ĐẠT (PASS)</option>
+                    <option value="OPTIMIZE">🔧 Kết luận: CẦN TỐI ƯU</option>
+                    <option value="FAIL">❌ Kết luận: KHÔNG ĐẠT</option>
+                    <option value="HAS_RESULT">📊 Đã có báo cáo kết quả</option>
+                  </select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setWbsGroupByProject(true)}
+                    className={`px-2.5 py-1 rounded-lg font-semibold cursor-pointer ${
+                      wbsGroupByProject
+                        ? "bg-indigo-600 text-white"
+                        : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+                    }`}
+                  >
+                    🗂️ Nhóm theo từng Dự án
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWbsGroupByProject(false)}
+                    className={`px-2.5 py-1 rounded-lg font-semibold cursor-pointer ${
+                      !wbsGroupByProject
+                        ? "bg-indigo-600 text-white"
+                        : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+                    }`}
+                  >
+                    📋 Bảng phẳng toàn bộ việc ({filteredWbsTasks.length})
+                  </button>
+                </div>
+              </div>
+
+              {wbsGroupByProject ? (
+                projectsToDisplay.length === 0 ? (
+                  <div className="p-6 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-center text-xs text-slate-500 space-y-2">
+                    <div>Hiện chưa có dự án nào có công việc WBS khớp bộ lọc (hoặc các dự án mới khởi tạo chưa được thêm việc WBS).</div>
+                    <div className="flex justify-center gap-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => setWbsProjectFilter("ALL")}
+                      >
+                        📁 Hiển thị tất cả {filteredProjects.length} dự án để giao việc WBS ngay
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    {projectsToDisplay.map((proj) => {
+                      const projTasks = filteredWbsTasks.filter((t) => t.project_id === proj.id);
+                      const totalProjTasks = tasksByProjectId.get(proj.id)?.length ?? 0;
+                      const doneProjTasks = (tasksByProjectId.get(proj.id) ?? []).filter((t) => t.status === "DONE").length;
+                      return (
+                        <div
+                          key={proj.id}
+                          className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/90 overflow-hidden shadow-xs"
+                        >
+                          <div className="px-3.5 py-2.5 bg-slate-50 dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="px-2 py-0.5 rounded-md bg-sky-100 dark:bg-sky-950 text-sky-800 dark:text-sky-300 font-mono font-bold text-xs">
+                                {proj.code}
+                              </span>
+                              <span className="font-bold text-sm text-slate-900 dark:text-white">{proj.name}</span>
+                              <span className="px-2 py-0.5 rounded bg-slate-200/70 dark:bg-slate-800 text-[11px] font-mono font-semibold">
+                                {proj.current_stage}
+                              </span>
+                              <span className="text-xs text-slate-600 dark:text-slate-400">
+                                · 👤 Chủ nhiệm: <b>{proj.leader_name}</b>
+                              </span>
+                              <span className="px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-950/80 text-indigo-800 dark:text-indigo-300 text-xs font-bold">
+                                Tiến độ WBS: {doneProjTasks}/{totalProjTasks} việc hoàn thành
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              {canManage && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setQuickWbsProjectId(proj.id);
+                                    setQuickWbsAssignee(proj.leader_name || "");
+                                    window.scrollTo({ top: 0, behavior: "smooth" });
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-xs font-semibold cursor-pointer hover:bg-indigo-100"
+                                >
+                                  + Thêm việc WBS cho {proj.code}
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => setSelected(proj.id)}
+                                className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                              >
+                                Mở hồ sơ dự án ↗
+                              </button>
+                            </div>
+                          </div>
+
+                          {projTasks.length === 0 ? (
+                            <div className="p-3 text-xs text-slate-400 italic flex items-center justify-between">
+                              <span>Dự án này hiện chưa có hạng mục công việc WBS nào (hoặc đang ẩn theo bộ lọc).</span>
+                              {canManage && (
+                                <button
+                                  type="button"
+                                  className="text-indigo-600 dark:text-indigo-400 font-semibold underline cursor-pointer not-italic"
+                                  onClick={() => {
+                                    setQuickWbsProjectId(proj.id);
+                                    setQuickWbsAssignee(proj.leader_name || "");
+                                  }}
+                                >
+                                  + Chọn dự án {proj.code} trên thanh Giao việc WBS ở trên để tạo việc đầu tiên
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="p-2">
+                              <Table
+                                head={[
+                                  "Mã việc",
+                                  "Cổng",
+                                  "Nội dung công việc & Kết quả thực nghiệm",
+                                  "Người phụ trách",
+                                  "Sổ ELN",
+                                  "Hạn chót",
+                                  "Tiến độ & Kết luận",
+                                  "Thao tác nhanh",
+                                ]}
+                              >
+                                {projTasks.map((t) => {
+                                  const metrics = Array.isArray(t.key_metrics_json) ? t.key_metrics_json : [];
+                                  const hasResult = Boolean(t.result_summary || metrics.length > 0 || t.protocol_summary);
+                                  return (
+                                    <tr key={t.id} className="align-top">
+                                      <td className="py-2 pr-2 font-mono font-semibold text-sky-700 dark:text-sky-400 whitespace-nowrap">{t.code}</td>
+                                      <td className="py-2 pr-2 font-mono font-bold whitespace-nowrap">G{t.gate_no}</td>
+                                      <td className="py-2 pr-3 min-w-72">
+                                        <div className="font-semibold text-slate-900 dark:text-slate-100">{t.title}</div>
+                                        {hasResult && (
+                                          <div className="mt-1 p-2 rounded-lg border border-emerald-200/80 dark:border-emerald-900/50 bg-emerald-50/40 dark:bg-emerald-950/20 space-y-1 text-[11px]">
+                                            {t.protocol_summary && (
+                                              <div className="text-slate-600 dark:text-slate-400">
+                                                <b>🧪 Protocol:</b> {t.protocol_summary}
+                                              </div>
+                                            )}
+                                            {t.result_summary && (
+                                              <div className="text-slate-800 dark:text-slate-200">
+                                                <b className="text-emerald-800 dark:text-emerald-300">📊 Kết quả:</b> {t.result_summary}
+                                              </div>
+                                            )}
+                                            {metrics.length > 0 && (
+                                              <div className="flex flex-wrap gap-1 pt-0.5">
+                                                {metrics.map((m: any, idx: number) => (
+                                                  <span key={idx} className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-800 font-mono text-[10px]">
+                                                    <b>{m.label}:</b> {m.value} {m.unit || ""}
+                                                  </span>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="py-2 pr-2 whitespace-nowrap">
+                                        <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-medium text-xs">
+                                          👤 {t.assignee_name || proj.leader_name || "—"}
+                                        </span>
+                                      </td>
+                                      <td className="py-2 pr-2 whitespace-nowrap">
+                                        {t.experiment_code ? (
+                                          <span className="px-2 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950/70 text-indigo-800 dark:text-indigo-300 font-mono font-bold text-[11px]">
+                                            🧪 {t.experiment_code}
+                                          </span>
+                                        ) : canManage ? (
+                                          <button
+                                            type="button"
+                                            className="px-2 py-0.5 rounded border border-indigo-300 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 text-[11px] font-semibold cursor-pointer hover:bg-indigo-50"
+                                            onClick={() => masterCreateExpMut.mutate({ project_id: t.project_id, task_id: t.id })}
+                                            disabled={masterCreateExpMut.isPending}
+                                          >
+                                            🧪 + Tạo ELN
+                                          </button>
+                                        ) : (
+                                          <span className="text-slate-400">—</span>
+                                        )}
+                                      </td>
+                                      <td className="py-2 pr-2 font-mono whitespace-nowrap">{fmtDate(t.due_date)}</td>
+                                      <td className="py-2 pr-2 whitespace-nowrap">
+                                        <div className="flex flex-col gap-1">
+                                          <StatusBadge
+                                            status={
+                                              t.status === "DONE"
+                                                ? "RELEASED"
+                                                : t.status === "IN_PROGRESS"
+                                                ? "PENDING_QC"
+                                                : t.status === "BLOCKED"
+                                                ? "REJECTED"
+                                                : "QUARANTINE"
+                                            }
+                                            label={
+                                              t.status === "DONE"
+                                                ? `Hoàn thành (${t.progress_pct}%)`
+                                                : t.status === "IN_PROGRESS"
+                                                ? `Đang làm (${t.progress_pct}%)`
+                                                : t.status === "BLOCKED"
+                                                ? "Vướng mắc"
+                                                : "Chưa làm"
+                                            }
+                                          />
+                                          {t.outcome_verdict && t.outcome_verdict !== "PENDING" && (
+                                            <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
+                                              {t.outcome_verdict === "PASS" ? "✅ ĐẠT" : t.outcome_verdict === "OPTIMIZE" ? "🔧 CẦN TỐI ƯU" : "❌ KHÔNG ĐẠT"}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </td>
+                                      <td className="py-2 pr-2 whitespace-nowrap">
+                                        {canManage && (
+                                          <div className="flex items-center gap-1">
+                                            <button
+                                              type="button"
+                                              className="px-2 py-1 rounded bg-sky-600 hover:bg-sky-500 text-white font-semibold text-[11px] cursor-pointer"
+                                              onClick={() => openMasterResultDrawer(t)}
+                                            >
+                                              📝 {hasResult ? "Sửa KQ" : "Ghi KQ"}
+                                            </button>
+                                            {t.status !== "DONE" && (
+                                              <button
+                                                type="button"
+                                                className="px-2 py-1 rounded bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 font-semibold text-[11px] cursor-pointer"
+                                                onClick={() =>
+                                                  masterSaveTaskMut.mutate({
+                                                    project_id: t.project_id,
+                                                    task_id: t.id,
+                                                    gate_no: t.gate_no,
+                                                    title: t.title,
+                                                    assignee_name: t.assignee_name,
+                                                    due_date: t.due_date ? String(t.due_date).slice(0, 10) : null,
+                                                    status: "DONE",
+                                                    progress_pct: 100,
+                                                  })
+                                                }
+                                              >
+                                                ✓ Xong
+                                              </button>
+                                            )}
+                                          </div>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </Table>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
+              ) : filteredWbsTasks.length === 0 ? (
+                <Empty>Chưa có hạng mục công việc WBS nào khớp bộ lọc.</Empty>
+              ) : (
+                <Table
+                  head={[
+                    "Dự án",
+                    "Mã việc WBS",
+                    "Cổng",
+                    "Nội dung công việc & Kết quả thực nghiệm",
+                    "Người phụ trách",
+                    "Sổ ELN",
+                    "Hạn chót",
+                    "Tiến độ & Kết luận",
+                    "Thao tác",
+                  ]}
+                >
+                  {filteredWbsTasks.map((t) => {
+                    const metrics = Array.isArray(t.key_metrics_json) ? t.key_metrics_json : [];
+                    const hasResult = Boolean(t.result_summary || metrics.length > 0 || t.protocol_summary);
+                    return (
+                      <tr key={t.id} className="align-top">
+                        <td className="py-2 pr-2">
+                          <button
+                            type="button"
+                            onClick={() => setSelected(t.project_id)}
+                            className="text-left group cursor-pointer"
+                          >
+                            <span className="px-2 py-0.5 rounded bg-sky-100 dark:bg-sky-950 text-sky-800 dark:text-sky-300 font-mono font-bold text-xs group-hover:underline">
+                              {t.project_code}
+                            </span>
+                            <div className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 line-clamp-1 max-w-52 mt-0.5">
+                              {t.project_name}
+                            </div>
+                          </button>
+                        </td>
+                        <td className="py-2 pr-2 font-mono font-semibold text-sky-700 dark:text-sky-400 whitespace-nowrap">{t.code}</td>
+                        <td className="py-2 pr-2 font-mono font-bold whitespace-nowrap">G{t.gate_no}</td>
+                        <td className="py-2 pr-3 min-w-72">
+                          <div className="font-semibold text-slate-900 dark:text-slate-100">{t.title}</div>
+                          {hasResult && (
+                            <div className="mt-1 p-2 rounded-lg border border-emerald-200/80 dark:border-emerald-900/50 bg-emerald-50/40 dark:bg-emerald-950/20 text-[11px] space-y-1">
+                              {t.result_summary && (
+                                <div>
+                                  <b className="text-emerald-800 dark:text-emerald-300">📊 Kết quả:</b> {t.result_summary}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-2 pr-2 whitespace-nowrap">👤 {t.assignee_name || t.project_leader_name || "—"}</td>
+                        <td className="py-2 pr-2 whitespace-nowrap">
+                          {t.experiment_code ? (
+                            <span className="px-2 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950/70 text-indigo-800 dark:text-indigo-300 font-mono font-bold text-[11px]">
+                              🧪 {t.experiment_code}
+                            </span>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td className="py-2 pr-2 font-mono whitespace-nowrap">{fmtDate(t.due_date)}</td>
+                        <td className="py-2 pr-2 whitespace-nowrap">
+                          <StatusBadge
+                            status={t.status === "DONE" ? "RELEASED" : t.status === "IN_PROGRESS" ? "PENDING_QC" : t.status === "BLOCKED" ? "REJECTED" : "QUARANTINE"}
+                            label={t.status === "DONE" ? `Hoàn thành (${t.progress_pct}%)` : t.status === "IN_PROGRESS" ? `Đang làm (${t.progress_pct}%)` : t.status === "BLOCKED" ? "Vướng mắc" : "Chưa làm"}
+                          />
+                        </td>
+                        <td className="py-2 pr-2 whitespace-nowrap">
+                          {canManage && (
+                            <button
+                              type="button"
+                              className="px-2 py-1 rounded bg-sky-600 hover:bg-sky-500 text-white font-semibold text-[11px] cursor-pointer"
+                              onClick={() => openMasterResultDrawer(t)}
+                            >
+                              📝 {hasResult ? "Sửa KQ" : "Ghi KQ"}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </Table>
+              )}
+            </div>
+          );
+        })()}
+
+        {viewMode === "PROJECTS" && filteredProjects.length === 0 && <Empty>Chưa có dự án R&D nào khớp điều kiện lọc.</Empty>}
+        {viewMode === "PROJECTS" && filteredProjects.length > 0 && (
           <Table
             head={[
               "Loại đề tài",
               "Lĩnh vực",
               "Giai đoạn (Stage)",
               "Tiến độ Gate",
+              "Công việc WBS",
               "Số ELN",
               "Chủ nhiệm & Nhóm NCV phụ trách",
               "Trạng thái",
@@ -3775,7 +4556,11 @@ export function ProjectsView({
           >
             {filteredProjects.map((r) => {
               const assignees: string[] = Array.isArray(r.assignees) ? r.assignees : [];
-              const colCount = canEdit || canDelete ? 8 : 7;
+              const colCount = canEdit || canDelete ? 9 : 8;
+              const projWbsTasks = (allWbsQuery.data?.tasks ?? []).filter((t) => t.project_id === r.id);
+              const wbsTotal = projWbsTasks.length || Number(r.wbs_total ?? 0);
+              const wbsDone = projWbsTasks.filter((t) => t.status === "DONE").length || Number(r.wbs_done ?? 0);
+              const isWbsExpanded = Boolean(expandedWbsProjects[r.id]);
               return (
                 <React.Fragment key={r.id}>
                   <tr
@@ -3783,13 +4568,31 @@ export function ProjectsView({
                     onClick={() => setSelected(r.id)}
                   >
                     <td colSpan={colCount} className="pt-2.5 pb-1 px-2">
-                      <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 rounded-md bg-sky-100 dark:bg-sky-950/80 text-sky-800 dark:text-sky-300 font-mono font-bold text-xs shrink-0">
-                          {r.code}
-                        </span>
-                        <span className="font-bold text-sm text-slate-900 dark:text-white">
-                          {r.name}
-                        </span>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 rounded-md bg-sky-100 dark:bg-sky-950/80 text-sky-800 dark:text-sky-300 font-mono font-bold text-xs shrink-0">
+                            {r.code}
+                          </span>
+                          <span className="font-bold text-sm text-slate-900 dark:text-white">
+                            {r.name}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            setExpandedWbsProjects((prev) => ({ ...prev, [r.id]: !prev[r.id] }));
+                          }}
+                          className={`px-2.5 py-0.5 rounded-lg text-[11px] font-bold cursor-pointer border transition-all ${
+                            isWbsExpanded
+                              ? "bg-indigo-600 text-white border-indigo-600"
+                              : wbsTotal > 0
+                              ? "bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100"
+                              : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-700 hover:border-indigo-400"
+                          }`}
+                        >
+                          📋 {isWbsExpanded ? `Ẩn WBS (${wbsDone}/${wbsTotal}) ▲` : `Xem nhanh WBS (${wbsDone}/${wbsTotal} việc) ▼`}
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -3806,6 +4609,19 @@ export function ProjectsView({
                     </td>
                     <td className="pb-2.5 pt-1 pr-3 font-mono font-semibold whitespace-nowrap">{r.current_stage}</td>
                     <td className="pb-2.5 pt-1 pr-3 font-mono whitespace-nowrap">{r.passed_gates}/{r.total_gates} cổng</td>
+                    <td className="pb-2.5 pt-1 pr-3 whitespace-nowrap" onClick={(ev) => ev.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => setExpandedWbsProjects((prev) => ({ ...prev, [r.id]: !prev[r.id] }))}
+                        className={`px-2 py-0.5 rounded-md font-mono text-xs font-bold cursor-pointer ${
+                          wbsTotal > 0
+                            ? "bg-indigo-100 dark:bg-indigo-950/80 text-indigo-800 dark:text-indigo-300 hover:bg-indigo-200"
+                            : "bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-slate-200"
+                        }`}
+                      >
+                        {wbsDone}/{wbsTotal} việc {isWbsExpanded ? "▲" : "▼"}
+                      </button>
+                    </td>
                     <td className="pb-2.5 pt-1 pr-3 font-mono whitespace-nowrap">{r.experiment_count}</td>
                     <td className="pb-2.5 pt-1 pr-3">
                       <div className="font-semibold text-slate-800 dark:text-slate-100 whitespace-nowrap">
@@ -3852,6 +4668,191 @@ export function ProjectsView({
                       </td>
                     )}
                   </tr>
+                  {isWbsExpanded && (
+                    <tr className="bg-indigo-50/30 dark:bg-indigo-950/20">
+                      <td colSpan={colCount} className="p-3 border-b border-indigo-200/70 dark:border-indigo-900/50">
+                        <div className="flex flex-col gap-2 text-xs">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="font-bold text-indigo-900 dark:text-indigo-200">
+                              📋 Danh sách Công việc WBS của Dự án <span className="font-mono">{r.code}</span> — {r.name} ({wbsDone}/{wbsTotal} hoàn thành)
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                className="text-xs font-semibold text-indigo-700 dark:text-indigo-300 underline cursor-pointer"
+                                onClick={() => {
+                                  setViewMode("WBS_BY_PROJECT");
+                                  setWbsProjectFilter(r.id);
+                                  setQuickWbsProjectId(r.id);
+                                }}
+                              >
+                                Mở trong Bảng Tổng hợp WBS ↗
+                              </button>
+                            </div>
+                          </div>
+
+                          {canManage && (
+                            <form
+                              className="grid gap-2 sm:grid-cols-12 items-end p-2.5 rounded-xl border border-indigo-200 dark:border-indigo-800/70 bg-white dark:bg-slate-900"
+                              onSubmit={(e) => {
+                                e.preventDefault();
+                                masterSaveTaskMut.mutate({
+                                  project_id: r.id,
+                                  gate_no: Number(quickWbsGate),
+                                  title: quickWbsTitle,
+                                  assignee_name: quickWbsAssignee || r.leader_name || null,
+                                  due_date: quickWbsDue || null,
+                                  status: "TODO",
+                                  progress_pct: 0,
+                                });
+                              }}
+                            >
+                              <div className="sm:col-span-2">
+                                <Field label="Cổng Gate">
+                                  <select className={inputClass} value={quickWbsGate} onChange={(e) => setQuickWbsGate(e.target.value)}>
+                                    <option value="0">G0 — Khảo sát</option>
+                                    <option value="1">G1 — Khả thi</option>
+                                    <option value="2">G2 — Tối ưu</option>
+                                    <option value="3">G3 — Thẩm định</option>
+                                    <option value="4">G4 — Chuyển giao</option>
+                                  </select>
+                                </Field>
+                              </div>
+                              <div className="sm:col-span-5">
+                                <Field label={`Giao nhanh công việc WBS cho dự án ${r.code} *`}>
+                                  <input
+                                    className={inputClass}
+                                    value={quickWbsTitle}
+                                    onChange={(e) => setQuickWbsTitle(e.target.value)}
+                                    placeholder="Nhập nội dung công việc / thực nghiệm cần thực hiện..."
+                                    required
+                                  />
+                                </Field>
+                              </div>
+                              <div className="sm:col-span-2">
+                                <Field label="NCV phụ trách">
+                                  <input
+                                    list="master-rd-staff-datalist"
+                                    className={inputClass}
+                                    value={quickWbsAssignee}
+                                    onChange={(e) => setQuickWbsAssignee(e.target.value)}
+                                    placeholder={r.leader_name || "Chọn NCV..."}
+                                  />
+                                </Field>
+                              </div>
+                              <div className="sm:col-span-3 flex items-end gap-1.5">
+                                <div className="flex-1">
+                                  <Field label="Hạn hoàn thành">
+                                    <input type="date" className={inputClass} value={quickWbsDue} onChange={(e) => setQuickWbsDue(e.target.value)} />
+                                  </Field>
+                                </div>
+                                <Button type="submit" disabled={masterSaveTaskMut.isPending}>
+                                  + Giao việc
+                                </Button>
+                              </div>
+                            </form>
+                          )}
+
+                          {projWbsTasks.length === 0 ? (
+                            <div className="p-2.5 rounded-lg bg-white/70 dark:bg-slate-900/50 text-slate-500 italic">
+                              Dự án {r.code} hiện chưa có công việc WBS nào. Bạn có thể nhập ngay vào ô phía trên để giao việc mà không cần mở chi tiết dự án.
+                            </div>
+                          ) : (
+                            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2">
+                              <Table
+                                head={[
+                                  "Mã việc",
+                                  "Cổng",
+                                  "Nội dung công việc & Kết quả",
+                                  "Người phụ trách",
+                                  "Sổ ELN",
+                                  "Hạn chót",
+                                  "Tiến độ",
+                                  "Thao tác",
+                                ]}
+                              >
+                                {projWbsTasks.map((t) => {
+                                  const hasResult = Boolean(t.result_summary || (Array.isArray(t.key_metrics_json) && t.key_metrics_json.length > 0));
+                                  return (
+                                    <tr key={t.id} className="align-top">
+                                      <td className="py-1.5 pr-2 font-mono font-semibold text-sky-700 dark:text-sky-400 whitespace-nowrap">{t.code}</td>
+                                      <td className="py-1.5 pr-2 font-mono font-bold">G{t.gate_no}</td>
+                                      <td className="py-1.5 pr-3">
+                                        <div className="font-semibold text-slate-900 dark:text-slate-100">{t.title}</div>
+                                        {t.result_summary && (
+                                          <div className="text-[11px] text-emerald-700 dark:text-emerald-300 mt-0.5">
+                                            📊 <b>Kết quả:</b> {t.result_summary}
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="py-1.5 pr-2 whitespace-nowrap">👤 {t.assignee_name || r.leader_name || "—"}</td>
+                                      <td className="py-1.5 pr-2 whitespace-nowrap">
+                                        {t.experiment_code ? (
+                                          <span className="px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950 text-indigo-800 dark:text-indigo-300 font-mono font-bold text-[11px]">
+                                            🧪 {t.experiment_code}
+                                          </span>
+                                        ) : canManage ? (
+                                          <button
+                                            type="button"
+                                            className="px-1.5 py-0.5 rounded border border-indigo-300 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 text-[10px] font-semibold cursor-pointer"
+                                            onClick={() => masterCreateExpMut.mutate({ project_id: r.id, task_id: t.id })}
+                                          >
+                                            + Tạo ELN
+                                          </button>
+                                        ) : (
+                                          "—"
+                                        )}
+                                      </td>
+                                      <td className="py-1.5 pr-2 font-mono whitespace-nowrap">{fmtDate(t.due_date)}</td>
+                                      <td className="py-1.5 pr-2 whitespace-nowrap">
+                                        <StatusBadge
+                                          status={t.status === "DONE" ? "RELEASED" : t.status === "IN_PROGRESS" ? "PENDING_QC" : t.status === "BLOCKED" ? "REJECTED" : "QUARANTINE"}
+                                          label={t.status === "DONE" ? `Hoàn thành (${t.progress_pct}%)` : t.status === "IN_PROGRESS" ? `Đang làm (${t.progress_pct}%)` : t.status === "BLOCKED" ? "Vướng mắc" : "Chưa làm"}
+                                        />
+                                      </td>
+                                      <td className="py-1.5 pr-2 whitespace-nowrap">
+                                        {canManage && (
+                                          <div className="flex items-center gap-1">
+                                            <button
+                                              type="button"
+                                              className="px-2 py-0.5 rounded bg-sky-600 text-white font-semibold text-[11px] cursor-pointer"
+                                              onClick={() => openMasterResultDrawer(t)}
+                                            >
+                                              📝 {hasResult ? "Sửa KQ" : "Ghi KQ"}
+                                            </button>
+                                            {t.status !== "DONE" && (
+                                              <button
+                                                type="button"
+                                                className="px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 font-semibold text-[11px] cursor-pointer"
+                                                onClick={() =>
+                                                  masterSaveTaskMut.mutate({
+                                                    project_id: r.id,
+                                                    task_id: t.id,
+                                                    gate_no: t.gate_no,
+                                                    title: t.title,
+                                                    assignee_name: t.assignee_name,
+                                                    due_date: t.due_date ? String(t.due_date).slice(0, 10) : null,
+                                                    status: "DONE",
+                                                    progress_pct: 100,
+                                                  })
+                                                }
+                                              >
+                                                ✓ Xong
+                                              </button>
+                                            )}
+                                          </div>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </Table>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
                 </React.Fragment>
               );
             })}

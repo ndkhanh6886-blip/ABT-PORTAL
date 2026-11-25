@@ -437,6 +437,73 @@ export async function createQuickRdProject(tx: Tx, actor: AuthzActor, input: unk
   return project;
 }
 
+export interface ListAllProjectWbsTasksFilter {
+  domain?: string | null;
+  excludeDomain?: string | null;
+  projectId?: string | null;
+}
+
+/**
+ * Lists all WBS tasks (`rd.project_task`) across all visible R&D / Software / Device projects,
+ * joined with project metadata (`project_code`, `project_name`, `project_stage`, `project_status`, `project_leader_name`)
+ * and linked ELN experiment info so users can view, filter, create, and update WBS tasks across projects
+ * without opening each individual project.
+ */
+export async function listAllProjectWbsTasks(
+  tx: Tx,
+  actor: AuthzActor,
+  filter?: ListAllProjectWbsTasksFilter
+) {
+  await ensureRdProjectOpsSchema(tx);
+  const domain = filter?.domain || null;
+  const excludeDomain = filter?.excludeDomain || null;
+  const projectId = filter?.projectId || null;
+
+  const rows = (
+    await tx.query(
+      `SELECT pt.*,
+              p.code AS project_code,
+              p.name AS project_name,
+              p.current_stage AS project_stage,
+              p.status AS project_status,
+              p.target_domain AS project_domain,
+              p.owner_org_unit_id,
+              coalesce(nullif(p.leader_name_override, ''), l.display_name) AS project_leader_name,
+              e.code AS experiment_code,
+              e.title AS experiment_title,
+              e.status AS experiment_status,
+              e.conclusion AS experiment_conclusion
+         FROM rd.project_task pt
+         JOIN rd.project p ON p.id = pt.project_id
+         LEFT JOIN core.user_profile l ON l.user_id = p.leader_id
+         LEFT JOIN rd.experiment e ON e.id = pt.linked_experiment_id
+        WHERE ($1::text IS NULL OR p.target_domain = $1)
+          AND ($2::text IS NULL OR p.target_domain <> $2)
+          AND ($3::uuid IS NULL OR pt.project_id = $3)
+        ORDER BY p.created_at DESC, pt.gate_no ASC, pt.created_at ASC`,
+      [domain, excludeDomain, projectId]
+    )
+  ).rows;
+
+  const visible = [];
+  for (const r of rows) {
+    try {
+      await authorize(tx, actor, "rd.view", r.owner_org_unit_id);
+      visible.push(r);
+    } catch {
+      if (r.project_domain === "SOFTWARE") {
+        try {
+          await authorize(tx, actor, "it.view", r.owner_org_unit_id);
+          visible.push(r);
+        } catch {
+          // skip
+        }
+      }
+    }
+  }
+  return { tasks: visible };
+}
+
 const taskMetricItemSchema = z.object({
   label: z.string().trim().min(1).max(120),
   value: z.string().trim().min(1).max(120),

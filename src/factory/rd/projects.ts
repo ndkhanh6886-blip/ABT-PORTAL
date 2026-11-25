@@ -1461,6 +1461,8 @@ export async function listProjects(tx: Tx, actor: AuthzActor, domainOrFilter?: s
               (SELECT count(*)::int FROM rd.project_gate g WHERE g.project_id = p.id) AS total_gates,
               (SELECT count(*)::int FROM rd.project_gate g WHERE g.project_id = p.id AND g.status = 'PASSED') AS passed_gates,
               (SELECT count(*)::int FROM rd.experiment e WHERE e.project_id = p.id) AS experiment_count,
+              (SELECT count(*)::int FROM rd.project_task pt WHERE pt.project_id = p.id) AS wbs_total,
+              (SELECT count(*)::int FROM rd.project_task pt WHERE pt.project_id = p.id AND pt.status = 'DONE') AS wbs_done,
               ${immutableHandoffSql("p.id")} AS has_immutable_handoff,
               coalesce((
                 SELECT jsonb_agg(DISTINCT nm)
