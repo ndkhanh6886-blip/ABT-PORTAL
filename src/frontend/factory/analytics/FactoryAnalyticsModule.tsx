@@ -6,6 +6,7 @@ import { api, escHtml, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge } from "../ui";
 
 import { ROLE_LABELS } from "../kit/shared";
+import { askCascadeQuarantineReason } from "../qa/cascadeQuarantinePrompt";
 
 type AnalyticsSubTab =
   | "scorecard_rbe"
@@ -1397,17 +1398,16 @@ export function FactoryAnalyticsModule() {
                   <Button
                     variant="danger"
                     disabled={busyKey === `quarantine-${selectedLotObj.id}`}
-                    onClick={() =>
-                      runAction(
+                    onClick={() => {
+                      if (busyKey) return;
+                      const reason = askCascadeQuarantineReason(selectedLotObj.lot_code);
+                      if (!reason) return;
+                      void runAction(
                         `quarantine-${selectedLotObj.id}`,
-                        {
-                          op: "cascade_quarantine",
-                          lot_id: selectedLotObj.id,
-                          reason: `Phát hiện cảnh báo chất lượng trên lô ${selectedLotObj.lot_code} (${selectedLotObj.item_code}) — Phong tỏa khẩn cấp toàn bộ lô thành phẩm liên đới`,
-                        },
+                        { op: "cascade_quarantine", lot_id: selectedLotObj.id, reason },
                         `Đã phong tỏa liên hoàn (ON_HOLD) lô ${selectedLotObj.lot_code} cùng toàn bộ lô liên đới và khởi tạo NCR!`
-                      )
-                    }
+                      );
+                    }}
                   >
                     🔒 Phong Tỏa Liên Hoàn Chuỗi Lô & Mở NCR
                   </Button>
