@@ -37,6 +37,50 @@ function cleanAssigneeName(name: any): string {
   return trimmed;
 }
 
+/**
+ * Chuẩn hóa chuỗi ngày hạn hoàn thành ("YYYY-MM-DD" hoặc "DD/MM/YYYY") về "YYYY-MM-DD",
+ * đồng thời tự động sửa các năm bị lệch < 1970 (VD: "1202-11-29" do lỗi gõ đè ô ngày trước đây -> "2026-11-29").
+ */
+function normalizeTaskDeadlineIso(raw: any, fallbackYear?: number): string | null {
+  if (raw === null || raw === undefined) return null;
+  if (raw instanceof Date) {
+    if (isNaN(raw.getTime())) return null;
+    const iso = raw.toISOString().slice(0, 10);
+    return normalizeTaskDeadlineIso(iso, fallbackYear);
+  }
+  const s = String(raw).trim();
+  if (!s) return null;
+  const targetYear = fallbackYear && fallbackYear >= 2020 && fallbackYear <= 2100 ? fallbackYear : new Date().getFullYear();
+
+  let yStr = "";
+  let mStr = "";
+  let dStr = "";
+
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) {
+    yStr = m[1];
+    mStr = m[2].padStart(2, "0");
+    dStr = m[3].padStart(2, "0");
+  } else {
+    m = s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2}|\d{4})$/);
+    if (m) {
+      dStr = m[1].padStart(2, "0");
+      mStr = m[2].padStart(2, "0");
+      yStr = m[3].length === 2 ? String(2000 + Number(m[3])) : m[3];
+    }
+  }
+  if (!yStr || !mStr || !dStr) return s.slice(0, 10);
+  const yr = Number(yStr);
+  const fixedYear = yr < 1970 || yr > 2100 ? String(targetYear) : yStr;
+  return `${fixedYear}-${mStr}-${dStr}`;
+}
+
+function formatDeadlineVN(isoOrRaw: any): string {
+  const iso = normalizeTaskDeadlineIso(isoOrRaw);
+  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return String(isoOrRaw || "").trim();
+  return `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
+}
+
 function normalizeDeptKey(raw: any): string {
   const s = lower(raw);
   if (!s) return "";
@@ -322,12 +366,31 @@ async function ensureFictionalAssigneesCleaned() {
       }
     }
 
-    // 2. Clean fictional assignees
+    // 2. Clean fictional assignees & repair any corrupted deadline years (< 1970, e.g. '1202-11-29' -> '2026-11-29')
     await query(
       `UPDATE company_tasks 
        SET assignee_name = '' 
        WHERE LOWER(TRIM(assignee_name)) IN ('phạm quốc tuấn', 'lê kỹ thuật', 'nguyễn văn a', 'nguyễn văn nam', 'trần thủ kho', 'trần thị thảo', 'đội vận chuyển')`
     );
+    const curYearPrefix = String(new Date().getFullYear());
+    await query(
+      `UPDATE company_tasks
+       SET deadline = ($1 || SUBSTRING(deadline::text FROM 5))::date
+       WHERE deadline IS NOT NULL
+         AND SUBSTRING(deadline::text FROM 1 FOR 4) ~ '^[0-9]{4}$'
+         AND SUBSTRING(deadline::text FROM 1 FOR 4)::int < 1970`,
+      [curYearPrefix]
+    ).catch(async () => {
+      // Fallback if deadline column is TEXT/VARCHAR instead of DATE
+      await query(
+        `UPDATE company_tasks
+         SET deadline = $1 || SUBSTRING(deadline::text FROM 5)
+         WHERE deadline IS NOT NULL
+           AND SUBSTRING(deadline::text FROM 1 FOR 4) ~ '^[0-9]{4}$'
+           AND SUBSTRING(deadline::text FROM 1 FOR 4)::int < 1970`,
+        [curYearPrefix]
+      ).catch(() => {});
+    });
     await query(
       `UPDATE workflow_requests 
        SET assignee_name = '' 
@@ -581,7 +644,7 @@ export async function POST(req: NextRequest) {
 
     // 1. Single Task Create / Update
     if (action === "task") {
-      // Phân quyền: chỉ người tạo / Trưởng phòng của phòng đó / BGĐ sửa được toàn bộ; người được giao chỉ cập nhật tiến độ
+      // Phân quyền: chỉ người tạo / Trưởng phòng của phòng đó / BGĐ sửa được toàn bộ; người được giao được cập nhật tiến độ & gia hạn/đổi hạn chót
       if (body.id) {
         const existingTask = (await query("SELECT * FROM company_tasks WHERE id = $1", [body.id])).rows[0];
         if (!existingTask) return NextResponse.json({ error: "Không tìm thấy công việc" }, { status: 404 });
@@ -590,14 +653,20 @@ export async function POST(req: NextRequest) {
           return forbiddenResponse("Bạn chỉ được xem công việc này (không phải người tạo, người được giao hoặc quản lý phòng ban).");
         }
         if (access === "progress") {
-          // Người được giao: giữ nguyên nội dung giao việc, chỉ nhận trạng thái / kết quả / đính kèm / trao đổi / người theo dõi
-          for (const k of ["title", "department", "task_category", "assignee_name", "customer_name", "priority", "deadline", "description", "related_type", "related_ref"]) {
+          // Người được giao: giữ nguyên nội dung giao việc gốc, nhưng cho phép cập nhật trạng thái, hạn chót (deadline), kết quả, đính kèm, trao đổi, người theo dõi
+          for (const k of ["title", "department", "task_category", "assignee_name", "customer_name", "priority", "description", "related_type", "related_ref"]) {
             body[k] = existingTask[k];
+          }
+          if (body.deadline === undefined || body.deadline === null || body.deadline === "") {
+            body.deadline = existingTask.deadline;
           }
           if (body.followers === undefined) {
             body.followers = existingTask.followers;
           }
         }
+      }
+      if (body.deadline) {
+        body.deadline = normalizeTaskDeadlineIso(body.deadline);
       }
       // Người sửa không đổi trạng thái (vẫn là trạng thái lúc mở form) mà việc đã được người khác cập nhật tiến độ trong lúc đó:
       // giữ trạng thái mới trong CSDL, không ghi đè bằng bản form cũ.
@@ -633,20 +702,50 @@ export async function POST(req: NextRequest) {
 
       // Báo cáo kết quả của công việc thuộc một phiếu phối hợp: đăng vào "Trao đổi nội bộ" của phiếu để bên yêu cầu thấy
       const prevTask = id ? (await query("SELECT task_code, title, assignee_name, status, deadline, priority, department, result, attachments, logs, related_workflow_code, followers FROM company_tasks WHERE id = $1", [id])).rows[0] : null;
-      // Lịch sử thay đổi tự động (ai đổi gì, lúc nào): giữ lại để không mất dấu khi việc bị sửa thành việc khác
-      let mergedLogs: any[] = Array.isArray(logs) ? logs : [];
+      // Lịch sử thay đổi tự động (ai đổi gì, lúc nào): luôn lấy prevTask.logs từ CSDL làm gốc, rồi gộp thêm các comment mới từ client
+      let mergedLogs: any[] = [];
       if (prevTask) {
-        const prevLogs: any[] = Array.isArray(prevTask.logs) ? prevTask.logs : [];
-        if (mergedLogs.length < prevLogs.length) mergedLogs = prevLogs;
-        const label: Record<string, string> = { title: "Tiêu đề", assignee_name: "Người phụ trách", status: "Trạng thái", deadline: "Hạn", priority: "Ưu tiên", department: "Phòng ban" };
-        const next: Record<string, any> = { title, assignee_name, status, deadline, priority, department };
+        const dbLogs: any[] = Array.isArray(prevTask.logs) ? prevTask.logs : [];
+        const clientLogs: any[] = Array.isArray(logs) ? logs : [];
+        mergedLogs = [...dbLogs];
+        for (const cl of clientLogs) {
+          if (!cl) continue;
+          const isDup = mergedLogs.some(
+            (dl) => dl && dl.time === cl.time && dl.type === cl.type && dl.text === cl.text
+          );
+          if (!isDup) mergedLogs.push(cl);
+        }
+
+        const actorDisplay = me.full_name || me.username || "Nhân viên";
+        const prevDeadlineIso = normalizeTaskDeadlineIso(prevTask.deadline);
+        const nextDeadlineIso = normalizeTaskDeadlineIso(deadline);
+        const nowStr = nowVNDateTime();
+
+        if (nextDeadlineIso && prevDeadlineIso !== nextDeadlineIso) {
+          const oldVN = prevDeadlineIso ? formatDeadlineVN(prevDeadlineIso) : "Chưa đặt";
+          const newVN = formatDeadlineVN(nextDeadlineIso);
+          mergedLogs.push({
+            time: nowStr,
+            author: actorDisplay,
+            type: "change",
+            field: "deadline",
+            oldDeadline: prevDeadlineIso || "",
+            newDeadline: nextDeadlineIso,
+            text: `📅 Đã thay đổi hạn hoàn thành: ${oldVN} → ${newVN}`
+          });
+        }
+
+        const label: Record<string, string> = { title: "Tiêu đề", assignee_name: "Người phụ trách", status: "Trạng thái", priority: "Ưu tiên", department: "Phòng ban" };
+        const next: Record<string, any> = { title, assignee_name, status, priority, department };
         const fmt = (v: any) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v ?? "").trim());
-        const changes = Object.keys(label)
+        const otherChanges = Object.keys(label)
           .filter(k => next[k] !== undefined && fmt(prevTask[k]) !== fmt(next[k]))
           .map(k => `${label[k]}: "${fmt(prevTask[k])}" → "${fmt(next[k])}"`);
-        if (changes.length) {
-          mergedLogs = [...mergedLogs, { time: nowVNDateTime(), author: me.full_name || me.username || "", type: "change", text: changes.join("; ") }];
+        if (otherChanges.length) {
+          mergedLogs.push({ time: nowStr, author: actorDisplay, type: "change", text: otherChanges.join("; ") });
         }
+      } else {
+        mergedLogs = Array.isArray(logs) ? logs : [];
       }
       const postReportToWorkflow = async (taskCode: string | null) => {
         const wfCode = String(related_workflow_code || prevTask?.related_workflow_code || "").trim();

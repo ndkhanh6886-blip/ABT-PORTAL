@@ -974,6 +974,26 @@ export function DepartmentWorkTasksBar({
                       Gửi
                     </button>
                   </div>
+
+                  {Array.isArray(form.logs) && form.logs.some((l: any) => l?.type === "change") && (
+                    <div className="mt-2 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11px] space-y-1">
+                      <div className="font-bold text-indigo-700 dark:text-indigo-300">
+                        🕒 Lịch sử thay đổi thời hạn &amp; thông tin công việc ({form.logs.filter((l: any) => l?.type === "change").length}):
+                      </div>
+                      <ul className="space-y-0.5 max-h-28 overflow-y-auto">
+                        {form.logs
+                          .filter((l: any) => l?.type === "change")
+                          .slice()
+                          .reverse()
+                          .map((l: any, i: number) => (
+                            <li key={i} className="text-slate-600 dark:text-slate-300">
+                              <span className="font-mono text-[10px] text-slate-400">{l.time}</span> · <b>{l.author || "?"}</b>:{" "}
+                              {String(l.text || "").replace(/\b(\d{4}-\d{2}-\d{2})\b/g, (m) => formatDayVN(m) || m)}
+                            </li>
+                          ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               )}
             </form>

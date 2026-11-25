@@ -3,13 +3,38 @@
 import React, { useEffect, useRef, useState } from "react";
 import { CalendarDays } from "lucide-react";
 
+const isValidISO = (iso: string) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
+    const yr = Number(iso.slice(0, 4));
+    if (yr < 1970 || yr > 2100) return false;
+    const d = new Date(`${iso}T00:00:00Z`);
+    return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === iso;
+};
+
+/**
+ * Sửa năm bị lệch do gõ chèn số trước đây (VD: "1202-11-29", "0202-11-29" -> "2026-11-29").
+ */
+function repairCorruptedYear(yearStr: string): string {
+    const yr = Number(yearStr);
+    if (yr >= 1970 && yr <= 2100) return yearStr;
+    const curYear = new Date().getFullYear();
+    return String(curYear);
+}
+
 /** "YYYY-MM-DD" từ chuỗi ngày bất kỳ ("YYYY-MM-DD...", "DD/MM/YYYY", "DD.MM.YYYY"); không hợp lệ -> "". */
 export function toISODate(v: any): string {
     const s = String(v ?? "").trim();
     let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+    if (m) {
+        const y = repairCorruptedYear(m[1]);
+        const iso = `${y}-${m[2]}-${m[3]}`;
+        return isValidISO(iso) ? iso : `${y}-${m[2]}-${m[3]}`;
+    }
     m = s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})$/);
-    if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+    if (m) {
+        const y = repairCorruptedYear(m[3]);
+        return `${y}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+    }
     return "";
 }
 
@@ -19,19 +44,25 @@ export function formatDateVN(v: any): string {
     return iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "";
 }
 
-const isValidISO = (iso: string) => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
-    const d = new Date(`${iso}T00:00:00Z`);
-    return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === iso;
-};
-
-/** Gõ số -> tự chèn "/" thành dd/mm/yyyy. Gõ kèm dấu phân cách ("4/9/2031", "4.9.31") thì giữ nguyên cách gõ. */
+/**
+ * Gõ số -> tự chèn "/" thành dd/mm/yyyy.
+ * Nếu chuỗi đang có dấu phân cách ("/" hoặc "." hoặc "-"), giữ nguyên từng phần ngày / tháng / năm
+ * (cắt phần ngày/tháng tối đa 2 chữ số, năm tối đa 4 chữ số) để khi người dùng gõ đè ngày (VD: gõ "29" vào "12/11/2026" thành "291/11/2026")
+ * KHÔNG bị dồn chữ số sang phần năm làm biến thành "29/11/1202" (năm 1202 -> trễ hạn 300.956 ngày).
+ */
 const mask = (raw: string) => {
-    const parts = raw.replace(/[^\d/.\-]/g, "").split(/[/.\-]/);
-    if (parts.length > 1 && parts.length <= 3 && (parts[0] || "").length <= 2 && (parts[1] || "").length <= 2 && (parts[2] || "").length <= 4) {
-        return parts.join("/");
+    const cleaned = raw.replace(/[^\d/.\-]/g, "");
+    if (/[/.\-]/.test(cleaned)) {
+        const parts = cleaned.split(/[/.\-]/).slice(0, 3);
+        const dPart = (parts[0] || "").replace(/\D/g, "").slice(0, 2);
+        const mPart = (parts[1] || "").replace(/\D/g, "").slice(0, 2);
+        if (parts.length === 2) {
+            return `${dPart}/${mPart}`;
+        }
+        const yPart = (parts[2] || "").replace(/\D/g, "").slice(0, 4);
+        return `${dPart}/${mPart}/${yPart}`;
     }
-    const digits = raw.replace(/\D/g, "").slice(0, 8);
+    const digits = cleaned.replace(/\D/g, "").slice(0, 8);
     if (digits.length <= 2) return digits;
     if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
     return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;

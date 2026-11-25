@@ -2610,6 +2610,76 @@ export function getTaskDeadlineAlert(task: any, refTodayIso?: string): {
   return { deadlineIso: iso, isOverdue: false, isDueToday: false, daysLate: 0 };
 }
 
+export interface TaskDeadlineChangeEntry {
+  time: string;
+  author: string;
+  oldIso: string;
+  newIso: string;
+  oldVN: string;
+  newVN: string;
+  text: string;
+}
+
+/**
+ * Trích xuất lịch sử thay đổi hạn hoàn thành (Deadline) từ `task.logs` (hỗ trợ cả bản ghi có `field: "deadline"`
+ * lẫn bản ghi cũ dạng `Hạn: "2026-11-20" → "2026-11-29"`).
+ */
+export function getTaskDeadlineChanges(task: any): TaskDeadlineChangeEntry[] {
+  const logs = Array.isArray(task?.logs) ? task.logs : [];
+  const out: TaskDeadlineChangeEntry[] = [];
+  for (const l of logs) {
+    if (!l || l.type !== "change") continue;
+    const author = String(l.author || l.actor || "Nhân sự").trim();
+    const time = String(l.time || "").trim();
+    if (l.field === "deadline" && (l.oldDeadline || l.newDeadline)) {
+      const oldIso = toISODate(l.oldDeadline);
+      const newIso = toISODate(l.newDeadline);
+      const oldVN = oldIso ? formatDayVN(oldIso) : String(l.oldDeadline || "Chưa đặt");
+      const newVN = newIso ? formatDayVN(newIso) : String(l.newDeadline || "");
+      if (newVN && oldVN !== newVN) {
+        out.push({
+          time,
+          author,
+          oldIso,
+          newIso,
+          oldVN,
+          newVN,
+          text: `Đã đổi hạn hoàn thành: ${oldVN} → ${newVN}`
+        });
+      }
+      continue;
+    }
+    const rawText = String(l.text || "");
+    const m =
+      rawText.match(/Hạn(?: hoàn thành)?:\s*"?([0-9/.\-]{6,10})"?\s*→\s*"?([0-9/.\-]{6,10})"?/i) ||
+      rawText.match(/thay đổi hạn hoàn thành:\s*([0-9/.\-]{6,10}|Chưa đặt)\s*→\s*([0-9/.\-]{6,10})/i);
+    if (m) {
+      const oldIso = toISODate(m[1]);
+      const newIso = toISODate(m[2]);
+      const oldVN = oldIso ? formatDayVN(oldIso) : m[1];
+      const newVN = newIso ? formatDayVN(newIso) : m[2];
+      if (newVN && oldVN !== newVN) {
+        out.push({
+          time,
+          author,
+          oldIso,
+          newIso,
+          oldVN,
+          newVN,
+          text: `Đã đổi hạn hoàn thành: ${oldVN} → ${newVN}`
+        });
+      }
+    }
+  }
+  return out;
+}
+
+export function formatTaskChangeLogText(rawText: any): string {
+  const s = String(rawText || "").trim();
+  if (!s) return "";
+  return s.replace(/\b(\d{4}-\d{2}-\d{2})\b/g, (match) => formatDayVN(match) || match);
+}
+
 export const renderTextWithLinks = (
   rawText: any,
   linkClassName = "text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 underline font-semibold break-all cursor-pointer"
@@ -11916,17 +11986,34 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       <td className="py-2.5 px-3"><PriorityBadge priority={t.priority} /></td>
                       <td className="py-2.5 px-3 font-mono whitespace-nowrap">
                         {t.deadline ? (
-                          <span
-                            className={
-                              dlAlert.isOverdue
-                                ? "px-2 py-0.5 rounded-lg bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-700 font-black"
-                                : dlAlert.isDueToday
-                                ? "px-2 py-0.5 rounded-lg bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 font-extrabold"
-                                : "text-slate-500"
-                            }
-                          >
-                            {dlAlert.isOverdue ? `🚨 ${formatDayVN(t.deadline)} (-${dlAlert.daysLate}d)` : dlAlert.isDueToday ? `⏰ ${formatDayVN(t.deadline)}` : formatDayVN(t.deadline)}
-                          </span>
+                          <div className="space-y-0.5">
+                            <span
+                              className={
+                                dlAlert.isOverdue
+                                  ? "inline-block px-2 py-0.5 rounded-lg bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-700 font-black"
+                                  : dlAlert.isDueToday
+                                  ? "inline-block px-2 py-0.5 rounded-lg bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 font-extrabold"
+                                  : "text-slate-500"
+                              }
+                            >
+                              {dlAlert.isOverdue ? `🚨 ${formatDayVN(t.deadline)} (-${dlAlert.daysLate}d)` : dlAlert.isDueToday ? `⏰ ${formatDayVN(t.deadline)}` : formatDayVN(t.deadline)}
+                            </span>
+                            {(() => {
+                              const dlChanges = getTaskDeadlineChanges(t);
+                              if (dlChanges.length === 0) return null;
+                              const lastChange = dlChanges[dlChanges.length - 1];
+                              return (
+                                <div
+                                  className="text-[10px] font-sans font-semibold text-indigo-600 dark:text-indigo-400"
+                                  title={`Lịch sử thay đổi hạn (${dlChanges.length} lần):\n${dlChanges
+                                    .map((c) => `• ${c.oldVN} → ${c.newVN} (${c.author}${c.time ? ` lúc ${c.time}` : ""})`)
+                                    .join("\n")}`}
+                                >
+                                  🔄 Đã đổi hạn: {lastChange.oldVN} → {lastChange.newVN}
+                                </div>
+                              );
+                            })()}
+                          </div>
                         ) : (
                           "—"
                         )}
@@ -17115,10 +17202,35 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Hạn chót</label>
               <DateInputVN
-                value={taskForm.deadline ? taskForm.deadline.slice(0, 10) : ""}
+                value={taskForm.deadline ? toISODate(taskForm.deadline) : ""}
                 onChange={(e) => setTaskForm({ ...taskForm, deadline: e.target.value })}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
               />
+              {taskForm.id && (() => {
+                const origTask = tasks.find((x: any) => x.id === taskForm.id);
+                const origIso = toISODate(origTask?.deadline);
+                const curIso = toISODate(taskForm.deadline);
+                const dlChanges = getTaskDeadlineChanges(taskForm);
+                const pendingChange = origIso && curIso && origIso !== curIso;
+                if (!pendingChange && dlChanges.length === 0) return null;
+                return (
+                  <div className="mt-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-50/80 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/70 text-[10px] text-indigo-800 dark:text-indigo-200 space-y-0.5">
+                    {pendingChange && (
+                      <div className="font-bold text-amber-700 dark:text-amber-300">
+                        ⚡ Sắp đổi hạn: {formatDayVN(origIso)} → {formatDayVN(curIso)} (Bấm Lưu để ghi nhận)
+                      </div>
+                    )}
+                    {dlChanges.slice(-2).reverse().map((c, idx) => (
+                      <div key={idx} className="font-semibold">
+                        🔄 {c.oldVN} → <b>{c.newVN}</b>{" "}
+                        <span className="text-slate-500 dark:text-slate-400">
+                          ({c.author}{c.time ? ` • ${c.time}` : ""})
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           </div>
 
@@ -17462,14 +17574,17 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           })()}
 
           {taskForm.id && Array.isArray((taskForm as any).logs) && (taskForm as any).logs.some((l: any) => l?.type === "change") && (
-            <details className="rounded-xl border border-slate-200 dark:border-slate-800 p-2.5 text-[11px]">
-              <summary className="cursor-pointer font-bold text-slate-600 dark:text-slate-300">
-                Lịch sử thay đổi ({(taskForm as any).logs.filter((l: any) => l?.type === "change").length})
+            <details open className="rounded-xl border border-indigo-200 dark:border-indigo-800/80 bg-slate-50/70 dark:bg-slate-900/60 p-3 text-[11px]">
+              <summary className="cursor-pointer font-extrabold text-indigo-800 dark:text-indigo-300">
+                🕒 Lịch sử thay đổi thời hạn &amp; thông tin công việc ({(taskForm as any).logs.filter((l: any) => l?.type === "change").length})
               </summary>
-              <ul className="mt-2 space-y-1 max-h-40 overflow-y-auto">
+              <ul className="mt-2 space-y-1.5 max-h-40 overflow-y-auto divide-y divide-slate-200/60 dark:divide-slate-800">
                 {(taskForm as any).logs.filter((l: any) => l?.type === "change").slice().reverse().map((l: any, i: number) => (
-                  <li key={i} className="text-slate-600 dark:text-slate-400">
-                    <span className="font-mono text-slate-400">{l.time}</span> · <b>{l.author || "?"}</b>: {l.text}
+                  <li key={i} className="pt-1 first:pt-0 text-slate-700 dark:text-slate-300">
+                    <span className="font-mono text-[10px] text-slate-400">{l.time}</span> · <b>{l.author || "?"}</b>:{" "}
+                    <span className={l.field === "deadline" || /hạn/i.test(String(l.text || "")) ? "font-bold text-indigo-700 dark:text-indigo-300" : ""}>
+                      {formatTaskChangeLogText(l.text)}
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -23547,28 +23662,46 @@ const TaskCard: React.FC<{
           </button>
         )}
         {task.deadline ? (
-          <span
-            className={`text-[10px] font-mono ${
-              dlAlert.isOverdue
-                ? "px-2 py-0.5 rounded-md bg-rose-600 text-white font-black shadow-2xs"
+          <div className="text-right space-y-0.5">
+            <span
+              className={`inline-block text-[10px] font-mono ${
+                dlAlert.isOverdue
+                  ? "px-2 py-0.5 rounded-md bg-rose-600 text-white font-black shadow-2xs"
+                  : dlAlert.isDueToday
+                  ? "px-2 py-0.5 rounded-md bg-amber-500 text-white font-extrabold"
+                  : "text-slate-500"
+              }`}
+              title={
+                dlAlert.isOverdue
+                  ? `Công việc đã trễ hạn ${dlAlert.daysLate} ngày (Hạn chót: ${formatDayVN(task.deadline)})`
+                  : dlAlert.isDueToday
+                  ? `Hạn hoàn thành ngay trong hôm nay (${formatDayVN(task.deadline)})`
+                  : `Hạn chót: ${formatDayVN(task.deadline)}`
+              }
+            >
+              {dlAlert.isOverdue
+                ? `🚨 Hạn: ${formatDayVN(task.deadline, true)} (-${dlAlert.daysLate}d)`
                 : dlAlert.isDueToday
-                ? "px-2 py-0.5 rounded-md bg-amber-500 text-white font-extrabold"
-                : "text-slate-500"
-            }`}
-            title={
-              dlAlert.isOverdue
-                ? `Công việc đã trễ hạn ${dlAlert.daysLate} ngày (Hạn chót: ${formatDayVN(task.deadline)})`
-                : dlAlert.isDueToday
-                ? `Hạn hoàn thành ngay trong hôm nay (${formatDayVN(task.deadline)})`
-                : `Hạn chót: ${formatDayVN(task.deadline)}`
-            }
-          >
-            {dlAlert.isOverdue
-              ? `🚨 Hạn: ${formatDayVN(task.deadline, true)} (-${dlAlert.daysLate}d)`
-              : dlAlert.isDueToday
-              ? `⏰ Hôm nay (${formatDayVN(task.deadline, true)})`
-              : formatDayVN(task.deadline, true)}
-          </span>
+                ? `⏰ Hôm nay (${formatDayVN(task.deadline, true)})`
+                : `📅 Hạn: ${formatDayVN(task.deadline, true)}`}
+            </span>
+            {(() => {
+              const dlChanges = getTaskDeadlineChanges(task);
+              if (dlChanges.length === 0) return null;
+              const lastChange = dlChanges[dlChanges.length - 1];
+              return (
+                <div
+                  onClick={() => onEdit(task)}
+                  className="text-[9px] font-sans font-bold text-indigo-600 dark:text-indigo-400 cursor-pointer hover:underline"
+                  title={`Lịch sử đổi hạn (${dlChanges.length} lần):\n${dlChanges
+                    .map((c) => `• ${c.oldVN} → ${c.newVN} (${c.author}${c.time ? ` lúc ${c.time}` : ""})`)
+                    .join("\n")}`}
+                >
+                  🔄 Đã đổi hạn: {lastChange.oldVN.slice(0, 5)} → {lastChange.newVN.slice(0, 5)}
+                </div>
+              );
+            })()}
+          </div>
         ) : (
           <span className="text-[10px] font-mono"></span>
         )}
