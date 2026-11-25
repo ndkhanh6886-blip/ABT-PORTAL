@@ -1292,7 +1292,13 @@ export function isLeaveProposal(p: Partial<ProposalItem> | null | undefined): bo
   const tid = String(p.templateId || "").toLowerCase();
   const code = String(p.proposalCode || "").toUpperCase();
   const tname = String(p.templateName || "").toLowerCase();
-  return tid === "tmpl_leave_request" || code.startsWith("DXNP") || tname.includes("nghỉ phép");
+  return (
+    tid === "tmpl_leave_request" ||
+    code.startsWith("DXNP") ||
+    code.startsWith("TBNP") ||
+    tname.includes("nghỉ phép") ||
+    tname.includes("vắng mặt")
+  );
 }
 
 /**
@@ -1935,9 +1941,9 @@ export function ProposalsApprovalView({
     });
   }, [templates, isFormModalOpen, editingProposalId, selectedTemplateId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const generateProposalCode = (tmpl: ProposalTemplate) => {
+  const generateProposalCode = (tmpl: ProposalTemplate, overridePrefix?: string) => {
     const year = new Date().getFullYear();
-    const prefix = tmpl.codePrefix || "DX";
+    const prefix = overridePrefix || tmpl.codePrefix || "DX";
     // Số lớn nhất đang dùng + 1 (trước đây "số đơn + 1": danh sách thiếu đơn / đã xóa đơn là sinh mã trùng, vd 3 đơn DXNP-2026-007).
     // Máy chủ vẫn kiểm tra lần cuối và cấp lại mã nếu trùng với đơn người khác vừa lập.
     const re = new RegExp("^" + prefix + "-" + year + "-([0-9]+)$", "i");
@@ -1965,24 +1971,24 @@ export function ProposalsApprovalView({
     const isExecRequester = isDirector || isSameWorkspaceDept(reqDept, "Ban Giám Đốc");
     if (isLeaveTmpl) {
       defaultDateValues.leaveType = isExecRequester
-        ? "Lịch công tác / Vắng mặt & Ủy quyền điều hành (BGĐ)"
+        ? "Nghỉ phép năm (Có hưởng lương)"
         : "Nghỉ phép năm (Có hưởng lương)";
       defaultDateValues.totalDays = "1";
       defaultDateValues.onBehalfOfName = currentStaffName;
       defaultDateValues.onBehalfOfDept = isDirector ? "Ban Giám Đốc" : reqDept;
     }
     setFormState({
-      proposalCode: generateProposalCode(tmpl),
+      proposalCode: generateProposalCode(tmpl, isLeaveTmpl && isExecRequester ? "TBNP" : undefined),
       title: isLeaveTmpl
         ? isExecRequester
-          ? `Lịch vắng mặt & Ủy quyền điều hành — ${currentStaffName} (${formatDayVN(todayVN())})`
+          ? `Thông báo nghỉ phép — ${currentStaffName} (${formatDayVN(todayVN())})`
           : `Xin nghỉ phép — ${currentStaffName} (${formatDayVN(todayVN())})`
         : "",
       priority: isLeaveTmpl ? "NORMAL" : "HIGH",
-      visibility: isLeaveTmpl && isExecRequester ? "PRIVATE" : resolveDefaultTemplateVisibility(tmpl),
+      visibility: resolveDefaultTemplateVisibility(tmpl),
       neededByDate: todayVN(),
       totalAmount: 0,
-      summaryReason: isLeaveTmpl && isExecRequester ? "Ủy quyền xử lý công việc trong thời gian vắng mặt / công tác." : "",
+      summaryReason: isLeaveTmpl && isExecRequester ? "Thông báo lịch nghỉ phép & phân công người nhận bàn giao/ủy quyền." : "",
       customerName: "",
       supplierName: "",
       linkedRefCode: "",
@@ -1990,14 +1996,14 @@ export function ProposalsApprovalView({
       lineItems: tmpl.hasLineItems
         ? [{ id: `li-${Date.now()}`, itemName: "", specification: "", quantity: 1, unitPrice: 0, amount: 0 }]
         : [],
-      steps: initialSteps,
+      steps: isLeaveTmpl && isExecRequester ? [] : initialSteps,
       followers: Array.isArray(tmpl.defaultFollowers)
         ? Array.from(new Set(tmpl.defaultFollowers.map((n) => cleanStaffDisplayName(n)).filter(Boolean)))
         : [],
       executorName: initialSteps[initialSteps.length - 1]?.approverName || "",
       attachments: [],
-      sendChatNotify: !(isLeaveTmpl && isExecRequester),
-      sendBellNotify: !(isLeaveTmpl && isExecRequester)
+      sendChatNotify: true,
+      sendBellNotify: true
     });
     setIsFormModalOpen(true);
 
@@ -2430,10 +2436,10 @@ export function ProposalsApprovalView({
       proposalCode: (() => {
         const typed = formState.proposalCode.trim();
         const taken = !existing && typed && proposals.some((p) => String(p.proposalCode || "").trim().toUpperCase() === typed.toUpperCase());
-        return !typed || taken ? generateProposalCode(activeTemplate) : typed;
+        return !typed || taken ? generateProposalCode(activeTemplate, isExecutiveLeave ? "TBNP" : undefined) : typed;
       })(),
       templateId: activeTemplate.id,
-      templateName: isExecutiveLeave ? "Lịch Vắng Mặt & Ủy Quyền Điều Hành (BGĐ)" : activeTemplate.name,
+      templateName: isExecutiveLeave ? "Thông báo Nghỉ phép / Vắng mặt (Ban Giám Đốc)" : activeTemplate.name,
       category: activeTemplate.category,
       title: formState.title.trim(),
       priority: formState.priority,
@@ -2450,7 +2456,7 @@ export function ProposalsApprovalView({
       steps: stepsList,
       currentStepIndex: activeIdx,
       status: finalStatus,
-      visibility: formState.visibility || (isExecutiveLeave ? "PRIVATE" : resolveDefaultTemplateVisibility(activeTemplate)),
+      visibility: formState.visibility || resolveDefaultTemplateVisibility(activeTemplate),
       followers: formState.followers,
       executorName: formState.executorName,
       linkedRefCode: formState.linkedRefCode.trim(),
@@ -3333,7 +3339,9 @@ export function ProposalsApprovalView({
   const isLeaveProposalItem = (p: ProposalItem) =>
     p.templateId === "tmpl_leave_request" ||
     String(p.proposalCode || "").toUpperCase().startsWith("DXNP") ||
-    String(p.templateName || "").toLowerCase().includes("nghỉ phép");
+    String(p.proposalCode || "").toUpperCase().startsWith("TBNP") ||
+    String(p.templateName || "").toLowerCase().includes("nghỉ phép") ||
+    String(p.templateName || "").toLowerCase().includes("vắng mặt");
 
   /** `month` ("YYYY-MM"): với đơn "các ngày cụ thể" chỉ tính các ngày trong tháng đó. */
   const getLeaveDatesAndDays = (p: ProposalItem, month?: string) => {
@@ -4151,7 +4159,7 @@ export function ProposalsApprovalView({
                   className="px-3.5 py-2 rounded-xl text-xs font-extrabold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs cursor-pointer flex items-center gap-1.5"
                 >
                   <Plus className="w-4 h-4" />
-                  <span>{isDirector ? "🏛️ + Báo Vắng Mặt / Ủy Quyền (BGĐ)" : "🏖️ + Tạo Đơn Xin Nghỉ Phép (DXNP)"}</span>
+                  <span>{isDirector ? "📢 + Thông Báo Nghỉ Phép (BGĐ)" : "🏖️ + Tạo Đơn Xin Nghỉ Phép (DXNP)"}</span>
                 </button>
               </div>
             </div>
@@ -4505,9 +4513,16 @@ export function ProposalsApprovalView({
                             )}
                           </td>
                           <td className="py-2.5 px-3">
-                            <span className={`inline-block px-2 py-0.5 rounded-lg text-[10px] font-extrabold border ${statusMeta.badgeCls}`}>
-                              {statusMeta.label}
-                            </span>
+                            {String(p.proposalCode || "").toUpperCase().startsWith("TBNP") ||
+                            isSameWorkspaceDept(p.requesterDept, "Ban Giám Đốc") ? (
+                              <span className="inline-block px-2 py-0.5 rounded-lg text-[10px] font-extrabold border bg-purple-100 text-purple-800 border-purple-300 dark:bg-purple-950/80 dark:text-purple-200 dark:border-purple-700">
+                                📢 Thông báo nghỉ (BGĐ)
+                              </span>
+                            ) : (
+                              <span className={`inline-block px-2 py-0.5 rounded-lg text-[10px] font-extrabold border ${statusMeta.badgeCls}`}>
+                                {statusMeta.label}
+                              </span>
+                            )}
                           </td>
                           <td className="py-2.5 px-3 text-right">
                             <div className="inline-flex items-center gap-1.5">
@@ -4829,215 +4844,248 @@ export function ProposalsApprovalView({
         </div>
       )}
 
-      {/* ==================== MODAL 1: TẠO / CẬP NHẬT TỜ TRÌNH & ĐỀ XUẤT ==================== */}
-      <Modal
-        isOpen={isFormModalOpen}
-        onClose={() => setIsFormModalOpen(false)}
-        title={
-          editingProposalId
-            ? `✏️ Cập nhật & Trình lại Đề xuất [${formState.proposalCode}]`
-            : `📝 Lập Tờ Trình & Đề Xuất Phê Duyệt Mới`
-        }
-        size="4xl"
-      >
-        <div className="space-y-4 max-h-[78vh] overflow-y-auto pr-1">
-          {/* Bước 1: Chọn Biểu mẫu Đề xuất chuẩn */}
-          <div className="p-3.5 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/80 space-y-2">
-            <label className="block text-xs font-extrabold uppercase tracking-wider text-indigo-900 dark:text-indigo-200">
-              1. Chọn Loại Biểu Mẫu Tờ Trình / Đề Xuất Chuẩn:
-            </label>
-            <select
-              value={selectedTemplateId}
-              onChange={(e) => handleSelectTemplateInModal(e.target.value)}
-              disabled={Boolean(editingProposalId)}
-              className="w-full px-3 py-2 rounded-xl text-xs font-bold bg-white dark:bg-slate-900 border border-indigo-300 dark:border-indigo-700 text-slate-900 dark:text-white"
-            >
-              {templates.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.icon} [{PROPOSAL_CATEGORY_META[t.category]?.shortLabel}] {t.name} ({t.codePrefix})
-                </option>
-              ))}
-            </select>
-            <p className="text-[11px] text-slate-600 dark:text-slate-400">
-              💡 {activeTemplate.description}
-            </p>
-          </div>
+      {/* ==================== MODAL 1: TẠO / CẬP NHẬT TỜ TRÌNH & ĐỀ XUẤT (HOẶC THÔNG BÁO NGHỈ PHÉP BGĐ) ==================== */}
+      {(() => {
+        const isLeaveTmplModal = activeTemplate.id === "tmpl_leave_request" || activeTemplate.codePrefix === "DXNP";
+        const modalProxyName = String(formState.formValues?.onBehalfOfName || currentStaffName).trim();
+        const modalProxyDept = String(
+          formState.formValues?.onBehalfOfDept ||
+            (isDirector && isSamePerson(modalProxyName, currentStaffName) ? "Ban Giám Đốc" : userDept)
+        ).trim();
+        const isExecLeaveModal =
+          isLeaveTmplModal &&
+          (isSameWorkspaceDept(modalProxyDept, "Ban Giám Đốc") ||
+            (isDirector && isSamePerson(modalProxyName, currentStaffName)) ||
+            /giám đốc|pgđ|bgđ|chủ tịch/i.test(
+              String(
+                (personnelList || []).find((p: any) => isSamePerson(p.full_name || p.name, modalProxyName))?.position || ""
+              )
+            ));
 
-          {/* Bước 2: Thông tin định danh & Mức độ khẩn cấp */}
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-            <div>
-              <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
-                Số hiệu phiếu
-              </label>
-              <input
-                type="text"
-                value={formState.proposalCode}
-                onChange={(e) => setFormState((prev) => ({ ...prev, proposalCode: e.target.value }))}
-                className="w-full px-3 py-2 rounded-xl text-xs font-mono font-bold border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
-                Mức độ ưu tiên
-              </label>
-              <select
-                value={formState.priority}
-                onChange={(e) => setFormState((prev) => ({ ...prev, priority: e.target.value as any }))}
-                className="w-full px-3 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-              >
-                <option value="NORMAL">🟢 Bình thường</option>
-                <option value="HIGH">🔥 Ưu tiên cao</option>
-                <option value="URGENT">🚨 Khẩn cấp (Cần duyệt ngay)</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
-                Hạn cần phê duyệt xong
-              </label>
-              <DateInputVN
-                value={formState.neededByDate}
-                onChange={(e) => setFormState((prev) => ({ ...prev, neededByDate: e.target.value }))}
-                className="w-full px-3 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-              />
-            </div>
-
-            {activeTemplate.hasAmount && (
-              <div>
-                <label className="block text-[11px] font-bold text-rose-700 dark:text-rose-300 mb-1">
-                  Tổng giá trị / Số tiền (VNĐ)
-                </label>
-                <input
-                  type="number"
-                  value={formState.totalAmount || ""}
-                  onChange={(e) => {
-                    const amt = Number(e.target.value) || 0;
-                    const reqDept = defaultConcreteDeptForScope(selectedDept, userDept);
-                    setFormState((prev) => ({
-                      ...prev,
-                      totalAmount: amt,
-                      steps: editingProposalId ? prev.steps : buildStepsFromTemplate(activeTemplate, reqDept, amt)
-                    }));
-                  }}
-                  placeholder="0"
-                  className="w-full px-3 py-2 rounded-xl text-xs font-black border border-rose-300 dark:border-rose-700 bg-rose-50/50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300"
-                />
-              </div>
-            )}
-          </div>
-
-          {/* Tùy chọn Phạm vi Hiển thị (Bảo mật theo luồng duyệt / Nội bộ phòng ban / Công khai toàn công ty) */}
-          <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <label className="block text-[11px] font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                🔐 Chế độ Hiển thị &amp; Bảo mật của Đề xuất (Ai được phép nhìn thấy tờ trình này?):
-              </label>
-              <span className="text-[11px] text-slate-500">
-                Mặc định chuẩn theo mẫu:{" "}
-                <strong className="text-indigo-600 dark:text-indigo-400">
-                  {PROPOSAL_VISIBILITY_META[resolveDefaultTemplateVisibility(activeTemplate)]?.shortLabel}
-                </strong>
-              </span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {(["PRIVATE", "DEPT", "PUBLIC"] as ProposalVisibility[]).map((visKey) => {
-                const meta = PROPOSAL_VISIBILITY_META[visKey];
-                const isSelected = (formState.visibility || "PRIVATE") === visKey;
-                return (
-                  <button
-                    key={visKey}
-                    type="button"
-                    onClick={() => setFormState((prev) => ({ ...prev, visibility: visKey }))}
-                    className={`text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
-                      isSelected
-                        ? "bg-indigo-50/90 dark:bg-indigo-950/60 border-indigo-500 ring-2 ring-indigo-500/25"
-                        : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-indigo-300"
-                    }`}
+        return (
+          <Modal
+            isOpen={isFormModalOpen}
+            onClose={() => setIsFormModalOpen(false)}
+            title={
+              isExecLeaveModal
+                ? `📢 THÔNG BÁO NGHỈ PHÉP / LỊCH VẮNG MẶT (BAN GIÁM ĐỐC — KHÔNG QUA PHÊ DUYỆT)`
+                : editingProposalId
+                ? `✏️ Cập nhật & Trình lại Đề xuất [${formState.proposalCode}]`
+                : `📝 Lập Tờ Trình & Đề Xuất Phê Duyệt Mới`
+            }
+            size="4xl"
+          >
+            <div className="space-y-4 max-h-[78vh] overflow-y-auto pr-1">
+              {/* Bước 1: Chọn Biểu mẫu Đề xuất chuẩn (Ẩn khi BGĐ thông báo nghỉ phép trực tiếp) */}
+              {!isExecLeaveModal && (
+                <div className="p-3.5 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/80 space-y-2">
+                  <label className="block text-xs font-extrabold uppercase tracking-wider text-indigo-900 dark:text-indigo-200">
+                    1. Chọn Loại Biểu Mẫu Tờ Trình / Đề Xuất Chuẩn:
+                  </label>
+                  <select
+                    value={selectedTemplateId}
+                    onChange={(e) => handleSelectTemplateInModal(e.target.value)}
+                    disabled={Boolean(editingProposalId)}
+                    className="w-full px-3 py-2 rounded-xl text-xs font-bold bg-white dark:bg-slate-900 border border-indigo-300 dark:border-indigo-700 text-slate-900 dark:text-white"
                   >
-                    <div className="flex items-center justify-between gap-1">
-                      <span className="text-xs font-extrabold text-slate-900 dark:text-white">{meta.shortLabel}</span>
-                      {isSelected && (
-                        <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black bg-indigo-600 text-white">
-                          Đang chọn
-                        </span>
-                      )}
+                    {templates.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.icon} [{PROPOSAL_CATEGORY_META[t.category]?.shortLabel}] {t.name} ({t.codePrefix})
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                    💡 {activeTemplate.description}
+                  </p>
+                </div>
+              )}
+
+              {/* Bước 2: Thông tin định danh & Mức độ khẩn cấp */}
+              <div className={`grid grid-cols-1 ${isExecLeaveModal ? "sm:grid-cols-2" : "sm:grid-cols-4"} gap-3`}>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    {isExecLeaveModal ? "Mã Thông báo nghỉ phép (TBNP)" : "Số hiệu phiếu"}
+                  </label>
+                  <input
+                    type="text"
+                    value={formState.proposalCode}
+                    onChange={(e) => setFormState((prev) => ({ ...prev, proposalCode: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-xl text-xs font-mono font-bold border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Mức độ ưu tiên
+                  </label>
+                  <select
+                    value={formState.priority}
+                    onChange={(e) => setFormState((prev) => ({ ...prev, priority: e.target.value as any }))}
+                    className="w-full px-3 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                  >
+                    <option value="NORMAL">🟢 Bình thường</option>
+                    <option value="HIGH">🔥 Ưu tiên cao</option>
+                    <option value="URGENT">{isExecLeaveModal ? "🚨 Quan trọng / Đột xuất" : "🚨 Khẩn cấp (Cần duyệt ngay)"}</option>
+                  </select>
+                </div>
+
+                {!isExecLeaveModal && (
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Hạn cần phê duyệt xong
+                    </label>
+                    <DateInputVN
+                      value={formState.neededByDate}
+                      onChange={(e) => setFormState((prev) => ({ ...prev, neededByDate: e.target.value }))}
+                      className="w-full px-3 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                    />
+                  </div>
+                )}
+
+                {activeTemplate.hasAmount && !isExecLeaveModal && (
+                  <div>
+                    <label className="block text-[11px] font-bold text-rose-700 dark:text-rose-300 mb-1">
+                      Tổng giá trị / Số tiền (VNĐ)
+                    </label>
+                    <input
+                      type="number"
+                      value={formState.totalAmount || ""}
+                      onChange={(e) => {
+                        const amt = Number(e.target.value) || 0;
+                        const reqDept = defaultConcreteDeptForScope(selectedDept, userDept);
+                        setFormState((prev) => ({
+                          ...prev,
+                          totalAmount: amt,
+                          steps: editingProposalId ? prev.steps : buildStepsFromTemplate(activeTemplate, reqDept, amt)
+                        }));
+                      }}
+                      placeholder="0"
+                      className="w-full px-3 py-2 rounded-xl text-xs font-black border border-rose-300 dark:border-rose-700 bg-rose-50/50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Tùy chọn Phạm vi Hiển thị */}
+              <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="block text-[11px] font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                    {isExecLeaveModal
+                      ? "📢 Phạm vi nhận Thông báo nghỉ phép của Ban Giám Đốc:"
+                      : "🔐 Chế độ Hiển thị & Bảo mật của Đề xuất (Ai được phép nhìn thấy tờ trình này?):"}
+                  </label>
+                  <span className="text-[11px] text-slate-500">
+                    Đang chọn:{" "}
+                    <strong className="text-indigo-600 dark:text-indigo-400">
+                      {PROPOSAL_VISIBILITY_META[formState.visibility || resolveDefaultTemplateVisibility(activeTemplate)]?.shortLabel}
+                    </strong>
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {(["PRIVATE", "DEPT", "PUBLIC"] as ProposalVisibility[]).map((visKey) => {
+                    const meta = PROPOSAL_VISIBILITY_META[visKey];
+                    const isSelected = (formState.visibility || "PRIVATE") === visKey;
+                    return (
+                      <button
+                        key={visKey}
+                        type="button"
+                        onClick={() => setFormState((prev) => ({ ...prev, visibility: visKey }))}
+                        className={`text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
+                          isSelected
+                            ? "bg-indigo-50/90 dark:bg-indigo-950/60 border-indigo-500 ring-2 ring-indigo-500/25"
+                            : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-indigo-300"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-xs font-extrabold text-slate-900 dark:text-white">{meta.shortLabel}</span>
+                          {isSelected && (
+                            <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black bg-indigo-600 text-white">
+                              Đang chọn
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 leading-snug">{meta.desc}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Tiêu đề & Liên kết Khách hàng / NCC / Mã đơn */}
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    {isExecLeaveModal ? "Tiêu đề Thông báo nghỉ phép / lịch vắng mặt" : "Tiêu đề Tờ trình / Đề xuất"}{" "}
+                    <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formState.title}
+                    onChange={(e) => setFormState((prev) => ({ ...prev, title: e.target.value }))}
+                    placeholder={
+                      isExecLeaveModal
+                        ? `VD: Thông báo nghỉ phép — ${modalProxyName}...`
+                        : `VD: ${activeTemplate.name} — Phục vụ dự án / khách hàng...`
+                    }
+                    className="w-full px-3 py-2 rounded-xl text-xs font-bold border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                  />
+                </div>
+
+                {!isLeaveTmplModal && (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                        Khách hàng / Bệnh viện liên quan (Nếu có)
+                      </label>
+                      <input
+                        type="text"
+                        list="proposal-customers-datalist"
+                        value={formState.customerName}
+                        onChange={(e) => setFormState((prev) => ({ ...prev, customerName: e.target.value }))}
+                        placeholder="Chọn hoặc nhập tên KH / Bệnh viện..."
+                        className="w-full px-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                      />
+                      <datalist id="proposal-customers-datalist">
+                        {(customerList || []).slice(0, 80).map((c: any, idx: number) => (
+                          <option key={idx} value={c.name || c.customer_name || c} />
+                        ))}
+                      </datalist>
                     </div>
-                    <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 leading-snug">{meta.desc}</p>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
 
-          {/* Tiêu đề & Liên kết Khách hàng / NCC / Mã đơn */}
-          <div className="space-y-3">
-            <div>
-              <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
-                Tiêu đề Tờ trình / Đề xuất <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={formState.title}
-                onChange={(e) => setFormState((prev) => ({ ...prev, title: e.target.value }))}
-                placeholder={`VD: ${activeTemplate.name} — Phục vụ dự án / khách hàng...`}
-                className="w-full px-3 py-2 rounded-xl text-xs font-bold border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-              />
-            </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                        Nhà cung cấp / Đối tác (Nếu có)
+                      </label>
+                      <input
+                        type="text"
+                        list="proposal-suppliers-datalist"
+                        value={formState.supplierName}
+                        onChange={(e) => setFormState((prev) => ({ ...prev, supplierName: e.target.value }))}
+                        placeholder="Chọn hoặc nhập tên Nhà cung cấp..."
+                        className="w-full px-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                      />
+                      <datalist id="proposal-suppliers-datalist">
+                        {(supplierList || []).slice(0, 80).map((s: any, idx: number) => (
+                          <option key={idx} value={s.name || s.supplier_name || s} />
+                        ))}
+                      </datalist>
+                    </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                  Khách hàng / Bệnh viện liên quan (Nếu có)
-                </label>
-                <input
-                  type="text"
-                  list="proposal-customers-datalist"
-                  value={formState.customerName}
-                  onChange={(e) => setFormState((prev) => ({ ...prev, customerName: e.target.value }))}
-                  placeholder="Chọn hoặc nhập tên KH / Bệnh viện..."
-                  className="w-full px-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-                />
-                <datalist id="proposal-customers-datalist">
-                  {(customerList || []).slice(0, 80).map((c: any, idx: number) => (
-                    <option key={idx} value={c.name || c.customer_name || c} />
-                  ))}
-                </datalist>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                        Mã tham chiếu (Số SO / PO / Báo giá / HĐ)
+                      </label>
+                      <input
+                        type="text"
+                        value={formState.linkedRefCode}
+                        onChange={(e) => setFormState((prev) => ({ ...prev, linkedRefCode: e.target.value }))}
+                        placeholder="VD: SO-2026-015 / PO-2026-008"
+                        className="w-full px-3 py-1.5 rounded-xl text-xs font-mono border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
-
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                  Nhà cung cấp / Đối tác (Nếu có)
-                </label>
-                <input
-                  type="text"
-                  list="proposal-suppliers-datalist"
-                  value={formState.supplierName}
-                  onChange={(e) => setFormState((prev) => ({ ...prev, supplierName: e.target.value }))}
-                  placeholder="Chọn hoặc nhập tên Nhà cung cấp..."
-                  className="w-full px-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-                />
-                <datalist id="proposal-suppliers-datalist">
-                  {(supplierList || []).slice(0, 80).map((s: any, idx: number) => (
-                    <option key={idx} value={s.name || s.supplier_name || s} />
-                  ))}
-                </datalist>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                  Mã tham chiếu (Số SO / PO / Báo giá / HĐ)
-                </label>
-                <input
-                  type="text"
-                  value={formState.linkedRefCode}
-                  onChange={(e) => setFormState((prev) => ({ ...prev, linkedRefCode: e.target.value }))}
-                  placeholder="VD: SO-2026-015 / PO-2026-008"
-                  className="w-full px-3 py-1.5 rounded-xl text-xs font-mono border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-                />
-              </div>
-            </div>
-          </div>
 
           {/* Các trường thông tin nghiệp vụ chuyên biệt theo từng Mẫu đề xuất */}
           {activeTemplate.fields.length > 0 && (
@@ -5398,156 +5446,171 @@ export function ProposalsApprovalView({
           {/* Nội dung giải trình & Lý do đề xuất */}
           <div>
             <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
-              Nội dung giải trình chi tiết &amp; Căn cứ đề xuất <span className="text-rose-500">*</span>
+              {isExecLeaveModal
+                ? "Nội dung thông báo nghỉ phép & Bàn giao / Ủy quyền công việc"
+                : "Nội dung giải trình chi tiết & Căn cứ đề xuất"}{" "}
+              <span className="text-rose-500">*</span>
             </label>
             <textarea
               rows={3}
               value={formState.summaryReason}
               onChange={(e) => setFormState((prev) => ({ ...prev, summaryReason: e.target.value }))}
-              placeholder="Trình bày rõ lý do, mục đích, tính cấp thiết và hiệu quả dự kiến để các cấp lãnh đạo đủ cơ sở phê duyệt..."
+              placeholder={
+                isExecLeaveModal
+                  ? "Nhập nội dung thông báo nghỉ phép / vắng mặt và hướng dẫn liên hệ người nhận bàn giao công việc..."
+                  : "Trình bày rõ lý do, mục đích, tính cấp thiết và hiệu quả dự kiến để các cấp lãnh đạo đủ cơ sở phê duyệt..."
+              }
               className="w-full px-3 py-2 rounded-xl text-xs border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
             />
           </div>
 
-          {/* Bước 3: Luồng phê duyệt đa cấp (Cho phép tùy chỉnh người duyệt từng bước) */}
-          <div className="p-3.5 rounded-2xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/80 space-y-2.5">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-extrabold text-amber-900 dark:text-amber-200 uppercase">
-                3. Luồng Phê Duyệt Đa Cấp ({formState.steps.length} bước):
-              </span>
-              <button
-                type="button"
-                onClick={() =>
-                  setFormState((prev) => ({
-                    ...prev,
-                    steps: [
-                      ...prev.steps,
-                      {
-                        stepOrder: prev.steps.length + 1,
-                        stepName: `Bước duyệt ${prev.steps.length + 1}`,
-                        roleType: "DIRECTOR",
-                        dept: "Ban Giám Đốc",
-                        approverName: getSupervisingBodForDept(
-                          defaultConcreteDeptForScope(selectedDept, userDept),
-                          personnelList
-                        ).approverName,
-                        status: "WAITING",
-                        slaHours: 8
-                      }
-                    ]
-                  }))
-                }
-                className="px-2.5 py-1 rounded-lg bg-amber-600 text-white text-[11px] font-bold hover:bg-amber-700 cursor-pointer"
-              >
-                + Thêm cấp duyệt
-              </button>
-            </div>
-
-            <div className="space-y-2">
-              {formState.steps.map((st, idx) => (
-                <div
-                  key={idx}
-                  className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center bg-white dark:bg-slate-900 p-2 rounded-xl border border-amber-200/80 dark:border-slate-800 text-xs"
-                >
-                  <div className="sm:col-span-1 font-black text-amber-700 dark:text-amber-400 text-center">
-                    Bước {idx + 1}
-                  </div>
-                  <div className="sm:col-span-4">
-                    <input
-                      type="text"
-                      value={st.stepName}
-                      onChange={(e) => {
-                        const copy = [...formState.steps];
-                        copy[idx] = { ...copy[idx], stepName: e.target.value };
-                        setFormState((prev) => ({ ...prev, steps: copy }));
-                      }}
-                      className="w-full px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 font-bold bg-transparent"
-                      placeholder="Tên bước duyệt..."
-                    />
-                  </div>
-                  <div className="sm:col-span-3">
-                    <select
-                      value={st.dept}
-                      onChange={(e) => {
-                        const nextDept = e.target.value;
-                        const copy = [...formState.steps];
-                        copy[idx] = {
-                          ...copy[idx],
-                          dept: nextDept,
-                          roleType: inferProposalStepRoleType(
-                            nextDept,
-                            copy[idx].approverName,
-                            copy[idx].stepName,
-                            copy[idx].roleType
-                          )
-                        };
-                        setFormState((prev) => ({ ...prev, steps: copy }));
-                      }}
-                      className="w-full px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
-                    >
-                      {st.dept &&
-                        !departments.some((d) => d.id !== "all" && d.id === st.dept) && (
-                          <option value={st.dept}>{st.dept}</option>
-                        )}
-                      {departments
-                        .filter((d) => d.id !== "all")
-                        .map((d) => (
-                          <option key={d.id} value={d.id}>
-                            {d.name}
-                          </option>
-                        ))}
-                    </select>
-                  </div>
-                  <div className="sm:col-span-3">
-                    <input
-                      type="text"
-                      list="proposal-approvers-datalist"
-                      value={st.approverName}
-                      onChange={(e) => {
-                        const copy = [...formState.steps];
-                        copy[idx] = { ...copy[idx], approverName: e.target.value };
-                        setFormState((prev) => ({ ...prev, steps: copy }));
-                      }}
-                      placeholder="Người phê duyệt..."
-                      className="w-full px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 font-bold text-indigo-700 dark:text-indigo-300 bg-transparent"
-                    />
-                  </div>
-                  <div className="sm:col-span-1 text-right">
-                    {formState.steps.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setFormState((prev) => ({
-                            ...prev,
-                            steps: prev.steps.filter((_, i) => i !== idx)
-                          }))
+          {/* Bước 3: Luồng phê duyệt đa cấp (ẨN HOÀN TOÀN khi Ban Giám Đốc thông báo nghỉ phép vì không có ai duyệt) */}
+          {!isExecLeaveModal && (
+            <div className="p-3.5 rounded-2xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/80 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-extrabold text-amber-900 dark:text-amber-200 uppercase">
+                  3. Luồng Phê Duyệt Đa Cấp ({formState.steps.length} bước):
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setFormState((prev) => ({
+                      ...prev,
+                      steps: [
+                        ...prev.steps,
+                        {
+                          stepOrder: prev.steps.length + 1,
+                          stepName: `Bước duyệt ${prev.steps.length + 1}`,
+                          roleType: "DIRECTOR",
+                          dept: "Ban Giám Đốc",
+                          approverName: getSupervisingBodForDept(
+                            defaultConcreteDeptForScope(selectedDept, userDept),
+                            personnelList
+                          ).approverName,
+                          status: "WAITING",
+                          slaHours: 8
                         }
-                        className="p-1 text-slate-400 hover:text-rose-600 cursor-pointer"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-              <datalist id="proposal-approvers-datalist">
-                {allStaffNames.map((n) => (
-                  <option key={n} value={n} />
-                ))}
-              </datalist>
-            </div>
-          </div>
+                      ]
+                    }))
+                  }
+                  className="px-2.5 py-1 rounded-lg bg-amber-600 text-white text-[11px] font-bold hover:bg-amber-700 cursor-pointer"
+                >
+                  + Thêm cấp duyệt
+                </button>
+              </div>
 
-          {/* Bước 4: Người theo dõi đề xuất (Chỉ xem tiến độ & nhận thông báo — Không có chức năng phê duyệt) */}
+              <div className="space-y-2">
+                {formState.steps.map((st, idx) => (
+                  <div
+                    key={idx}
+                    className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center bg-white dark:bg-slate-900 p-2 rounded-xl border border-amber-200/80 dark:border-slate-800 text-xs"
+                  >
+                    <div className="sm:col-span-1 font-black text-amber-700 dark:text-amber-400 text-center">
+                      Bước {idx + 1}
+                    </div>
+                    <div className="sm:col-span-4">
+                      <input
+                        type="text"
+                        value={st.stepName}
+                        onChange={(e) => {
+                          const copy = [...formState.steps];
+                          copy[idx] = { ...copy[idx], stepName: e.target.value };
+                          setFormState((prev) => ({ ...prev, steps: copy }));
+                        }}
+                        className="w-full px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 font-bold bg-transparent"
+                        placeholder="Tên bước duyệt..."
+                      />
+                    </div>
+                    <div className="sm:col-span-3">
+                      <select
+                        value={st.dept}
+                        onChange={(e) => {
+                          const nextDept = e.target.value;
+                          const copy = [...formState.steps];
+                          copy[idx] = {
+                            ...copy[idx],
+                            dept: nextDept,
+                            roleType: inferProposalStepRoleType(
+                              nextDept,
+                              copy[idx].approverName,
+                              copy[idx].stepName,
+                              copy[idx].roleType
+                            )
+                          };
+                          setFormState((prev) => ({ ...prev, steps: copy }));
+                        }}
+                        className="w-full px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
+                      >
+                        {st.dept &&
+                          !departments.some((d) => d.id !== "all" && d.id === st.dept) && (
+                            <option value={st.dept}>{st.dept}</option>
+                          )}
+                        {departments
+                          .filter((d) => d.id !== "all")
+                          .map((d) => (
+                            <option key={d.id} value={d.id}>
+                              {d.name}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                    <div className="sm:col-span-3">
+                      <input
+                        type="text"
+                        list="proposal-approvers-datalist"
+                        value={st.approverName}
+                        onChange={(e) => {
+                          const copy = [...formState.steps];
+                          copy[idx] = { ...copy[idx], approverName: e.target.value };
+                          setFormState((prev) => ({ ...prev, steps: copy }));
+                        }}
+                        placeholder="Người phê duyệt..."
+                        className="w-full px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 font-bold text-indigo-700 dark:text-indigo-300 bg-transparent"
+                      />
+                    </div>
+                    <div className="sm:col-span-1 text-right">
+                      {formState.steps.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setFormState((prev) => ({
+                              ...prev,
+                              steps: prev.steps.filter((_, i) => i !== idx)
+                            }))
+                          }
+                          className="p-1 text-slate-400 hover:text-rose-600 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                <datalist id="proposal-approvers-datalist">
+                  {allStaffNames.map((n) => (
+                    <option key={n} value={n} />
+                  ))}
+                </datalist>
+              </div>
+            </div>
+          )}
+
+          {/* Bước 4: Người nhận thông báo / theo dõi */}
           <div className="p-3.5 rounded-2xl bg-sky-50/70 dark:bg-sky-950/25 border border-sky-200 dark:border-sky-800/80 space-y-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <span className="text-xs font-extrabold text-sky-900 dark:text-sky-200 uppercase flex items-center gap-1.5">
                   <Eye className="w-3.5 h-3.5 text-sky-600" />
-                  <span>4. Người Theo Dõi Đề Xuất — Chỉ Theo Dõi, Không Phê Duyệt ({formState.followers.length} người):</span>
+                  <span>
+                    {isExecLeaveModal
+                      ? `Người Nhận Thông Báo Trực Tiếp (CC thêm cho Trưởng phòng / HCNS) (${formState.followers.length} người):`
+                      : `4. Người Theo Dõi Đề Xuất — Chỉ Theo Dõi, Không Phê Duyệt (${formState.followers.length} người):`}
+                  </span>
                 </span>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                  Người theo dõi được xem nội dung, nhận thông báo khi tờ trình qua từng bước và tham gia thảo luận, nhưng <strong>không nằm trong luồng ký duyệt và không có nút Phê duyệt</strong>.
+                  {isExecLeaveModal
+                    ? "Chọn thêm các Trưởng bộ phận, Hành chính – Nhân sự hoặc cá nhân liên quan để gửi trực tiếp thông báo nghỉ phép & người nhận bàn giao."
+                    : "Người theo dõi được xem nội dung, nhận thông báo khi tờ trình qua từng bước và tham gia thảo luận, nhưng không nằm trong luồng ký duyệt và không có nút Phê duyệt."}
                 </p>
               </div>
 
@@ -5564,7 +5627,7 @@ export function ProposalsApprovalView({
                   }}
                   className="px-3 py-1.5 rounded-xl text-xs font-bold border border-sky-300 dark:border-sky-700 bg-white dark:bg-slate-900 text-sky-800 dark:text-sky-200 cursor-pointer"
                 >
-                  <option value="">+ Chọn thêm Người theo dõi (Chỉ xem)...</option>
+                  <option value="">+ Chọn thêm Người nhận thông báo...</option>
                   {allStaffNames
                     .filter((n) => !formState.followers.some((f) => isSamePerson(f, n)))
                     .map((n) => (
@@ -5590,7 +5653,7 @@ export function ProposalsApprovalView({
                     <Eye className="w-3 h-3 text-sky-600 shrink-0" />
                     <span>{fName}</span>
                     <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300">
-                      Chỉ theo dõi
+                      Nhận thông báo
                     </span>
                     <button
                       type="button"
@@ -5612,14 +5675,16 @@ export function ProposalsApprovalView({
           </div>
 
           {/* Tệp đính kèm (Hóa đơn, Báo giá, Hợp đồng, Biên bản) */}
-          <div className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800">
-            <AttachmentPicker
-              files={formState.attachments}
-              onChange={(files) => setFormState((prev) => ({ ...prev, attachments: files }))}
-              label="Chứng từ, Báo giá, Hóa đơn hoặc Văn bản đính kèm"
-              hint="Hỗ trợ đính kèm PDF, Word, Excel, Ảnh chụp hóa đơn/biên bản..."
-            />
-          </div>
+          {!isExecLeaveModal && (
+            <div className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800">
+              <AttachmentPicker
+                files={formState.attachments}
+                onChange={(files) => setFormState((prev) => ({ ...prev, attachments: files }))}
+                label="Chứng từ, Báo giá, Hóa đơn hoặc Văn bản đính kèm"
+                hint="Hỗ trợ đính kèm PDF, Word, Excel, Ảnh chụp hóa đơn/biên bản..."
+              />
+            </div>
+          )}
 
           {/* Tùy chọn gửi thông báo */}
           <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-200 dark:border-slate-800">
@@ -5631,7 +5696,7 @@ export function ProposalsApprovalView({
                   onChange={(e) => setFormState((prev) => ({ ...prev, sendBellNotify: e.target.checked }))}
                   className="rounded accent-indigo-600"
                 />
-                <span>🔔 Báo Chuông cho người duyệt</span>
+                <span>{isExecLeaveModal ? "🔔 Báo Chuông cho người nhận bàn giao & người liên quan" : "🔔 Báo Chuông cho người duyệt"}</span>
               </label>
               <label className="flex items-center gap-1.5 font-semibold text-slate-700 dark:text-slate-300 cursor-pointer">
                 <input
@@ -5652,25 +5717,37 @@ export function ProposalsApprovalView({
               >
                 Đóng
               </button>
-              <button
-                type="button"
-                onClick={() => handleSaveProposal("DRAFT")}
-                className="px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-300 cursor-pointer"
-              >
-                📝 Lưu bản nháp
-              </button>
+              {!isExecLeaveModal && (
+                <button
+                  type="button"
+                  onClick={() => handleSaveProposal("DRAFT")}
+                  className="px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-300 cursor-pointer"
+                >
+                  📝 Lưu bản nháp
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => handleSaveProposal("PENDING")}
-                className="px-4 py-2 rounded-xl text-xs font-extrabold bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm cursor-pointer flex items-center gap-1.5"
+                className={`px-4 py-2 rounded-xl text-xs font-extrabold text-white shadow-sm cursor-pointer flex items-center gap-1.5 ${
+                  isExecLeaveModal ? "bg-teal-600 hover:bg-teal-700" : "bg-indigo-600 hover:bg-indigo-700"
+                }`}
               >
                 <Send className="w-3.5 h-3.5" />
-                <span>{editingProposalId ? "🚀 Gửi Duyệt Lại" : "🚀 Trình Ký & Phê Duyệt Ngay"}</span>
+                <span>
+                  {isExecLeaveModal
+                    ? "📢 Phát Thông Báo Nghỉ Phép Ngay (Không Qua Duyệt)"
+                    : editingProposalId
+                    ? "🚀 Gửi Duyệt Lại"
+                    : "🚀 Trình Ký & Phê Duyệt Ngay"}
+                </span>
               </button>
             </div>
           </div>
         </div>
       </Modal>
+        );
+      })()}
 
       {/* ==================== MODAL 2: CHI TIẾT TỜ TRÌNH & XỬ LÝ PHÊ DUYỆT ĐA CẤP ==================== */}
       <Modal
