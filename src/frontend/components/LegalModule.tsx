@@ -36,6 +36,7 @@ import {
   Maximize2
 } from "lucide-react";
 import { Modal } from "@/frontend/components/Modal";
+import { DirectFileViewer } from "@/frontend/components/DirectFileViewer";
 import { useAuth } from "@/frontend/contexts/AuthContext";
 import { useCompanyConfig } from "@/frontend/utils/companyConfig";
 import { uploadSingleFileSmart } from "@/frontend/components/AttachmentPicker";
@@ -3228,79 +3229,17 @@ export const LegalModule: React.FC = () => {
                       );
                     }
 
-                    // If user uploaded a real file with dataUrl (PDF iframe or image)
-                    if (currentFile.dataUrl) {
-                      if (currentFile.type.includes("pdf")) {
-                        return (
-                          <div className="space-y-3">
-                            <div className="flex items-center justify-between text-xs text-slate-400 bg-white/5 p-2.5 rounded-xl border border-white/10">
-                              <span className="font-bold text-white flex items-center gap-1.5">
-                                <FileText className="w-4 h-4 text-rose-400" />
-                                {currentFile.name} ({currentFile.size})
-                              </span>
-                              <span className="text-emerald-400 font-semibold">
-                                ✓ Đang đọc trực tiếp qua Web PDF Engine (Không cần tải về)
-                              </span>
-                            </div>
-                            <iframe
-                              src={currentFile.dataUrl}
-                              className="w-full h-[68vh] rounded-xl border border-slate-700 bg-white shadow-xl"
-                              title={currentFile.name}
-                            />
-                          </div>
-                        );
-                      } else if (currentFile.type.includes("image") || /^data:image\//.test(currentFile.dataUrl)) {
-                        return (
-                          <div className="space-y-3 text-center">
-                            <div className="text-xs text-slate-400 bg-white/5 p-2 rounded-xl border border-white/10 text-left">
-                              <span className="font-bold text-white">{currentFile.name}</span> ({currentFile.size})
-                            </div>
-                            <div className="p-4 bg-white/5 rounded-2xl flex items-center justify-center">
-                              <img
-                                src={currentFile.dataUrl}
-                                alt={currentFile.name}
-                                className="max-h-[65vh] object-contain rounded-xl shadow-2xl"
-                              />
-                            </div>
-                          </div>
-                        );
-                      }
-                    }
-
-                    // File thật nhưng trình duyệt không xem trực tiếp được (Word, Excel, ZIP...): mở / tải đúng file đã đính kèm
+                    // If user uploaded a real file with dataUrl (PDF, Image, Word .DOCX/.DOC, Excel .XLSX/.CSV, Text)
                     if (currentFile.dataUrl) {
                       return (
-                        <div className="max-w-xl mx-auto text-center space-y-4 py-10">
-                          <FileText className="w-12 h-12 text-sky-400 mx-auto" />
-                          <div>
-                            <div className="font-bold text-white text-sm break-all">{currentFile.name}</div>
-                            <div className="text-[11px] text-slate-400 mt-1">
-                              {currentFile.size} • Tải lên: {currentFile.uploadedAt}
-                            </div>
-                          </div>
-                          <div className="text-xs text-slate-400">
-                            Định dạng này không xem trực tiếp trên trình duyệt được. Tải về để mở bằng Word / Excel.
-                          </div>
-                          <div className="flex items-center justify-center gap-2">
-                            <a
-                              href={currentFile.dataUrl}
-                              download={currentFile.name}
-                              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold"
-                            >
-                              <Download className="w-4 h-4" /> Tải file về
-                            </a>
-                            {!currentFile.dataUrl.startsWith("data:") && (
-                              <a
-                                href={currentFile.dataUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold"
-                              >
-                                <Eye className="w-4 h-4" /> Mở ở tab mới
-                              </a>
-                            )}
-                          </div>
-                        </div>
+                        <DirectFileViewer
+                          url={currentFile.dataUrl}
+                          name={currentFile.name}
+                          mimeType={currentFile.type}
+                          sizeLabel={currentFile.size}
+                          uploadedAtLabel={currentFile.uploadedAt}
+                          zoom={viewerZoom}
+                        />
                       );
                     }
 

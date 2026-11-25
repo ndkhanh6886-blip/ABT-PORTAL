@@ -82,6 +82,7 @@ import {
   Code2
 } from "lucide-react";
 import { Modal } from "@/frontend/components/Modal";
+import { DirectFileViewer } from "@/frontend/components/DirectFileViewer";
 import { useNotification } from "@/frontend/contexts/NotificationContext";
 import { useAuth } from "@/frontend/contexts/AuthContext";
 import { cn } from "@/backend/services/utils";
@@ -23475,20 +23476,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     className="max-w-full max-h-[78vh] object-contain rounded-xl shadow-xl"
                   />
                 ) : (
-                  <div className="text-center p-8 space-y-3 bg-white dark:bg-slate-900 rounded-2xl border border-slate-700 max-w-md">
-                    <FileText className="w-12 h-12 text-indigo-400 mx-auto" />
-                    <div className="font-bold text-white text-sm">{activeName}</div>
-                    <p className="text-xs text-slate-400">
-                      Tệp tin đã được số hóa và lưu trữ an toàn trên máy chủ ABT Portal.
-                    </p>
-                    <a
-                      href={activeUrl}
-                      download={activeName}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold"
-                    >
-                      <Download className="w-4 h-4" /> Tải Xuống Tệp
-                    </a>
-                  </div>
+                  <DirectFileViewer
+                    url={activeUrl}
+                    name={activeName}
+                    mimeType={previewDoc?.type}
+                  />
                 )}
               </div>
             </div>
