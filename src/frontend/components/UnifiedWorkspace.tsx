@@ -3590,7 +3590,7 @@ export const UnifiedWorkspace: React.FC = () => {
   };
 
   const [selectedDailyDay, setSelectedDailyDay] = useState<string>(() => getInitialDailyDay(todayVN()));
-  const [selectedDailyStaff, setSelectedDailyStaff] = useState<string>("");
+  const [selectedDailyStaff, setSelectedDailyStaff] = useState<string>("all");
   const [dailySourceFilter, setDailySourceFilter] = useState<string>("all");
   const [dailyLogStaffScope, setDailyLogStaffScope] = useState<"selected_staff" | "dept">("dept");
   const [dailyLogTimeScope, setDailyLogTimeScope] = useState<"week" | "day" | "all">("week");
@@ -3641,6 +3641,7 @@ export const UnifiedWorkspace: React.FC = () => {
   const [dailyPlanItems, setDailyPlanItems] = useState<Array<{
     id: string | number;
     title: string;
+    actor_name?: string;
     source: "schedule" | "task" | "workflow" | "extra" | "hub";
     origin_tab?: "planner_schedule" | "planner_thematic" | "workflows" | "tasks" | "extra" | "hub_technical";
     origin_badge?: string;
@@ -4151,18 +4152,22 @@ export const UnifiedWorkspace: React.FC = () => {
         setSelectedAssignee("all");
       }
       if (
-        !selectedDailyStaff ||
+        selectedDailyStaff &&
+        selectedDailyStaff !== "all" &&
         !departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, selectedDailyStaff))
       ) {
-        const firstStaff = departmentStaffList[0]?.full_name || "";
-        setSelectedDailyStaff(firstStaff);
+        setSelectedDailyStaff("all");
+        setDailyLogStaffScope("dept");
       }
     }
   }, [filterDept, departmentStaffList, rolePerspective, selectedAssignee, selectedDailyStaff]);
 
-  // Đồng bộ khi người dùng chọn 1 nhân sự cụ thể trên thanh lọc chung
+  // Đồng bộ khi người dùng chọn 1 nhân sự cụ thể hoặc "Tất cả" trên thanh lọc chung
   useEffect(() => {
-    if (selectedAssignee && selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__") {
+    if (selectedAssignee === "all") {
+      setSelectedDailyStaff("all");
+      setDailyLogStaffScope("dept");
+    } else if (selectedAssignee && selectedAssignee !== "__UNASSIGNED__") {
       setSelectedDailyStaff(selectedAssignee);
     }
   }, [selectedAssignee]);
@@ -4955,7 +4960,7 @@ export const UnifiedWorkspace: React.FC = () => {
           const matchStaffDept = departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, emp));
           if (!matchLogDept && !matchStaffDept) return false;
         }
-        if (dailyLogStaffScope === "selected_staff" && selectedDailyStaff) {
+        if (dailyLogStaffScope === "selected_staff" && selectedDailyStaff && selectedDailyStaff !== "all") {
           if (!emp || !sameStaffName(emp, selectedDailyStaff)) return false;
         }
       }
@@ -7660,17 +7665,18 @@ export const UnifiedWorkspace: React.FC = () => {
     }
   };
 
-  // Nhân sự đang được chọn để xem/báo cáo tại Tab Nhật Ký Daily (luôn khớp với Phòng ban đang lọc)
+  // Nhân sự đang được chọn để xem/báo cáo tại Tab Nhật Ký Daily ("" nghĩa là xem Tất cả Toàn công ty / Toàn phòng ban)
   const activeDailyStaff = useMemo(() => {
     if (rolePerspective === "staff") return currentStaffName;
+    if (!selectedDailyStaff || selectedDailyStaff === "all") return "";
     const activeDept = selectedDept !== "all" ? selectedDept : (rolePerspective === "manager" ? managerDept : "all");
     if (activeDept !== "all") {
-      if (selectedDailyStaff && departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, selectedDailyStaff))) {
+      if (departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, selectedDailyStaff))) {
         return selectedDailyStaff;
       }
-      return departmentStaffList[0]?.full_name || "";
+      return "";
     }
-    return selectedDailyStaff || currentStaffName;
+    return selectedDailyStaff;
   }, [rolePerspective, currentStaffName, selectedDept, managerDept, selectedDailyStaff, departmentStaffList]);
 
   // Hàm phân tích nguồn gốc công việc từ Tab nào (hỗ trợ cả dữ liệu trực tiếp lẫn nhật ký đã lưu trong DB)
@@ -7810,7 +7816,12 @@ export const UnifiedWorkspace: React.FC = () => {
         const targetLower = targetStaff.toLowerCase().trim();
         return Boolean(actorLower && targetLower && (actorLower.includes(targetLower) || targetLower.includes(actorLower)));
       }
-      if (targetDept && !isSameWorkspaceDept(s.category, targetDept)) return false;
+      if (targetDept) {
+        const matchCat = isSameWorkspaceDept(s.category, targetDept);
+        const actors = String(s.actor || "").split(",").map((a: string) => a.trim()).filter(Boolean);
+        const matchStaff = actors.some((a: string) => departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, a)));
+        return matchCat || matchStaff;
+      }
       return true;
     });
 
@@ -7820,6 +7831,7 @@ export const UnifiedWorkspace: React.FC = () => {
       time_slot: s.time || "",
       task_code: s.linked_task_code || "",
       title: s.title || `Công tác ${s.category || ""}`,
+      actor_name: String(s.actor || "").trim(),
       source: "schedule" as const,
       origin_tab: "planner_schedule" as const,
       origin_badge: "📅 Nguồn: Tab Lịch & Kế Hoạch (Lịch tuần)",
@@ -7836,12 +7848,12 @@ export const UnifiedWorkspace: React.FC = () => {
       proportionality: "balanced" as const
     }));
 
-    // Kéo các Công việc đang thực hiện / đến hạn từ Bảng Công Việc (company_tasks) của đúng nhân sự đang chọn
+    // Kéo các Công việc đang thực hiện / đến hạn từ Bảng Công Việc (company_tasks) của nhân sự hoặc toàn phòng ban / toàn công ty
     const matchingTasks = tasks.filter((t: any) => {
       const cleanAssignee = cleanWorkspaceAssignee(t.assignee_name);
       if (targetStaff) {
         if (!cleanAssignee || !taskHasAssignee(t.assignee_name, targetStaff)) return false;
-      } else if (targetDept && !isSameWorkspaceDept(t.department, targetDept)) {
+      } else if (targetDept && !taskInvolvesDept(t, targetDept)) {
         return false;
       }
       const dl = t.deadline ? String(t.deadline).slice(0, 10) : "";
@@ -7897,6 +7909,7 @@ export const UnifiedWorkspace: React.FC = () => {
         workflow_code,
         project_code,
         title: `${t.task_code ? `[${t.task_code}] ` : ""}${t.title || ""}`,
+        actor_name: cleanWorkspaceAssignee(t.assignee_name) || "",
         source: "task" as const,
         origin_tab,
         origin_badge,
@@ -7911,7 +7924,7 @@ export const UnifiedWorkspace: React.FC = () => {
       };
     });
 
-    // Kéo thêm các Phiếu phối hợp liên phòng (Tab Quy Trình Phối Hợp) đang giao cho nhân sự này (nếu chưa có trong danh sách task)
+    // Kéo thêm các Phiếu phối hợp liên phòng (Tab Quy Trình Phối Hợp) đang giao cho nhân sự / phòng ban / toàn công ty
     const representedWfCodes = new Set(
       itemsFromTasks.map(it => String(it.workflow_code || "").toUpperCase()).filter(Boolean)
     );
@@ -7936,20 +7949,22 @@ export const UnifiedWorkspace: React.FC = () => {
         );
       }
       if (targetDept) {
-        return isSameWorkspaceDept(w.target_dept, targetDept) || (curStep && isSameWorkspaceDept(curStep.dept, targetDept));
+        return workflowInvolvesDept(w, targetDept);
       }
-      return false;
+      return true;
     });
 
     const itemsFromWorkflows = matchingWorkflows.map((w: any) => {
       const steps = Array.isArray(w.steps) ? w.steps : [];
       const curIdx = typeof w.current_step_index === "number" ? w.current_step_index : 0;
       const curStep = steps[curIdx];
+      const wfActor = cleanWorkspaceAssignee(curStep?.assignee_name || w.assignee_name || w.requester_name || "");
       return {
         id: `wf-${w.id}`,
         workflow_id: w.id,
         workflow_code: w.workflow_code,
         title: `[${w.workflow_code}] ${w.title}${curStep?.title ? ` — Bước ${curIdx + 1}: ${curStep.title}` : ""}`,
+        actor_name: wfActor,
         source: "workflow" as const,
         origin_tab: "workflows" as const,
         origin_badge: "🔄 Nguồn: Tab Quy Trình Phối Hợp",
@@ -7983,15 +7998,20 @@ export const UnifiedWorkspace: React.FC = () => {
         return h.assignees.some((a) => sameStaffName(a, targetStaff));
       }
       if (targetDept) {
-        return isSameWorkspaceDept(h.dept, targetDept) || h.involvedDepts.some((d) => isSameWorkspaceDept(d, targetDept));
+        return (
+          isSameWorkspaceDept(h.dept, targetDept) ||
+          h.involvedDepts.some((d) => isSameWorkspaceDept(d, targetDept)) ||
+          h.assignees.some((a) => departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, a)))
+        );
       }
-      return false;
+      return true;
     });
 
     const itemsFromHub = matchingHubItems.slice(0, 20).map((h) => ({
       id: `hub-${h.uid}`,
       task_code: h.code,
       title: `[${h.code}] ${h.title}`,
+      actor_name: Array.isArray(h.assignees) ? h.assignees.filter(Boolean).join(", ") : "",
       source: "hub" as const,
       origin_tab: "hub_technical" as const,
       origin_badge: `${h.typeLabel} · Phân hệ ${h.dept}`,
@@ -8007,7 +8027,7 @@ export const UnifiedWorkspace: React.FC = () => {
     }));
 
     setDailyPlanItems([...itemsFromSchedule, ...itemsFromTasks, ...itemsFromWorkflows, ...itemsFromHub]);
-  }, [selectedDailyDay, activeDailyStaff, weeklySchedule, tasks, workflows, labProjects, hubWorkItems, viewedWeek, rolePerspective, managerDept, selectedDept, resolveUserIdForStaffName]);
+  }, [selectedDailyDay, activeDailyStaff, weeklySchedule, tasks, workflows, labProjects, hubWorkItems, viewedWeek, rolePerspective, managerDept, selectedDept, departmentStaffList, taskHasAssignee, taskInvolvesDept, workflowInvolvesDept, resolveUserIdForStaffName]);
 
   // Dựng lại danh sách Daily chỉ khi tab Nhật ký Daily đang mở. Tab đóng: ghi nhớ là cần dựng lại và dựng khi mở tab,
   // nên đổi bộ lọc Khối / phòng ban ở tab khác không còn tính phần này; chuyển tab qua lại mà nguồn không đổi thì giữ
@@ -13952,19 +13972,25 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     // Count planned items for this exact date in the current viewed week + active tasks
                     const schedCount = weeklySchedule.filter(s => {
                       if (!scheduleOnDay(s, dayObj)) return false;
-                      if (staff && s.actor) {
+                      if (staff) {
+                        if (!s.actor) return false;
                         const actors = String(s.actor || "").split(",").map((a: string) => a.trim()).filter(Boolean);
                         if (actors.some((a: string) => sameStaffName(a, staff))) return true;
                         return s.actor.toLowerCase().includes(staff.toLowerCase()) || staff.toLowerCase().includes(s.actor.toLowerCase());
                       }
-                      if (activeDept && !isSameWorkspaceDept(s.category, activeDept)) return false;
+                      if (activeDept) {
+                        const matchCat = isSameWorkspaceDept(s.category, activeDept);
+                        const actors = String(s.actor || "").split(",").map((a: string) => a.trim()).filter(Boolean);
+                        const matchStaff = actors.some((a: string) => departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, a)));
+                        return matchCat || matchStaff;
+                      }
                       return true;
                     }).length;
                     const taskCountForDay = tasks.filter((t: any) => {
                       const cleanA = cleanWorkspaceAssignee(t.assignee_name);
                       if (staff) {
-                        if (!cleanA || !sameStaffName(cleanA, staff)) return false;
-                      } else if (activeDept && !isSameWorkspaceDept(t.department, activeDept)) {
+                        if (!cleanA || !taskHasAssignee(t.assignee_name, staff)) return false;
+                      } else if (activeDept && !taskInvolvesDept(t, activeDept)) {
                         return false;
                       }
                       const dl = t.deadline ? String(t.deadline).slice(0, 10) : "";
@@ -14004,24 +14030,54 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 </div>
               </div>
 
-              {/* Staff / Department Context (Chỉ hiển thị đúng nhân sự thuộc Phòng ban đang chọn) */}
-              <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto shrink-0">
+              {/* Staff / Department Context (Hỗ trợ xem Tất cả Toàn công ty / Toàn phòng ban hoặc lọc 1 nhân sự cụ thể) */}
+              <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto shrink-0">
                 {rolePerspective === "director" || rolePerspective === "manager" ? (
-                  <div className="flex items-center gap-2 min-w-[290px]">
+                  <div className="flex flex-wrap items-center gap-2 min-w-[290px]">
                     <span className="text-xs text-slate-500 font-semibold shrink-0">
                       Nhân sự ({formatWorkspaceScopeLabel(effectiveSelectedDept)}):
                     </span>
-                    <SearchablePersonnelSelect
-                      value={activeDailyStaff}
-                      onChange={(val) => setSelectedDailyStaff(val)}
-                      personnelList={departmentStaffList}
-                      filterDepartment={effectiveSelectedDept}
-                      placeholder={
-                        effectiveSelectedDept !== "all"
-                          ? `Chọn nhân sự thuộc ${formatWorkspaceScopeLabel(effectiveSelectedDept)} (${departmentStaffList.length} người)...`
-                          : "Chọn nhân sự để theo dõi..."
-                      }
-                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedDailyStaff("all");
+                        setDailyLogStaffScope("dept");
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all shrink-0 cursor-pointer border ${
+                        !activeDailyStaff
+                          ? "bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-600/25"
+                          : "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100"
+                      }`}
+                      title="Xem tổng hợp toàn bộ công việc và nhật ký của tất cả nhân sự thuộc phạm vi đang chọn"
+                    >
+                      <Building2 className="w-3.5 h-3.5" />
+                      <span>
+                        {effectiveSelectedDept !== "all"
+                          ? `Tất cả ${formatWorkspaceScopeLabel(effectiveSelectedDept)} (${departmentStaffList.length})`
+                          : `Tất cả Toàn công ty (${departmentStaffList.length})`}
+                      </span>
+                    </button>
+                    <div className="min-w-[240px]">
+                      <SearchablePersonnelSelect
+                        value={activeDailyStaff}
+                        onChange={(val) => {
+                          if (!val) {
+                            setSelectedDailyStaff("all");
+                            setDailyLogStaffScope("dept");
+                          } else {
+                            setSelectedDailyStaff(val);
+                            setDailyLogStaffScope("selected_staff");
+                          }
+                        }}
+                        personnelList={departmentStaffList}
+                        filterDepartment={effectiveSelectedDept}
+                        placeholder={
+                          effectiveSelectedDept !== "all"
+                            ? `Đang xem toàn bộ ${formatWorkspaceScopeLabel(effectiveSelectedDept)} • Bấm để lọc 1 người...`
+                            : `Đang xem Toàn công ty (${departmentStaffList.length} người) • Bấm để lọc 1 người...`
+                        }
+                      />
+                    </div>
                   </div>
                 ) : (
                   <div className="px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-xs font-bold flex items-center gap-2">
@@ -14038,21 +14094,38 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 <span className="text-[11px] font-bold text-slate-500 shrink-0 mr-1 flex items-center gap-1">
                   <Users className="w-3.5 h-3.5 text-indigo-500" />
                   <span>
-                    Nhân sự {effectiveSelectedDept !== "all" ? formatWorkspaceScopeLabel(effectiveSelectedDept, true) : "toàn công ty"} ({departmentStaffList.length}):
+                    Xem theo nhân sự {effectiveSelectedDept !== "all" ? formatWorkspaceScopeLabel(effectiveSelectedDept, true) : "toàn công ty"}:
                   </span>
                 </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedDailyStaff("all");
+                    setDailyLogStaffScope("dept");
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs transition-all shrink-0 cursor-pointer border ${
+                    !activeDailyStaff
+                      ? "bg-indigo-600 text-white border-indigo-600 font-extrabold shadow-xs"
+                      : "bg-indigo-50/70 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 font-bold"
+                  }`}
+                >
+                  <span>🏢 Tất cả ({departmentStaffList.length})</span>
+                </button>
                 {departmentStaffList.map((p: any) => {
                   const name = p.full_name || p;
-                  const isSelected = sameStaffName(activeDailyStaff, name);
+                  const isSelected = Boolean(activeDailyStaff) && sameStaffName(activeDailyStaff, name);
                   const activeTaskCount = tasks.filter((t: any) => {
                     const cleanA = cleanWorkspaceAssignee(t.assignee_name);
-                    return cleanA && sameStaffName(cleanA, name) && t.status !== "DONE";
+                    return cleanA && taskHasAssignee(t.assignee_name, name) && t.status !== "DONE";
                   }).length;
                   return (
                     <button
                       key={p.id || p.employee_code || name}
                       type="button"
-                      onClick={() => setSelectedDailyStaff(name)}
+                      onClick={() => {
+                        setSelectedDailyStaff(name);
+                        setDailyLogStaffScope("selected_staff");
+                      }}
                       className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs transition-all shrink-0 cursor-pointer border ${
                         isSelected
                           ? "bg-indigo-600 text-white border-indigo-600 font-bold shadow-xs"
@@ -14087,9 +14160,13 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     <div>
                       <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2 flex-wrap">
                         <span>Công Việc Trong Ngày • {selectedDailyDay} ({selectedDailyDayObj.label}) • Tuần {viewedWeek.weekNo}</span>
-                        {activeDailyStaff && (
+                        {activeDailyStaff ? (
                           <span className="px-2 py-0.5 rounded-lg text-xs font-extrabold bg-indigo-50 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
                             👤 {activeDailyStaff}
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-0.5 rounded-lg text-xs font-extrabold bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                            🏢 {effectiveSelectedDept !== "all" ? `Toàn bộ ${formatWorkspaceScopeLabel(effectiveSelectedDept)} (${departmentStaffList.length} nhân sự)` : `Toàn công ty (${departmentStaffList.length} nhân sự)`}
                           </span>
                         )}
                       </h3>
@@ -14181,14 +14258,50 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                 : "bg-rose-50/40 dark:bg-rose-950/20 border-rose-200 dark:border-rose-800/60"
                             }`}
                           >
-                            {/* Top row: Source Tab Banner + Status switcher + Title + Category + Remove */}
-                            <div className="flex items-start justify-between gap-2 flex-wrap">
-                              <div className="flex-1 min-w-[220px]">
-                                {/* Crystal-clear Source Tab Identification Row */}
-                                <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
-                                  <span className="font-mono text-[11px] font-extrabold text-slate-400">
-                                    #{idx + 1}
-                                  </span>
+                            {/* Top row: Prominent Work Content Hero Callout + Source Metadata + Status switcher */}
+                            <div className="flex items-start justify-between gap-2.5 flex-wrap">
+                              <div className="flex-1 min-w-[240px] space-y-2">
+                                {/* HERO WORK CONTENT / TITLE BOX — Nổi bật ngay lập tức khi nhìn vào thẻ */}
+                                {item.source === "extra" ? (
+                                  <div className="flex items-center gap-2 bg-amber-50/90 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 border-l-4 border-l-amber-500 px-3 py-2 rounded-xl shadow-2xs">
+                                    <span className="px-1.5 py-0.5 rounded-md bg-amber-600 text-white font-mono text-[11px] font-black shrink-0">
+                                      #{idx + 1}
+                                    </span>
+                                    <input
+                                      type="text"
+                                      value={item.title}
+                                      onChange={(e) => updateDailyPlanItem(item.id, "title", e.target.value)}
+                                      placeholder="Nhập tên công việc phát sinh..."
+                                      className="w-full px-2.5 py-1 text-sm font-extrabold rounded-lg border border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-900 text-slate-950 dark:text-white"
+                                    />
+                                  </div>
+                                ) : (
+                                  <div className="bg-gradient-to-r from-indigo-50/95 via-white to-slate-50 dark:from-indigo-950/80 dark:via-slate-900 dark:to-slate-900 border border-indigo-200/90 dark:border-indigo-800/80 border-l-4 border-l-indigo-600 px-3.5 py-2.5 rounded-xl shadow-2xs">
+                                    <div className="flex items-start justify-between gap-2 flex-wrap">
+                                      <div className="flex items-start gap-2 flex-1 min-w-[180px]">
+                                        <span className="px-1.5 py-0.5 rounded-md bg-indigo-600 text-white font-mono text-[11px] font-black shrink-0 mt-0.5">
+                                          #{idx + 1}
+                                        </span>
+                                        <div className="space-y-0.5 flex-1">
+                                          <div className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+                                            📌 Nội dung công việc
+                                          </div>
+                                          <div className="font-black text-sm sm:text-[15px] text-slate-950 dark:text-white leading-snug">
+                                            {item.title}
+                                          </div>
+                                        </div>
+                                      </div>
+                                      {(item.actor_name || activeDailyStaff) && (
+                                        <span className="px-2.5 py-1 rounded-lg text-[11px] font-extrabold bg-indigo-100 dark:bg-indigo-900/70 text-indigo-800 dark:text-indigo-200 border border-indigo-300 dark:border-indigo-700 shrink-0">
+                                          👤 {item.actor_name || activeDailyStaff}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Secondary Metadata Row: Source Tab, Time/Code, Dept, Location, Action link */}
+                                <div className="flex items-center gap-1.5 flex-wrap pl-1">
                                   <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold ${originMeta.badgeClass}`}>
                                     {originMeta.badgeLabel}
                                   </span>
@@ -14218,19 +14331,6 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                     </button>
                                   )}
                                 </div>
-                                {item.source === "extra" ? (
-                                  <input
-                                    type="text"
-                                    value={item.title}
-                                    onChange={(e) => updateDailyPlanItem(item.id, "title", e.target.value)}
-                                    placeholder="Nhập tên công việc phát sinh..."
-                                    className="w-full px-2.5 py-1 text-xs font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-                                  />
-                                ) : (
-                                  <div className="font-bold text-xs text-slate-900 dark:text-white leading-snug">
-                                    {item.title}
-                                  </div>
-                                )}
                               </div>
 
                           {/* Status buttons */}
@@ -14339,7 +14439,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   ) : (
                     <div className="p-6 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl space-y-2">
                       <div className="text-slate-400 text-xs italic">
-                        Chưa có công việc nào trong kế hoạch tuần hoặc bảng việc của {selectedDailyDay} ({activeDailyStaff || currentStaffName}).
+                        Chưa có công việc nào trong kế hoạch tuần hoặc bảng việc của {selectedDailyDay} ({activeDailyStaff || (effectiveSelectedDept !== "all" ? `Toàn bộ ${formatWorkspaceScopeLabel(effectiveSelectedDept)}` : "Toàn công ty")}).
                       </div>
                       <button
                         type="button"
@@ -14502,30 +14602,35 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         🗂️ Tất cả
                       </button>
                     </div>
-                    {(rolePerspective === "director" || rolePerspective === "manager") && activeDailyStaff && (
+                    {(rolePerspective === "director" || rolePerspective === "manager") && (
                       <div className="inline-flex rounded-lg p-0.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[10px] font-bold">
                         <button
                           type="button"
-                          onClick={() => setDailyLogStaffScope("dept")}
+                          onClick={() => {
+                            setDailyLogStaffScope("dept");
+                            setSelectedDailyStaff("all");
+                          }}
                           className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
-                            dailyLogStaffScope === "dept"
+                            dailyLogStaffScope === "dept" || !activeDailyStaff
                               ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-2xs"
                               : "text-slate-500 hover:text-slate-700"
                           }`}
                         >
                           🏢 {effectiveSelectedDept !== "all" ? formatWorkspaceScopeLabel(effectiveSelectedDept) : "Cả công ty"}
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => setDailyLogStaffScope("selected_staff")}
-                          className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
-                            dailyLogStaffScope === "selected_staff"
-                              ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-2xs"
-                              : "text-slate-500 hover:text-slate-700"
-                          }`}
-                        >
-                          👤 {activeDailyStaff}
-                        </button>
+                        {activeDailyStaff && (
+                          <button
+                            type="button"
+                            onClick={() => setDailyLogStaffScope("selected_staff")}
+                            className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                              dailyLogStaffScope === "selected_staff"
+                                ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-2xs"
+                                : "text-slate-500 hover:text-slate-700"
+                            }`}
+                          >
+                            👤 {activeDailyStaff}
+                          </button>
+                        )}
                       </div>
                     )}
                     <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
@@ -14599,7 +14704,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                     key={pIdx}
                                     className="p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 text-[11px] space-y-1.5"
                                   >
-                                    <div className="flex items-center justify-between gap-1.5 flex-wrap">
+                                    <div className="p-2 rounded-lg bg-indigo-50/70 dark:bg-indigo-950/50 border-l-3 border-l-indigo-600 font-extrabold text-xs text-slate-950 dark:text-white leading-snug">
+                                      {pi.status === "completed" ? "🟢" : pi.status === "partial" ? "🟡" : "🔴"} {pi.title}
+                                    </div>
+                                    <div className="flex items-center justify-between gap-1.5 flex-wrap pt-0.5">
                                       <div className="flex items-center gap-1.5 flex-wrap">
                                         <span className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold ${piOrigin.badgeClass}`}>
                                           {piOrigin.badgeLabel}
@@ -14624,9 +14732,6 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                           <span className="text-slate-400 font-mono text-[10px]">{pi.work_hours}h</span>
                                         )}
                                       </div>
-                                    </div>
-                                    <div className="font-bold text-slate-800 dark:text-slate-200">
-                                      {pi.status === "completed" ? "🟢" : pi.status === "partial" ? "🟡" : "🔴"} {pi.title}
                                     </div>
                                     {pi.result && (
                                       <div className="text-emerald-700 dark:text-emerald-400 font-medium">
