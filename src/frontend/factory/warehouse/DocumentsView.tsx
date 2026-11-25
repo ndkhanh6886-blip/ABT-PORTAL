@@ -141,7 +141,7 @@ function NewDocumentForm({
       api<{ rows: StockRow[] }>(
         `/api/factory/inv/stock?warehouse_id=${whId}&page_size=40${debouncedPickQ ? `&q=${encodeURIComponent(debouncedPickQ)}` : ""}`
       ),
-    enabled: Boolean(whId),
+    enabled: Boolean(whId) && Boolean(debouncedPickQ.trim()),
   });
 
   const localLocs = useQuery({
@@ -265,37 +265,45 @@ function NewDocumentForm({
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
-          <ul className="mt-1 max-h-48 overflow-auto rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
-            {stock.data?.rows.map((r) => (
-              <li key={r.id}>
-                <button
-                  type="button"
-                  className="w-full text-left px-3 py-1.5 hover:bg-sky-50 dark:hover:bg-sky-950/40 cursor-pointer"
-                  onClick={() =>
-                    setLines([
-                      ...lines,
-                      {
-                        row: r,
-                        qty: String(Number(r.qty_available)),
-                        to_location_id: "",
-                        direction: "OUT",
-                      },
-                    ])
-                  }
-                >
-                  <span className="font-mono font-bold">{r.item_code}</span> — {r.item_name} · Lô{" "}
-                  <span className="font-mono font-semibold">{r.lot_code ?? "—"}</span> · Vị trí{" "}
-                  <span className="font-mono">{r.location_code}</span> · Khả dụng{" "}
-                  <b>
-                    {fmtQty(r.qty_available)} {r.base_uom}
-                  </b>
-                  {r.lot_status && r.lot_status !== "RELEASED" && (
-                    <span className="text-amber-600"> ({r.lot_status})</span>
-                  )}
-                </button>
-              </li>
-            ))}
-          </ul>
+          {q.trim().length > 0 && (
+            <ul className="mt-1 max-h-48 overflow-auto rounded-xl border border-slate-200 dark:border-slate-800 text-xs divide-y divide-slate-100 dark:divide-slate-800/60">
+              {stock.isLoading && (
+                <li className="px-3 py-2 text-slate-400">Đang tìm lô tồn kho tại kho nguồn…</li>
+              )}
+              {!stock.isLoading && stock.data?.rows.length === 0 && (
+                <li className="px-3 py-2 text-slate-500">Không tìm thấy lô tồn kho nào khớp từ khóa.</li>
+              )}
+              {stock.data?.rows.map((r) => (
+                <li key={r.id}>
+                  <button
+                    type="button"
+                    className="w-full text-left px-3 py-1.5 hover:bg-sky-50 dark:hover:bg-sky-950/40 cursor-pointer"
+                    onClick={() =>
+                      setLines([
+                        ...lines,
+                        {
+                          row: r,
+                          qty: String(Number(r.qty_available)),
+                          to_location_id: "",
+                          direction: "OUT",
+                        },
+                      ])
+                    }
+                  >
+                    <span className="font-mono font-bold">{r.item_code}</span> — {r.item_name} · Lô{" "}
+                    <span className="font-mono font-semibold">{r.lot_code ?? "—"}</span> · Vị trí{" "}
+                    <span className="font-mono">{r.location_code}</span> · Khả dụng{" "}
+                    <b>
+                      {fmtQty(r.qty_available)} {r.base_uom}
+                    </b>
+                    {r.lot_status && r.lot_status !== "RELEASED" && (
+                      <span className="text-amber-600"> ({r.lot_status})</span>
+                    )}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
 
         {lines.length > 0 && (

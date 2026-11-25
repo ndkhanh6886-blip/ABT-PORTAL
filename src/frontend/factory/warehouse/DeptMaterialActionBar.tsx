@@ -208,7 +208,7 @@ export function DeptMaterialActionBar({
           transferPickQ.trim() ? `&q=${encodeURIComponent(transferPickQ.trim())}` : ""
         }`
       ),
-    enabled: panel === "transfer" && Boolean(effectiveTransferSrcWhId),
+    enabled: panel === "transfer" && Boolean(effectiveTransferSrcWhId) && Boolean(transferPickQ.trim()),
   });
 
   const postTransferMut = useMutation({
@@ -267,9 +267,9 @@ export function DeptMaterialActionBar({
     queryKey: ["factory", "stock", "quick-issue-pick", targetIssueWhId, issuePickQ],
     queryFn: () =>
       api<{ rows: StockRow[] }>(
-        `/api/factory/inv/stock?warehouse_id=${targetIssueWhId}&status=RELEASED&page_size=20${issuePickQ ? `&q=${encodeURIComponent(issuePickQ)}` : ""}`
+        `/api/factory/inv/stock?warehouse_id=${targetIssueWhId}&status=RELEASED&page_size=20${issuePickQ.trim() ? `&q=${encodeURIComponent(issuePickQ.trim())}` : ""}`
       ),
-    enabled: panel === "requisition" && Boolean(targetIssueWhId),
+    enabled: panel === "requisition" && Boolean(targetIssueWhId) && Boolean(issuePickQ.trim()),
   });
 
   const postIssueMut = useMutation({
@@ -962,34 +962,39 @@ export function DeptMaterialActionBar({
                   onChange={(e) => setTransferPickQ(e.target.value)}
                 />
               </Field>
-              <ul className="mt-1 max-h-44 overflow-auto rounded-xl border border-slate-200 dark:border-slate-800 text-xs divide-y divide-slate-100 dark:divide-slate-800/60">
-                {transferStockPick.data?.rows.length === 0 && (
-                  <li className="px-3 py-2 text-slate-500">
-                    Không tìm thấy lô khả dụng (RELEASED) nào tại kho nguồn khớp từ khóa.
-                  </li>
-                )}
-                {transferStockPick.data?.rows.map((r) => (
-                  <li key={r.id}>
-                    <button
-                      type="button"
-                      className="w-full text-left px-3 py-1.5 hover:bg-teal-50 dark:hover:bg-teal-950/40 cursor-pointer flex flex-wrap items-center justify-between gap-2"
-                      onClick={() => {
-                        setTransferLines((prev) =>
-                          prev.some((x) => x.row.id === r.id) ? prev : [...prev, { row: r, qty: "1" }]
-                        );
-                      }}
-                    >
-                      <span>
-                        <b>{r.item_code}</b> — {r.item_name} · Lô <span className="font-mono font-semibold">{r.lot_code ?? "—"}</span> ({r.warehouse_code} · {r.location_code})
-                        {r.expiry_date ? ` · HSD: ${fmtDate(r.expiry_date)}` : ""}
-                      </span>
-                      <span className="font-bold text-teal-700 dark:text-teal-400">
-                        Khả dụng: {fmtQty(r.qty_available)} {r.base_uom} ＋ Chọn
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              {transferPickQ.trim().length > 0 && (
+                <ul className="mt-1 max-h-44 overflow-auto rounded-xl border border-slate-200 dark:border-slate-800 text-xs divide-y divide-slate-100 dark:divide-slate-800/60">
+                  {transferStockPick.isLoading && (
+                    <li className="px-3 py-2 text-slate-400">Đang tìm lô khả dụng tại kho nguồn…</li>
+                  )}
+                  {!transferStockPick.isLoading && transferStockPick.data?.rows.length === 0 && (
+                    <li className="px-3 py-2 text-slate-500">
+                      Không tìm thấy lô khả dụng (RELEASED) nào tại kho nguồn khớp từ khóa.
+                    </li>
+                  )}
+                  {transferStockPick.data?.rows.map((r) => (
+                    <li key={r.id}>
+                      <button
+                        type="button"
+                        className="w-full text-left px-3 py-1.5 hover:bg-teal-50 dark:hover:bg-teal-950/40 cursor-pointer flex flex-wrap items-center justify-between gap-2"
+                        onClick={() => {
+                          setTransferLines((prev) =>
+                            prev.some((x) => x.row.id === r.id) ? prev : [...prev, { row: r, qty: "1" }]
+                          );
+                        }}
+                      >
+                        <span>
+                          <b>{r.item_code}</b> — {r.item_name} · Lô <span className="font-mono font-semibold">{r.lot_code ?? "—"}</span> ({r.warehouse_code} · {r.location_code})
+                          {r.expiry_date ? ` · HSD: ${fmtDate(r.expiry_date)}` : ""}
+                        </span>
+                        <span className="font-bold text-teal-700 dark:text-teal-400">
+                          Khả dụng: {fmtQty(r.qty_available)} {r.base_uom} ＋ Chọn
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
 
             {transferLines.length > 0 && (
@@ -1151,19 +1156,29 @@ export function DeptMaterialActionBar({
                 value={issuePickQ}
                 onChange={(e) => setIssuePickQ(e.target.value)}
               />
-              <ul className="mt-1 max-h-40 overflow-auto rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
-                {issueStockPick.data?.rows.map((r) => (
-                  <li key={r.id}>
-                    <button
-                      type="button"
-                      className="w-full text-left px-3 py-1.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 cursor-pointer"
-                      onClick={() => setIssueLines([...issueLines, { row: r, qty: "" }])}
-                    >
-                      <b>{r.item_code}</b> — {r.item_name} · Lô <span className="font-mono">{r.lot_code ?? "—"}</span> ({r.location_code}) · Khả dụng: <b>{fmtQty(r.qty_available)} {r.base_uom}</b>
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              {issuePickQ.trim().length > 0 && (
+                <ul className="mt-1 max-h-40 overflow-auto rounded-xl border border-slate-200 dark:border-slate-800 text-xs divide-y divide-slate-100 dark:divide-slate-800/60">
+                  {issueStockPick.isLoading && (
+                    <li className="px-3 py-2 text-slate-400">Đang tìm lô khả dụng…</li>
+                  )}
+                  {!issueStockPick.isLoading && issueStockPick.data?.rows.length === 0 && (
+                    <li className="px-3 py-2 text-slate-500">
+                      Không tìm thấy lô khả dụng (RELEASED) nào khớp từ khóa.
+                    </li>
+                  )}
+                  {issueStockPick.data?.rows.map((r) => (
+                    <li key={r.id}>
+                      <button
+                        type="button"
+                        className="w-full text-left px-3 py-1.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 cursor-pointer"
+                        onClick={() => setIssueLines([...issueLines, { row: r, qty: "" }])}
+                      >
+                        <b>{r.item_code}</b> — {r.item_name} · Lô <span className="font-mono">{r.lot_code ?? "—"}</span> ({r.location_code}) · Khả dụng: <b>{fmtQty(r.qty_available)} {r.base_uom}</b>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
 
             {issueLines.length > 0 && (
