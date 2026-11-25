@@ -111,7 +111,8 @@ setNoticePolicy({
       : [];
     return {
       enabled: ev ? ev.enabled !== false : true,
-      permissions: TECHNICAL_MATRIX_ROLES.filter((r) => roles.includes(r.code)).map((r) => r.permission),
+      permissions: [],
+      groups: TECHNICAL_MATRIX_ROLES.filter((r) => roles.includes(r.code)).map((r) => ({ permission: r.permission, orgUnitCode: r.orgUnitCode ?? null })),
       userIds,
       excludedUserIds,
     };

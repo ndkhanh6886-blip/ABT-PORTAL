@@ -3728,7 +3728,7 @@ export async function verifyStepQcGate(
       entityType: "kit_production_step",
       entityId: stepId,
       link: "/?tab=factory-kit",
-      sourceKey: `kit_ipc_req_${stepId}_${Date.now()}`,
+      sourceKey: `kit_ipc_req_${stepId}_v${step.version}`,
     });
     return upd;
   }
@@ -3797,7 +3797,7 @@ export async function verifyStepQcGate(
       entityType: "kit_production_step",
       entityId: stepId,
       link: "/?tab=factory-kit",
-      sourceKey: `kit_ipc_pass_${stepId}_${Date.now()}`,
+      sourceKey: `kit_ipc_pass_${stepId}_v${updatedStep.version}`,
     });
     return updatedStep;
   }
@@ -3845,7 +3845,7 @@ export async function verifyStepQcGate(
     entityType: "kit_production_step",
     entityId: stepId,
     link: "/?tab=factory-kit",
-    sourceKey: `kit_ipc_rej_${stepId}_${Date.now()}`,
+    sourceKey: `kit_ipc_rej_${stepId}_v${updatedStep.version}`,
   });
   return updatedStep;
 }
