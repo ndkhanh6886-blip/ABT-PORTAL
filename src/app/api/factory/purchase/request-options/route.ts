@@ -10,6 +10,24 @@ export interface PrReasonOption {
   entity_id?: string;
 }
 
+const GENERAL_NON_PROJECT_REASONS: { category: string; label: string; value: string }[] = [
+  {
+    category: "📦 Dự trữ kho phòng ban & Sử dụng chung (Chưa có Lệnh SX / Dự án cụ thể)",
+    label: "📦 Dự trữ & sử dụng chung tại kho phòng ban (Chưa có Lệnh SX / Dự án cụ thể)",
+    value: "Dự trữ & sử dụng chung tại kho phòng ban (Chưa có Lệnh SX / Dự án cụ thể)",
+  },
+  {
+    category: "📦 Dự trữ kho phòng ban & Sử dụng chung (Chưa có Lệnh SX / Dự án cụ thể)",
+    label: "🚚 Đề xuất chuyển / bổ sung NVL từ Kho Trung Tâm về Kho phòng ban để sử dụng thường xuyên",
+    value: "Đề xuất chuyển / bổ sung NVL từ Kho Trung Tâm về Kho phòng ban để sử dụng thường xuyên",
+  },
+  {
+    category: "📦 Dự trữ kho phòng ban & Sử dụng chung (Chưa có Lệnh SX / Dự án cụ thể)",
+    label: "🔄 Bù đắp tồn kho an toàn dưới định mức tối thiểu (Safety Stock) tại kho nhánh",
+    value: "Bù đắp tồn kho an toàn dưới định mức tối thiểu (Safety Stock) tại kho nhánh",
+  },
+];
+
 const STANDARD_REASONS_BY_MODULE: Record<string, { category: string; label: string; value: string }[]> = {
   RD: [
     {
@@ -195,6 +213,22 @@ export const GET = factoryRoute(async (tx, { actor }) => {
     const modKey = detectModuleKey(u);
     const reasons: PrReasonOption[] = [];
 
+    // 1. Ưu tiên đưa nhóm Lý do sử dụng chung / dự trữ kho phòng ban (chưa có Lệnh SX hoặc Dự án cụ thể) lên ĐẦU TIÊN
+    const stdList = [
+      ...GENERAL_NON_PROJECT_REASONS,
+      ...(STANDARD_REASONS_BY_MODULE[modKey] || []),
+      ...STANDARD_REASONS_BY_MODULE.DEFAULT,
+    ];
+    stdList.forEach((std, idx) => {
+      reasons.push({
+        id: `std-${modKey}-${idx}`,
+        category: std.category,
+        label: std.label,
+        value: std.value,
+      });
+    });
+
+    // 2. Tiếp theo là danh sách Lệnh sản xuất / Dự án R&D / Đơn hàng cụ thể đang chạy (nếu muốn gắn trực tiếp)
     if (modKey === "RD") {
       for (const prj of rdProjects.rows) {
         const val = `Dự án R&D [${prj.code}]: ${prj.name}`;
@@ -269,16 +303,6 @@ export const GET = factoryRoute(async (tx, { actor }) => {
         });
       }
     }
-
-    const stdList = [...(STANDARD_REASONS_BY_MODULE[modKey] || []), ...STANDARD_REASONS_BY_MODULE.DEFAULT];
-    stdList.forEach((std, idx) => {
-      reasons.push({
-        id: `std-${modKey}-${idx}`,
-        category: std.category,
-        label: std.label,
-        value: std.value,
-      });
-    });
 
     out.push({ ...u, module_key: modKey, warehouses, reasons });
   }

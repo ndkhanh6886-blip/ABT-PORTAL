@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, Boxes, FileStack, PackagePlus, ShoppingCart } from "lucide-react";
+import { ArrowUpRight, ArrowRightLeft, Boxes, FileStack, PackagePlus, ShoppingCart } from "lucide-react";
 import { api, fmtDate, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { openExcelImportTemplate } from "../import/FactoryExcelImportModule";
@@ -119,7 +119,7 @@ export function DeptMaterialActionBar({
   defaultReasonPlaceholder?: string;
 }) {
   const qc = useQueryClient();
-  const [panel, setPanel] = useState<"none" | "stock" | "history" | "requisition" | "pr">("none");
+  const [panel, setPanel] = useState<"none" | "stock" | "history" | "transfer" | "requisition" | "pr">("none");
   const [historyFlow, setHistoryFlow] = useState<"" | "PURCHASE_IN" | "SUPPLY_TRANSFER" | "PRODUCTION_OUT">("");
   const [historyQ, setHistoryQ] = useState("");
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
@@ -128,6 +128,14 @@ export function DeptMaterialActionBar({
     queryKey: ["factory", "warehouses"],
     queryFn: () => api<WarehouseItem[]>("/api/factory/master/warehouses"),
   });
+
+  const centralWarehouse = React.useMemo(
+    () =>
+      (warehouses.data ?? []).find((w) => w.code === "KHO-TONG") ??
+      (warehouses.data ?? []).find((w) => `${w.code} ${w.name}`.toUpperCase().includes("TỔNG")) ??
+      null,
+    [warehouses.data]
+  );
 
   const deptWarehouses = (warehouses.data ?? []).filter((w) => {
     if (w.owner_module_key === moduleKey) return true;
@@ -166,11 +174,92 @@ export function DeptMaterialActionBar({
     enabled: panel === "history",
   });
 
+  // Quick Inter-Warehouse Transfer (Kho Trung Tâm KHO-TONG -> Kho Phòng Ban) state
+  const GENERAL_USAGE_PRESETS = React.useMemo(
+    () => [
+      `Dự trữ & sử dụng chung tại ${deptLabel} (Chưa có Lệnh SX / Dự án cụ thể)`,
+      `Bổ sung tồn kho nhánh ${deptLabel} để sử dụng thường xuyên`,
+      `Pha chế dung dịch đệm / Bán thành phẩm / Hóa chất dùng chung tại ${deptLabel}`,
+      `Chuẩn bị vật tư tiêu hao / Thử nghiệm & đánh giá nội bộ ${deptLabel}`,
+    ],
+    [deptLabel]
+  );
+  const [transferSrcWhId, setTransferSrcWhId] = useState("");
+  const [transferDstWhId, setTransferDstWhId] = useState("");
+  const effectiveTransferSrcWhId = transferSrcWhId || centralWarehouse?.id || "";
+  const effectiveTransferDstWhId =
+    transferDstWhId ||
+    activeDeptWhId ||
+    (warehouses.data ?? []).find((w) => w.id !== effectiveTransferSrcWhId)?.id ||
+    "";
+  const [transferReasonPreset, setTransferReasonPreset] = useState<string>("__GENERAL_0__");
+  const [transferNotes, setTransferNotes] = useState<string>(
+    () => `Dự trữ & sử dụng chung tại ${deptLabel} (Chưa có Lệnh SX / Dự án cụ thể)`
+  );
+  const [transferPickQ, setTransferPickQ] = useState("");
+  const [transferLines, setTransferLines] = useState<{ row: StockRow; qty: string }[]>([]);
+  const [transferSuccessMsg, setTransferSuccessMsg] = useState<string | null>(null);
+
+  const transferStockPick = useQuery({
+    queryKey: ["factory", "stock", "quick-transfer-pick", effectiveTransferSrcWhId, transferPickQ],
+    queryFn: () =>
+      api<{ rows: StockRow[] }>(
+        `/api/factory/inv/stock?warehouse_id=${effectiveTransferSrcWhId}&status=RELEASED&page_size=25${
+          transferPickQ.trim() ? `&q=${encodeURIComponent(transferPickQ.trim())}` : ""
+        }`
+      ),
+    enabled: panel === "transfer" && Boolean(effectiveTransferSrcWhId),
+  });
+
+  const postTransferMut = useMutation({
+    mutationFn: async () => {
+      const results = [];
+      for (const l of transferLines) {
+        const qtyNum = Number(String(l.qty || "").replace(",", "."));
+        if (!(qtyNum > 0)) continue;
+        const res = await api<{ document: { code: string }; from_warehouse: string; to_warehouse: string }>(
+          "/api/factory/inv/ops",
+          {
+            method: "POST",
+            idempotent: true,
+            json: {
+              op: "dispatch_inter_warehouse",
+              source_warehouse_id: effectiveTransferSrcWhId,
+              target_warehouse_id: effectiveTransferDstWhId,
+              item_id: l.row.item_id,
+              lot_id: l.row.lot_id,
+              qty: qtyNum,
+              notes:
+                transferNotes.trim() ||
+                `Chuyển NVL từ Kho Trung Tâm về Kho ${deptLabel} (Dự trữ / sử dụng chung, chưa gắn Lệnh SX / Dự án cụ thể)`,
+            },
+          }
+        );
+        results.push(res);
+      }
+      return results;
+    },
+    onSuccess: (results) => {
+      const docCodes = results.map((r) => r.document?.code).filter(Boolean);
+      setTransferLines([]);
+      setTransferSuccessMsg(
+        `Đã chuyển thành công ${results.length} dòng nguyên vật liệu về kho phòng ban (${docCodes.join(", ") || "Đã ghi sổ"}).`
+      );
+      qc.invalidateQueries({ queryKey: ["factory", "stock"] });
+      qc.invalidateQueries({ queryKey: ["factory", "dept-quick-stock"] });
+      qc.invalidateQueries({ queryKey: ["factory", "dept-quick-history"] });
+      qc.invalidateQueries({ queryKey: ["factory", "documents"] });
+      qc.invalidateQueries({ queryKey: ["factory", "wh-hub-overview"] });
+    },
+  });
+
   // Quick Issue / Requisition state
   const [issueWhId, setIssueWhId] = useState("");
   const targetIssueWhId = issueWhId || currentWhId || warehouses.data?.[0]?.id || "";
   const [issueReason, setIssueReason] = useState(moduleKey === "RD" ? "RND" : moduleKey === "QMS" ? "QC_SAMPLE" : "PRODUCTION");
-  const [issueNotes, setIssueNotes] = useState("");
+  const [issueNotes, setIssueNotes] = useState(
+    () => `Dự trữ & sử dụng chung tại ${deptLabel} (Chưa có Lệnh SX / Dự án cụ thể)`
+  );
   const [issuePickQ, setIssuePickQ] = useState("");
   const [issueLines, setIssueLines] = useState<{ row: StockRow; qty: string }[]>([]);
 
@@ -217,7 +306,7 @@ export function DeptMaterialActionBar({
   const prOptions = useQuery({
     queryKey: ["factory", "pr-options"],
     queryFn: () => api<PrOption[]>("/api/factory/purchase/request-options"),
-    enabled: panel === "pr",
+    enabled: panel === "pr" || panel === "transfer" || panel === "requisition",
   });
   const uoms = useQuery({
     queryKey: ["factory", "uoms"],
@@ -376,6 +465,23 @@ export function DeptMaterialActionBar({
           >
             <FileStack className="w-3.5 h-3.5" />
             Phiếu Nhập / Xuất &amp; Lịch sử kho
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setTransferSuccessMsg(null);
+              setPanel(panel === "transfer" ? "none" : "transfer");
+            }}
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl font-bold transition-colors cursor-pointer ${
+              panel === "transfer"
+                ? "bg-teal-700 text-white"
+                : "bg-teal-50 dark:bg-teal-950/50 text-teal-800 dark:text-teal-300 border border-teal-200 dark:border-teal-800 hover:bg-teal-100"
+            }`}
+            title="Đề xuất / Điều chuyển nguyên vật liệu từ Kho Trung Tâm (KHO-TONG) về Kho nhánh phòng ban (không bắt buộc có Lệnh SX hay Dự án cụ thể)"
+          >
+            <ArrowRightLeft className="w-3.5 h-3.5" />
+            🚚 + Chuyển NVL từ Kho Tổng về Kho Phòng
           </button>
 
           <button
@@ -709,7 +815,251 @@ export function DeptMaterialActionBar({
         </div>
       )}
 
-      {/* 2. Quick Material Issue / Consumption Drawer */}
+      {/* 2A. Quick Inter-Warehouse Material Transfer Drawer (Kho Trung Tâm KHO-TONG -> Kho Phòng Ban) */}
+      {panel === "transfer" && (
+        <Card
+          title={`🚚 Đề xuất / Chuyển nguyên vật liệu từ Kho Trung Tâm về Kho ${deptLabel}`}
+          actions={<Button variant="ghost" onClick={() => setPanel("none")}>Đóng</Button>}
+        >
+          <form
+            className="flex flex-col gap-3 text-xs"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setTransferSuccessMsg(null);
+              postTransferMut.mutate();
+            }}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-teal-50/80 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-800/80">
+              <div className="text-[11px] text-teal-900 dark:text-teal-200">
+                💡 <b>Chuyển kho nội bộ (KHO-TONG ➔ Kho Phòng Ban):</b> Dùng khi bạn muốn rút nguyên vật liệu từ <b>Kho Trung Tâm</b> về dự trữ hoặc sử dụng dần tại <b>Kho nhánh {deptLabel}</b> mà <b>chưa cần có Lệnh sản xuất hay Dự án cụ thể</b>.
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setPanel("requisition")}
+                  className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white dark:bg-slate-800 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-50 cursor-pointer"
+                >
+                  📤 Chuyển sang Xuất tiêu hao tại kho
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!prReason || prReason.includes("[MO") || prReason.includes("[PRJ")) {
+                      setPrReason(transferNotes);
+                      setPrPurposeEntityType(null);
+                      setPrPurposeEntityId(null);
+                    }
+                    setPanel("pr");
+                  }}
+                  className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white dark:bg-slate-800 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 hover:bg-amber-50 cursor-pointer"
+                >
+                  🛒 Kho Tổng hết hàng? Lập Đề nghị mua (PR)
+                </button>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-12">
+              <div className="lg:col-span-3">
+                <Field label="Từ Kho nguồn (Kho Trung Tâm) *">
+                  <select
+                    className={inputClass}
+                    value={effectiveTransferSrcWhId}
+                    onChange={(e) => {
+                      setTransferSrcWhId(e.target.value);
+                      setTransferLines([]);
+                    }}
+                    required
+                  >
+                    {(warehouses.data ?? []).map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.code} — {w.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+
+              <div className="lg:col-span-3">
+                <Field label="Về Kho nhánh Phòng ban nhận *">
+                  <select
+                    className={inputClass}
+                    value={effectiveTransferDstWhId}
+                    onChange={(e) => setTransferDstWhId(e.target.value)}
+                    required
+                  >
+                    {(warehouses.data ?? [])
+                      .filter((w) => w.id !== effectiveTransferSrcWhId)
+                      .map((w) => (
+                        <option key={w.id} value={w.id}>
+                          {w.code} — {w.name}
+                        </option>
+                      ))}
+                  </select>
+                </Field>
+              </div>
+
+              <div className="lg:col-span-6">
+                <Field label="Chọn nhanh Mục đích chuyển kho (Không bắt buộc có Lệnh SX / Dự án) *">
+                  <select
+                    className={inputClass}
+                    value={transferReasonPreset}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setTransferReasonPreset(val);
+                      if (val.startsWith("__GENERAL_")) {
+                        const idx = Number(val.replace("__GENERAL_", "").replace("__", ""));
+                        if (GENERAL_USAGE_PRESETS[idx]) {
+                          setTransferNotes(GENERAL_USAGE_PRESETS[idx]);
+                        }
+                        return;
+                      }
+                      const found = selectedPrUnit?.reasons?.find((r) => r.id === val);
+                      if (found) {
+                        setTransferNotes(found.value);
+                      }
+                    }}
+                  >
+                    <optgroup label="📦 Dự trữ & Sử dụng chung tại phòng ban (Chưa có Lệnh SX / Dự án cụ thể)">
+                      {GENERAL_USAGE_PRESETS.map((text, idx) => (
+                        <option key={idx} value={`__GENERAL_${idx}__`}>
+                          📦 {text}
+                        </option>
+                      ))}
+                    </optgroup>
+                    {groupedReasons.map(([cat, items]) => (
+                      <optgroup key={cat} label={cat}>
+                        {items.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                    <option value="__CUSTOM__">✍️ Tự gõ lý do / mục đích khác ở ô bên dưới...</option>
+                  </select>
+                </Field>
+              </div>
+            </div>
+
+            <div>
+              <Field label="Chi tiết Lý do / Ghi chú phiếu chuyển kho * (Mặc định: Dự trữ & sử dụng chung tại phòng ban)">
+                <input
+                  className={inputClass}
+                  value={transferNotes}
+                  onChange={(e) => setTransferNotes(e.target.value)}
+                  placeholder={`VD: Dự trữ & sử dụng chung tại ${deptLabel} (Chưa có Lệnh SX / Dự án cụ thể)...`}
+                  required
+                />
+              </Field>
+            </div>
+
+            <div>
+              <Field label="Tìm & bấm chọn lô nguyên vật liệu đã duyệt (RELEASED) tại Kho Trung Tâm để chuyển về kho phòng:">
+                <input
+                  className={inputClass}
+                  placeholder="🔍 Gõ mã vật tư, tên hóa chất, số lô trong Kho Trung Tâm rồi bấm vào dòng bên dưới để thêm..."
+                  value={transferPickQ}
+                  onChange={(e) => setTransferPickQ(e.target.value)}
+                />
+              </Field>
+              <ul className="mt-1 max-h-44 overflow-auto rounded-xl border border-slate-200 dark:border-slate-800 text-xs divide-y divide-slate-100 dark:divide-slate-800/60">
+                {transferStockPick.data?.rows.length === 0 && (
+                  <li className="px-3 py-2 text-slate-500">
+                    Không tìm thấy lô khả dụng (RELEASED) nào tại kho nguồn khớp từ khóa.
+                  </li>
+                )}
+                {transferStockPick.data?.rows.map((r) => (
+                  <li key={r.id}>
+                    <button
+                      type="button"
+                      className="w-full text-left px-3 py-1.5 hover:bg-teal-50 dark:hover:bg-teal-950/40 cursor-pointer flex flex-wrap items-center justify-between gap-2"
+                      onClick={() => {
+                        setTransferLines((prev) =>
+                          prev.some((x) => x.row.id === r.id) ? prev : [...prev, { row: r, qty: "1" }]
+                        );
+                      }}
+                    >
+                      <span>
+                        <b>{r.item_code}</b> — {r.item_name} · Lô <span className="font-mono font-semibold">{r.lot_code ?? "—"}</span> ({r.warehouse_code} · {r.location_code})
+                        {r.expiry_date ? ` · HSD: ${fmtDate(r.expiry_date)}` : ""}
+                      </span>
+                      <span className="font-bold text-teal-700 dark:text-teal-400">
+                        Khả dụng: {fmtQty(r.qty_available)} {r.base_uom} ＋ Chọn
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {transferLines.length > 0 && (
+              <Table head={["Nguyên vật liệu · Lô · Vị trí tại Kho nguồn", "Số lượng chuyển về Kho phòng", ""]}>
+                {transferLines.map((l, idx) => (
+                  <tr key={l.row.id}>
+                    <td className="py-1.5 pr-3">
+                      <b>{l.row.item_code}</b> — {l.row.item_name} · Lô <span className="font-mono">{l.row.lot_code ?? "—"}</span> ({l.row.warehouse_code} · {l.row.location_code})
+                    </td>
+                    <td className="py-1.5 pr-3 w-48">
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          className={inputClass}
+                          inputMode="decimal"
+                          placeholder={`Tối đa ${fmtQty(l.row.qty_available)}`}
+                          value={l.qty}
+                          onChange={(e) =>
+                            setTransferLines(
+                              transferLines.map((item, j) => (j === idx ? { ...item, qty: e.target.value } : item))
+                            )
+                          }
+                          required
+                        />
+                        <span className="text-[11px] font-semibold text-slate-500 whitespace-nowrap">
+                          / {fmtQty(l.row.qty_available)} {l.row.base_uom}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="py-1.5 pr-3 text-right">
+                      <button
+                        type="button"
+                        className="text-rose-600 font-bold cursor-pointer"
+                        onClick={() => setTransferLines(transferLines.filter((_, j) => j !== idx))}
+                      >
+                        Xóa
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </Table>
+            )}
+
+            {transferSuccessMsg && (
+              <div className="px-3 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 font-semibold">
+                ✅ {transferSuccessMsg}
+              </div>
+            )}
+            <ErrorNote error={postTransferMut.error} />
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="ghost" onClick={() => setPanel("none")}>Hủy</Button>
+              <Button
+                type="submit"
+                disabled={
+                  postTransferMut.isPending ||
+                  transferLines.length === 0 ||
+                  !effectiveTransferSrcWhId ||
+                  !effectiveTransferDstWhId ||
+                  effectiveTransferSrcWhId === effectiveTransferDstWhId
+                }
+              >
+                {postTransferMut.isPending
+                  ? "Đang chuyển kho…"
+                  : `🚚 Thực hiện chuyển về Kho Phòng (${transferLines.length} dòng)`}
+              </Button>
+            </div>
+          </form>
+        </Card>
+      )}
+
+      {/* 2B. Quick Material Issue / Consumption Drawer */}
       {panel === "requisition" && (
         <Card
           title={`Lập phiếu xuất / lĩnh vật tư nhanh (${deptLabel})`}
@@ -722,6 +1072,19 @@ export function DeptMaterialActionBar({
               postIssueMut.mutate();
             }}
           >
+            <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/70">
+              <span className="text-[11px] text-emerald-900 dark:text-emerald-200">
+                💡 <b>Xuất tiêu hao tại kho:</b> Ghi nhận vật tư xuất ra để sử dụng ngay (trừ trực tiếp tồn kho). Nếu bạn muốn <b>rút vật tư từ Kho Trung Tâm (KHO-TONG) về dự trữ tại Kho nhánh {deptLabel}</b>, hãy bấm nút bên phải:
+              </span>
+              <button
+                type="button"
+                onClick={() => setPanel("transfer")}
+                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-teal-700 hover:bg-teal-800 text-white cursor-pointer"
+              >
+                🚚 Chuyển NVL từ Kho Trung Tâm về Kho Phòng
+              </button>
+            </div>
+
             <div className="grid gap-3 sm:grid-cols-3">
               <Field label="Kho xuất *">
                 <select className={inputClass} value={targetIssueWhId} onChange={(e) => { setIssueWhId(e.target.value); setIssueLines([]); }}>
@@ -734,18 +1097,48 @@ export function DeptMaterialActionBar({
               </Field>
               <Field label="Mục đích xuất *">
                 <select className={inputClass} value={issueReason} onChange={(e) => setIssueReason(e.target.value)}>
-                  <option value="PRODUCTION">Xuất cho sản xuất / chạy mẻ</option>
-                  <option value="RND">Xuất cho nghiên cứu R&amp;D</option>
+                  <option value="PRODUCTION">Xuất cho sản xuất / pha chế / sử dụng tại phòng</option>
+                  <option value="RND">Xuất cho nghiên cứu R&amp;D / thử nghiệm</option>
                   <option value="QC_SAMPLE">Xuất mẫu kiểm nghiệm QC/QA</option>
-                  <option value="OTHER">Mục đích khác</option>
+                  <option value="OTHER">Sử dụng chung / Mục đích khác (Chưa gắn Lệnh SX)</option>
                 </select>
               </Field>
-              <Field label="Mã lệnh SX / Mẻ / Thí nghiệm tham chiếu *">
+              <Field label="Chọn nhanh Lý do (Không bắt buộc có Lệnh SX / Dự án)">
+                <select
+                  className={inputClass}
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) setIssueNotes(e.target.value);
+                  }}
+                >
+                  <option value="">-- Chọn nhanh lý do sử dụng chung hoặc Lệnh SX / Dự án --</option>
+                  <optgroup label="📦 Sử dụng chung (Chưa có Lệnh SX / Dự án cụ thể)">
+                    {GENERAL_USAGE_PRESETS.map((text, idx) => (
+                      <option key={idx} value={text}>
+                        📦 {text}
+                      </option>
+                    ))}
+                  </optgroup>
+                  {groupedReasons.map(([cat, items]) => (
+                    <optgroup key={cat} label={cat}>
+                      {items.map((r) => (
+                        <option key={r.id} value={r.value}>
+                          {r.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </Field>
+            </div>
+
+            <div>
+              <Field label="Lý do xuất / Ghi chú mục đích sử dụng (Hoặc Mã Lệnh SX / Dự án nếu có) *">
                 <input
                   className={inputClass}
                   value={issueNotes}
                   onChange={(e) => setIssueNotes(e.target.value)}
-                  placeholder={defaultReasonPlaceholder ?? `VD: Xuất cho ${deptLabel}...`}
+                  placeholder={defaultReasonPlaceholder ?? `VD: Sử dụng chung tại ${deptLabel} (Chưa có Lệnh SX / Dự án cụ thể)...`}
                   required
                 />
               </Field>
