@@ -80,7 +80,7 @@ const ACTION_LABEL = {
   obsolete: "🚫 Ngừng hiệu lực",
 };
 const blankParam = (): Param => ({ name: "", method: "", unit: "", value_type: "NUMERIC", lower_limit: "", upper_limit: "", target: "", is_critical: true, derived_metric: "", oligo_purifications: [] });
-const NEEDS_ITEM = ["ITEM", "RECEIPT", "PRODUCT"];
+const NEEDS_ITEM = ["ITEM", "RECEIPT", "PRODUCT", "DEVICE_MODEL"];
 /** Oligo: values the server computes from the sequence instead of the analyst typing them. */
 const DERIVED: Record<string, string> = {
   "": "Kiểm nghiệm viên nhập",

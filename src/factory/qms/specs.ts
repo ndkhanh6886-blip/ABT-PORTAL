@@ -53,6 +53,66 @@ export async function ensureSpecItemsSchema(tx: Tx): Promise<void> {
   specItemsSchemaEnsured = true;
 }
 
+export async function syncDeviceModelsWithSpecItems(tx: Tx, specId: string): Promise<void> {
+  await tx.query("SAVEPOINT sp_sync_device_spec");
+  try {
+    const spec = (await tx.query("SELECT id, status FROM qms.qc_spec WHERE id = $1", [specId])).rows[0];
+    if (!spec || spec.status !== "EFFECTIVE") {
+      await tx.query("RELEASE SAVEPOINT sp_sync_device_spec");
+      return;
+    }
+    // 1. Update device.device_model.fqc_spec_id for any model matching the items assigned to this spec
+    await tx.query(
+      `UPDATE device.device_model m
+          SET fqc_spec_id = $1
+        WHERE (
+          (m.item_id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM qms.qc_spec s WHERE s.id = $1 AND s.item_id = m.item_id
+            UNION ALL
+            SELECT 1 FROM qms.qc_spec_item si WHERE si.spec_id = $1 AND si.item_id = m.item_id
+          ))
+          OR EXISTS (
+            SELECT 1
+              FROM qms.qc_spec_item si
+              JOIN master.item mi ON mi.id = si.item_id
+             WHERE si.spec_id = $1
+               AND upper(regexp_replace(mi.code, '[^A-Za-z0-9]', '', 'g')) = upper(regexp_replace(m.code, '[^A-Za-z0-9]', '', 'g'))
+          )
+          OR EXISTS (
+            SELECT 1
+              FROM qms.qc_spec s
+              JOIN master.item mi ON mi.id = s.item_id
+             WHERE s.id = $1
+               AND upper(regexp_replace(mi.code, '[^A-Za-z0-9]', '', 'g')) = upper(regexp_replace(m.code, '[^A-Za-z0-9]', '', 'g'))
+          )
+        )` ,
+      [specId]
+    );
+
+    // 2. If a model previously pointed to this specId, but this spec now has assigned items that do NOT include that model, clear stale fqc_spec_id
+    await tx.query(
+      `UPDATE device.device_model m
+          SET fqc_spec_id = NULL
+        WHERE m.fqc_spec_id = $1
+          AND EXISTS (SELECT 1 FROM qms.qc_spec_item si WHERE si.spec_id = $1)
+          AND NOT EXISTS (
+            SELECT 1
+              FROM qms.qc_spec_item si
+              JOIN master.item mi ON mi.id = si.item_id
+             WHERE si.spec_id = $1
+               AND (
+                 (m.item_id IS NOT NULL AND si.item_id = m.item_id)
+                 OR upper(regexp_replace(mi.code, '[^A-Za-z0-9]', '', 'g')) = upper(regexp_replace(m.code, '[^A-Za-z0-9]', '', 'g'))
+               )
+          )`,
+      [specId]
+    );
+    await tx.query("RELEASE SAVEPOINT sp_sync_device_spec");
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_sync_device_spec").catch(() => {});
+  }
+}
+
 async function syncSpecItems(tx: Tx, specId: string, itemIds: string[]) {
   await ensureSpecItemsSchema(tx);
   const uniqueIds = Array.from(new Set(itemIds.filter(Boolean)));
@@ -63,6 +123,7 @@ async function syncSpecItems(tx: Tx, specId: string, itemIds: string[]) {
       [specId, iid]
     );
   }
+  await syncDeviceModelsWithSpecItems(tx, specId);
 }
 const oligoOnly = (applies: string, params: z.infer<typeof parameterSchema>[]) => {
   if (applies !== "OLIGO" && params.some((p) => p.derived_metric || p.oligo_purifications?.length)) throw invalid("Chỉ tiêu tính tự động / theo kiểu tinh sạch chỉ dùng cho tiêu chuẩn Oligo.");

@@ -6,6 +6,7 @@ import { authenticateSigner } from "@/factory/core/signature";
 import { verifyPortalPassword } from "@/factory/portalBridge";
 import {
   assignSpecToItem,
+  changeQcTestSpec,
   getQaOpsDashboard,
   issueCoaFromQcTest,
   receiveAndCreateQcTest,
@@ -66,6 +67,8 @@ export const POST = factoryRoute(
         });
       case "assign_spec_item":
         return assignSpecToItem(tx, actor, body);
+      case "change_test_spec":
+        return changeQcTestSpec(tx, actor, body);
       case "release_opening_lots":
         return releaseOpeningLotsSkipQc(tx, actor, body);
       default:

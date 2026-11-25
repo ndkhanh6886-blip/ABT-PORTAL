@@ -371,9 +371,63 @@ export async function getQcTest(tx: Tx, id: string) {
 
 export async function listQcTests(tx: Tx, actor: AuthzActor, status?: string) {
   await authorize(tx, actor, "qms.qc.view");
+
+  // Tự động đồng bộ tiêu chuẩn QC (spec_id) cho các phiếu FQC Thiết bị đang mở (chưa duyệt và chưa nhập kết quả)
+  // nếu Model thiết bị đó đã được gán rõ ràng vào một bộ tiêu chuẩn hiệu lực (VD: PCR-W08 gán vào TC0005 thay vì TC0004 của Tủ ATSH).
+  await tx.query("SAVEPOINT sp_reconcile_dev_qc_spec");
+  try {
+    await tx.query(
+      `WITH model_assigned_spec AS (
+         SELECT DISTINCT ON (m.id)
+                m.id AS model_id,
+                s.id AS target_spec_id
+           FROM device.device_model m
+           JOIN qms.qc_spec s ON s.status = 'EFFECTIVE'
+          WHERE (m.item_id IS NOT NULL AND s.item_id = m.item_id)
+             OR EXISTS (
+                  SELECT 1
+                    FROM qms.qc_spec_item si
+                    JOIN master.item mi ON mi.id = si.item_id
+                   WHERE si.spec_id = s.id
+                     AND (
+                       (m.item_id IS NOT NULL AND si.item_id = m.item_id)
+                       OR upper(regexp_replace(mi.code, '[^A-Za-z0-9]', '', 'g')) = upper(regexp_replace(m.code, '[^A-Za-z0-9]', '', 'g'))
+                     )
+                )
+             OR EXISTS (
+                  SELECT 1
+                    FROM master.item mi
+                   WHERE mi.id = s.item_id
+                     AND upper(regexp_replace(mi.code, '[^A-Za-z0-9]', '', 'g')) = upper(regexp_replace(m.code, '[^A-Za-z0-9]', '', 'g'))
+                )
+          ORDER BY m.id, (s.applies_to = 'DEVICE_MODEL') DESC, s.spec_version DESC, s.updated_at DESC NULLS LAST
+       ),
+       upd_models AS (
+         UPDATE device.device_model m
+            SET fqc_spec_id = mas.target_spec_id
+           FROM model_assigned_spec mas
+          WHERE m.id = mas.model_id
+            AND m.fqc_spec_id IS DISTINCT FROM mas.target_spec_id
+       )
+       UPDATE qms.qc_test t
+          SET spec_id = mas.target_spec_id,
+              updated_at = now()
+         FROM device.device_unit du
+         JOIN model_assigned_spec mas ON mas.model_id = du.model_id
+        WHERE t.entity_type = 'DEVICE_UNIT'
+          AND t.entity_id = du.id
+          AND t.status IN ('PLANNED', 'IN_PROGRESS')
+          AND t.spec_id <> mas.target_spec_id
+          AND NOT EXISTS (SELECT 1 FROM qms.qc_result r WHERE r.test_id = t.id)`
+    );
+    await tx.query("RELEASE SAVEPOINT sp_reconcile_dev_qc_spec");
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_reconcile_dev_qc_spec").catch(() => {});
+  }
+
   return (
     await tx.query(
-      `SELECT t.id, t.code, t.entity_type, t.entity_id, t.test_kind, t.status, t.overall_result, t.version, t.created_at, t.analyst_id,
+      `SELECT t.id, t.code, t.entity_type, t.entity_id, t.spec_id, t.test_kind, t.status, t.overall_result, t.version, t.created_at, t.analyst_id,
               s.code AS spec_code, s.name AS spec_name,
               COALESCE(l.code, pol.code, du.serial_no) AS lot_code,
               COALESCE(i.code, poi.code, dm.code) AS item_code,

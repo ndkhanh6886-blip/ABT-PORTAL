@@ -26,6 +26,7 @@ interface QcRow {
   code: string;
   entity_type?: string;
   entity_id?: string;
+  spec_id?: string;
   test_kind: string;
   status: string;
   overall_result: string | null;
@@ -238,6 +239,7 @@ const limits = (p: Parameter) =>
 
 function QcDetailPanel({
   id,
+  specs,
   standards,
   standardUsages,
   formsConfig,
@@ -245,6 +247,7 @@ function QcDetailPanel({
   onClose,
 }: {
   id: string;
+  specs: any[];
   standards: any[];
   standardUsages: any[];
   formsConfig: QcFormsConfig;
@@ -404,6 +407,18 @@ function QcDetailPanel({
     onSuccess: refresh,
   });
 
+  const changeSpecInDetailMut = useMutation({
+    mutationFn: (nextSpecId: string) =>
+      api("/api/factory/qms/ops", {
+        method: "POST",
+        json: { op: "change_test_spec", test_id: id, spec_id: nextSpecId },
+      }),
+    onSuccess: () => {
+      setValues({});
+      refresh();
+    },
+  });
+
   const t = test.data;
   const editable = t?.status === "IN_PROGRESS" && t.analyst_id === me.data?.profile.user_id;
   const result = (pid: string) => t?.results.find((r) => r.parameter_id === pid);
@@ -417,7 +432,7 @@ function QcDetailPanel({
 
   return (
     <Card title={t ? `Phiếu ${t.code} — ${t.spec_code} rev ${t.spec_version} (${t.test_kind})` : "Phiếu QC"} actions={<Button variant="ghost" onClick={onClose}>Đóng</Button>}>
-      <ErrorNote error={test.error ?? save.error ?? recordStdMut.error ?? issueCoaMut.error ?? releaseLotMut.error ?? retest.error} />
+      <ErrorNote error={test.error ?? save.error ?? recordStdMut.error ?? issueCoaMut.error ?? releaseLotMut.error ?? retest.error ?? changeSpecInDetailMut.error} />
       {t && (
         <div className="flex flex-col gap-3">
           <p className="text-xs text-slate-600 dark:text-slate-300">
@@ -503,8 +518,34 @@ function QcDetailPanel({
             )}
           </div>
 
-          <div className="font-bold text-xs text-slate-700 dark:text-slate-200">
-            📋 2. Kết quả Kiểm nghiệm các Chỉ tiêu theo Tiêu chuẩn ({t.spec_code})
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="font-bold text-xs text-slate-700 dark:text-slate-200">
+              📋 2. Kết quả Kiểm nghiệm các Chỉ tiêu theo Tiêu chuẩn ({t.spec_code} — {t.spec_name})
+            </div>
+            {t.status !== "REVIEWED" && t.status !== "CANCELLED" && specs.length > 0 && (
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className="font-semibold text-slate-600 dark:text-slate-300">Đổi Tiêu chuẩn áp dụng:</span>
+                <select
+                  className={`${inputClass} !py-1 !text-xs font-semibold min-w-[260px]`}
+                  value={t.spec_id ?? specs.find((s) => s.code === t.spec_code)?.id ?? ""}
+                  disabled={changeSpecInDetailMut.isPending}
+                  onChange={(e) => {
+                    const nextId = e.target.value;
+                    if (nextId && nextId !== t.spec_id) {
+                      changeSpecInDetailMut.mutate(nextId);
+                    }
+                  }}
+                >
+                  {specs
+                    .filter((sp: any) => sp.status === "EFFECTIVE")
+                    .map((sp: any) => (
+                      <option key={sp.id} value={sp.id}>
+                        {sp.code} (rev {sp.spec_version}) — {sp.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+            )}
           </div>
           <Table head={["#", "Chỉ tiêu", "Phương pháp", "Yêu cầu", "Kết quả", "Đánh giá"]}>
             {t.parameters.map((p) => {
@@ -1022,10 +1063,28 @@ export function QcTestsView() {
   const openingQueueCount = queue.filter((q) => q.origin === "OPENING").length;
   const canReleaseOpening = Boolean(me.data?.is_root || me.data?.permissions?.includes("inv.lot.release"));
 
+  const changeSpecMut = useMutation({
+    mutationFn: (payload: { test_id: string; spec_id: string }) =>
+      api("/api/factory/qms/ops", {
+        method: "POST",
+        json: {
+          op: "change_test_spec",
+          test_id: payload.test_id,
+          spec_id: payload.spec_id,
+        },
+      }),
+    onSuccess: (_res, vars) => {
+      qc.invalidateQueries({ queryKey: ["factory", "qc-tests"] });
+      qc.invalidateQueries({ queryKey: ["factory", "qc-test", vars.test_id] });
+      qc.invalidateQueries({ queryKey: ["factory", "qa-ops"] });
+    },
+  });
+
   const renderInlineDetailPanel = (testId: string) => (
     <QcDetailPanel
       key={testId}
       id={testId}
+      specs={specsList.data ?? []}
       standards={qaOps.data?.standards ?? []}
       standardUsages={qaOps.data?.standard_usages ?? []}
       formsConfig={formsConfig}
@@ -1250,7 +1309,7 @@ export function QcTestsView() {
           </select>
         }
       >
-        <ErrorNote error={list.error} />
+        <ErrorNote error={list.error ?? changeSpecMut.error} />
         {selected && selectedSource === "list" && !isRenderedInlineInList && (
           <div className="mb-3">{renderInlineDetailPanel(selected)}</div>
         )}
@@ -1304,7 +1363,32 @@ export function QcTestsView() {
                       )}
                     </td>
                     <td className="py-2 pr-3 font-mono font-semibold">{r.test_kind}</td>
-                    <td className="py-2 pr-3 font-mono">{r.spec_code}</td>
+                    <td className="py-2 pr-3 font-mono" onClick={(e) => e.stopPropagation()}>
+                      {r.status !== "REVIEWED" && r.status !== "CANCELLED" && (specsList.data ?? []).length > 0 ? (
+                        <select
+                          className={`${inputClass} !py-1 !px-2 !text-xs font-mono font-bold text-sky-800 dark:text-sky-300 max-w-[230px] cursor-pointer`}
+                          title={`Đang áp dụng: ${r.spec_code} — ${r.spec_name}. Bấm để đổi sang tiêu chuẩn QC khác (VD: TC0005).`}
+                          value={r.spec_id ?? (specsList.data ?? []).find((s: any) => s.code === r.spec_code)?.id ?? ""}
+                          disabled={changeSpecMut.isPending}
+                          onChange={(e) => {
+                            const nextSpecId = e.target.value;
+                            if (nextSpecId && nextSpecId !== r.spec_id) {
+                              changeSpecMut.mutate({ test_id: r.id, spec_id: nextSpecId });
+                            }
+                          }}
+                        >
+                          {(specsList.data ?? [])
+                            .filter((sp: any) => sp.status === "EFFECTIVE")
+                            .map((sp: any) => (
+                              <option key={sp.id} value={sp.id}>
+                                {sp.code} — {sp.name}
+                              </option>
+                            ))}
+                        </select>
+                      ) : (
+                        <span title={r.spec_name}>{r.spec_code}</span>
+                      )}
+                    </td>
                     <td className="py-2 pr-3 whitespace-nowrap">{QC_STATUS_LABEL[r.status]}</td>
                     <td className="py-2 pr-3">
                       {r.overall_result ? (

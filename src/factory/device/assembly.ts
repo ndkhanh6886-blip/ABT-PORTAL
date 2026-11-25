@@ -622,19 +622,64 @@ function parseCustomSerials(raw?: string[] | string | null): string[] {
     .filter(Boolean);
 }
 
-/** Effective FQC spec of a model: the one set on the model, else the latest effective spec of its finished item. */
+/**
+ * Effective FQC spec of a model:
+ * 1. Priority 1: An EFFECTIVE spec explicitly assigned to this model's item/code via `qms.qc_spec_item` or `qms.qc_spec.item_id`.
+ * 2. Priority 2: `m.fqc_spec_id` ONLY if that spec is EFFECTIVE and not exclusively assigned to other products/models.
+ */
 async function fqcSpecFor(tx: Tx, modelId: string): Promise<string | null> {
-  const r = (
+  const assigned = (
     await tx.query(
-      `SELECT COALESCE(
-                (SELECT s.id FROM qms.qc_spec s WHERE s.id = m.fqc_spec_id AND s.status = 'EFFECTIVE'),
-                (SELECT s.id FROM qms.qc_spec s WHERE s.item_id = m.item_id AND s.status = 'EFFECTIVE' ORDER BY s.spec_version DESC LIMIT 1)
-              ) AS spec_id
-         FROM device.device_model m WHERE m.id = $1`,
+      `SELECT s.id AS spec_id
+         FROM device.device_model m
+         JOIN qms.qc_spec s ON s.status = 'EFFECTIVE'
+        WHERE m.id = $1
+          AND (
+            (m.item_id IS NOT NULL AND s.item_id = m.item_id)
+            OR EXISTS (
+              SELECT 1
+                FROM qms.qc_spec_item si
+                JOIN master.item mi ON mi.id = si.item_id
+               WHERE si.spec_id = s.id
+                 AND (
+                   (m.item_id IS NOT NULL AND si.item_id = m.item_id)
+                   OR upper(regexp_replace(mi.code, '[^A-Za-z0-9]', '', 'g')) = upper(regexp_replace(m.code, '[^A-Za-z0-9]', '', 'g'))
+                 )
+            )
+            OR EXISTS (
+              SELECT 1
+                FROM master.item mi
+               WHERE mi.id = s.item_id
+                 AND upper(regexp_replace(mi.code, '[^A-Za-z0-9]', '', 'g')) = upper(regexp_replace(m.code, '[^A-Za-z0-9]', '', 'g'))
+            )
+          )
+        ORDER BY (s.applies_to = 'DEVICE_MODEL') DESC, s.spec_version DESC, s.updated_at DESC NULLS LAST
+        LIMIT 1`,
       [modelId]
     )
   ).rows[0];
-  return r?.spec_id ?? null;
+
+  if (assigned?.spec_id) {
+    await tx.query("UPDATE device.device_model SET fqc_spec_id = $2 WHERE id = $1 AND fqc_spec_id IS DISTINCT FROM $2", [
+      modelId,
+      assigned.spec_id,
+    ]);
+    return assigned.spec_id as string;
+  }
+
+  const fallback = (
+    await tx.query(
+      `SELECT s.id AS spec_id
+         FROM device.device_model m
+         JOIN qms.qc_spec s ON s.id = m.fqc_spec_id AND s.status = 'EFFECTIVE'
+        WHERE m.id = $1
+          AND s.item_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM qms.qc_spec_item si WHERE si.spec_id = s.id)
+        LIMIT 1`,
+      [modelId]
+    )
+  ).rows[0];
+  return fallback?.spec_id ?? null;
 }
 
 /** Automatically provisions and links an effective FQC specification for a model if none has been linked yet. */

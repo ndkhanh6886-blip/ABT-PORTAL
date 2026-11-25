@@ -10,7 +10,8 @@ import { isPlaceholderUom } from "../master/service";
 import { insertSignature, recordHash, type SignatureCredential } from "../core/signature";
 import { listPortalActivePersonnel } from "../core/hrDirectory";
 import { raiseDeviation } from "./incidents";
-import { createQcTest, registerQcSubject, runTransition } from "./qcTests";
+import { createQcTest, getQcTest, registerQcSubject, runTransition } from "./qcTests";
+import { syncDeviceModelsWithSpecItems } from "./specs";
 import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import {
   normalizeQcFormsConfig,
@@ -2168,6 +2169,7 @@ export async function assignSpecToItem(tx: Tx, actor: AuthzActor, input: unknown
         [srcSpec.id, ir.id]
       );
     }
+    await syncDeviceModelsWithSpecItems(tx, srcSpec.id);
 
     await writeAudit(tx, actor, {
       entityType: "qc_spec",
@@ -2216,6 +2218,7 @@ export async function assignSpecToItem(tx: Tx, actor: AuthzActor, input: unknown
       [cloned.id, ir.id]
     );
   }
+  await syncDeviceModelsWithSpecItems(tx, cloned.id);
 
   await tx.query(
     `INSERT INTO qms.qc_spec_parameter
@@ -2239,6 +2242,73 @@ export async function assignSpecToItem(tx: Tx, actor: AuthzActor, input: unknown
   });
 
   return { spec: cloned, mode: "CLONE", count: itemRows.length };
+}
+
+const changeQcTestSpecSchema = z.object({
+  test_id: z.string().uuid(),
+  spec_id: z.string().uuid(),
+});
+
+/**
+ * Changes the applied QC Specification (`spec_id`) on an open QC test (`PLANNED`, `IN_PROGRESS`, or `RESULTS_ENTERED`).
+ * Also updates `device.device_model.fqc_spec_id` when the test subject is a `DEVICE_UNIT` so subsequent units of that model use the chosen spec.
+ */
+export async function changeQcTestSpec(tx: Tx, actor: AuthzActor, input: unknown) {
+  await ensureQaOpsSchema(tx);
+  const d = parseInput(changeQcTestSpecSchema, input);
+
+  const test = (await tx.query("SELECT * FROM qms.qc_test WHERE id = $1 FOR UPDATE", [d.test_id])).rows[0];
+  if (!test) throw notFound("phiếu kiểm nghiệm QC");
+  if (test.status === "REVIEWED" || test.status === "CANCELLED") {
+    throw invalid("Không thể đổi tiêu chuẩn áp dụng trên phiếu QC đã duyệt hoặc đã hủy. Hãy tạo phiếu kiểm lại (Retest).");
+  }
+
+  const newSpec = (await tx.query("SELECT * FROM qms.qc_spec WHERE id = $1", [d.spec_id])).rows[0];
+  if (!newSpec) throw notFound("tiêu chuẩn QC");
+  if (newSpec.status !== "EFFECTIVE") {
+    throw invalid(`Tiêu chuẩn ${newSpec.code} chưa ở trạng thái Hiệu lực (EFFECTIVE).`);
+  }
+
+  const oldSpec = (await tx.query("SELECT code, name FROM qms.qc_spec WHERE id = $1", [test.spec_id])).rows[0];
+
+  if (test.spec_id !== newSpec.id) {
+    // Xóa các dòng kết quả thuộc chỉ tiêu của bộ tiêu chuẩn cũ để nạp bộ chỉ tiêu của tiêu chuẩn mới
+    await tx.query("DELETE FROM qms.qc_result WHERE test_id = $1", [test.id]);
+    const nextStatus = test.status === "RESULTS_ENTERED" ? "IN_PROGRESS" : test.status;
+    await tx.query(
+      `UPDATE qms.qc_test
+          SET spec_id = $2,
+              status = $3,
+              overall_result = NULL,
+              version = version + 1,
+              updated_at = now(),
+              updated_by = $4
+        WHERE id = $1`,
+      [test.id, newSpec.id, nextStatus, actor.userId]
+    );
+
+    if (test.entity_type === "DEVICE_UNIT") {
+      await tx.query(
+        `UPDATE device.device_model m
+            SET fqc_spec_id = $2
+           FROM device.device_unit du
+          WHERE du.id = $1 AND m.id = du.model_id`,
+        [test.entity_id, newSpec.id]
+      );
+    }
+
+    await writeAudit(tx, actor, {
+      entityType: "qc_test",
+      entityId: test.id,
+      action: "change_spec",
+      changes: {
+        spec_code: [oldSpec?.code ?? test.spec_id, newSpec.code],
+        spec_name: [oldSpec?.name ?? null, newSpec.name],
+      },
+    });
+  }
+
+  return getQcTest(tx, test.id);
 }
 
 const DEFAULT_OPENING_RELEASE_REASON =
