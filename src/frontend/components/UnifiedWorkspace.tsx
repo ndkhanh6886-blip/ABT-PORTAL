@@ -2889,6 +2889,20 @@ export const UnifiedWorkspace: React.FC = () => {
   const [announcementToDate, setAnnouncementToDate] = useState<string>("");
   const [announcementSortBy, setAnnouncementSortBy] = useState<"newest" | "issue_desc" | "issue_asc" | "pinned_first">("newest");
   const [isAnnouncementModalOpen, setIsAnnouncementModalOpen] = useState(false);
+  const [isAnnouncementApproverConfigOpen, setIsAnnouncementApproverConfigOpen] = useState(false);
+  const [announcementApprovalConfig, setAnnouncementApprovalConfig] = useState<{
+    requireApprovalForNonDirector: boolean;
+    defaultApproverByType: Record<"DECISION" | "ANNOUNCEMENT" | "POLICY" | "SALES_POLICY" | "RECOGNITION", string>;
+  }>({
+    requireApprovalForNonDirector: true,
+    defaultApproverByType: {
+      DECISION: "__DIRECTOR__",
+      ANNOUNCEMENT: "__DIRECTOR__",
+      POLICY: "__DIRECTOR__",
+      SALES_POLICY: "__DIRECTOR__",
+      RECOGNITION: "__DIRECTOR__",
+    },
+  });
   const [editingAnnouncementId, setEditingAnnouncementId] = useState<string | number | null>(null);
   const [selectedAnnouncementDetail, setSelectedAnnouncementDetail] = useState<any>(null);
   const [announcementCommentText, setAnnouncementCommentText] = useState("");
@@ -2906,6 +2920,11 @@ export const UnifiedWorkspace: React.FC = () => {
     issuerName: string;
     issuerRole: string;
     issuerDept: string;
+    requireApproval: boolean;
+    approverName: string;
+    approverRole: string;
+    createdBy: string;
+    createdByDept: string;
     targetScope: "ALL" | "DEPARTMENTS" | "MANAGERS" | "INDIVIDUALS";
     targetDepts: string[];
     targetStaff: string[];
@@ -2926,6 +2945,11 @@ export const UnifiedWorkspace: React.FC = () => {
     issuerName: "",
     issuerRole: "Ban Giám Đốc",
     issuerDept: "Ban Giám Đốc",
+    requireApproval: true,
+    approverName: "",
+    approverRole: "Ban Giám Đốc",
+    createdBy: "",
+    createdByDept: "",
     targetScope: "ALL",
     targetDepts: [],
     targetStaff: [],
@@ -3780,6 +3804,7 @@ export const UnifiedWorkspace: React.FC = () => {
         "unified_thematic_projects",
         "unified_sales_targets",
         "unified_announcements",
+        "unified_announcement_approval_config",
         "workspace_proposals",
         "unified_functional_groups"
       ];
@@ -3940,6 +3965,29 @@ export const UnifiedWorkspace: React.FC = () => {
         } catch (err) {
           const localAnn = typeof window !== "undefined" ? localStorage.getItem("unified_announcements") : null;
           if (localAnn) setAnnouncements(JSON.parse(localAnn));
+        }
+
+        // Load persistent announcement default approver configuration
+        try {
+          const rawCfg =
+            batchStorageData.unified_announcement_approval_config ??
+            (typeof window !== "undefined" && localStorage.getItem("unified_announcement_approval_config")
+              ? JSON.parse(localStorage.getItem("unified_announcement_approval_config")!)
+              : null);
+          if (rawCfg && typeof rawCfg === "object") {
+            setAnnouncementApprovalConfig((prev) => ({
+              requireApprovalForNonDirector:
+                typeof rawCfg.requireApprovalForNonDirector === "boolean"
+                  ? rawCfg.requireApprovalForNonDirector
+                  : prev.requireApprovalForNonDirector,
+              defaultApproverByType: {
+                ...prev.defaultApproverByType,
+                ...(rawCfg.defaultApproverByType || {}),
+              },
+            }));
+          }
+        } catch {
+          // ignore parse error
         }
 
         // Load persistent enterprise proposals & approvals
@@ -9817,14 +9865,113 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
     [currentStaffName]
   );
 
-  // Số lượng văn bản/quyết định yêu cầu xác nhận mà user hiện tại chưa bấm "Đã đọc"
+  const saveAnnouncementApprovalConfigToStorage = async (nextCfg: typeof announcementApprovalConfig) => {
+    setAnnouncementApprovalConfig(nextCfg);
+    try {
+      if (typeof window !== "undefined") {
+        localStorage.setItem("unified_announcement_approval_config", JSON.stringify(nextCfg));
+      }
+      await fetch("/api/storage?key=unified_announcement_approval_config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(nextCfg),
+      });
+    } catch (err) {
+      console.warn("Could not save announcement approval config:", err);
+    }
+  };
+
+  const resolveDefaultApproverForDocType = useCallback(
+    (
+      docType: "DECISION" | "ANNOUNCEMENT" | "POLICY" | "SALES_POLICY" | "RECOGNITION"
+    ): { name: string; role: string; dept: string } => {
+      const configured = announcementApprovalConfig?.defaultApproverByType?.[docType] || "__DIRECTOR__";
+      const directors = managementStaffCatalog.filter((m) => isSameWorkspaceDept(m.dept, "Ban Giám Đốc"));
+      const primaryDirector =
+        directors.find((d) => /nguyễn\s*duy\s*khánh|nguyễn\s*văn\s*tùng/i.test(d.name)) ||
+        directors[0] ||
+        managementStaffCatalog[0] ||
+        allAnnouncementStaffCatalog[0];
+
+      if (configured && configured !== "__DIRECTOR__" && configured !== "__DEPT_HEAD__") {
+        const found =
+          allAnnouncementStaffCatalog.find((p) => sameStaffName(p.name, configured)) ||
+          managementStaffCatalog.find((p) => sameStaffName(p.name, configured));
+        if (found) {
+          return {
+            name: found.name,
+            role: found.position || (isSameWorkspaceDept(found.dept, "Ban Giám Đốc") ? "Ban Giám Đốc" : `Quản lý ${found.dept}`),
+            dept: found.dept || "Ban Giám Đốc",
+          };
+        }
+      }
+
+      if (configured === "__DEPT_HEAD__") {
+        const myDept = managerDept || userDept;
+        const deptMgr = managementStaffCatalog.find(
+          (m) => isSameWorkspaceDept(m.dept, myDept) && !isSameWorkspaceDept(m.dept, "Ban Giám Đốc")
+        );
+        if (deptMgr) {
+          return {
+            name: deptMgr.name,
+            role: deptMgr.position || `Trưởng bộ phận ${deptMgr.dept}`,
+            dept: deptMgr.dept,
+          };
+        }
+      }
+
+      if (primaryDirector) {
+        return {
+          name: primaryDirector.name,
+          role: primaryDirector.position || "Ban Giám Đốc",
+          dept: primaryDirector.dept || "Ban Giám Đốc",
+        };
+      }
+
+      return {
+        name: isDirector ? currentStaffName : "Nguyễn Duy Khánh",
+        role: "Giám Đốc (Ban Giám Đốc)",
+        dept: "Ban Giám Đốc",
+      };
+    },
+    [announcementApprovalConfig, managementStaffCatalog, allAnnouncementStaffCatalog, managerDept, userDept, isDirector, currentStaffName]
+  );
+
+  const isAnnouncementApproved = useCallback((ann: any): boolean => {
+    return !ann?.approvalStatus || ann.approvalStatus === "PUBLISHED" || ann.approvalStatus === "APPROVED";
+  }, []);
+
+  const canUserApproveAnnouncement = useCallback(
+    (ann: any): boolean => {
+      if (!ann) return false;
+      if (isDirector || Boolean((user as any)?.isRootAdmin)) return true;
+      if (ann.approverName && sameStaffName(ann.approverName, currentStaffName)) return true;
+      return false;
+    },
+    [isDirector, user, currentStaffName]
+  );
+
+  // Số lượng văn bản/quyết định đã ban hành chính thức yêu cầu xác nhận mà user hiện tại chưa bấm "Đã đọc"
   const unacknowledgedAnnouncementsForMe = useMemo(() => {
     return (announcements || []).filter((ann: any) => {
+      if (!isAnnouncementApproved(ann)) return false;
       if (ann.requireAck === false) return false;
       if (!isUserTargetedByAnnouncement(ann)) return false;
       return !hasUserAcknowledgedAnnouncement(ann);
     });
-  }, [announcements, isUserTargetedByAnnouncement, hasUserAcknowledgedAnnouncement]);
+  }, [announcements, isAnnouncementApproved, isUserTargetedByAnnouncement, hasUserAcknowledgedAnnouncement]);
+
+  // Danh sách văn bản đang chờ phê duyệt mà user hiện tại có quyền xem hoặc duyệt
+  const pendingApprovalAnnouncements = useMemo(() => {
+    return (announcements || []).filter((ann: any) => {
+      if (ann?.approvalStatus !== "PENDING_APPROVAL") return false;
+      return (
+        canUserApproveAnnouncement(ann) ||
+        sameStaffName(ann.createdBy || "", currentStaffName) ||
+        sameStaffName(ann.issuerName || "", currentStaffName)
+      );
+    });
+  }, [announcements, canUserApproveAnnouncement, currentStaffName]);
 
   const generateNextDocCode = (docType: "DECISION" | "ANNOUNCEMENT" | "POLICY" | "SALES_POLICY" | "RECOGNITION") => {
     const meta = getDocTypeMeta(docType);
@@ -9837,8 +9984,17 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
     setEditingAnnouncementId(null);
     setAnnouncementStaffSearch("");
     setAnnouncementStaffDeptFilter("all");
-    const defaultIssuerRole = isDirector ? "Ban Giám Đốc" : isManager ? `Trưởng bộ phận ${managerDept}` : "Cán bộ Ban hành";
-    const defaultIssuerDept = isDirector ? "Ban Giám Đốc" : managerDept;
+    const defApprover = resolveDefaultApproverForDocType(defaultType);
+    const needApprovalByDefault = !isDirector && announcementApprovalConfig.requireApprovalForNonDirector;
+    const defaultIssuerName = needApprovalByDefault ? defApprover.name : currentStaffName;
+    const defaultIssuerRole = needApprovalByDefault
+      ? defApprover.role
+      : isDirector
+      ? "Ban Giám Đốc"
+      : isManager
+      ? `Trưởng bộ phận ${managerDept}`
+      : "Cán bộ Ban hành";
+    const defaultIssuerDept = needApprovalByDefault ? defApprover.dept : isDirector ? "Ban Giám Đốc" : managerDept;
     setAnnouncementForm({
       docCode: generateNextDocCode(defaultType),
       docType: defaultType,
@@ -9847,9 +10003,14 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       title: "",
       summary: "",
       content: "",
-      issuerName: currentStaffName,
+      issuerName: defaultIssuerName,
       issuerRole: defaultIssuerRole,
       issuerDept: defaultIssuerDept,
+      requireApproval: needApprovalByDefault,
+      approverName: defApprover.name,
+      approverRole: defApprover.role,
+      createdBy: currentStaffName,
+      createdByDept: userDept,
       targetScope: isDirector ? "ALL" : "DEPARTMENTS",
       targetDepts: isDirector ? [] : [managerDept],
       targetStaff: [],
@@ -9867,102 +10028,42 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
     setEditingAnnouncementId(ann.id);
     setAnnouncementStaffSearch("");
     setAnnouncementStaffDeptFilter("all");
+    const docType = (ann.docType || "ANNOUNCEMENT") as "DECISION" | "ANNOUNCEMENT" | "POLICY" | "SALES_POLICY" | "RECOGNITION";
+    const defApprover = resolveDefaultApproverForDocType(docType);
+    const isPendingOrRejected = ann.approvalStatus === "PENDING_APPROVAL" || ann.approvalStatus === "REJECTED";
     setAnnouncementForm({
-      docCode: ann.docCode || generateNextDocCode(ann.docType || "ANNOUNCEMENT"),
-      docType: ann.docType || "ANNOUNCEMENT",
+      docCode: ann.docCode || generateNextDocCode(docType),
+      docType,
       priority: ann.priority || "IMPORTANT",
       pinned: Boolean(ann.pinned),
       title: ann.title || "",
       summary: ann.summary || "",
       content: ann.content || "",
-      issuerName: ann.issuerName || currentStaffName,
-      issuerRole: ann.issuerRole || "Ban Giám Đốc",
-      issuerDept: ann.issuerDept || "Ban Giám Đốc",
+      issuerName: ann.issuerName || defApprover.name || currentStaffName,
+      issuerRole: ann.issuerRole || defApprover.role || "Ban Giám Đốc",
+      issuerDept: ann.issuerDept || defApprover.dept || "Ban Giám Đốc",
+      requireApproval: isPendingOrRejected ? true : Boolean(ann.requireApproval),
+      approverName: ann.approverName || ann.issuerName || defApprover.name,
+      approverRole: ann.approverRole || ann.issuerRole || defApprover.role,
+      createdBy: ann.createdBy || ann.issuerName || currentStaffName,
+      createdByDept: ann.createdByDept || ann.issuerDept || userDept,
       targetScope: ann.targetScope || "ALL",
       targetDepts: Array.isArray(ann.targetDepts) ? ann.targetDepts : [],
       targetStaff: Array.isArray(ann.targetStaff) ? ann.targetStaff : [],
       issueDate: ann.issueDate || todayVN(),
       effectiveDate: ann.effectiveDate || todayVN(),
       requireAck: ann.requireAck !== false,
-      sendChatNotify: false,
-      sendBellNotify: false,
+      sendChatNotify: isPendingOrRejected ? ann.pendingChatNotify !== false : false,
+      sendBellNotify: isPendingOrRejected ? ann.pendingBellNotify !== false : false,
       attachments: Array.isArray(ann.attachments) ? ann.attachments : []
     });
     setIsAnnouncementModalOpen(true);
   };
 
-  const handleSaveAnnouncement = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!announcementForm.title.trim()) {
-      showToast("Vui lòng nhập tiêu đề Thông báo / Quyết định", "warning");
-      return;
-    }
-    if (!announcementForm.content.trim() && !announcementForm.summary.trim()) {
-      showToast("Vui lòng nhập nội dung chi tiết hoặc tóm tắt văn bản", "warning");
-      return;
-    }
-    if (announcementForm.targetScope === "DEPARTMENTS" && announcementForm.targetDepts.length === 0) {
-      showToast("Vui lòng chọn ít nhất 1 phòng ban nhận văn bản", "warning");
-      return;
-    }
-    if (announcementForm.targetScope === "INDIVIDUALS" && announcementForm.targetStaff.length === 0) {
-      showToast("Vui lòng chọn ít nhất 1 nhân sự cụ thể nhận văn bản", "warning");
-      return;
-    }
-    if (announcementForm.targetScope === "MANAGERS" && announcementForm.targetStaff.length === 0 && managementStaffCatalog.length === 0) {
-      showToast("Vui lòng chọn ít nhất 1 Quản lý nhận văn bản", "warning");
-      return;
-    }
-
-    const nowTimeStr = nowVNDateTime();
-    const existingItem = editingAnnouncementId
-      ? announcements.find((a: any) => a.id === editingAnnouncementId)
-      : null;
-
-    const initialAck = existingItem?.acknowledgedBy || [
-      {
-        name: announcementForm.issuerName || currentStaffName,
-        dept: announcementForm.issuerDept || userDept,
-        time: nowTimeStr,
-        note: "Người ký ban hành"
-      }
-    ];
-
-    const savedItem = {
-      id: existingItem ? existingItem.id : `ANN-${Date.now()}`,
-      docCode: announcementForm.docCode.trim() || generateNextDocCode(announcementForm.docType),
-      docType: announcementForm.docType,
-      priority: announcementForm.priority,
-      pinned: announcementForm.pinned,
-      title: announcementForm.title.trim(),
-      summary: announcementForm.summary.trim() || announcementForm.content.trim().slice(0, 180),
-      content: announcementForm.content.trim(),
-      issuerName: announcementForm.issuerName || currentStaffName,
-      issuerRole: announcementForm.issuerRole || "Ban Giám Đốc",
-      issuerDept: announcementForm.issuerDept || userDept,
-      targetScope: announcementForm.targetScope,
-      targetDepts: announcementForm.targetDepts,
-      targetStaff: announcementForm.targetStaff,
-      issueDate: announcementForm.issueDate || todayVN(),
-      effectiveDate: announcementForm.effectiveDate || todayVN(),
-      requireAck: announcementForm.requireAck,
-      acknowledgedBy: initialAck,
-      comments: existingItem?.comments || [],
-      attachments: announcementForm.attachments || [],
-      createdAt: existingItem?.createdAt || nowTimeStr,
-      updatedAt: nowTimeStr
-    };
-
-    const nextList = existingItem
-      ? announcements.map((a: any) => (a.id === editingAnnouncementId ? savedItem : a))
-      : [savedItem, ...announcements];
-
-    await saveAnnouncementsToStorage(nextList);
-    setIsAnnouncementModalOpen(false);
-    if (selectedAnnouncementDetail && selectedAnnouncementDetail.id === savedItem.id) {
-      setSelectedAnnouncementDetail(savedItem);
-    }
-
+  const broadcastPublishedAnnouncement = async (
+    savedItem: any,
+    opts: { sendBell: boolean; sendChat: boolean }
+  ) => {
     const recipients = getTargetStaffForAnnouncement(savedItem)
       .map((r) => r.name)
       .filter((n) => n && !sameStaffName(n, currentStaffName));
@@ -9979,8 +10080,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             (savedItem.targetStaff || []).length > 3 ? ` (+${(savedItem.targetStaff || []).length - 3} người)` : ""
           }`;
 
-    // Gửi thông báo Chuông hệ thống
-    if (announcementForm.sendBellNotify) {
+    if (opts.sendBell && recipients.length > 0) {
       notifyActivity({
         title: `${meta.shortLabel} [${savedItem.docCode}]`,
         message: `${savedItem.issuerName} (${savedItem.issuerRole}) vừa ban hành: "${savedItem.title}". Hiệu lực từ ${formatDayVN(savedItem.effectiveDate)}. Vui lòng mở xem và bấm Xác nhận đã đọc!`,
@@ -9993,15 +10093,17 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       });
     }
 
-    // Gửi tin nhắn Chat nội bộ 1-1 tới tất cả nhân sự thuộc phạm vi nhận
-    if (announcementForm.sendChatNotify && recipients.length > 0) {
+    if (opts.sendChat && recipients.length > 0) {
       try {
         const effStr = formatDayVN(savedItem.effectiveDate);
         const msgLines = [
           `📢 **[BAN HÀNH ${meta.shortLabel} MỚI]**`,
           `• **Số hiệu:** ${savedItem.docCode} ${savedItem.priority === "URGENT" ? "🚨 *(KHẨN CẤP)*" : ""}`,
           `• **Tiêu đề:** **${savedItem.title}**`,
-          `• **Người ký ban hành:** ${savedItem.issuerName} (${savedItem.issuerRole})`,
+          `• **Người ký duyệt ban hành:** ${savedItem.issuerName} (${savedItem.issuerRole})`,
+          savedItem.createdBy && !sameStaffName(savedItem.createdBy, savedItem.issuerName)
+            ? `• **Người soạn thảo / Trình ban hành:** ${savedItem.createdBy} (${savedItem.createdByDept || "ABT"})`
+            : "",
           `• **Phạm vi áp dụng:** ${scopeLabel} | **Hiệu lực từ:** ${effStr}`,
           savedItem.summary ? `• **Trích yếu:** ${savedItem.summary}` : "",
           savedItem.requireAck
@@ -10032,11 +10134,286 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
         console.warn("Could not broadcast announcement to chat:", err);
       }
     }
+    return recipients.length;
+  };
+
+  const handleApproveAnnouncement = async (ann: any) => {
+    if (!ann) return;
+    if (!canUserApproveAnnouncement(ann)) {
+      showToast("Chỉ Người phê duyệt được chỉ định hoặc Ban Giám Đốc mới có quyền duyệt ban hành văn bản này!", "warning");
+      return;
+    }
+    const nowTimeStr = nowVNDateTime();
+    const approverInfo = allAnnouncementStaffCatalog.find((p) => sameStaffName(p.name, currentStaffName));
+    const finalIssuerName = currentStaffName;
+    const finalIssuerRole =
+      approverInfo?.position || (isDirector ? "Ban Giám Đốc" : ann.approverRole || ann.issuerRole || "Người ký duyệt");
+    const finalIssuerDept = approverInfo?.dept || (isDirector ? "Ban Giám Đốc" : userDept);
+
+    const existingAcks = Array.isArray(ann.acknowledgedBy) ? ann.acknowledgedBy : [];
+    const nextAcks = existingAcks.some((a: any) => sameStaffName(a?.name || a, finalIssuerName))
+      ? existingAcks
+      : [
+          ...existingAcks,
+          {
+            name: finalIssuerName,
+            dept: finalIssuerDept,
+            time: nowTimeStr,
+            note: "Người ký phê duyệt ban hành",
+          },
+        ];
+
+    const approvedItem = {
+      ...ann,
+      approvalStatus: "PUBLISHED",
+      approvedBy: finalIssuerName,
+      approvedByRole: finalIssuerRole,
+      approvedAt: nowTimeStr,
+      issuerName: finalIssuerName,
+      issuerRole: finalIssuerRole,
+      issuerDept: finalIssuerDept,
+      issueDate: todayVN(),
+      acknowledgedBy: nextAcks,
+      updatedAt: nowTimeStr,
+    };
+
+    const nextList = announcements.map((a: any) => (a.id === ann.id ? approvedItem : a));
+    await saveAnnouncementsToStorage(nextList);
+    if (selectedAnnouncementDetail && selectedAnnouncementDetail.id === approvedItem.id) {
+      setSelectedAnnouncementDetail(approvedItem);
+    }
+
+    const meta = getDocTypeMeta(approvedItem.docType);
+    if (approvedItem.createdBy && !sameStaffName(approvedItem.createdBy, currentStaffName)) {
+      notifyActivity({
+        title: `✅ Đã duyệt ban hành ${meta.shortLabel} [${approvedItem.docCode}]`,
+        message: `${finalIssuerName} (${finalIssuerRole}) đã phê duyệt và chính thức ban hành văn bản "${approvedItem.title}" do bạn trình.`,
+        type: "success",
+        category: "system",
+        sender: { name: finalIssuerName },
+        targetEmployeeNames: [approvedItem.createdBy],
+        link: { tab: "workspace", subTab: "announcements", itemId: String(approvedItem.docCode || approvedItem.id) },
+      });
+    }
+
+    const recipientCount = await broadcastPublishedAnnouncement(approvedItem, {
+      sendBell: approvedItem.pendingBellNotify !== false,
+      sendChat: approvedItem.pendingChatNotify !== false,
+    });
+
+    showToast(
+      `✅ Đã phê duyệt & chính thức ban hành ${meta.shortLabel} [${approvedItem.docCode}] tới ${recipientCount} nhân sự!`,
+      "success"
+    );
+  };
+
+  const handleRejectAnnouncement = async (ann: any) => {
+    if (!ann) return;
+    if (!canUserApproveAnnouncement(ann)) {
+      showToast("Chỉ Người phê duyệt được chỉ định hoặc Ban Giám Đốc mới có quyền trả lại / từ chối văn bản này!", "warning");
+      return;
+    }
+    const reason = window.prompt(
+      `Nhập ý kiến yêu cầu chỉnh sửa hoặc lý do chưa duyệt văn bản [${ann.docCode}] "${ann.title}":`,
+      "Cần bổ sung / hiệu chỉnh lại nội dung trước khi ban hành"
+    );
+    if (reason === null) return;
+    const nowTimeStr = nowVNDateTime();
+    const rejectedItem = {
+      ...ann,
+      approvalStatus: "REJECTED",
+      rejectedBy: currentStaffName,
+      rejectedAt: nowTimeStr,
+      rejectionReason: reason.trim() || "Yêu cầu chỉnh sửa trước khi ban hành",
+      updatedAt: nowTimeStr,
+    };
+    const nextList = announcements.map((a: any) => (a.id === ann.id ? rejectedItem : a));
+    await saveAnnouncementsToStorage(nextList);
+    if (selectedAnnouncementDetail && selectedAnnouncementDetail.id === rejectedItem.id) {
+      setSelectedAnnouncementDetail(rejectedItem);
+    }
+    if (rejectedItem.createdBy && !sameStaffName(rejectedItem.createdBy, currentStaffName)) {
+      notifyActivity({
+        title: `⚠️ Yêu cầu chỉnh sửa văn bản [${rejectedItem.docCode}]`,
+        message: `${currentStaffName} đã phản hồi văn bản "${rejectedItem.title}": ${rejectedItem.rejectionReason}`,
+        type: "warning",
+        category: "system",
+        sender: { name: currentStaffName },
+        targetEmployeeNames: [rejectedItem.createdBy],
+        link: { tab: "workspace", subTab: "announcements", itemId: String(rejectedItem.docCode || rejectedItem.id) },
+      });
+    }
+    showToast(`Đã gửi yêu cầu chỉnh sửa văn bản [${rejectedItem.docCode}] cho ${rejectedItem.createdBy || "người tạo"}.`, "info");
+  };
+
+  const handleSaveAnnouncement = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!announcementForm.title.trim()) {
+      showToast("Vui lòng nhập tiêu đề Thông báo / Quyết định / Tài liệu", "warning");
+      return;
+    }
+    if (!announcementForm.content.trim() && !announcementForm.summary.trim()) {
+      showToast("Vui lòng nhập nội dung chi tiết hoặc tóm tắt văn bản", "warning");
+      return;
+    }
+    if (announcementForm.targetScope === "DEPARTMENTS" && announcementForm.targetDepts.length === 0) {
+      showToast("Vui lòng chọn ít nhất 1 phòng ban nhận văn bản", "warning");
+      return;
+    }
+    if (announcementForm.targetScope === "INDIVIDUALS" && announcementForm.targetStaff.length === 0) {
+      showToast("Vui lòng chọn ít nhất 1 nhân sự cụ thể nhận văn bản", "warning");
+      return;
+    }
+    if (announcementForm.targetScope === "MANAGERS" && announcementForm.targetStaff.length === 0 && managementStaffCatalog.length === 0) {
+      showToast("Vui lòng chọn ít nhất 1 Quản lý nhận văn bản", "warning");
+      return;
+    }
+
+    const nowTimeStr = nowVNDateTime();
+    const existingItem = editingAnnouncementId
+      ? announcements.find((a: any) => a.id === editingAnnouncementId)
+      : null;
+
+    const defApprover = resolveDefaultApproverForDocType(announcementForm.docType);
+    const chosenApproverName = (announcementForm.approverName || defApprover.name || currentStaffName).trim();
+    const chosenApproverEntry = allAnnouncementStaffCatalog.find((p) => sameStaffName(p.name, chosenApproverName));
+    const chosenApproverRole =
+      announcementForm.approverRole?.trim() ||
+      chosenApproverEntry?.position ||
+      defApprover.role ||
+      "Ban Giám Đốc";
+    const chosenApproverDept = chosenApproverEntry?.dept || defApprover.dept || "Ban Giám Đốc";
+
+    // Nếu người tạo chọn "Cần phê duyệt trước khi ban hành" (và người duyệt khác người tạo, hoặc người tạo không phải BGĐ tự ban hành ngay)
+    const isPendingApproval =
+      Boolean(announcementForm.requireApproval) &&
+      (!sameStaffName(chosenApproverName, currentStaffName) || !isDirector);
+
+    const creatorName = existingItem?.createdBy || announcementForm.createdBy || currentStaffName;
+    const creatorDept = existingItem?.createdByDept || announcementForm.createdByDept || userDept;
+
+    const initialAck = existingItem?.acknowledgedBy || [
+      {
+        name: creatorName,
+        dept: creatorDept,
+        time: nowTimeStr,
+        note: isPendingApproval ? "Người soạn thảo & trình duyệt" : "Người ký ban hành"
+      }
+    ];
+
+    const savedItem = {
+      id: existingItem ? existingItem.id : `ANN-${Date.now()}`,
+      docCode: announcementForm.docCode.trim() || generateNextDocCode(announcementForm.docType),
+      docType: announcementForm.docType,
+      priority: announcementForm.priority,
+      pinned: announcementForm.pinned,
+      title: announcementForm.title.trim(),
+      summary: announcementForm.summary.trim() || announcementForm.content.trim().slice(0, 180),
+      content: announcementForm.content.trim(),
+      issuerName: isPendingApproval ? chosenApproverName : (announcementForm.issuerName || currentStaffName),
+      issuerRole: isPendingApproval ? chosenApproverRole : (announcementForm.issuerRole || "Ban Giám Đốc"),
+      issuerDept: isPendingApproval ? chosenApproverDept : (announcementForm.issuerDept || userDept),
+      requireApproval: Boolean(announcementForm.requireApproval),
+      approvalStatus: isPendingApproval ? "PENDING_APPROVAL" : "PUBLISHED",
+      approverName: chosenApproverName,
+      approverRole: chosenApproverRole,
+      createdBy: creatorName,
+      createdByDept: creatorDept,
+      approvedBy: isPendingApproval ? null : (existingItem?.approvedBy || currentStaffName),
+      approvedAt: isPendingApproval ? null : (existingItem?.approvedAt || nowTimeStr),
+      rejectionReason: null,
+      pendingBellNotify: announcementForm.sendBellNotify,
+      pendingChatNotify: announcementForm.sendChatNotify,
+      targetScope: announcementForm.targetScope,
+      targetDepts: announcementForm.targetDepts,
+      targetStaff: announcementForm.targetStaff,
+      issueDate: announcementForm.issueDate || todayVN(),
+      effectiveDate: announcementForm.effectiveDate || todayVN(),
+      requireAck: announcementForm.requireAck,
+      acknowledgedBy: initialAck,
+      comments: existingItem?.comments || [],
+      attachments: announcementForm.attachments || [],
+      createdAt: existingItem?.createdAt || nowTimeStr,
+      updatedAt: nowTimeStr
+    };
+
+    const nextList = existingItem
+      ? announcements.map((a: any) => (a.id === editingAnnouncementId ? savedItem : a))
+      : [savedItem, ...announcements];
+
+    await saveAnnouncementsToStorage(nextList);
+    setIsAnnouncementModalOpen(false);
+    if (selectedAnnouncementDetail && selectedAnnouncementDetail.id === savedItem.id) {
+      setSelectedAnnouncementDetail(savedItem);
+    }
+
+    const meta = getDocTypeMeta(savedItem.docType);
+
+    if (isPendingApproval) {
+      // Chỉ gửi thông báo trình duyệt tới Người phê duyệt được chọn (không phát tán toàn công ty khi chưa duyệt!)
+      if (chosenApproverName && !sameStaffName(chosenApproverName, currentStaffName)) {
+        notifyActivity({
+          title: `⏳ Chờ duyệt ${meta.shortLabel} [${savedItem.docCode}]`,
+          message: `${creatorName} (${creatorDept}) vừa tải lên và trình bạn phê duyệt ban hành: "${savedItem.title}". Vui lòng mở xem và bấm Phê duyệt!`,
+          type: "warning",
+          category: "system",
+          sender: { name: creatorName },
+          targetEmployeeNames: [chosenApproverName],
+          link: { tab: "workspace", subTab: "announcements", itemId: String(savedItem.docCode || savedItem.id) }
+        });
+
+        try {
+          const effStr = formatDayVN(savedItem.effectiveDate);
+          const approvalMsg = [
+            `⏳ **[TRÌNH PHÊ DUYỆT BAN HÀNH ${meta.shortLabel}]**`,
+            `• **Số hiệu:** ${savedItem.docCode}`,
+            `• **Tiêu đề:** **${savedItem.title}**`,
+            `• **Người trình:** ${creatorName} (${creatorDept})`,
+            `• **Người phê duyệt & ký ban hành:** ${chosenApproverName} (${chosenApproverRole})`,
+            savedItem.summary ? `• **Trích yếu:** ${savedItem.summary}` : "",
+            `👉 *Đề nghị Anh/Chị vào mục **Điều hành → Thông Báo & Quyết Định** để xem nội dung/tệp đính kèm và bấm **"✅ Phê duyệt & Ban hành"**.*`
+          ]
+            .filter(Boolean)
+            .join("\n");
+
+          await fetch("/api/chat?action=broadcast_meeting", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: `[Chờ duyệt] ${savedItem.docCode}: ${savedItem.title}`,
+              date_label: effStr,
+              time_slot: "Trình ký duyệt văn bản",
+              location: "Điều hành → Thông Báo & Quyết Định",
+              host_name: creatorName,
+              attendees: [chosenApproverName],
+              agenda: savedItem.summary || savedItem.content.slice(0, 250),
+              custom_message: approvalMsg,
+              mode: "invite",
+              create_group: false,
+              send_direct: true
+            })
+          });
+        } catch (err) {
+          console.warn("Could not send approval request chat:", err);
+        }
+      }
+
+      showToast(
+        `⏳ Đã trình ${meta.shortLabel} [${savedItem.docCode}] tới ${chosenApproverName} (${chosenApproverRole}) để phê duyệt! Văn bản sẽ chính thức phát hành sau khi được duyệt.`,
+        "info"
+      );
+      return;
+    }
+
+    const recipientCount = await broadcastPublishedAnnouncement(savedItem, {
+      sendBell: announcementForm.sendBellNotify,
+      sendChat: announcementForm.sendChatNotify,
+    });
 
     showToast(
       existingItem
         ? `Đã cập nhật văn bản ${savedItem.docCode}!`
-        : `Đã ban hành ${meta.shortLabel} [${savedItem.docCode}] & gửi thông báo tới ${recipients.length} nhân sự!`,
+        : `Đã ban hành ${meta.shortLabel} [${savedItem.docCode}] & gửi thông báo tới ${recipientCount} nhân sự!`,
       "success"
     );
   };
@@ -15737,12 +16114,22 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
         const filteredAnnouncements = (announcements || [])
           .map((ann: any, _idx: number) => ({ ann, _idx }))
           .filter(({ ann }) => {
+            // Bảo mật văn bản Chờ phê duyệt / Từ chối: Chỉ Người trình, Người được chọn duyệt, Ban Giám Đốc hoặc Admin mới nhìn thấy trước khi được duyệt ban hành
+            if (!isAnnouncementApproved(ann)) {
+              const canSeeUnapproved =
+                canUserApproveAnnouncement(ann) ||
+                sameStaffName(ann.createdBy || "", currentStaffName) ||
+                sameStaffName(ann.issuerName || "", currentStaffName);
+              if (!canSeeUnapproved) return false;
+            }
             // Bảo mật phạm vi đối tượng nhận: Văn bản giới hạn (Cấp Quản lý / Cá nhân chỉ định / Phòng ban) chỉ hiển thị cho người thuộc phạm vi, người ban hành hoặc Ban Giám Đốc / Admin
             if (ann.targetScope && ann.targetScope !== "ALL") {
               const canSeeRestricted =
                 isDirector ||
                 Boolean((user as any)?.isRootAdmin) ||
                 sameStaffName(ann.issuerName || "", currentStaffName) ||
+                sameStaffName(ann.createdBy || "", currentStaffName) ||
+                sameStaffName(ann.approverName || "", currentStaffName) ||
                 isUserTargetedByAnnouncement(ann);
               if (!canSeeRestricted) return false;
             }
@@ -15754,12 +16141,17 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 !ann.targetScope ||
                 (Array.isArray(ann.targetDepts) && ann.targetDepts.some((d: string) => isSameWorkspaceDept(d, selectedDept))) ||
                 targetsOfAnn.some((t) => isSameWorkspaceDept(t.dept, selectedDept)) ||
-                isSameWorkspaceDept(ann.issuerDept, selectedDept);
+                isSameWorkspaceDept(ann.issuerDept, selectedDept) ||
+                isSameWorkspaceDept(ann.createdByDept, selectedDept);
               if (!appliesToSelectedDept) return false;
             }
             // Lọc theo phân loại văn bản
-            if (announcementCategoryFilter === "UNACKNOWLEDGED") {
-              if (!(ann.requireAck !== false && isUserTargetedByAnnouncement(ann) && !hasUserAcknowledgedAnnouncement(ann))) {
+            if (announcementCategoryFilter === "PENDING_APPROVAL") {
+              if (ann.approvalStatus !== "PENDING_APPROVAL" && ann.approvalStatus !== "REJECTED") {
+                return false;
+              }
+            } else if (announcementCategoryFilter === "UNACKNOWLEDGED") {
+              if (!(isAnnouncementApproved(ann) && ann.requireAck !== false && isUserTargetedByAnnouncement(ann) && !hasUserAcknowledgedAnnouncement(ann))) {
                 return false;
               }
             } else if (announcementCategoryFilter !== "all" && ann.docType !== announcementCategoryFilter) {
@@ -15812,13 +16204,14 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           })
           .map((x) => x.ann);
 
-        const decisionCount = (announcements || []).filter((a: any) => a.docType === "DECISION").length;
-        const policyCount = (announcements || []).filter((a: any) => a.docType === "POLICY" || a.docType === "SALES_POLICY").length;
+        const publishedAnnouncements = (announcements || []).filter((a: any) => isAnnouncementApproved(a));
+        const decisionCount = publishedAnnouncements.filter((a: any) => a.docType === "DECISION").length;
+        const policyCount = publishedAnnouncements.filter((a: any) => a.docType === "POLICY" || a.docType === "SALES_POLICY").length;
 
-        // Tính tỷ lệ xác nhận đọc trung bình toàn công ty
+        // Tính tỷ lệ xác nhận đọc trung bình toàn công ty (chỉ tính văn bản đã được duyệt ban hành)
         let totalAckPossible = 0;
         let totalAckDone = 0;
-        (announcements || []).forEach((ann: any) => {
+        publishedAnnouncements.forEach((ann: any) => {
           if (ann.requireAck === false) return;
           const targets = getTargetStaffForAnnouncement(ann);
           const acked = targets.filter((t) => hasUserAcknowledgedAnnouncement(ann, t.name));
@@ -15886,7 +16279,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               </div>
             </div>
 
-            {/* Thanh Lọc Nhanh Theo Loại Văn Bản + Nút Ban Hành */}
+            {/* Thanh Lọc Nhanh Theo Loại Văn Bản + Nút Cài Đặt Người Duyệt Mặc Định + Nút Ban Hành */}
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3.5 shadow-xs flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-1.5 flex-wrap">
                 {[
@@ -15896,6 +16289,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   { id: "POLICY", label: "📘 Quy chế / SOP" },
                   { id: "SALES_POLICY", label: "💼 Chính sách KD & Thưởng" },
                   { id: "RECOGNITION", label: "🏆 Vinh danh & Nhân sự" },
+                  {
+                    id: "PENDING_APPROVAL",
+                    label: `🛡️ Chờ duyệt ban hành (${pendingApprovalAnnouncements.length})`
+                  },
                   {
                     id: "UNACKNOWLEDGED",
                     label: `⏳ Chưa xác nhận đọc (${unacknowledgedAnnouncementsForMe.length})`
@@ -15909,7 +16306,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       announcementCategoryFilter === cat.id
                         ? cat.id === "UNACKNOWLEDGED"
                           ? "bg-rose-600 text-white shadow-xs"
+                          : cat.id === "PENDING_APPROVAL"
+                          ? "bg-amber-600 text-white shadow-xs"
                           : "bg-indigo-600 text-white shadow-xs"
+                        : cat.id === "PENDING_APPROVAL" && pendingApprovalAnnouncements.length > 0
+                        ? "bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700"
                         : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
                     }`}
                   >
@@ -15918,8 +16319,29 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 ))}
               </div>
 
-              {/* Bộ lọc Từ ngày - Đến ngày & Sắp xếp trực tiếp trên thanh phân loại */}
+              {/* Bộ lọc Từ ngày - Đến ngày & Cài đặt Người duyệt mặc định */}
               <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAnnouncementApproverConfigOpen((v) => !v)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                    isAnnouncementApproverConfigOpen
+                      ? "bg-indigo-700 text-white border-indigo-700"
+                      : "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100"
+                  }`}
+                  title="Thiết lập Người phê duyệt mặc định cho từng loại Thông báo, Quyết định, Quy chế / Tài liệu SOP"
+                >
+                  ⚙️ Cài đặt Người duyệt mặc định
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => openCreateAnnouncementModal("ANNOUNCEMENT")}
+                  className="px-3 py-1.5 rounded-xl text-xs font-extrabold bg-rose-600 hover:bg-rose-700 text-white shadow-xs cursor-pointer"
+                >
+                  📜 + Tải lên / Trình duyệt Văn bản
+                </button>
+
                 <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/70 text-xs">
                   <Calendar className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
                   <span className="text-[11px] font-semibold text-slate-500 whitespace-nowrap">Từ ngày:</span>
@@ -15950,6 +16372,92 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 </div>
               </div>
             </div>
+
+            {/* Bảng Cài Đặt Người Duyệt Mặc Định Theo Từng Loại Văn Bản / Tài Liệu */}
+            {isAnnouncementApproverConfigOpen && (
+              <div className="bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 rounded-2xl p-4 space-y-3 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h4 className="font-extrabold text-indigo-950 dark:text-indigo-200 text-sm">
+                      ⚙️ Cấu hình Người Phê Duyệt Mặc Định khi Tải lên Thông báo, Quyết định &amp; Tài liệu / Quy chế SOP
+                    </h4>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                      Khi nhân sự tạo văn bản mới, hệ thống tự động điền sẵn Người phê duyệt mặc định theo loại văn bản bên dưới (người tạo vẫn có thể đổi người duyệt khác ngay trên biểu mẫu tạo).
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsAnnouncementApproverConfigOpen(false)}
+                    className="px-3 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold text-slate-600 dark:text-slate-300 cursor-pointer"
+                  >
+                    Đóng
+                  </button>
+                </div>
+
+                <label className="flex items-center gap-2 p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800/80 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={announcementApprovalConfig.requireApprovalForNonDirector}
+                    onChange={(e) =>
+                      saveAnnouncementApprovalConfigToStorage({
+                        ...announcementApprovalConfig,
+                        requireApprovalForNonDirector: e.target.checked,
+                      })
+                    }
+                    className="w-4 h-4 rounded accent-indigo-600"
+                  />
+                  <span className="font-bold text-slate-800 dark:text-slate-100">
+                    🛡️ Bắt buộc qua bước Trình phê duyệt khi Cán bộ / Nhân viên (không phải Ban Giám Đốc) tải Thông báo, Quyết định, Tài liệu SOP lên
+                  </span>
+                </label>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+                  {(
+                    [
+                      { key: "DECISION", label: "📜 Quyết định BGĐ (QĐ)" },
+                      { key: "ANNOUNCEMENT", label: "📢 Thông báo nội bộ (TB)" },
+                      { key: "POLICY", label: "📘 Quy chế / Tài liệu SOP (QC)" },
+                      { key: "SALES_POLICY", label: "💼 Chính sách KD & Thưởng (CS)" },
+                      { key: "RECOGNITION", label: "🏆 Vinh danh & Nhân sự (KT)" },
+                    ] as const
+                  ).map((item) => (
+                    <div
+                      key={item.key}
+                      className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1.5"
+                    >
+                      <label className="block font-bold text-slate-700 dark:text-slate-200 text-[11px]">
+                        {item.label}
+                      </label>
+                      <select
+                        value={announcementApprovalConfig.defaultApproverByType[item.key] || "__DIRECTOR__"}
+                        onChange={(e) => {
+                          const nextVal = e.target.value;
+                          saveAnnouncementApprovalConfigToStorage({
+                            ...announcementApprovalConfig,
+                            defaultApproverByType: {
+                              ...announcementApprovalConfig.defaultApproverByType,
+                              [item.key]: nextVal,
+                            },
+                          });
+                          showToast(`Đã lưu Người duyệt mặc định cho ${item.label}!`, "success");
+                        }}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 font-bold text-[11px] text-slate-900 dark:text-white"
+                      >
+                        <option value="__DIRECTOR__">👑 Ban Giám Đốc (Mặc định)</option>
+                        <option value="__DEPT_HEAD__">👔 Trưởng bộ phận của người trình</option>
+                        <optgroup label="Chọn đích danh Ban Giám Đốc / Quản lý">
+                          {managementStaffCatalog.map((m) => (
+                            <option key={m.name} value={m.name}>
+                              {m.name} ({m.position} • {m.dept})
+                            </option>
+                          ))}
+                        </optgroup>
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Danh sách Thông báo, Quyết định & Quy chế */}
             {filteredAnnouncements.length === 0 ? (
@@ -16009,6 +16517,16 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         {/* Left: Document Info & Content Preview */}
                         <div className="space-y-2.5 flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
+                            {ann.approvalStatus === "PENDING_APPROVAL" && (
+                              <span className="px-2.5 py-0.5 rounded-md bg-amber-500 text-white text-[10px] font-extrabold shadow-2xs">
+                                ⏳ CHỜ PHÊ DUYỆT BAN HÀNH (Người duyệt: {ann.approverName || ann.issuerName})
+                              </span>
+                            )}
+                            {ann.approvalStatus === "REJECTED" && (
+                              <span className="px-2.5 py-0.5 rounded-md bg-rose-700 text-white text-[10px] font-extrabold">
+                                ❌ YÊU CẦU CHỈNH SỬA ({ann.rejectedBy || "Người duyệt"})
+                              </span>
+                            )}
                             {ann.pinned && (
                               <span className="px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/90 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 text-[10px] font-extrabold">
                                 📌 GHIM TIÊU ĐIỂM
@@ -16054,9 +16572,20 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
                           {/* Metadata Row */}
                           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-1 text-[11px] text-slate-500">
+                            {ann.createdBy && !sameStaffName(ann.createdBy, ann.issuerName) && (
+                              <span>
+                                📤 Người tải lên / Trình duyệt: <strong className="text-slate-800 dark:text-slate-200">{ann.createdBy}</strong> ({ann.createdByDept || "ABT"})
+                              </span>
+                            )}
                             <span>
-                              ✍️ Người ký ban hành: <strong className="text-slate-800 dark:text-slate-200">{ann.issuerName}</strong> ({ann.issuerRole})
+                              ✍️ {ann.approvalStatus === "PENDING_APPROVAL" ? "Người phê duyệt:" : "Người ký ban hành:"}{" "}
+                              <strong className="text-slate-800 dark:text-slate-200">{ann.approverName || ann.issuerName}</strong> ({ann.approverRole || ann.issuerRole})
                             </span>
+                            {ann.rejectionReason && (
+                              <span className="text-rose-600 dark:text-rose-400 font-bold">
+                                ⚠️ Ý kiến phản hồi: {ann.rejectionReason}
+                              </span>
+                            )}
                             <span>
                               📅 Ngày ban hành: <strong className="text-slate-700 dark:text-slate-300">{formatDayVN(ann.issueDate)}</strong>
                             </span>
@@ -16108,7 +16637,25 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           )}
 
                           <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                            {ann.requireAck !== false && iAmTargeted && (
+                            {ann.approvalStatus === "PENDING_APPROVAL" && canUserApproveAnnouncement(ann) && (
+                              <div className="w-full flex items-center gap-1.5 pb-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleApproveAnnouncement(ann)}
+                                  className="flex-1 py-1.5 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[11px] shadow-xs cursor-pointer"
+                                >
+                                  ✅ Duyệt &amp; Ban hành
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRejectAnnouncement(ann)}
+                                  className="py-1.5 px-2.5 rounded-lg bg-rose-100 dark:bg-rose-950/70 hover:bg-rose-200 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800 font-bold text-[11px] cursor-pointer"
+                                >
+                                  ❌ Yêu cầu sửa
+                                </button>
+                              </div>
+                            )}
+                            {isAnnouncementApproved(ann) && ann.requireAck !== false && iAmTargeted && (
                               iHaveAcked ? (
                                 <span className="w-full py-1.5 px-2.5 rounded-lg bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 font-bold text-[11px] text-center">
                                   ✅ Bạn đã xác nhận đọc văn bản này
@@ -21673,11 +22220,17 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               <select
                 value={announcementForm.docType}
                 onChange={(e) => {
-                  const nextType = e.target.value as any;
+                  const nextType = e.target.value as "DECISION" | "ANNOUNCEMENT" | "POLICY" | "SALES_POLICY" | "RECOGNITION";
+                  const defApp = resolveDefaultApproverForDocType(nextType);
                   setAnnouncementForm({
                     ...announcementForm,
                     docType: nextType,
-                    docCode: editingAnnouncementId ? announcementForm.docCode : generateNextDocCode(nextType)
+                    docCode: editingAnnouncementId ? announcementForm.docCode : generateNextDocCode(nextType),
+                    approverName: defApp.name,
+                    approverRole: defApp.role,
+                    issuerName: announcementForm.requireApproval ? defApp.name : announcementForm.issuerName,
+                    issuerRole: announcementForm.requireApproval ? defApp.role : announcementForm.issuerRole,
+                    issuerDept: announcementForm.requireApproval ? defApp.dept : announcementForm.issuerDept,
                   });
                 }}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
@@ -21728,6 +22281,168 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   <span className="font-bold text-amber-800 dark:text-amber-300 text-[10px]">📌 Ghim đầu</span>
                 </label>
               </div>
+            </div>
+          </div>
+
+          {/* Hàng 1B: Luồng Phê Duyệt & Chọn Người Phê Duyệt Mặc Định / Tùy Chọn */}
+          <div className="p-3 rounded-xl bg-amber-50/70 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-800/80 space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="font-extrabold text-amber-950 dark:text-amber-200 text-xs flex items-center gap-1.5">
+                <span>🛡️ Cơ chế Phê duyệt &amp; Chọn Người Duyệt Ban Hành Văn Bản / Tài Liệu</span>
+                <span className="px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-[10px] font-bold text-slate-700 dark:text-slate-300">
+                  Người tải lên: {announcementForm.createdBy || currentStaffName} ({announcementForm.createdByDept || userDept})
+                </span>
+              </div>
+              <div className="inline-flex rounded-lg bg-white dark:bg-slate-900 p-0.5 border border-amber-300 dark:border-amber-700 text-[11px] font-bold">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const defApp = resolveDefaultApproverForDocType(announcementForm.docType);
+                    const nextApprover = announcementForm.approverName || defApp.name;
+                    const nextRole = announcementForm.approverRole || defApp.role;
+                    setAnnouncementForm({
+                      ...announcementForm,
+                      requireApproval: true,
+                      approverName: nextApprover,
+                      approverRole: nextRole,
+                      issuerName: nextApprover,
+                      issuerRole: nextRole,
+                    });
+                  }}
+                  className={`px-2.5 py-1 rounded-md cursor-pointer transition-colors ${
+                    announcementForm.requireApproval
+                      ? "bg-amber-600 text-white"
+                      : "text-slate-600 dark:text-slate-300"
+                  }`}
+                >
+                  ⏳ Cần phê duyệt trước khi ban hành
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAnnouncementForm({
+                      ...announcementForm,
+                      requireApproval: false,
+                      issuerName: announcementForm.approverName || currentStaffName,
+                      issuerRole:
+                        announcementForm.approverRole ||
+                        (isDirector ? "Ban Giám Đốc" : isManager ? `Trưởng bộ phận ${managerDept}` : "Người ký ban hành"),
+                    })
+                  }
+                  className={`px-2.5 py-1 rounded-md cursor-pointer transition-colors ${
+                    !announcementForm.requireApproval
+                      ? "bg-emerald-600 text-white"
+                      : "text-slate-600 dark:text-slate-300"
+                  }`}
+                >
+                  ⚡ Ban hành hiệu lực ngay
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-end">
+              <div className="md:col-span-5">
+                <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1 text-[11px]">
+                  Chọn Người phê duyệt &amp; ký ban hành (Mặc định theo loại văn bản hoặc chọn tại đây) *
+                </label>
+                <select
+                  value={announcementForm.approverName}
+                  onChange={(e) => {
+                    const nextName = e.target.value;
+                    const staffObj = allAnnouncementStaffCatalog.find((p) => sameStaffName(p.name, nextName));
+                    const nextRole =
+                      staffObj?.position ||
+                      (staffObj && isSameWorkspaceDept(staffObj.dept, "Ban Giám Đốc")
+                        ? "Ban Giám Đốc"
+                        : announcementForm.approverRole || "Ban Giám Đốc");
+                    const nextDept = staffObj?.dept || "Ban Giám Đốc";
+                    setAnnouncementForm({
+                      ...announcementForm,
+                      approverName: nextName,
+                      approverRole: nextRole,
+                      issuerName: nextName,
+                      issuerRole: nextRole,
+                      issuerDept: nextDept,
+                    });
+                  }}
+                  className="w-full px-3 py-2 rounded-xl border border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold text-xs"
+                >
+                  <optgroup label="👑 Ban Giám Đốc & Cấp Quản lý / Trưởng bộ phận">
+                    {managementStaffCatalog.map((m) => (
+                      <option key={m.name} value={m.name}>
+                        {m.name} — {m.position} ({m.dept})
+                      </option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="👥 Toàn bộ nhân sự">
+                    {allAnnouncementStaffCatalog
+                      .filter((p) => !p.isManager)
+                      .map((p) => (
+                        <option key={p.name} value={p.name}>
+                          {p.name} — {p.position} ({p.dept})
+                        </option>
+                      ))}
+                  </optgroup>
+                </select>
+              </div>
+
+              <div className="md:col-span-4">
+                <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1 text-[11px]">
+                  Chức danh Người phê duyệt / Ký ban hành
+                </label>
+                <FastInput
+                  type="text"
+                  value={announcementForm.approverRole}
+                  onChange={(e) =>
+                    setAnnouncementForm({
+                      ...announcementForm,
+                      approverRole: e.target.value,
+                      issuerRole: e.target.value,
+                    })
+                  }
+                  placeholder="VD: Giám Đốc, Trưởng Ban ISO..."
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-semibold text-xs"
+                />
+              </div>
+
+              <div className="md:col-span-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!announcementForm.approverName) return;
+                    saveAnnouncementApprovalConfigToStorage({
+                      ...announcementApprovalConfig,
+                      defaultApproverByType: {
+                        ...announcementApprovalConfig.defaultApproverByType,
+                        [announcementForm.docType]: announcementForm.approverName,
+                      },
+                    });
+                    showToast(
+                      `📌 Đã đặt ${announcementForm.approverName} làm Người duyệt mặc định cho ${getDocTypeMeta(announcementForm.docType).label}!`,
+                      "success"
+                    );
+                  }}
+                  className="w-full px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] cursor-pointer shadow-2xs"
+                  title="Lưu người đang chọn làm Người phê duyệt mặc định cho loại văn bản này ở các lần tạo sau"
+                >
+                  📌 Đặt làm Mặc định cho loại này
+                </button>
+              </div>
+            </div>
+
+            <div className="text-[11px] text-amber-900 dark:text-amber-200">
+              {announcementForm.requireApproval ? (
+                <span>
+                  ⏳ Khi bấm lưu, văn bản sẽ ở trạng thái <b>Chờ phê duyệt</b> và gửi thông báo tới{" "}
+                  <b>{announcementForm.approverName || "Người phê duyệt"}</b>. Sau khi được bấm{" "}
+                  <b>&quot;✅ Duyệt &amp; Ban hành&quot;</b>, hệ thống mới phát thông báo toàn công ty / phòng ban nhận.
+                </span>
+              ) : (
+                <span>
+                  ⚡ Văn bản sẽ được <b>Chính thức ban hành ngay</b> dưới tên Người ký:{" "}
+                  <b>{announcementForm.issuerName} ({announcementForm.issuerRole})</b>.
+                </span>
+              )}
             </div>
           </div>
 
@@ -22249,9 +22964,19 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             </button>
             <button
               type="submit"
-              className="px-5 py-2 rounded-xl font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-md shadow-rose-600/30 cursor-pointer"
+              className={`px-5 py-2 rounded-xl font-bold text-white shadow-md cursor-pointer ${
+                announcementForm.requireApproval && (!sameStaffName(announcementForm.approverName, currentStaffName) || !isDirector)
+                  ? "bg-amber-600 hover:bg-amber-700 shadow-amber-600/30"
+                  : "bg-rose-600 hover:bg-rose-700 shadow-rose-600/30"
+              }`}
             >
-              {editingAnnouncementId ? "💾 Lưu Cập Nhật Văn Bản" : "📜 Chính Thức Ban Hành Văn Bản"}
+              {editingAnnouncementId
+                ? announcementForm.requireApproval && (!sameStaffName(announcementForm.approverName, currentStaffName) || !isDirector)
+                  ? `⏳ Lưu & Trình ${announcementForm.approverName} Phê Duyệt`
+                  : "💾 Lưu Cập Nhật Văn Bản"
+                : announcementForm.requireApproval && (!sameStaffName(announcementForm.approverName, currentStaffName) || !isDirector)
+                ? `⏳ Trình ${announcementForm.approverName} Phê Duyệt Ban Hành`
+                : "📜 Chính Thức Ban Hành Văn Bản"}
             </button>
           </div>
         </form>
@@ -22375,7 +23100,34 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 )}
               </div>
 
-              {/* Thanh Hành Động Nhanh: Xác nhận đã đọc + Giao việc triển khai + Nhắc đọc */}
+              {/* Thanh Hành Động Nhanh: Phê duyệt ban hành + Xác nhận đã đọc + Giao việc triển khai + Nhắc đọc */}
+              {ann.approvalStatus === "PENDING_APPROVAL" && (
+                <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700">
+                  <div className="text-xs text-amber-950 dark:text-amber-200">
+                    ⏳ <b>Văn bản đang chờ phê duyệt ban hành</b> • Người trình:{" "}
+                    <b>{ann.createdBy || ann.issuerName} ({ann.createdByDept || "ABT"})</b> • Người duyệt:{" "}
+                    <b>{ann.approverName || ann.issuerName} ({ann.approverRole || ann.issuerRole})</b>
+                  </div>
+                  {canUserApproveAnnouncement(ann) && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleApproveAnnouncement(ann)}
+                        className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs shadow-sm cursor-pointer"
+                      >
+                        ✅ Phê duyệt &amp; Chính thức Ban hành
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRejectAnnouncement(ann)}
+                        className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs cursor-pointer"
+                      >
+                        ❌ Yêu cầu chỉnh sửa
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-900/60">
                 <div className="flex items-center gap-2 flex-wrap">
                   {!iHaveAcked ? (
