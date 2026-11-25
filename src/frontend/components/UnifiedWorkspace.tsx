@@ -10714,17 +10714,21 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             </div>
           )}
 
-          {/* TAB 2B: ĐỀ XUẤT & PHÊ DUYỆT -> Nút Lập Đề Xuất / Tờ Trình + Nút nhanh Xin Nghỉ Phép (DXNP) */}
+          {/* TAB 2B: ĐỀ XUẤT & PHÊ DUYỆT -> Nút Lập Đề Xuất / Tờ Trình + Nút nhanh Xin Nghỉ Phép (hoặc Báo Vắng Mặt / Ủy Quyền cho BGĐ) */}
           {renderedSubTab === "proposals" && (
             <div className="flex items-center gap-2 flex-wrap">
               <button
                 type="button"
                 onClick={() => setProposalLeaveCreateTrigger((n) => n + 1)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white transition-all shadow-xs cursor-pointer"
-                title="Lập nhanh Đơn Xin Nghỉ Phép / Nghỉ Việc Riêng (DXNP)"
+                title={
+                  isDirector
+                    ? "Ghi nhận lịch vắng mặt / công tác & ủy quyền điều hành của Ban Giám Đốc (Hiệu lực ngay, không cần trình xin nghỉ phép và mặc định bảo mật nội bộ)"
+                    : "Lập nhanh Đơn Xin Nghỉ Phép / Nghỉ Việc Riêng (DXNP)"
+                }
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>🏖️ Xin Nghỉ Phép (DXNP)</span>
+                <span>{isDirector ? "🏛️ Báo Vắng Mặt / Ủy Quyền (BGĐ)" : "🏖️ Xin Nghỉ Phép (DXNP)"}</span>
               </button>
               <button
                 type="button"

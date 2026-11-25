@@ -1493,14 +1493,12 @@ export function isProposalWaitingForUser(
   }
   if (isSamePerson(activeStep.approverName, currentStaffName)) return true;
   if (userDept && canonName(activeStep.approverName) === canonName(userDept)) return true;
+  // Nếu một thành viên BGĐ nghỉ / vắng mặt mà không lập đơn xin nghỉ phép hay thông báo nghỉ phép,
+  // bất kỳ thành viên nào khác trong Ban Giám Đốc (isDirector) đều có thể duyệt thay bước DIRECTOR / Ban Giám Đốc để không bị tắc luồng.
   if (isDirector && (activeStep.roleType === "DIRECTOR" || activeStep.dept === "Ban Giám Đốc")) {
-    // Nếu bước duyệt đã chỉ định đích danh 1 thành viên BGĐ cụ thể thì ưu tiên đúng thành viên đó (hoặc Quản trị viên)
-    if (!isGenericRoleApproverLabel(activeStep.approverName)) {
-      const isRootAdmin = canonName(currentStaffName).includes("quan tri vien");
-      return isRootAdmin || isSamePerson(activeStep.approverName, currentStaffName);
-    }
     return true;
   }
+  // Nếu người hiện tại được chỉ định làm Người nhận bàn giao / Ủy quyền (handoverStaff) trong một phiếu báo vắng mặt đang còn hiệu lực hôm nay của người duyệt bước này -> cho phép duyệt thay theo ủy quyền
   const sameDept =
     canonName(activeStep.dept) === canonName(userDept) ||
     isSameWorkspaceDept(activeStep.dept, userDept) ||
@@ -1576,6 +1574,7 @@ export function ProposalsApprovalView({
   const [leaveDeptFilter, setLeaveDeptFilter] = useState<string>("all");
   const [leaveTypeFilter, setLeaveTypeFilter] = useState<string>("all");
   const [leaveStatusFilter, setLeaveStatusFilter] = useState<string>("all");
+  const [hideStaffLeaveForDirector, setHideStaffLeaveForDirector] = useState<boolean>(false);
   const [categoryFilter, setCategoryFilter] = useState<"all" | ProposalCategoryKey>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | ProposalStatus>("all");
   const [priorityFilter, setPriorityFilter] = useState<"all" | "NORMAL" | "HIGH" | "URGENT">("all");
@@ -1963,18 +1962,27 @@ export function ProposalsApprovalView({
       if (f.type === "date") defaultDateValues[f.key] = todayVN();
     });
     const isLeaveTmpl = tmpl.id === "tmpl_leave_request" || tmpl.codePrefix === "DXNP";
+    const isExecRequester = isDirector || isSameWorkspaceDept(reqDept, "Ban Giám Đốc");
     if (isLeaveTmpl) {
-      defaultDateValues.leaveType = "Nghỉ phép năm (Có hưởng lương)";
+      defaultDateValues.leaveType = isExecRequester
+        ? "Lịch công tác / Vắng mặt & Ủy quyền điều hành (BGĐ)"
+        : "Nghỉ phép năm (Có hưởng lương)";
       defaultDateValues.totalDays = "1";
+      defaultDateValues.onBehalfOfName = currentStaffName;
+      defaultDateValues.onBehalfOfDept = isDirector ? "Ban Giám Đốc" : reqDept;
     }
     setFormState({
       proposalCode: generateProposalCode(tmpl),
-      title: isLeaveTmpl ? `Xin nghỉ phép — ${currentStaffName} (${formatDayVN(todayVN())})` : "",
+      title: isLeaveTmpl
+        ? isExecRequester
+          ? `Lịch vắng mặt & Ủy quyền điều hành — ${currentStaffName} (${formatDayVN(todayVN())})`
+          : `Xin nghỉ phép — ${currentStaffName} (${formatDayVN(todayVN())})`
+        : "",
       priority: isLeaveTmpl ? "NORMAL" : "HIGH",
-      visibility: resolveDefaultTemplateVisibility(tmpl),
+      visibility: isLeaveTmpl && isExecRequester ? "PRIVATE" : resolveDefaultTemplateVisibility(tmpl),
       neededByDate: todayVN(),
       totalAmount: 0,
-      summaryReason: "",
+      summaryReason: isLeaveTmpl && isExecRequester ? "Ủy quyền xử lý công việc trong thời gian vắng mặt / công tác." : "",
       customerName: "",
       supplierName: "",
       linkedRefCode: "",
@@ -1988,8 +1996,8 @@ export function ProposalsApprovalView({
         : [],
       executorName: initialSteps[initialSteps.length - 1]?.approverName || "",
       attachments: [],
-      sendChatNotify: true,
-      sendBellNotify: true
+      sendChatNotify: !(isLeaveTmpl && isExecRequester),
+      sendBellNotify: !(isLeaveTmpl && isExecRequester)
     });
     setIsFormModalOpen(true);
 
@@ -2337,8 +2345,27 @@ export function ProposalsApprovalView({
 
     const nowStr = nowVNDateTime();
     const existing = editingProposalId ? proposals.find((p) => p.id === editingProposalId) : null;
-    const reqDept = existing?.requesterDept || defaultConcreteDeptForScope(selectedDept, userDept);
-    const reqName = existing?.requesterName || currentStaffName;
+    const isLeaveTmpl = activeTemplate.id === "tmpl_leave_request" || activeTemplate.codePrefix === "DXNP";
+    const proxyName = isLeaveTmpl ? String(formState.formValues?.onBehalfOfName || "").trim() : "";
+    const proxyDept = isLeaveTmpl ? String(formState.formValues?.onBehalfOfDept || "").trim() : "";
+    const reqName = existing?.requesterName || proxyName || currentStaffName;
+    const reqDept =
+      existing?.requesterDept ||
+      proxyDept ||
+      (isDirector && (!proxyName || isSamePerson(proxyName, currentStaffName))
+        ? "Ban Giám Đốc"
+        : defaultConcreteDeptForScope(selectedDept, userDept));
+
+    // Kiểm tra nếu người vắng mặt thuộc Ban Giám Đốc -> KHÔNG phải "Đơn xin nghỉ phép" chờ duyệt, mà tự động có hiệu lực ngay (APPROVED)
+    const isExecutiveLeave =
+      isLeaveTmpl &&
+      (isSameWorkspaceDept(reqDept, "Ban Giám Đốc") ||
+        (isDirector && isSamePerson(reqName, currentStaffName)) ||
+        /giám đốc|pgđ|bgđ|chủ tịch/i.test(
+          String(
+            (personnelList || []).find((p: any) => isSamePerson(p.full_name || p.name, reqName))?.position || ""
+          )
+        ));
 
     // Chuẩn hóa luồng bước duyệt (tự động phân luồng Trưởng/Phó phòng hoặc PGĐ phụ trách nhóm / GĐ)
     const initialStepsList = formState.steps.length > 0
@@ -2347,17 +2374,36 @@ export function ProposalsApprovalView({
           stepOrder: i + 1
         }))
       : buildStepsFromTemplate(activeTemplate, reqDept, formState.totalAmount, reqName);
-    let stepsList = normalizeProposalStepsForRequester(
-      initialStepsList,
-      reqDept,
-      reqName,
-      personnelList,
-      activeTemplate?.defaultSteps
-    ).steps;
+    let stepsList = isExecutiveLeave
+      ? [
+          {
+            stepOrder: 1,
+            stepName: "Ban Giám Đốc ghi nhận lịch vắng mặt & ủy quyền (Không qua trình xin phép)",
+            roleType: "DIRECTOR" as const,
+            dept: "Ban Giám Đốc",
+            approverName: reqName,
+            status: "APPROVED" as const,
+            decidedAt: nowStr,
+            decidedBy: currentStaffName,
+            comment: isSamePerson(reqName, currentStaffName)
+              ? "Ban Giám Đốc xác nhận lịch vắng mặt / ủy quyền điều hành (Hiệu lực ngay)"
+              : `${currentStaffName} ghi nhận lịch vắng mặt / ủy quyền theo chỉ đạo của ${reqName}`,
+            slaHours: 0
+          }
+        ]
+      : normalizeProposalStepsForRequester(
+          initialStepsList,
+          reqDept,
+          reqName,
+          personnelList,
+          activeTemplate?.defaultSteps
+        ).steps;
 
     // Nếu Gửi duyệt lại từ trạng thái RETURNED hoặc DRAFT -> đặt bước đầu tiên chưa APPROVED thành PENDING_NOW
     let activeIdx = 0;
-    if (submitMode === "PENDING") {
+    const finalStatus: ProposalStatus =
+      submitMode === "PENDING" && isExecutiveLeave ? "APPROVED" : submitMode;
+    if (submitMode === "PENDING" && !isExecutiveLeave) {
       const firstNotApproved = stepsList.findIndex((s) => s.status !== "APPROVED");
       activeIdx = firstNotApproved >= 0 ? firstNotApproved : 0;
       stepsList = stepsList.map((s, idx) => {
@@ -2370,6 +2416,8 @@ export function ProposalsApprovalView({
     const actionText =
       submitMode === "DRAFT"
         ? "Lưu bản nháp đề xuất"
+        : isExecutiveLeave
+        ? "Ghi nhận lịch vắng mặt & ủy quyền Ban Giám Đốc (Hiệu lực ngay — Không qua xin phép)"
         : existing && existing.status === "RETURNED"
         ? "Đã bổ sung giải trình & Gửi duyệt lại"
         : existing
@@ -2385,7 +2433,7 @@ export function ProposalsApprovalView({
         return !typed || taken ? generateProposalCode(activeTemplate) : typed;
       })(),
       templateId: activeTemplate.id,
-      templateName: activeTemplate.name,
+      templateName: isExecutiveLeave ? "Lịch Vắng Mặt & Ủy Quyền Điều Hành (BGĐ)" : activeTemplate.name,
       category: activeTemplate.category,
       title: formState.title.trim(),
       priority: formState.priority,
@@ -2401,8 +2449,8 @@ export function ProposalsApprovalView({
       lineItems: formState.lineItems.filter((li) => li.itemName.trim() || li.amount > 0),
       steps: stepsList,
       currentStepIndex: activeIdx,
-      status: submitMode,
-      visibility: formState.visibility || resolveDefaultTemplateVisibility(activeTemplate),
+      status: finalStatus,
+      visibility: formState.visibility || (isExecutiveLeave ? "PRIVATE" : resolveDefaultTemplateVisibility(activeTemplate)),
       followers: formState.followers,
       executorName: formState.executorName,
       linkedRefCode: formState.linkedRefCode.trim(),
@@ -2417,9 +2465,11 @@ export function ProposalsApprovalView({
           actor: currentStaffName,
           action: actionText,
           detail:
-            submitMode === "PENDING"
-              ? `Trình Bước ${activeIdx + 1}: ${stepsList[activeIdx]?.stepName || "Phê duyệt"} (${stepsList[activeIdx]?.approverName || ""})`
-              : "Lưu nháp chưa gửi duyệt"
+            submitMode === "DRAFT"
+              ? "Lưu nháp chưa gửi duyệt"
+              : isExecutiveLeave
+              ? `Ghi nhận lịch vắng mặt & người nhận bàn giao/ủy quyền (${formState.formValues?.handoverStaff || "Nội bộ BGĐ"}) — Hiệu lực ngay (APPROVED)`
+              : `Trình Bước ${activeIdx + 1}: ${stepsList[activeIdx]?.stepName || "Phê duyệt"} (${stepsList[activeIdx]?.approverName || ""})`
         }
       ]
     };
@@ -2436,20 +2486,29 @@ export function ProposalsApprovalView({
       const currentStep = stepsList[activeIdx];
       const handoverPerson = String(formState.formValues?.handoverStaff || "").trim();
       const targetApprovers = Array.from(
-        new Set([currentStep?.approverName, handoverPerson, ...formState.followers].filter((n) => n && !isSamePerson(n, currentStaffName)))
+        new Set(
+          (isExecutiveLeave
+            ? [handoverPerson, ...formState.followers]
+            : [currentStep?.approverName, handoverPerson, ...formState.followers]
+          ).filter((n) => n && !isSamePerson(n, currentStaffName))
+        )
       );
 
       if (formState.sendBellNotify && targetApprovers.length > 0) {
         notifyActivity({
-          title: `📝 Trình duyệt [${newProposal.proposalCode}]`,
-          message: `${newProposal.requesterName} (${newProposal.requesterDept}) vừa trình duyệt "${newProposal.title}"${
-            newProposal.totalAmount > 0 ? ` — Số tiền: ${formatMoneyVND(newProposal.totalAmount)}` : ""
-          }. Đang chờ ${currentStep?.approverName || "Anh/Chị"} phê duyệt (Bước ${activeIdx + 1}/${stepsList.length}).`,
+          title: isExecutiveLeave
+            ? `🏛️ Ủy quyền / Vắng mặt [${newProposal.proposalCode}]`
+            : `📝 Trình duyệt [${newProposal.proposalCode}]`,
+          message: isExecutiveLeave
+            ? `${newProposal.requesterName} (${newProposal.requesterDept}) đã ghi nhận lịch vắng mặt & bàn giao/ủy quyền: "${newProposal.title}".`
+            : `${newProposal.requesterName} (${newProposal.requesterDept}) vừa trình duyệt "${newProposal.title}"${
+                newProposal.totalAmount > 0 ? ` — Số tiền: ${formatMoneyVND(newProposal.totalAmount)}` : ""
+              }. Đang chờ ${currentStep?.approverName || "Anh/Chị"} phê duyệt (Bước ${activeIdx + 1}/${stepsList.length}).`,
           type: newProposal.priority === "URGENT" ? "warning" : "info",
           category: "task",
           sender: { name: currentStaffName },
           targetEmployeeNames: targetApprovers,
-          targetDept: currentStep?.dept || "all",
+          targetDept: isExecutiveLeave ? "Ban Giám Đốc" : (currentStep?.dept || "all"),
           link: { tab: "workspace", subTab: "proposals", itemId: newProposal.proposalCode }
         });
       }
@@ -2460,7 +2519,9 @@ export function ProposalsApprovalView({
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              title: `[ĐỀ XUẤT CẦN DUYỆT] ${newProposal.proposalCode}: ${newProposal.title}`,
+              title: isExecutiveLeave
+                ? `[ỦY QUYỀN / LỊCH VẮNG MẶT BGĐ] ${newProposal.proposalCode}: ${newProposal.title}`
+                : `[ĐỀ XUẤT CẦN DUYỆT] ${newProposal.proposalCode}: ${newProposal.title}`,
               date_label: formatDayVN(newProposal.neededByDate),
               time_slot: newProposal.priority === "URGENT" ? "🚨 KHẨN CẤP" : "Đề xuất phê duyệt",
               location: `Điều hành → Đề Xuất & Phê Duyệt`,
@@ -2468,7 +2529,7 @@ export function ProposalsApprovalView({
               attendees: targetApprovers,
               agenda: `Loại đề xuất: ${newProposal.templateName}${
                 newProposal.totalAmount > 0 ? ` | Số tiền: ${formatMoneyVND(newProposal.totalAmount)}` : ""
-              }\nLý do: ${newProposal.summaryReason}\n👉 Kính đề nghị ${currentStep?.approverName} vào mục Điều hành → Đề Xuất & Phê Duyệt để xem xét phê duyệt.`,
+              }\nLý do: ${newProposal.summaryReason}`,
               mode: "invite",
               create_group: false,
               send_direct: true
@@ -2481,6 +2542,8 @@ export function ProposalsApprovalView({
     showToast(
       submitMode === "DRAFT"
         ? `Đã lưu nháp đề xuất [${newProposal.proposalCode}]`
+        : isExecutiveLeave
+        ? `🏛️ Đã ghi nhận lịch vắng mặt & ủy quyền [${newProposal.proposalCode}] (Có hiệu lực ngay, không cần chờ duyệt)!`
         : `🚀 Đã gửi trình duyệt đề xuất [${newProposal.proposalCode}] thành công!`,
       "success"
     );
@@ -3197,6 +3260,13 @@ export function ProposalsApprovalView({
     }
 
     return base.filter((p) => {
+      if (hideStaffLeaveForDirector && isDirector && isLeaveProposal(p)) {
+        const involvesDirector =
+          isSameWorkspaceDept(p.requesterDept, "Ban Giám Đốc") ||
+          isPersonDeptHeadOrDeputy(p.requesterName, p.requesterDept, personnelList) ||
+          (p.steps || []).some((s) => s.roleType === "DIRECTOR" || s.dept === "Ban Giám Đốc");
+        if (!involvesDirector) return false;
+      }
       if (categoryFilter !== "all" && p.category !== categoryFilter) return false;
       if (statusFilter !== "all" && p.status !== statusFilter) return false;
       if (priorityFilter !== "all" && p.priority !== priorityFilter) return false;
@@ -3242,7 +3312,8 @@ export function ProposalsApprovalView({
     priorityFilter,
     fromDate,
     toDate,
-    searchQuery
+    searchQuery,
+    hideStaffLeaveForDirector
   ]);
 
   const totalPendingAmount = useMemo(
@@ -3315,6 +3386,13 @@ export function ProposalsApprovalView({
         if (!isLeaveProposalItem(p)) return false;
         if (p.status === "WITHDRAWN" || p.status === "DRAFT") return false;
         if (needsLeaveDates(p)) return false;
+        if (hideStaffLeaveForDirector && isDirector) {
+          const involvesDirector =
+            isSameWorkspaceDept(p.requesterDept, "Ban Giám Đốc") ||
+            isPersonDeptHeadOrDeputy(p.requesterName, p.requesterDept, personnelList) ||
+            (p.steps || []).some((s) => s.roleType === "DIRECTOR" || s.dept === "Ban Giám Đốc");
+          if (!involvesDirector) return false;
+        }
         const { fDate, tDate, leaveType, leaveDays } = getLeaveDatesAndDays(p);
         if (leaveMonthFilter && leaveMonthFilter !== "all") {
           const mStart = `${leaveMonthFilter}-01`;
@@ -3364,7 +3442,7 @@ export function ProposalsApprovalView({
         const db = getLeaveDatesAndDays(b).fDate;
         return db.localeCompare(da);
       });
-  }, [accessibleProposals, leaveMonthFilter, leaveDeptFilter, leaveTypeFilter, leaveStatusFilter, searchQuery, currentStaffName, userDept, isDirector, isManager, personnelList]);
+  }, [accessibleProposals, leaveMonthFilter, leaveDeptFilter, leaveTypeFilter, leaveStatusFilter, searchQuery, currentStaffName, userDept, isDirector, isManager, personnelList, hideStaffLeaveForDirector]);
 
   const todayIsoStr = todayVN();
   const todayLeaveProposals = useMemo(() => {
@@ -4073,7 +4151,7 @@ export function ProposalsApprovalView({
                   className="px-3.5 py-2 rounded-xl text-xs font-extrabold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs cursor-pointer flex items-center gap-1.5"
                 >
                   <Plus className="w-4 h-4" />
-                  <span>🏖️ + Tạo Đơn Xin Nghỉ Phép (DXNP)</span>
+                  <span>{isDirector ? "🏛️ + Báo Vắng Mặt / Ủy Quyền (BGĐ)" : "🏖️ + Tạo Đơn Xin Nghỉ Phép (DXNP)"}</span>
                 </button>
               </div>
             </div>
@@ -4326,9 +4404,30 @@ export function ProposalsApprovalView({
 
           {/* BẢNG 2: DANH SÁCH CHI TIẾT CÁC ĐƠN XIN NGHỈ PHÉP TRONG THÁNG (TOÀN CÔNG TY XEM & TRƯỞNG BỘ PHẬN DUYỆT) */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 space-y-3">
-            <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white uppercase">
-              📋 II. DANH SÁCH CHI TIẾT ĐƠN XIN NGHỈ PHÉP &amp; NGƯỜI NHẬN BÀN GIAO ({monthlyLeaveProposals.length} ĐƠN)
-            </h4>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white uppercase">
+                📋 II. DANH SÁCH CHI TIẾT ĐƠN XIN NGHỈ PHÉP &amp; NGƯỜI NHẬN BÀN GIAO ({monthlyLeaveProposals.length} ĐƠN)
+              </h4>
+
+              {isDirector && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setHideStaffLeaveForDirector((prev) => !prev)}
+                    className={`px-3 py-1.5 rounded-xl text-[11px] font-extrabold border cursor-pointer transition-all ${
+                      hideStaffLeaveForDirector
+                        ? "bg-amber-600 text-white border-amber-600 shadow-2xs"
+                        : "bg-amber-50 dark:bg-amber-950/50 text-amber-900 dark:text-amber-200 border-amber-300 dark:border-amber-700 hover:bg-amber-100"
+                    }`}
+                    title="Nhân viên thường xin nghỉ phép do Trưởng phòng & HCNS duyệt. Bật chế độ này để ẩn đơn nghỉ phép của nhân viên thường khỏi màn hình BGĐ (chỉ hiện cấp Trưởng/Phó phòng trực thuộc BGĐ)."
+                  >
+                    {hideStaffLeaveForDirector
+                      ? "🏛️ Đang ẩn đơn nghỉ phép NV thường (Chỉ hiện Trưởng/Phó phòng & BGĐ) • Bấm để xem tất cả"
+                      : "🏛️ Ẩn đơn nghỉ phép NV thường khỏi màn hình BGĐ (Chỉ xem cấp Trưởng phòng)"}
+                  </button>
+                </div>
+              )}
+            </div>
 
             {monthlyLeaveProposals.length === 0 ? (
               <div className="p-8 text-center text-xs text-slate-500">
@@ -4946,6 +5045,102 @@ export function ProposalsApprovalView({
               <div className="text-xs font-extrabold text-slate-800 dark:text-slate-200 uppercase">
                 2. Thông tin nghiệp vụ chi tiết ({activeTemplate.name}):
               </div>
+              {activeTemplate.id === "tmpl_leave_request" && (() => {
+                const canRecordForOthers =
+                  isDirector ||
+                  isManager ||
+                  isSameWorkspaceDept(userDept, "Hành Chính Nhân Sự");
+                const currentProxyName = String(formState.formValues?.onBehalfOfName || currentStaffName).trim();
+                const currentProxyDept = String(
+                  formState.formValues?.onBehalfOfDept ||
+                    (isDirector && isSamePerson(currentProxyName, currentStaffName) ? "Ban Giám Đốc" : userDept)
+                ).trim();
+                const isExecPerson =
+                  isSameWorkspaceDept(currentProxyDept, "Ban Giám Đốc") ||
+                  (isDirector && isSamePerson(currentProxyName, currentStaffName)) ||
+                  /giám đốc|pgđ|bgđ|chủ tịch/i.test(
+                    String(
+                      (personnelList || []).find((p: any) => isSamePerson(p.full_name || p.name, currentProxyName))?.position || ""
+                    )
+                  );
+                return (
+                  <div className="p-3 rounded-xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-700 space-y-2 text-xs">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <div className="font-extrabold text-amber-950 dark:text-amber-200">
+                          {isExecPerson
+                            ? "🏛️ Chế độ Ban Giám Đốc: Lịch Vắng Mặt & Ủy Quyền Điều Hành (Không cần xin nghỉ phép)"
+                            : "👤 Người đăng ký nghỉ phép (HCNS hoặc Quản lý có thể ghi nhận hộ)"}
+                        </div>
+                        <p className="text-[11px] text-amber-800 dark:text-amber-300 mt-0.5">
+                          {isExecPerson
+                            ? "Ban Giám Đốc KHÔNG phải lập đơn xin nghỉ phép chờ duyệt và mặc định KHÔNG phát thông báo nghỉ phép ra toàn công ty (chế độ Riêng tư PRIVATE). Phiếu có hiệu lực ngay (APPROVED) để ghi nhận người nhận ủy quyền/bàn giao. Nếu BGĐ hoàn toàn không lập phiếu này, thành viên BGĐ khác vẫn có thể duyệt thay trực tiếp trên mọi tờ trình."
+                            : "Nếu lãnh đạo / nhân sự báo vắng mặt qua điện thoại hoặc tin nhắn mà không trực tiếp vào phần mềm, Hành chính – Nhân sự (HCNS) có thể chọn tên bên dưới để ghi nhận hộ lịch nghỉ & người nhận bàn giao."}
+                        </p>
+                      </div>
+
+                      {canRecordForOthers && (
+                        <div className="shrink-0 min-w-[230px]">
+                          <label className="block text-[10px] font-extrabold text-amber-900 dark:text-amber-200 mb-0.5">
+                            ✍️ Ghi nhận cho nhân sự / lãnh đạo:
+                          </label>
+                          <select
+                            value={currentProxyName}
+                            onChange={(e) => {
+                              const pickedName = e.target.value;
+                              const foundStaff = (personnelList || []).find((p: any) =>
+                                isSamePerson(p.full_name || p.name, pickedName)
+                              );
+                              const pickedDept =
+                                foundStaff?.department ||
+                                (isSamePerson(pickedName, currentStaffName) && isDirector ? "Ban Giám Đốc" : userDept);
+                              const pickedIsExec =
+                                isSameWorkspaceDept(pickedDept, "Ban Giám Đốc") ||
+                                /giám đốc|pgđ|bgđ|chủ tịch/i.test(String(foundStaff?.position || ""));
+                              setFormState((prev) => ({
+                                ...prev,
+                                title: pickedIsExec
+                                  ? `Lịch vắng mặt & Ủy quyền điều hành — ${pickedName} (${formatDayVN(todayVN())})`
+                                  : `Xin nghỉ phép — ${pickedName} (${formatDayVN(todayVN())})`,
+                                visibility: pickedIsExec ? "PRIVATE" : prev.visibility,
+                                sendChatNotify: pickedIsExec ? false : prev.sendChatNotify,
+                                sendBellNotify: pickedIsExec ? false : prev.sendBellNotify,
+                                formValues: {
+                                  ...prev.formValues,
+                                  onBehalfOfName: pickedName,
+                                  onBehalfOfDept: pickedDept,
+                                  leaveType: pickedIsExec
+                                    ? "Lịch công tác / Vắng mặt & Ủy quyền điều hành (BGĐ)"
+                                    : prev.formValues.leaveType || "Nghỉ phép năm (Có hưởng lương)"
+                                }
+                              }));
+                            }}
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-amber-400 dark:border-amber-700 bg-white dark:bg-slate-900 font-bold text-xs text-slate-900 dark:text-white cursor-pointer"
+                          >
+                            <option value={currentStaffName}>
+                              {currentStaffName} ({isDirector ? "Ban Giám Đốc" : userDept}) — Bản thân
+                            </option>
+                            {(personnelList || [])
+                              .filter((p: any) => {
+                                const n = cleanStaffDisplayName(p?.full_name || p?.name || "");
+                                return n && !isSamePerson(n, currentStaffName);
+                              })
+                              .map((p: any) => {
+                                const n = cleanStaffDisplayName(p?.full_name || p?.name || "");
+                                const d = p?.department || "";
+                                return (
+                                  <option key={p?.id || p?.employee_code || n} value={n}>
+                                    {n} {d ? `(${d})` : ""}
+                                  </option>
+                                );
+                              })}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
               {activeTemplate.id === "tmpl_leave_request" && renderLeaveDatesEditor()}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {activeTemplate.fields
