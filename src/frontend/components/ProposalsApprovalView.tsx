@@ -1301,6 +1301,19 @@ export function isLeaveProposal(p: Partial<ProposalItem> | null | undefined): bo
   );
 }
 
+export function isBusinessTripProposal(p: Partial<ProposalItem> | null | undefined): boolean {
+  if (!p) return false;
+  const tid = String(p.templateId || "").toLowerCase();
+  const code = String(p.proposalCode || "").toUpperCase();
+  const tname = String(p.templateName || "").toLowerCase();
+  return (
+    tid === "tmpl_business_trip" ||
+    code.startsWith("DXCT") ||
+    tname.includes("đi công tác") ||
+    tname.includes("lịch trình làm việc")
+  );
+}
+
 /**
  * Xác định chế độ hiển thị mặc định chuẩn quản trị doanh nghiệp cho từng mẫu đề xuất:
  * - "PUBLIC": Đơn xin nghỉ phép (DXNP - công khai lịch ngày nghỉ & người nhận bàn giao nhưng ẩn lý do riêng) và Tờ trình Ban Giám Đốc / Chủ trương chung.
@@ -1537,6 +1550,7 @@ export interface ProposalsApprovalViewProps {
   onSaveProposals: (nextList: ProposalItem[]) => Promise<void>;
   onPreviewAttachment: (att: Attachment) => void;
   onCreateTaskFromProposal: (proposal: ProposalItem) => void;
+  onViewWeeklyScheduleFromProposal?: (proposal: ProposalItem) => void;
   notifyActivity: (payload: any) => void;
   showToast: (msg: string, type?: "success" | "error" | "warning" | "info") => void;
   externalCreateTrigger?: number;
@@ -1564,6 +1578,7 @@ export function ProposalsApprovalView({
   onSaveProposals,
   onPreviewAttachment,
   onCreateTaskFromProposal,
+  onViewWeeklyScheduleFromProposal,
   notifyActivity,
   showToast,
   externalCreateTrigger,
@@ -2653,6 +2668,7 @@ export function ProposalsApprovalView({
           proposal.templateId === "tmpl_leave_request" ||
           String(proposal.proposalCode || "").toUpperCase().startsWith("DXNP") ||
           String(proposal.templateName || "").toLowerCase().includes("nghỉ phép");
+        const isTripProp = isBusinessTripProposal(proposal);
         if (isLeaveProp) {
           const lvType = proposal.formValues?.leaveType || "Nghỉ phép";
           const lvFrom = formatDayVN(proposal.formValues?.fromDate || proposal.neededByDate);
@@ -2666,6 +2682,23 @@ export function ProposalsApprovalView({
             proposal.requesterName,
             ...matchedHandoverStaff,
             ...(proposal.steps || []).map((s) => s.approverName).filter(Boolean),
+            ...(proposal.followers || [])
+          ];
+        } else if (isTripProp) {
+          const depStr = formatDayVN(proposal.formValues?.departureDate || proposal.neededByDate);
+          const retStr = formatDayVN(proposal.formValues?.returnDate || proposal.formValues?.departureDate || proposal.neededByDate);
+          const destStr = proposal.formValues?.destination || proposal.customerName || "Đơn vị công tác";
+          const compList = String(proposal.formValues?.companions || "")
+            .split(/[,;\n]+/)
+            .map((s) => cleanStaffDisplayName(s))
+            .filter(Boolean);
+          auditDetail = `${currentStaffName} đã phê duyệt công lệnh đi công tác (${depStr} → ${retStr} tại ${destStr}) & tự động đồng bộ lên Lịch Công Tác Tuần${uploadedFilesNote}.${note ? ` Chỉ đạo: ${note}` : ""}`;
+          notifyTitle = `✈️ ĐÃ DUYỆT LỊCH CÔNG TÁC [${proposal.proposalCode}]: ${destStr}`;
+          notifyMsg = `Đề xuất đi công tác "${proposal.title}" (${depStr} → ${retStr} tại ${destStr}) của ${proposal.requesterName} đã được ${currentStaffName} phê duyệt và tự động cập nhật vào Lịch Công Tác Tuần!`;
+          notifyTargets = [
+            proposal.requesterName,
+            ...compList,
+            proposal.executorName || "",
             ...(proposal.followers || [])
           ];
         } else {
@@ -4757,13 +4790,26 @@ export function ProposalsApprovalView({
                         )}
 
                         {p.status === "APPROVED" && (
-                          <button
-                            type="button"
-                            onClick={() => onCreateTaskFromProposal(p)}
-                            className="px-2.5 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-bold text-xs hover:bg-indigo-100 cursor-pointer"
-                          >
-                            📌 Giao việc thực thi
-                          </button>
+                          <>
+                            {isBusinessTripProposal(p) && onViewWeeklyScheduleFromProposal && (
+                              <button
+                                type="button"
+                                onClick={() => onViewWeeklyScheduleFromProposal(p)}
+                                className="px-2.5 py-1.5 rounded-xl bg-teal-50 dark:bg-teal-950/70 text-teal-700 dark:text-teal-300 border border-teal-300 dark:border-teal-700 font-extrabold text-xs hover:bg-teal-100 cursor-pointer flex items-center gap-1"
+                                title="Đề xuất đi công tác này đã được tự động đồng bộ vào Lịch Công Tác Tuần — Bấm để mở xem trên Lịch tuần"
+                              >
+                                <Calendar className="w-3.5 h-3.5" />
+                                <span>✈️ Xem trên Lịch Công Tác Tuần</span>
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => onCreateTaskFromProposal(p)}
+                              className="px-2.5 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-bold text-xs hover:bg-indigo-100 cursor-pointer"
+                            >
+                              📌 Giao việc thực thi
+                            </button>
+                          </>
                         )}
 
                         <button
@@ -6392,16 +6438,31 @@ export function ProposalsApprovalView({
                         Kế toán / Bộ phận thực thi có thể tải bổ sung file Hóa đơn VAT, Ủy nhiệm chi (UNC), Biên bản bàn giao và xác nhận hoàn tất tại đây.
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onCreateTaskFromProposal(p);
-                        setSelectedProposal(null);
-                      }}
-                      className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-300 border border-indigo-300 font-bold text-xs hover:bg-indigo-50 cursor-pointer shrink-0"
-                    >
-                      📌 Giao việc triển khai
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      {isBusinessTripProposal(p) && onViewWeeklyScheduleFromProposal && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onViewWeeklyScheduleFromProposal(p);
+                            setSelectedProposal(null);
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-extrabold text-xs cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                        >
+                          <Calendar className="w-3.5 h-3.5" />
+                          <span>✈️ Đã đồng bộ Lịch Công Tác Tuần (Mở xem)</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onCreateTaskFromProposal(p);
+                          setSelectedProposal(null);
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-300 border border-indigo-300 font-bold text-xs hover:bg-indigo-50 cursor-pointer shrink-0"
+                      >
+                        📌 Giao việc triển khai
+                      </button>
+                    </div>
                   </div>
 
                   {Array.isArray(p.executionAttachments) && p.executionAttachments.length > 0 && (

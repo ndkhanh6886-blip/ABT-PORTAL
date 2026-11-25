@@ -93,7 +93,8 @@ import {
   ProposalItem,
   isProposalWaitingForUser,
   isPersonDeptHeadOrDeputy,
-  normalizeProposalStepsForRequester
+  normalizeProposalStepsForRequester,
+  isBusinessTripProposal
 } from "@/frontend/components/ProposalsApprovalView";
 import { Pager, usePaged } from "@/frontend/components/Pager";
 import type { HubProject, HubWeeklyPlanEvent, HubWorkItem } from "@/factory/workhub/service";
@@ -4836,22 +4837,29 @@ export const UnifiedWorkspace: React.FC = () => {
   }, [hubWeeklyPlans, rolePerspective, user, filterDept, departmentStaffList, selectedAssignee, currentStaffName, resolveUserIdForStaffName]);
 
   // RBAC Filtered Weekly Schedules:
-  // - Staff: ONLY sees their own schedule items
+  // - Staff: ONLY sees their own schedule items (or schedules where they are among actors/coActors)
   // - Manager: Sees all schedule items belonging to their department (can filter by specific staff)
   // - Director: Sees whole company or selected department (can filter by specific staff)
   const filteredSchedules = useMemo(() => {
     return weeklySchedule.filter((s) => {
+      const actorsList = [
+        ...String(s.actor || "").split(/[,;\n]+/).map((a: string) => a.trim()).filter(Boolean),
+        ...(Array.isArray(s.coActors) ? s.coActors.map((a: any) => String(a || "").trim()).filter(Boolean) : [])
+      ];
       if (rolePerspective === "staff") {
-        // Lịch công khai: mọi người đều xem được; không công khai: chỉ người phụ trách / phối hợp (quản lý xem ở chế độ quản lý)
+        // Lịch công khai: mọi người đều xem được; không công khai: người phụ trách chính hoặc thành viên đoàn cùng đi đều xem được
         if (s.isPublic) return true;
-        return Boolean(s.actor) && sameStaffName(s.actor, currentStaffName);
+        return actorsList.some((a) => sameStaffName(a, currentStaffName));
       }
       if (filterDept !== "all") {
         const matchScheduleDept = isSameWorkspaceDept(s.category, filterDept);
-        const matchDeptStaff = Boolean(s.actor) && departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, s.actor));
+        const matchDeptStaff = actorsList.some((a) =>
+          departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, a))
+        );
         if (!matchScheduleDept && !matchDeptStaff) return false;
       }
       if (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__") {
+        if (actorsList.some((a) => sameStaffName(a, selectedAssignee))) return true;
         const actor = (s.actor || "").toLowerCase().trim();
         const target = selectedAssignee.toLowerCase().trim();
         if (!actor.includes(target) && !target.includes(actor)) return false;
@@ -9367,8 +9375,143 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
   };
 
   // ==================== HỆ THỐNG ĐỀ XUẤT & PHÊ DUYỆT ĐA CẤP (ENTERPRISE PROPOSALS & APPROVALS) ====================
+  // Tự động đồng bộ các Đề xuất Đi công tác & Lịch trình làm việc (DXCT) đã được PHÊ DUYỆT (APPROVED / EXECUTED)
+  // sang Lịch Công Tác Tuần (unified_weekly_schedule) để hiển thị ngay trên lịch từ Ngày khởi hành -> Ngày kết thúc
+  const syncApprovedBusinessTripsToWeeklySchedule = useCallback(
+    async (proposalsList: ProposalItem[]) => {
+      if (!Array.isArray(proposalsList)) return;
+
+      const getDayNameFromIso = (isoStr: string) => {
+        const idx = (new Date(isoStr + "T00:00:00").getDay() + 6) % 7;
+        return ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"][idx] || "Thứ 2";
+      };
+
+      const approvedTrips = proposalsList.filter(
+        (p) =>
+          isBusinessTripProposal(p) &&
+          (p.status === "APPROVED" || p.status === "EXECUTED")
+      );
+      const approvedCodes = new Set(
+        approvedTrips.map((p) => String(p.proposalCode || "").trim().toUpperCase()).filter(Boolean)
+      );
+
+      const tripScheduleItems = approvedTrips.map((p) => {
+        const codeUpper = String(p.proposalCode || "").trim().toUpperCase();
+        const rawDep = toISODate(p.formValues?.departureDate) || toISODate(p.neededByDate) || todayVN();
+        const rawRet = toISODate(p.formValues?.returnDate) || rawDep;
+        const startIso = rawDep;
+        const endIso = rawRet >= startIso ? rawRet : startIso;
+        const dest = String(p.formValues?.destination || p.customerName || "Đơn vị công tác").trim();
+        const transport = String(p.formValues?.transport || "").trim();
+        const companionsList = String(p.formValues?.companions || "")
+          .split(/[,;\n]+/)
+          .map((s) => cleanWorkspaceAssignee(s))
+          .filter((c) => Boolean(c) && !sameStaffName(c, p.requesterName));
+        const combinedActors =
+          companionsList.length > 0
+            ? `${p.requesterName}, ${companionsList.join(", ")}`
+            : p.requesterName;
+        const normReqDept = normalizeWorkspaceDept(p.requesterDept || "Kinh Doanh");
+        const validCategory = SCHEDULE_VALID_CATEGORIES.includes(normReqDept)
+          ? normReqDept
+          : "Kinh Doanh";
+        const linkedCodes = Array.from(
+          new Set([codeUpper, String(p.linkedRefCode || "").trim()].filter(Boolean))
+        );
+        const agendaParts = [
+          p.summaryReason ? `Mục đích công tác: ${p.summaryReason}` : "",
+          transport ? `Phương tiện: ${transport}` : "",
+          p.customerName ? `Khách hàng / Viện: ${p.customerName}` : "",
+          companionsList.length > 0 ? `Thành viên cùng đi: ${companionsList.join(", ")}` : ""
+        ].filter(Boolean);
+
+        return {
+          id: `prop-trip-${codeUpper || p.id}`,
+          sourceProposalCode: codeUpper,
+          sourceProposalId: p.id,
+          day: getDayNameFromIso(startIso),
+          date: startIso,
+          endDate: endIso,
+          time: "08:00 - 17:30 (Cả ngày)",
+          category: validCategory,
+          title: `✈️ [${codeUpper}] ${p.title || `Công tác tại ${dest}`}`,
+          actor: combinedActors,
+          coActors: companionsList,
+          location: dest,
+          linkedTaskCodes: linkedCodes,
+          linked_task_code: codeUpper,
+          eventType: "WORK" as const,
+          meetingAgenda: agendaParts.join(" • "),
+          isPublic: p.visibility === "PUBLIC",
+          attachments: Array.isArray(p.attachments) ? p.attachments : []
+        };
+      });
+
+      setWeeklySchedule((prev) => {
+        // Loại bỏ các mục lịch tự động sinh từ DXCT cũ để cập nhật bản mới nhất (hoặc gỡ lịch nếu đề xuất bị hủy/trả lại)
+        const kept = (prev || []).filter((s: any) => {
+          const idStr = String(s?.id || "");
+          const srcCode = String(s?.sourceProposalCode || "").toUpperCase();
+          if (idStr.startsWith("prop-trip-")) return false;
+          if (srcCode && (approvedCodes.has(srcCode) || srcCode.startsWith("DXCT"))) return false;
+          return true;
+        });
+        const merged = dedupeWeeklySchedules([...kept, ...tripScheduleItems]);
+        if (JSON.stringify(merged) === JSON.stringify(prev)) {
+          return prev;
+        }
+        try {
+          if (typeof window !== "undefined") {
+            localStorage.setItem("unified_weekly_schedule", JSON.stringify(merged));
+          }
+          fetch("/api/storage?key=unified_weekly_schedule", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(merged)
+          }).catch(() => {});
+        } catch {}
+        return merged;
+      });
+    },
+    [dedupeWeeklySchedules]
+  );
+
+  // Đồng bộ tự động mỗi khi danh sách proposals được tải về hoặc cập nhật
+  useEffect(() => {
+    if (proposals && proposals.length > 0) {
+      syncApprovedBusinessTripsToWeeklySchedule(proposals);
+    }
+  }, [proposals, syncApprovedBusinessTripsToWeeklySchedule]);
+
+  const handleViewWeeklyScheduleFromProposal = useCallback(
+    (prop: ProposalItem) => {
+      if (!prop) return;
+      const depIso = toISODate(prop.formValues?.departureDate) || toISODate(prop.neededByDate) || todayVN();
+      const base = new Date((currentTodayIso || todayVN()) + "T00:00:00");
+      const baseDow = (base.getDay() + 6) % 7;
+      const baseMon = new Date(base);
+      baseMon.setDate(base.getDate() - baseDow);
+
+      const target = new Date(depIso + "T00:00:00");
+      if (!isNaN(target.getTime())) {
+        const tDow = (target.getDay() + 6) % 7;
+        const tMon = new Date(target);
+        tMon.setDate(target.getDate() - tDow);
+        const diffWeeks = Math.round((tMon.getTime() - baseMon.getTime()) / (7 * 86400000));
+        setWeekOffset(diffWeeks);
+      }
+      if (rolePerspective !== "staff") {
+        setSelectedAssignee("all");
+      }
+      setActiveSubTab("planner");
+      setPlannerView("calendar");
+    },
+    [currentTodayIso, rolePerspective]
+  );
+
   const saveProposalsToStorage = async (nextList: ProposalItem[]) => {
     setProposals(nextList);
+    await syncApprovedBusinessTripsToWeeklySchedule(nextList);
     try {
       if (typeof window !== "undefined") {
         localStorage.setItem("workspace_proposals", JSON.stringify(nextList));
@@ -10836,6 +10979,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             }
           }}
           onCreateTaskFromProposal={handleCreateTaskFromProposal}
+          onViewWeeklyScheduleFromProposal={handleViewWeeklyScheduleFromProposal}
           notifyActivity={notifyActivity}
           showToast={showToast}
           externalCreateTrigger={proposalCreateTrigger}
@@ -12532,6 +12676,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               <div className="text-[10px] font-extrabold uppercase text-rose-600">
                                 {ev.isHubWeeklyPlan
                                   ? `🏭 Kế hoạch Kỹ thuật · ${ev.sourceLabel || ev.category}`
+                                  : ev.sourceProposalCode
+                                  ? `✈️ Lịch đi công tác đã phê duyệt (${ev.sourceProposalCode})`
                                   : isMeeting
                                   ? "🎥 Cuộc họp"
                                   : "📅 Lịch công tác"}
@@ -12830,7 +12976,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         <div className="space-y-1.5">
                           {dayEvents.map((ev: any) => {
                             const isHubPlan = Boolean(ev.isHubWeeklyPlan);
-                            const isMeeting = !isHubPlan && (ev.eventType === "MEETING" || String(ev.title || "").toLowerCase().includes("họp"));
+                            const isBusinessTrip = Boolean(ev.sourceProposalCode) || String(ev.id || "").startsWith("prop-trip-");
+                            const isMeeting = !isHubPlan && !isBusinessTrip && (ev.eventType === "MEETING" || String(ev.title || "").toLowerCase().includes("họp"));
                             const isApp = ev.category === "Application";
                             const isSales = ev.category === "Kinh Doanh";
                             const isWh = ev.category === "Kho & Vận Hành" || isSameWorkspaceDept(ev.category, "Kho Nhà Máy");
@@ -12884,6 +13031,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                     {isMeeting && (
                                       <span className="px-1.5 py-0.2 rounded bg-rose-600 text-white text-[9px] font-extrabold uppercase">
                                         🎥 HỌP
+                                      </span>
+                                    )}
+                                    {isBusinessTrip && (
+                                      <span className="px-1.5 py-0.2 rounded bg-teal-600 text-white text-[9px] font-extrabold uppercase">
+                                        ✈️ CÔNG TÁC ĐÃ DUYỆT
                                       </span>
                                     )}
                                     {isHubPlan && (
