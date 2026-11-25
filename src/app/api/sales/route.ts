@@ -339,6 +339,49 @@ function logStorageSyncError(what: string, err: any) {
   logAudit("SYNC_ERROR", "SALES", `Đồng bộ ${what} sang bản sao màn hình lỗi: ${msg}`.slice(0, 500)).catch(() => {});
 }
 
+/**
+ * Chứng từ mua hàng gắn với một SO: PR (mã lưu trên đơn hoặc PR có nhắc mã đơn) và PO (ghi chú / dòng hàng nhắc mã đơn)
+ * chưa hủy. Đơn có các chứng từ này không được XÓA: xóa không hủy PR, Cung ứng vẫn mua tiếp cho một đơn không còn tồn tại
+ * (SO26-NG-1103 trên TBRs: xóa 18/11, PR26-NG-1102 vẫn chạy, PO26-TB-11124 vẫn về hàng).
+ */
+async function linkedPurchaseDocs(db: { query: (sql: string, params?: any[]) => Promise<any> }, code: string, ord?: any): Promise<string[]> {
+  const pattern = `%${code}%`;
+  const docs = new Set<string>();
+  for (const v of [ord?.pr_code, ord?.procure_order_code]) if (String(v || "").trim()) docs.add(String(v).trim());
+  const prs = await db.query(
+    `SELECT workflow_code FROM workflow_requests
+      WHERE workflow_code LIKE 'PR%' AND (title ILIKE $1 OR description ILIKE $1)
+        AND UPPER(COALESCE(status, '')) NOT IN ('CANCELLED', 'REJECTED')`,
+    [pattern]
+  ).catch(() => ({ rows: [] }));
+  for (const r of prs.rows) docs.add(String(r.workflow_code));
+  const pos = await db.query(
+    `SELECT po_code FROM procurement_orders
+      WHERE (COALESCE(notes, '') ILIKE $1 OR items::text ILIKE $1) AND UPPER(COALESCE(status, '')) <> 'CANCELLED'`,
+    [pattern]
+  ).catch(() => ({ rows: [] }));
+  for (const r of pos.rows) docs.add(String(r.po_code));
+  return [...docs];
+}
+
+/** Hủy đơn đã có PO: ghi chú vào PO (đơn đã hủy, hàng dùng cho đơn nào); trả về PO đã ghi chú và PR đã chuyển PO một phần. */
+async function noteCancelledOrderOnPurchases(db: { query: (sql: string, params?: any[]) => Promise<any> }, code: string, note: string) {
+  const pattern = `%${code}%`;
+  const pos = await db.query(
+    `UPDATE procurement_orders SET notes = COALESCE(notes, '') || $2
+      WHERE (COALESCE(notes, '') ILIKE $1 OR items::text ILIKE $1) AND UPPER(COALESCE(status, '')) <> 'CANCELLED'
+      RETURNING po_code`,
+    [pattern, ` • [${note}]`]
+  ).catch(() => ({ rows: [] }));
+  // PR đã chuyển PO một phần: không đổi trạng thái / kết quả (kết quả lưu dạng JSON) — báo để Cung ứng đóng dòng còn lại
+  const partial = await db.query(
+    `SELECT workflow_code FROM workflow_requests
+      WHERE workflow_code LIKE 'PR%' AND (title ILIKE $1 OR description ILIKE $1) AND UPPER(COALESCE(status, '')) = 'PARTIAL_CONVERTED'`,
+    [pattern]
+  ).catch(() => ({ rows: [] }));
+  return { notedPos: pos.rows.map((r: any) => String(r.po_code)), partialPrs: partial.rows.map((r: any) => String(r.workflow_code)) };
+}
+
 async function computeOrderDeliveryFromSlips(db: { query: (sql: string, params?: any[]) => Promise<any> }, orderCode: string): Promise<{
   hasSlips: boolean; status: "DELIVERED" | "PARTIALLY_DELIVERED" | "SHIPPED" | "PENDING"; remaining: Record<string, number>;
 } | null> {
@@ -2278,6 +2321,10 @@ export async function POST(req: NextRequest) {
 
       const result = await withTransaction(async (c) => {
         const rows = (await c.query("SELECT * FROM sales_orders WHERE order_code = $1 FOR UPDATE", [code])).rows;
+        const purchaseDocs = await linkedPurchaseDocs(c, code, rows[0]);
+        if (purchaseDocs.length > 0) {
+          throw new HttpError(409, `Đơn ${code} đã có chứng từ mua hàng (${purchaseDocs.join(", ")}) nên không xóa được. Hãy dùng "Hủy đơn": PR còn chờ được hủy theo, PO được ghi chú; nếu đã làm lại thành đơn khác thì nhập mã đơn làm lại để Cung ứng / Kho biết hàng chuyển sang đơn nào.`);
+        }
         // Đơn chỉ có trên màn hình: vẫn bỏ khỏi bản màn hình + ghi vào danh sách đã xóa
         if (rows.length === 0) return { deleted: 0, removed: await forgetDeletedOrder(c, code) };
         for (const ord of rows) {
@@ -2316,6 +2363,14 @@ export async function POST(req: NextRequest) {
       if (cancelDenied) return forbiddenResponse(cancelDenied);
       // Bắt buộc ghi lý do hủy thật (trước đây ô lý do điền sẵn câu mặc định nên dễ bấm OK nhầm)
       if (reason.length < 5) return NextResponse.json({ error: "Vui lòng nhập lý do hủy đơn (ít nhất 5 ký tự)." }, { status: 400 });
+      // Đơn làm lại (không bắt buộc): ghi vào lý do hủy, ghi chú PO, nhật ký — Cung ứng / Kho biết hàng chuyển sang đơn nào
+      const replacementCode = String(body.replacement_order_code || "").trim().toUpperCase();
+      if (replacementCode) {
+        if (replacementCode === code.toUpperCase()) return NextResponse.json({ error: "Mã đơn làm lại phải khác đơn đang hủy." }, { status: 400 });
+        const repRow = (await query("SELECT order_code FROM sales_orders WHERE UPPER(order_code) = $1 LIMIT 1", [replacementCode])).rows[0];
+        if (!repRow) return NextResponse.json({ error: `Không tìm thấy đơn làm lại ${replacementCode} trong CSDL.` }, { status: 400 });
+      }
+      const cancelReasonText = replacementCode ? `${reason} — làm lại thành ${replacementCode}` : reason;
 
       const result = await withTransaction(async (c) => {
         const ordRes = await c.query("SELECT * FROM sales_orders WHERE order_code = $1 ORDER BY id ASC FOR UPDATE", [code]);
@@ -2327,7 +2382,7 @@ export async function POST(req: NextRequest) {
             [code]
           );
           for (const r of activeRes.rows) {
-            if (r.product_code) await releaseReservationsFor(c, code, r.product_code, ` • [Giải phóng giữ hàng do hủy đơn ${code}: ${reason}]`);
+            if (r.product_code) await releaseReservationsFor(c, code, r.product_code, ` • [Giải phóng giữ hàng do hủy đơn ${code}: ${cancelReasonText}]`);
           }
           const prPattern = `%${code}%`;
           await c.query(
@@ -2336,9 +2391,10 @@ export async function POST(req: NextRequest) {
                     results_summary = COALESCE(results_summary, '') || $2
               WHERE (workflow_code = $1 OR title ILIKE $3 OR description ILIKE $3)
                 AND status IN ('PENDING', 'IN_PROGRESS', 'APPROVED')`,
-            [body.pr_code || "", ` • [Hủy tự động do hủy đơn ${code}: ${reason}]`, prPattern]
+            [body.pr_code || "", ` • [Hủy tự động do hủy đơn ${code}: ${cancelReasonText}]`, prPattern]
           );
-          return { cancelled: true, order_code: code };
+          const purchaseNotes = await noteCancelledOrderOnPurchases(c, code, `SO ${code} đã hủy${replacementCode ? `, hàng dùng cho ${replacementCode}` : ""}: ${reason}`);
+          return { cancelled: true, order_code: code, ...purchaseNotes };
         }
 
         // Kiểm tra phiếu giao hàng chưa hủy
@@ -2369,9 +2425,9 @@ export async function POST(req: NextRequest) {
           status: "CANCELLED",
           cancelledAt: new Date().toISOString(),
           cancelledBy: me.full_name || me.username,
-          cancelReason: reason
+          cancelReason: cancelReasonText
         }));
-        const cancelNote = `[HỦY ĐƠN - ${todayVN()} bởi ${me.full_name || me.username}: ${reason}]`;
+        const cancelNote = `[HỦY ĐƠN - ${todayVN()} bởi ${me.full_name || me.username}: ${cancelReasonText}]`;
         const updatedNotes = ord.notes ? `${ord.notes} • ${cancelNote}` : cancelNote;
 
         await c.query(
@@ -2390,7 +2446,7 @@ export async function POST(req: NextRequest) {
           [code]
         );
         for (const r of activeRes.rows) {
-          if (r.product_code) await releaseReservationsFor(c, code, r.product_code, ` • [Giải phóng giữ hàng do hủy đơn ${code}: ${reason}]`);
+          if (r.product_code) await releaseReservationsFor(c, code, r.product_code, ` • [Giải phóng giữ hàng do hủy đơn ${code}: ${cancelReasonText}]`);
         }
 
         // Hủy PR liên kết nếu đang chờ Cung ứng xử lý
@@ -2403,13 +2459,14 @@ export async function POST(req: NextRequest) {
                   results_summary = COALESCE(results_summary, '') || $2
             WHERE (workflow_code = $1 OR title ILIKE $3 OR description ILIKE $3)
               AND status IN ('PENDING', 'IN_PROGRESS', 'APPROVED')`,
-          [prCode, ` • [Hủy tự động do hủy đơn ${code}: ${reason}]`, prPattern]
+          [prCode, ` • [Hủy tự động do hủy đơn ${code}: ${cancelReasonText}]`, prPattern]
         );
 
-        return { cancelled: true, order_code: code, items: cancelledItems, notes: updatedNotes };
+        const purchaseNotes = await noteCancelledOrderOnPurchases(c, code, `SO ${code} đã hủy${replacementCode ? `, hàng dùng cho ${replacementCode}` : ""}: ${reason}`);
+        return { cancelled: true, order_code: code, items: cancelledItems, notes: updatedNotes, ...purchaseNotes };
       });
 
-      await logAudit("CANCEL_ORDER", "SALES_ORDER", `Hủy đơn đặt hàng ${code}: ${reason}`, me.username, me.full_name);
+      await logAudit("CANCEL_ORDER", "SALES_ORDER", `Hủy đơn đặt hàng ${code}: ${cancelReasonText}`, me.username, me.full_name);
       return NextResponse.json({ success: true, ...result });
     }
 

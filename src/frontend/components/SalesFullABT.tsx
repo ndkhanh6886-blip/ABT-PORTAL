@@ -13639,11 +13639,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return false;
         });
 
-        if (isDeliveredOrShipped || activePOs.length > 0) {
+        // Đã giao / đã lập phiếu giao: không hủy trực tiếp. Đã có PO (chưa giao) thì được hủy: hàng về vào kho chung, ghi đơn làm lại.
+        // (Trước đây đơn có PO bị chặn hủy nên người dùng XÓA đơn — xóa không hủy PR: SO26-NG-1103 trên TBRs.)
+        if (isDeliveredOrShipped) {
             const blockDetail = slips.length > 0
                 ? `đã lập phiếu giao hàng (${slips.map((s: any) => s.id).join(", ")})`
-                : activePOs.length > 0
-                ? `đã phát hành PO đặt hàng NCC (${activePOs.map((p: any) => p.po_code).join(", ")})`
                 : "đã xuất kho / giao hàng";
             showToast(`⚠️ Đơn hàng ${orderCode} ${blockDetail}. Không thể hủy trực tiếp — vui lòng thực hiện quy trình Trả hàng hoặc liên hệ bộ phận Kho / Cung ứng / Quản lý!`, "warning");
             return;
@@ -13657,6 +13657,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             showToast(`Chưa hủy đơn ${orderCode}: cần nhập lý do hủy (ít nhất 5 ký tự).`, "warning");
             return;
         }
+        let replacementCode = "";
+        if (activePOs.length > 0 || req.prCode) {
+            const purchaseList = [req.prCode, ...activePOs.map((p: any) => p.po_code)].filter(Boolean).join(", ");
+            const answer = window.prompt(`Đơn ${orderCode} đã có chứng từ mua hàng (${purchaseList}).\nHàng mua về sẽ vào KHO CHUNG; PO được ghi chú là đơn đã hủy.\n\nNếu đã làm lại thành đơn khác, nhập MÃ ĐƠN LÀM LẠI (VD: SO26-NG-1104) — để trống nếu không có:`, "");
+            if (answer === null) return;
+            replacementCode = answer.trim().toUpperCase();
+        }
 
         try {
             const res = await fetch("/api/sales?action=cancel_order", {
@@ -13665,6 +13672,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 body: JSON.stringify({
                     order_code: orderCode,
                     reason: cleanReason,
+                    replacement_order_code: replacementCode || undefined,
                     cancelled_by: loggedInStaff?.full_name || user?.full_name || user?.username || "NVKD"
                 })
             });
@@ -13688,7 +13696,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             }));
             setSelectedFactoryOrdersForCombine(prev => prev.filter(id => id !== req.id && id !== orderCode));
             fetchReservations();
-            showToast(`✅ Đã hủy đơn hàng ${orderCode}, giải phóng giữ chỗ kho và hủy PR liên kết!`, "success");
+            showToast(`✅ Đã hủy đơn hàng ${orderCode}${replacementCode ? ` (làm lại thành ${replacementCode})` : ""}, giải phóng giữ chỗ kho và hủy PR liên kết!`, "success");
+            if (Array.isArray(data?.partialPrs) && data.partialPrs.length > 0) {
+                showToast(`PR ${data.partialPrs.join(", ")} đã chuyển PO một phần: báo Cung ứng đóng các dòng còn lại để không mua thừa.`, "warning");
+            }
         } catch (err: any) {
             console.error("Failed to cancel order:", err);
             showToast("Lỗi kết nối máy chủ khi hủy đơn hàng", "error");
