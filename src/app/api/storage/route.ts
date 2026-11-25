@@ -310,6 +310,11 @@ export async function POST(request: NextRequest) {
             me.username, me.full_name
           ).catch(() => {});
         }
+        // Lần lưu đòi xóa nhiều đơn cùng lúc (danh sách trên máy này đã cũ): không lưu gì và BÁO cho người dùng.
+        // Trước đây chỉ bỏ lệnh xóa rồi lưu phần còn lại và trả "thành công": người đang xóa 1 đơn thấy "Đã xóa" nhưng đơn quay lại.
+        if (droppedDeletes > 0) {
+          throw new HttpError(409, `Lần lưu này sẽ xóa ${droppedDeletes} đề xuất cùng lúc (danh sách trên máy này đã cũ) nên đã bị chặn, chưa có thay đổi nào được lưu. Vui lòng tải lại trang rồi thao tác lại.`);
+        }
         const up = await c.query(
           `INSERT INTO app_storage (key, data, version, updated_at)
            VALUES ($1, $2, 1, now())
@@ -318,16 +323,19 @@ export async function POST(request: NextRequest) {
            RETURNING version`,
           [key, JSON.stringify(next)]
         );
-        return { version: up.rows[0]?.version || 1, next };
+        return { version: up.rows[0]?.version || 1, next, recoded };
       });
       if (key === "sales_commercial_products") {
         await syncCatalogSuppliersAndProducts();
       } else if (key === "sales_contracts") {
         await syncSalesContractsTable(result.next);
       }
-      return NextResponse.json({ success: true, version: result.version });
+      // Mã đề xuất bị trùng đã được cấp lại: báo về để màn hình cập nhật và thông báo người lập
+      const recodedOut = (result.recoded || []).map(([from, to, id]) => ({ from, to, id }));
+      return NextResponse.json({ success: true, version: result.version, ...(recodedOut.length ? { recoded: recodedOut } : {}) });
     }
 
+    let proposalRecoded: Array<[string, string, string]> = [];
     let data = isEnvelope ? body.data : body;
     if (hideCost) return forbiddenResponse("Không thể ghi đè toàn bộ danh mục có giá vốn.");
     if (Array.isArray(data)) {
@@ -339,6 +347,7 @@ export async function POST(request: NextRequest) {
         const { list, kept } = keepMissingProposals(curList, restoredIncoming);
         const existingIds = new Set((Array.isArray(curList) ? curList : []).map((p: any) => String(itemIdentity(p))));
         const recoded = dedupeProposalCodes(list, existingIds, curList);
+        proposalRecoded = recoded;
         data = list;
         if (kept > 0 || recoded.length > 0) {
           await logAudit(
@@ -432,7 +441,7 @@ export async function POST(request: NextRequest) {
     }
 
     const newVersion = updateRes.rows[0]?.version || 1;
-    return NextResponse.json({ success: true, version: newVersion });
+    return NextResponse.json({ success: true, version: newVersion, ...(proposalRecoded.length ? { recoded: proposalRecoded.map(([from, to, id]) => ({ from, to, id })) } : {}) });
   } catch (error: any) {
     console.error("[Storage API POST Error]:", error);
     return apiErrorResponse(error);

@@ -9353,11 +9353,22 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       if (typeof window !== "undefined") {
         localStorage.setItem("workspace_proposals", JSON.stringify(nextList));
       }
-      await fetch("/api/storage?key=workspace_proposals", {
+      const res = await fetch("/api/storage?key=workspace_proposals", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(nextList)
       });
+      // Máy chủ cấp lại mã cho đơn trùng mã (người khác vừa lập cùng mã): tải lại danh sách để hiện đúng mã ngay
+      const json = res.ok ? await res.clone().json().catch(() => ({})) : {};
+      if (Array.isArray(json?.recoded) && json.recoded.length > 0) {
+        const fresh = await fetch("/api/storage?key=workspace_proposals", { headers: { "x-no-cache": "1" } }).then(r => r.json()).catch(() => null);
+        const list = Array.isArray(fresh) ? fresh : Array.isArray(fresh?.data) ? fresh.data : null;
+        if (list) {
+          setProposals(list);
+          try { localStorage.setItem("workspace_proposals", JSON.stringify(list)); } catch {}
+        }
+        window.dispatchEvent(new CustomEvent("tbr:proposal-recoded", { detail: json.recoded }));
+      }
     } catch (err) {
       console.warn("Could not save proposals:", err);
     }

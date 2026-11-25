@@ -2378,7 +2378,12 @@ export function ProposalsApprovalView({
 
     const newProposal: ProposalItem = {
       id: existing ? existing.id : `PROP-${Date.now()}`,
-      proposalCode: formState.proposalCode.trim() || generateProposalCode(activeTemplate),
+      // Đơn mới: mã đã có người khác dùng (danh sách vừa cập nhật) thì lấy số kế tiếp ngay lúc gửi; máy chủ vẫn kiểm tra lần cuối
+      proposalCode: (() => {
+        const typed = formState.proposalCode.trim();
+        const taken = !existing && typed && proposals.some((p) => String(p.proposalCode || "").trim().toUpperCase() === typed.toUpperCase());
+        return !typed || taken ? generateProposalCode(activeTemplate) : typed;
+      })(),
       templateId: activeTemplate.id,
       templateName: activeTemplate.name,
       category: activeTemplate.category,
@@ -2925,6 +2930,16 @@ export function ProposalsApprovalView({
       "info"
     );
   };
+
+  useEffect(() => {
+    const onRecoded = (e: any) => {
+      const list = Array.isArray(e?.detail) ? e.detail : [];
+      if (list.length === 0) return;
+      showToast(`Mã đơn bị trùng với đơn người khác vừa lập nên đã được cấp lại: ${list.map((x: any) => `${x.from} → ${x.to}`).join(", ")}`, "warning");
+    };
+    window.addEventListener("tbr:proposal-recoded", onRecoded);
+    return () => window.removeEventListener("tbr:proposal-recoded", onRecoded);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDeleteProposal = async (p: ProposalItem) => {
     if (!window.confirm(`Bạn có chắc chắn muốn xóa đề xuất [${p.proposalCode}] "${p.title}"?`)) return;
