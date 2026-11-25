@@ -3752,7 +3752,7 @@ export function ProjectsView({
                   : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:border-indigo-400"
               }`}
             >
-              <span>📋 2. Xem &amp; Giao Công việc WBS theo Dự án (Không cần mở từng dự án)</span>
+              <span>📋 2. Xem &amp; Giao Công việc WBS theo Dự án</span>
               <span className={`px-1.5 py-0.2 rounded-full text-[11px] ${viewMode === "WBS_BY_PROJECT" ? "bg-indigo-700 text-white" : "bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300"}`}>
                 {(allWbsQuery.data?.tasks ?? []).length} việc WBS
               </span>
