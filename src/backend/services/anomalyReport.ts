@@ -118,21 +118,23 @@ export async function buildAnomalyReport(days = 7): Promise<AnomalyReport> {
   {
     const rows = await safeRows(
       `SELECT a.order_code, a.slip_code AS slip_a, b.slip_code AS slip_b, a.creator_name, b.created_at,
-              ${slipCancelled("a")} OR ${slipCancelled("b")} AS da_huy
+              FALSE AS da_huy
          FROM sales_delivery_slips a
          JOIN sales_delivery_slips b ON b.order_code = a.order_code AND b.id > a.id
           AND b.created_at BETWEEN a.created_at AND a.created_at + INTERVAL '5 minutes'
           AND b.items = a.items
         WHERE b.created_at >= ${since}
+          -- Một trong hai phiếu đã hủy = người dùng đã xử lý phiếu thừa: không cần cảnh báo nữa (SO26-TL-1110)
+          AND NOT ${slipCancelled("a")} AND NOT ${slipCancelled("b")}
         ORDER BY b.created_at DESC LIMIT ${MAX_ROWS}`
     );
     sections.push({
       key: "duplicate_slips",
       title: "Phiếu giao lập trùng",
       severity: "medium",
-      why: "Hai phiếu cùng đơn, cùng hàng lập cách nhau vài phút: thường do bấm lưu 2 lần hoặc lập lại khi mạng chậm.",
-      fix: "Bấm lưu một lần; chưa thấy phản hồi thì tải lại trang và kiểm tra danh sách phiếu trước khi lập lại.",
-      rows: rows.map(r => ({ ref: r.order_code, detail: `${r.slip_a} và ${r.slip_b}${r.da_huy ? " (đã hủy 1 phiếu)" : " — CHƯA hủy phiếu thừa"}`, actor: r.creator_name, at: fmt(r.created_at) })),
+      why: "Hai phiếu cùng đơn, cùng hàng lập cách nhau vài phút và CẢ HAI còn hiệu lực: thường do bấm lưu 2 lần hoặc lập lại khi mạng chậm — hàng bị xuất kho 2 lần.",
+      fix: "Hủy phiếu thừa (hàng tự nhập lại kho). Lần sau bấm lưu một lần; chưa thấy phản hồi thì tải lại trang và kiểm tra danh sách phiếu trước khi lập lại.",
+      rows: rows.map(r => ({ ref: r.order_code, detail: `${r.slip_a} và ${r.slip_b} — cả hai còn hiệu lực, CHƯA hủy phiếu thừa`, actor: r.creator_name, at: fmt(r.created_at) })),
     });
   }
 
