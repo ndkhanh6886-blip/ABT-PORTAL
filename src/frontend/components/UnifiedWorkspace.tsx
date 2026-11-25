@@ -14182,13 +14182,77 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 </div>
               </div>
 
-              {/* Staff / Department Context (Hỗ trợ xem Tất cả Toàn công ty / Toàn phòng ban hoặc lọc 1 nhân sự cụ thể) */}
+              {/* Staff / Department Context (Hỗ trợ chọn Phòng ban / Khối ngay tại chỗ + xem Tất cả hoặc lọc 1 nhân sự cụ thể) */}
               <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto shrink-0">
                 {rolePerspective === "director" || rolePerspective === "manager" ? (
                   <div className="flex flex-wrap items-center gap-2 min-w-[290px]">
-                    <span className="text-xs text-slate-500 font-semibold shrink-0">
-                      Nhân sự ({formatWorkspaceScopeLabel(effectiveSelectedDept)}):
-                    </span>
+                    {rolePerspective === "director" ? (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-slate-500 font-semibold shrink-0">
+                          Phòng ban:
+                        </span>
+                        <div className="relative">
+                          <select
+                            value={selectedDept}
+                            onChange={(e) => {
+                              setSelectedDept(e.target.value);
+                              setSelectedDailyStaff("all");
+                              setDailyLogStaffScope("dept");
+                            }}
+                            className="appearance-none pl-7 pr-7 py-1.5 rounded-xl text-xs font-extrabold bg-amber-50 dark:bg-amber-950/50 text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-700 hover:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500/20 cursor-pointer transition-all max-w-[230px] truncate"
+                            title="Chọn Phòng ban / Khối / Ban chức năng để xem công việc & nhật ký của cả phòng ban đó"
+                          >
+                            <option value="all">🏢 Toàn công ty (Tất cả phòng)</option>
+                            <optgroup label="⚡ Xem Theo Khối">
+                              <option value="BLOCK_COMMERCIAL">💼 Toàn Khối Kinh Doanh &amp; VP</option>
+                              <option value="BLOCK_TECHNICAL">🏭 Toàn Khối Kỹ Thuật – Nhà Máy</option>
+                              <option value="BLOCK_EXECUTIVE">🏛️ Khối Ban Lãnh Đạo (BOD)</option>
+                            </optgroup>
+                            <optgroup label="🏢 Phòng Ban — Khối Kinh Doanh &amp; VP">
+                              <option value="Kinh Doanh">💼 Kinh Doanh (Sales)</option>
+                              <option value="Sales Admin">📋 Sales Admin</option>
+                              <option value="Application">🔬 Application (Lab KD)</option>
+                              <option value="IT">💻 Phòng IT (CNTT &amp; Phần mềm)</option>
+                              <option value="Kho & Vận Hành">📦 Kho Kinh Doanh &amp; Vận Hành</option>
+                              <option value="Cung Ứng">🛒 Cung Ứng Kinh Doanh</option>
+                              <option value="PM">🎯 Quản Lý Sản Phẩm (PM)</option>
+                              <option value="Marketing">📢 Marketing &amp; Tiếp Thị</option>
+                              <option value="Kế Toán">💰 Kế Toán - Tài Chính</option>
+                              <option value="Pháp Chế">⚖️ Pháp Chế &amp; Tuân Thủ</option>
+                              <option value="Hành Chính Nhân Sự">👥 Hành Chính – Nhân Sự</option>
+                            </optgroup>
+                            <optgroup label="🏭 Phòng Ban — Khối Kỹ Thuật – Nhà Máy">
+                              <option value="Đơn Nội Bộ">📑 Điều Phối Đơn Nội Bộ</option>
+                              <option value="Nghiên Cứu R&D">🧬 Nghiên Cứu R&amp;D</option>
+                              <option value="Sản Xuất Kit">🧪 Sản Xuất Kit</option>
+                              <option value="Tổng Hợp Oligo">🧬 Tổng Hợp Oligo</option>
+                              <option value="Kỹ Thuật – Thiết Bị">⚙️ Kỹ Thuật – Thiết Bị</option>
+                              <option value="QA/QC">🛡️ Đảm Bảo &amp; Kiểm Soát CL (QA/QC)</option>
+                              <option value="Kho Nhà Máy">🏭 Kho Nhà Máy (Kỹ Thuật)</option>
+                              <option value="Cung Ứng Kỹ Thuật">🧪 Cung Ứng Kỹ Thuật (NVL)</option>
+                            </optgroup>
+                            <optgroup label="🏛️ Ban Lãnh Đạo">
+                              <option value="Ban Giám Đốc">🏛️ Ban Giám Đốc (BOD)</option>
+                            </optgroup>
+                            {functionalGroups.length > 0 && (
+                              <optgroup label="🏛️ Ban / Nhóm Chức Năng">
+                                {functionalGroups.map((fg) => (
+                                  <option key={fg.id} value={fg.id}>
+                                    {fg.icon || "🏛️"} {fg.name || fg.id}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
+                          </select>
+                          <Building2 className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none text-amber-700 dark:text-amber-300" />
+                          <ChevronDown className="w-3.5 h-3.5 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-amber-700 dark:text-amber-300" />
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-slate-500 font-semibold shrink-0">
+                        Nhân sự ({formatWorkspaceScopeLabel(effectiveSelectedDept)}):
+                      </span>
+                    )}
                     <button
                       type="button"
                       onClick={() => {
@@ -14209,7 +14273,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           : `Tất cả Toàn công ty (${departmentStaffList.length})`}
                       </span>
                     </button>
-                    <div className="min-w-[240px]">
+                    <div className="min-w-[230px]">
                       <SearchablePersonnelSelect
                         value={activeDailyStaff}
                         onChange={(val) => {
@@ -14225,8 +14289,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         filterDepartment={effectiveSelectedDept}
                         placeholder={
                           effectiveSelectedDept !== "all"
-                            ? `Đang xem toàn bộ ${formatWorkspaceScopeLabel(effectiveSelectedDept)} • Bấm để lọc 1 người...`
-                            : `Đang xem Toàn công ty (${departmentStaffList.length} người) • Bấm để lọc 1 người...`
+                            ? `Đang xem cả phòng ${formatWorkspaceScopeLabel(effectiveSelectedDept)} • Bấm lọc 1 người...`
+                            : `Đang xem Toàn công ty (${departmentStaffList.length} người) • Bấm lọc 1 người...`
                         }
                       />
                     </div>
@@ -14239,6 +14303,51 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 )}
               </div>
             </div>
+
+            {/* Quick Department Filter Chips in Daily Log (Dành cho Ban Giám Đốc bấm chọn nhanh từng Phòng ban 1 chạm) */}
+            {rolePerspective === "director" && (
+              <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center gap-1.5 overflow-x-auto no-scrollbar text-xs">
+                <span className="text-[11px] font-bold text-slate-500 shrink-0 mr-1 flex items-center gap-1">
+                  <Building2 className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Xem theo phòng ban:</span>
+                </span>
+                {[
+                  { id: "all", label: "🏢 Toàn công ty" },
+                  { id: "BLOCK_COMMERCIAL", label: "💼 Khối KD & VP" },
+                  { id: "BLOCK_TECHNICAL", label: "🏭 Khối Kỹ Thuật" },
+                  ...DEPARTMENTS.filter((d) => d.id !== "all").map((d) => ({
+                    id: d.id,
+                    label: d.id
+                  })),
+                  ...functionalGroups.map((fg) => ({
+                    id: fg.id,
+                    label: `${fg.icon || "🏛️"} ${fg.id}`
+                  }))
+                ].map((deptChip) => {
+                  const isSelected =
+                    selectedDept === deptChip.id ||
+                    (deptChip.id !== "all" && !isWorkspaceBlockKey(deptChip.id) && isSameWorkspaceDept(selectedDept, deptChip.id));
+                  return (
+                    <button
+                      key={deptChip.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedDept(deptChip.id);
+                        setSelectedDailyStaff("all");
+                        setDailyLogStaffScope("dept");
+                      }}
+                      className={`px-2.5 py-1 rounded-xl text-xs transition-all shrink-0 cursor-pointer border ${
+                        isSelected
+                          ? "bg-amber-600 text-white border-amber-600 font-extrabold shadow-2xs"
+                          : "bg-amber-50/50 dark:bg-slate-800/70 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-amber-400 hover:bg-amber-50 font-semibold"
+                      }`}
+                    >
+                      {deptChip.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
             {/* Quick Department-Scoped Staff Chips in Daily Log */}
             {(rolePerspective === "director" || rolePerspective === "manager") && departmentStaffList.length > 0 && (
