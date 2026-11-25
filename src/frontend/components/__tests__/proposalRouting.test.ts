@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   resolveDeptLeaderInfo,
   getSupervisingBodForDept,
+  resolveBodMemberForStep,
+  formatStepApproverDeptLabel,
   isPersonDeptHeadOrDeputy,
   normalizeProposalStepsForRequester,
   isProposalWaitingForUser,
@@ -513,5 +515,121 @@ describe("Proposal approval routing & escalation rules", () => {
     expect(serverFiltered[0].proposalCode).toBe("DXNP-2026-010");
     expect(serverFiltered[0].summaryReason).toContain("Lý do xin nghỉ riêng tư");
     expect(serverFiltered[0].attachments).toEqual([]);
+  });
+
+  it("distinguishes each BOD member individually so PGĐ Kinh doanh steps do NOT show 'Cần tôi duyệt' for PGĐ Kỹ thuật or Giám đốc", () => {
+    // Đề xuất nghỉ phép của nhân sự Marketing (DXNP-2026-008: Hà Thượng Hương, DXNP-2026-013: Nguyễn Nhật Đức)
+    // Bước 1 do PGĐ Kinh doanh — Đỗ Ngọc Diễm Trúc duyệt
+    const rawMarketingSteps: ProposalStepInstance[] = [
+      {
+        stepOrder: 1,
+        stepName: "Trưởng bộ phận duyệt & sắp xếp nhân sự",
+        roleType: "DEPT_HEAD",
+        dept: "Marketing",
+        approverName: "Trưởng bộ phận",
+        status: "PENDING_NOW",
+        slaHours: 4
+      },
+      {
+        stepOrder: 2,
+        stepName: "Hành chính - Nhân sự ghi nhận công phép",
+        roleType: "REVIEWER",
+        dept: "Hành Chính Nhân Sự",
+        approverName: "Hành Chính Nhân Sự",
+        status: "WAITING",
+        slaHours: 4
+      }
+    ];
+
+    const normMkt = normalizeProposalStepsForRequester(
+      rawMarketingSteps,
+      "Marketing",
+      "Hà Thượng Hương",
+      SAMPLE_PERSONNEL
+    );
+
+    expect(normMkt.steps[0]).toMatchObject({
+      stepOrder: 1,
+      stepName: "PGĐ Kinh doanh duyệt & sắp xếp nhân sự",
+      roleType: "DIRECTOR",
+      dept: "Ban Giám Đốc",
+      approverName: "Đỗ Ngọc Diễm Trúc",
+      status: "PENDING_NOW"
+    });
+    expect(formatStepApproverDeptLabel(normMkt.steps[0])).toBe("PGĐ Kinh doanh • Ban Giám Đốc");
+
+    const dxnp008 = {
+      id: "PROP-DXNP-008",
+      proposalCode: "DXNP-2026-008",
+      requesterName: "Hà Thượng Hương",
+      requesterDept: "Marketing",
+      status: "PENDING",
+      currentStepIndex: 0,
+      steps: normMkt.steps
+    } as ProposalItem;
+
+    // CHỈ PGĐ Kinh doanh (Đỗ Ngọc Diễm Trúc) mới hiển thị "Cần tôi duyệt" / "Đang chờ bạn duyệt!"
+    expect(isProposalWaitingForUser(dxnp008, "Đỗ Ngọc Diễm Trúc", "Ban Giám Đốc", true, false, SAMPLE_PERSONNEL)).toBe(true);
+
+    // PGĐ Kỹ thuật (Nguyễn Duy Khánh) và Giám đốc (Nguyễn Văn Tùng) KHÔNG hiển thị "Cần tôi duyệt" cho bước của PGĐ Kinh doanh
+    expect(isProposalWaitingForUser(dxnp008, "Nguyễn Duy Khánh", "Ban Giám Đốc", true, false, SAMPLE_PERSONNEL)).toBe(false);
+    expect(isProposalWaitingForUser(dxnp008, "Nguyễn Văn Tùng", "Ban Giám Đốc", true, false, SAMPLE_PERSONNEL)).toBe(false);
+
+    // Tương tự: bước duyệt của PGĐ Kỹ thuật (Nguyễn Duy Khánh) không hiển thị "Cần tôi duyệt" cho PGĐ Kinh doanh hoặc Giám đốc
+    const techDirectorProposal = {
+      id: "PROP-TECH-1",
+      proposalCode: "DXNP-2026-001",
+      requesterName: "Phan Thị Thảo Trinh",
+      requesterDept: "QA/QC",
+      status: "PENDING",
+      currentStepIndex: 0,
+      steps: [
+        {
+          stepOrder: 1,
+          stepName: "PGĐ Kỹ thuật duyệt & sắp xếp nhân sự",
+          roleType: "DIRECTOR",
+          dept: "Ban Giám Đốc",
+          approverName: "Nguyễn Duy Khánh",
+          status: "PENDING_NOW",
+          slaHours: 4
+        }
+      ]
+    } as ProposalItem;
+
+    expect(formatStepApproverDeptLabel(techDirectorProposal.steps[0])).toBe("PGĐ Kỹ thuật • Ban Giám Đốc");
+    expect(isProposalWaitingForUser(techDirectorProposal, "Nguyễn Duy Khánh", "Ban Giám Đốc", true, false, SAMPLE_PERSONNEL)).toBe(true);
+    expect(isProposalWaitingForUser(techDirectorProposal, "Đỗ Ngọc Diễm Trúc", "Ban Giám Đốc", true, false, SAMPLE_PERSONNEL)).toBe(false);
+    expect(isProposalWaitingForUser(techDirectorProposal, "Nguyễn Văn Tùng", "Ban Giám Đốc", true, false, SAMPLE_PERSONNEL)).toBe(false);
+
+    // Bước duyệt của Giám đốc (Nguyễn Văn Tùng - phụ trách KTCN) không hiển thị "Cần tôi duyệt" cho 2 PGĐ
+    const ceoProposal = {
+      id: "PROP-CEO-1",
+      proposalCode: "DXNP-2026-015",
+      requesterName: "Nguyễn Khánh Linh",
+      requesterDept: "Kỹ Thuật – Thiết Bị",
+      status: "PENDING",
+      currentStepIndex: 0,
+      steps: [
+        {
+          stepOrder: 1,
+          stepName: "Giám đốc duyệt & sắp xếp nhân sự",
+          roleType: "DIRECTOR",
+          dept: "Ban Giám Đốc",
+          approverName: "Nguyễn Văn Tùng",
+          status: "PENDING_NOW",
+          slaHours: 4
+        }
+      ]
+    } as ProposalItem;
+
+    expect(formatStepApproverDeptLabel(ceoProposal.steps[0])).toBe("Giám đốc • Ban Giám Đốc");
+    expect(isProposalWaitingForUser(ceoProposal, "Nguyễn Văn Tùng", "Ban Giám Đốc", true, false, SAMPLE_PERSONNEL)).toBe(true);
+    expect(isProposalWaitingForUser(ceoProposal, "Nguyễn Duy Khánh", "Ban Giám Đốc", true, false, SAMPLE_PERSONNEL)).toBe(false);
+    expect(isProposalWaitingForUser(ceoProposal, "Đỗ Ngọc Diễm Trúc", "Ban Giám Đốc", true, false, SAMPLE_PERSONNEL)).toBe(false);
+
+    // Kiểm tra ánh xạ chức danh BGĐ cụ thể qua resolveBodMemberForStep
+    expect(resolveBodMemberForStep({ approverName: "PGĐ Kinh doanh", dept: "Ban Giám Đốc" }, "QA/QC", SAMPLE_PERSONNEL).approverName).toBe("Đỗ Ngọc Diễm Trúc");
+    expect(resolveBodMemberForStep({ approverName: "PGĐ Kỹ thuật", dept: "Ban Giám Đốc" }, "Kinh Doanh", SAMPLE_PERSONNEL).approverName).toBe("Nguyễn Duy Khánh");
+    expect(resolveBodMemberForStep({ approverName: "Giám đốc", dept: "Ban Giám Đốc" }, "Kinh Doanh", SAMPLE_PERSONNEL).approverName).toBe("Nguyễn Văn Tùng");
   });
 });

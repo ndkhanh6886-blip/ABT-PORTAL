@@ -868,6 +868,123 @@ export function getSupervisingBodForDept(
 }
 
 /**
+ * Xác định chính xác từng thành viên trong Ban Giám Đốc cho một bước duyệt:
+ * - Nguyễn Văn Tùng: Giám đốc (GĐ)
+ * - Đỗ Ngọc Diễm Trúc: Phó Giám đốc Kinh doanh (PGĐ Kinh doanh)
+ * - Nguyễn Duy Khánh: Phó Giám đốc Kỹ thuật (PGĐ Kỹ thuật)
+ *
+ * Nếu bước duyệt đã ghi đích danh tên hoặc chức danh cụ thể (VD: "PGĐ Kinh doanh", "PGĐ Kỹ thuật", "Giám đốc")
+ * thì ánh xạ tới đúng thành viên BGĐ đó; nếu chỉ ghi chung "Ban Giám Đốc" thì phân theo khối phụ trách của phòng người trình.
+ */
+export function resolveBodMemberForStep(
+  step: Partial<ProposalStepInstance> | null | undefined,
+  requesterDept: string,
+  personnelList?: any[]
+): { approverName: string; roleTitle: string; dept: string } {
+  const rawApprover = cleanStaffDisplayName(step?.approverName || "");
+  const approverLower = rawApprover.toLowerCase().normalize("NFC").trim();
+  const stepNameLower = String(step?.stepName || "").toLowerCase().normalize("NFC").trim();
+
+  const findBodByMatcher = (matcher: (pos: string, name: string) => boolean, fallbackName: string) => {
+    const matched = (personnelList || []).find((p: any) => {
+      const pos = String(p?.position || "").toLowerCase().normalize("NFC").trim();
+      const name = cleanStaffDisplayName(p?.full_name || p?.name || "");
+      return matcher(pos, name);
+    });
+    return cleanStaffDisplayName(matched?.full_name || matched?.name) || fallbackName;
+  };
+
+  // 1. Khớp theo tên đích danh hoặc chức danh PGĐ Kinh doanh (Đỗ Ngọc Diễm Trúc)
+  if (
+    isSamePerson(rawApprover, "Đỗ Ngọc Diễm Trúc") ||
+    ((approverLower.includes("pgđ") || approverLower.includes("phó giám đốc")) &&
+      approverLower.includes("kinh doanh")) ||
+    ((!rawApprover || approverLower === "ban giám đốc" || approverLower === "bgđ") &&
+      (stepNameLower.includes("pgđ kinh doanh") || stepNameLower.includes("phó giám đốc kinh doanh")))
+  ) {
+    return {
+      approverName: findBodByMatcher(
+        (pos, name) =>
+          isSamePerson(name, "Đỗ Ngọc Diễm Trúc") ||
+          ((pos.includes("phó giám đốc") || pos.includes("pgđ")) && pos.includes("kinh doanh")),
+        "Đỗ Ngọc Diễm Trúc"
+      ),
+      roleTitle: "PGĐ Kinh doanh",
+      dept: "Ban Giám Đốc"
+    };
+  }
+
+  // 2. Khớp theo tên đích danh hoặc chức danh PGĐ Kỹ thuật (Nguyễn Duy Khánh)
+  if (
+    isSamePerson(rawApprover, "Nguyễn Duy Khánh") ||
+    ((approverLower.includes("pgđ") || approverLower.includes("phó giám đốc")) &&
+      approverLower.includes("kỹ thuật")) ||
+    ((!rawApprover || approverLower === "ban giám đốc" || approverLower === "bgđ") &&
+      (stepNameLower.includes("pgđ kỹ thuật") || stepNameLower.includes("phó giám đốc kỹ thuật")))
+  ) {
+    return {
+      approverName: findBodByMatcher(
+        (pos, name) =>
+          isSamePerson(name, "Nguyễn Duy Khánh") ||
+          ((pos.includes("phó giám đốc") || pos.includes("pgđ")) && pos.includes("kỹ thuật")),
+        "Nguyễn Duy Khánh"
+      ),
+      roleTitle: "PGĐ Kỹ thuật",
+      dept: "Ban Giám Đốc"
+    };
+  }
+
+  // 3. Khớp theo tên đích danh hoặc chức danh Giám đốc (Nguyễn Văn Tùng)
+  const isExplicitCeoApprover =
+    isSamePerson(rawApprover, "Nguyễn Văn Tùng") ||
+    approverLower === "giám đốc" ||
+    approverLower === "tổng giám đốc" ||
+    ((!rawApprover || approverLower === "ban giám đốc" || approverLower === "bgđ") &&
+      /^(?:tổng\s+)?giám\s+đốc\b/i.test(stepNameLower) &&
+      !stepNameLower.includes("ban giám đốc") &&
+      !stepNameLower.includes("phó giám đốc"));
+
+  if (isExplicitCeoApprover) {
+    return {
+      approverName: findBodByMatcher(
+        (pos, name) =>
+          isSamePerson(name, "Nguyễn Văn Tùng") ||
+          ((pos === "giám đốc" || pos.startsWith("tổng giám đốc")) && !pos.includes("phó")),
+        "Nguyễn Văn Tùng"
+      ),
+      roleTitle: "Giám đốc",
+      dept: "Ban Giám Đốc"
+    };
+  }
+
+  // 4. Nếu bước duyệt đã gán đích danh một nhân sự cụ thể khác (không phải nhãn chức danh chung)
+  if (rawApprover && !isGenericRoleApproverLabel(rawApprover)) {
+    return {
+      approverName: rawApprover,
+      roleTitle: "Ban Giám Đốc",
+      dept: "Ban Giám Đốc"
+    };
+  }
+
+  // 5. Mặc định: phân theo Lãnh đạo BGĐ phụ trách khối của phòng người trình
+  return getSupervisingBodForDept(requesterDept, personnelList);
+}
+
+/**
+ * Hiển thị rõ chức danh riêng của từng thành viên Ban Giám Đốc thay vì chỉ ghi chung "(Ban Giám Đốc)".
+ */
+export function formatStepApproverDeptLabel(step: Partial<ProposalStepInstance> | null | undefined): string {
+  const dept = String(step?.dept || "").trim();
+  const actor = cleanStaffDisplayName(step?.decidedBy || step?.approverName || "");
+  if (dept === "Ban Giám Đốc" || step?.roleType === "DIRECTOR") {
+    if (isSamePerson(actor, "Đỗ Ngọc Diễm Trúc")) return "PGĐ Kinh doanh • Ban Giám Đốc";
+    if (isSamePerson(actor, "Nguyễn Duy Khánh")) return "PGĐ Kỹ thuật • Ban Giám Đốc";
+    if (isSamePerson(actor, "Nguyễn Văn Tùng")) return "Giám đốc • Ban Giám Đốc";
+  }
+  return dept;
+}
+
+/**
  * Kiểm tra nhân sự có phải là Trưởng phòng hoặc Phó trưởng phòng (cấp lãnh đạo phòng ban) hay không.
  */
 export function isPersonDeptHeadOrDeputy(
@@ -911,6 +1028,13 @@ export function isGenericRoleApproverLabel(label: any): boolean {
   return (
     s === "trưởng bộ phận" ||
     s === "ban giám đốc" ||
+    s === "bgđ" ||
+    s === "giám đốc" ||
+    s === "tổng giám đốc" ||
+    s === "pgđ kinh doanh" ||
+    s === "phó giám đốc kinh doanh" ||
+    s === "pgđ kỹ thuật" ||
+    s === "phó giám đốc kỹ thuật" ||
     s === "kế toán trưởng" ||
     s === "kế toán viên" ||
     s === "nhân viên kế toán" ||
@@ -1223,16 +1347,22 @@ export function normalizeProposalStepsForRequester(
     }
 
     if (st.roleType === "DIRECTOR" || st.dept === "Ban Giám Đốc") {
-      if (isGenericRoleApproverLabel(st.approverName)) {
-        const bod = getSupervisingBodForDept(resolvedReqDept, personnelList);
-        if (st.approverName !== bod.approverName || st.dept !== "Ban Giám Đốc") {
-          changed = true;
-          return {
-            ...st,
-            dept: "Ban Giám Đốc",
-            approverName: bod.approverName
-          };
-        }
+      const bod = resolveBodMemberForStep(st, resolvedReqDept, personnelList);
+      const nextStepName = /^ban\s+giám\s+đốc\b/i.test(String(st.stepName || "").trim())
+        ? String(st.stepName || "").trim().replace(/^ban\s+giám\s+đốc\b/i, bod.roleTitle)
+        : st.stepName;
+      if (
+        st.approverName !== bod.approverName ||
+        st.dept !== "Ban Giám Đốc" ||
+        st.stepName !== nextStepName
+      ) {
+        changed = true;
+        return {
+          ...st,
+          stepName: nextStepName,
+          dept: "Ban Giám Đốc",
+          approverName: bod.approverName
+        };
       }
       return st;
     }
@@ -1501,7 +1631,8 @@ export function isProposalWaitingForUser(
   currentStaffName: string,
   userDept: string,
   isDirector: boolean,
-  isManager: boolean
+  isManager: boolean,
+  personnelList?: any[]
 ): boolean {
   if (!p || p.status !== "PENDING") return false;
   const activeStep = (p.steps || []).find((s) => s.status === "PENDING_NOW") || p.steps?.[p.currentStepIndex];
@@ -1511,20 +1642,43 @@ export function isProposalWaitingForUser(
     return false;
   }
   if (isSamePerson(activeStep.approverName, currentStaffName)) return true;
-  if (userDept && canonName(activeStep.approverName) === canonName(userDept)) return true;
-  // Nếu một thành viên BGĐ nghỉ / vắng mặt mà không lập đơn xin nghỉ phép hay thông báo nghỉ phép,
-  // bất kỳ thành viên nào khác trong Ban Giám Đốc (isDirector) đều có thể duyệt thay bước DIRECTOR / Ban Giám Đốc để không bị tắc luồng.
-  if (isDirector && (activeStep.roleType === "DIRECTOR" || activeStep.dept === "Ban Giám Đốc")) {
+
+  // Phân biệt rõ từng thành viên trong Ban Giám Đốc (Giám đốc Nguyễn Văn Tùng, PGĐ Kinh doanh Đỗ Ngọc Diễm Trúc, PGĐ Kỹ thuật Nguyễn Duy Khánh):
+  // Bước duyệt của thành viên BGĐ nào (VD: PGĐ Kinh doanh Đỗ Ngọc Diễm Trúc duyệt) thì CHỈ hiển thị "Cần tôi duyệt" / "Đang chờ bạn duyệt!"
+  // đối với đúng thành viên BGĐ đó (hoặc tài khoản gốc Quản trị viên), KHÔNG gộp chung cho tất cả thành viên Ban Giám Đốc khác.
+  const isBodStep =
+    activeStep.roleType === "DIRECTOR" ||
+    canonName(activeStep.dept) === "ban giam doc" ||
+    isSameWorkspaceDept(activeStep.dept, "Ban Giám Đốc");
+
+  if (isBodStep) {
+    if (!isDirector) return false;
+    const isRootAdmin = canonName(currentStaffName) === "quan tri vien";
+    if (isRootAdmin) return true;
+    const bod = resolveBodMemberForStep(activeStep, p.requesterDept || "Kinh Doanh", personnelList);
+    return isSamePerson(bod.approverName, currentStaffName);
+  }
+
+  // Nếu bước đã chỉ định đích danh một nhân sự cụ thể (không phải nhãn chức danh chung) thì chỉ đúng người đó mới hiển thị "Cần tôi duyệt"
+  if (!isGenericRoleApproverLabel(activeStep.approverName)) {
+    return false;
+  }
+
+  if (
+    userDept &&
+    canonName(userDept) !== "ban giam doc" &&
+    canonName(activeStep.approverName) === canonName(userDept)
+  ) {
     return true;
   }
-  // Nếu người hiện tại được chỉ định làm Người nhận bàn giao / Ủy quyền (handoverStaff) trong một phiếu báo vắng mặt đang còn hiệu lực hôm nay của người duyệt bước này -> cho phép duyệt thay theo ủy quyền
+
   const sameDept =
     canonName(activeStep.dept) === canonName(userDept) ||
     isSameWorkspaceDept(activeStep.dept, userDept) ||
     (Boolean(canonicalDepartment(activeStep.dept)) &&
       canonicalDepartment(activeStep.dept) === canonicalDepartment(userDept));
   if (
-    (isManager || isPersonDeptHeadOrDeputy(currentStaffName, userDept)) &&
+    (isManager || isPersonDeptHeadOrDeputy(currentStaffName, userDept, personnelList)) &&
     (activeStep.roleType === "DEPT_HEAD" || isGenericRoleApproverLabel(activeStep.approverName)) &&
     sameDept
   ) {
@@ -4865,7 +5019,7 @@ export function ProposalsApprovalView({
                                 <div>
                                   <div className="text-[11px] font-bold leading-tight">{st.stepName}</div>
                                   <div className="text-[10px] opacity-80">
-                                    {st.decidedBy || st.approverName} ({st.dept})
+                                    {st.decidedBy || st.approverName} ({formatStepApproverDeptLabel(st)})
                                     {st.decidedAt ? ` • ${st.decidedAt.slice(0, 16)}` : isNow ? " • Đang chờ duyệt" : ""}
                                   </div>
                                 </div>
@@ -6114,7 +6268,7 @@ export function ProposalsApprovalView({
                           <div>
                             <div className="font-extrabold text-slate-900 dark:text-white">
                               Bước {idx + 1}: {st.stepName}{" "}
-                              <span className="text-[11px] font-semibold text-slate-500">({st.dept})</span>
+                              <span className="text-[11px] font-semibold text-slate-500">({formatStepApproverDeptLabel(st)})</span>
                             </div>
                             <div className="text-slate-600 dark:text-slate-300 mt-0.5">
                               Người duyệt: <strong>{st.decidedBy || st.approverName}</strong> • SLA: {st.slaHours}h

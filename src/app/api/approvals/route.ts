@@ -863,21 +863,67 @@ function isDeptManager(me: AuthorizedUser): boolean {
 /** Kiểm tra người dùng hiện tại có thẩm quyền phê duyệt tại bước (stage) đang xét hay không */
 function canApproveStage(me: AuthorizedUser, stage: any, requesterDept: string): boolean {
   if (!stage) return false;
-  if (isDirectorOrAdmin(me)) return true;
 
   const myName = String(me.full_name || "").trim();
   const myUsername = String(me.username || "").trim().toLowerCase();
   const stageApproverName = String(stage.approver_name || "").trim();
   const stageApproverUser = String(stage.approver_username || "").trim().toLowerCase();
+  const isRootAdmin = myUsername === "admin" || sameStaffName(myName, "Quản trị viên");
+  if (isRootAdmin) return true;
 
   // Nếu bước này đã gán đích danh người duyệt và khớp với người đang đăng nhập
   if (stageApproverUser && myUsername && stageApproverUser === myUsername) return true;
   if (stageApproverName && myName && sameStaffName(stageApproverName, myName)) return true;
 
-  // Nếu bước này là của Ban Giám Đốc thì chỉ BGD/Admin hoặc người được đích danh mới duyệt được
-  const targetDept = stage.dept === "REQUESTER_DEPT" ? requesterDept : String(stage.dept || "");
-  if (targetDept.toLowerCase().includes("giám đốc") || stage.role_type === "BOD") {
+  const approverLower = stageApproverName.toLowerCase().normalize("NFC").trim();
+  const isGenericApprover =
+    !approverLower ||
+    approverLower === "ban giám đốc" ||
+    approverLower === "bgđ" ||
+    approverLower === "trưởng bộ phận" ||
+    approverLower === "kế toán trưởng" ||
+    approverLower === "kế toán viên" ||
+    approverLower === "hành chính nhân sự" ||
+    approverLower.startsWith("trưởng phòng") ||
+    approverLower.startsWith("phó trưởng phòng") ||
+    approverLower.startsWith("phụ trách");
+
+  // Nếu bước duyệt đã gán đích danh một nhân sự cụ thể (VD: Đỗ Ngọc Diễm Trúc, Nguyễn Duy Khánh, Nguyễn Văn Tùng, Nguyễn Văn Hiếu...)
+  // thì chỉ đúng nhân sự đó mới hiển thị "Cần tôi duyệt" (không gộp chung các thành viên Ban Giám Đốc).
+  if (!isGenericApprover) {
+    if ((approverLower.includes("pgđ") || approverLower.includes("phó giám đốc")) && approverLower.includes("kinh doanh")) {
+      return sameStaffName(myName, "Đỗ Ngọc Diễm Trúc");
+    }
+    if ((approverLower.includes("pgđ") || approverLower.includes("phó giám đốc")) && approverLower.includes("kỹ thuật")) {
+      return sameStaffName(myName, "Nguyễn Duy Khánh");
+    }
+    if ((approverLower === "giám đốc" || approverLower === "tổng giám đốc") && !approverLower.includes("phó")) {
+      return sameStaffName(myName, "Nguyễn Văn Tùng");
+    }
     return false;
+  }
+
+  // Nếu bước này là của Ban Giám Đốc (nhãn chung "Ban Giám Đốc") thì phân theo thành viên BGĐ phụ trách khối của phòng người trình
+  const targetDept = stage.dept === "REQUESTER_DEPT" ? requesterDept : String(stage.dept || "");
+  if (targetDept.toLowerCase().includes("giám đốc") || stage.role_type === "BOD" || stage.role_type === "DIRECTOR") {
+    if (!isDirectorOrAdmin(me)) return false;
+    const reqLower = String(requesterDept || "").toLowerCase().normalize("NFC");
+    if (reqLower.includes("ktcn") || reqLower.includes("kỹ thuật công nghệ") || reqLower.includes("thiết bị")) {
+      return sameStaffName(myName, "Nguyễn Văn Tùng");
+    }
+    if (
+      reqLower.includes("r&d") ||
+      reqLower.includes("nghiên cứu") ||
+      reqLower.includes("sản xuất") ||
+      reqLower.includes("oligo") ||
+      reqLower.includes("qa") ||
+      reqLower.includes("qc") ||
+      reqLower.includes("cung ứng kho") ||
+      reqLower.includes("kho nhà máy")
+    ) {
+      return sameStaffName(myName, "Nguyễn Duy Khánh");
+    }
+    return sameStaffName(myName, "Đỗ Ngọc Diễm Trúc");
   }
 
   // Nếu người dùng thuộc đúng phòng ban phụ trách bước này và là Quản lý/Trưởng phòng (hoặc bước chuyên môn Kế toán/Pháp chế/QA/Cung ứng)
@@ -885,7 +931,6 @@ function canApproveStage(me: AuthorizedUser, stage: any, requesterDept: string):
   if (!sameDept) return false;
 
   if (stage.role_type === "SPECIALIST_DEPT") {
-    // Trong phòng chuyên môn (Kế toán, Pháp chế, Cung ứng, QA/QC), trưởng phòng hoặc chuyên viên được phân quyền của phòng đó có thể thẩm định bước 2
     return true;
   }
   return isDeptManager(me);
