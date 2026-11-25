@@ -6,11 +6,12 @@ import { api, fmtDate, fmtDateTime, fmtQty } from "../api";
 import { printKitCoaCertificate } from "../coa";
 import { type QcFormsConfig } from "../qcSignatures";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
+import { IncidentsView } from "../qa/IncidentsView";
 import { QcDocumentPreview } from "../qa/QcDocumentPreview";
 import { ACTION_LABELS, type KitOptions } from "./shared";
 
 export function QualityTraceView({ options }: { options: KitOptions }) {
-  const [subTab, setSubTab] = useState<"genealogy" | "retain" | "stability" | "coa">("genealogy");
+  const [subTab, setSubTab] = useState<"genealogy" | "retain" | "stability" | "coa" | "incidents">("genealogy");
   const [selectedLotId, setSelectedLotId] = useState<string>(options.lots[0]?.id ?? "");
   const [traceData, setTraceData] = useState<any | null>(null);
   const [retains, setRetains] = useState<any[]>([]);
@@ -157,9 +158,14 @@ export function QualityTraceView({ options }: { options: KitOptions }) {
         <Button variant={subTab === "stability" ? "primary" : "ghost"} onClick={() => setSubTab("stability")}>
           Độ ổn định — Stability ({studies.length})
         </Button>
+        <Button variant={subTab === "incidents" ? "primary" : "ghost"} onClick={() => setSubTab("incidents")}>
+          ⚠️ Sự cố &amp; NCR Sản xuất Kit
+        </Button>
       </div>
 
       <ErrorNote error={error} />
+
+      {subTab === "incidents" && <IncidentsView moduleKey="KIT" canReport={true} />}
 
       {subTab === "genealogy" && (
         <div className="space-y-4">

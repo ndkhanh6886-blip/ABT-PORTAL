@@ -67,7 +67,7 @@ export function FactoryOligoModule() {
       {tab === "quality" && (
         <div className="flex flex-col gap-3">
           <TraceView />
-          <IncidentsView canReport={perms.has("qms.deviation.report")} />
+          <IncidentsView moduleKey="OLIGO" canReport={perms.has("qms.deviation.report")} />
         </div>
       )}
       {tab === "equipment" && (

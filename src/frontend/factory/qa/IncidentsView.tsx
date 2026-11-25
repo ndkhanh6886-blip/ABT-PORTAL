@@ -9,17 +9,75 @@ import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table }
 interface Dev {
   id: string; code: string; title: string | null; severity: string; status: string; description: string; step_ref: string | null; entity_type: string; entity_code: string | null;
   entity_name: string | null; reporter_name: string | null; performer_name: string | null; created_at: string; root_cause: string | null; corrective_action: string | null;
-  preventive_action: string | null; action_owner: string | null; action_due: string | null; ncr_code: string | null; version: number; actions: AllowedAction[];
+  preventive_action: string | null; action_owner: string | null; action_due: string | null; ncr_code: string | null; source_module?: string | null; version: number; actions: AllowedAction[];
 }
+
+export type IncidentModuleKey = "ALL" | "RD" | "KIT" | "OLIGO" | "DEVICE" | "QMS";
 
 const SEVERITY: Record<string, [string, string]> = { LOW: ["EXPIRED", "Thấp"], MEDIUM: ["QUARANTINE", "Trung bình"], HIGH: ["ON_HOLD", "Cao"], CRITICAL: ["REJECTED", "Nghiêm trọng"] };
 const STATUS: Record<string, string> = { OPEN: "Mới báo", UNDER_INVESTIGATION: "Đang điều tra", ACTION_DEFINED: "Đã có CAPA", CLOSED: "Đã đóng" };
-const SUBJECT: Record<string, string> = { OLIGO_SEQUENCE: "Trình tự", SYNTHESIS_BATCH: "Mẻ tổng hợp", ASSET: "Thiết bị", LOT: "Lô" };
+const SUBJECT: Record<string, string> = {
+  OLIGO_SEQUENCE: "Trình tự Oligo",
+  SYNTHESIS_BATCH: "Mẻ tổng hợp Oligo",
+  KIT_ORDER: "Lệnh SX Kit",
+  KIT_STEP: "Công đoạn EBR Kit",
+  DEVICE_ORDER: "Lệnh lắp ráp Thiết bị",
+  DEVICE_UNIT: "Serial Thiết bị",
+  SERVICE_TICKET: "Phiếu bảo hành / dịch vụ",
+  SUBCONTRACT_LINE: "Gia công cơ khí / IQC",
+  ASSET: "Thiết bị / Máy móc",
+  LOT: "Lô vật tư / thành phẩm",
+};
 
-function ReportForm({ onDone, presetCode }: { onDone: () => void; presetCode?: string }) {
-  const [f, setF] = useState({ entity_type: "OLIGO_SEQUENCE", entity_code: presetCode ?? "", title: "", severity: "MEDIUM", step_ref: "", description: "", product_affected: false });
+const MODULE_SUBJECT_CHOICES: Record<IncidentModuleKey, string[]> = {
+  OLIGO: ["OLIGO_SEQUENCE", "SYNTHESIS_BATCH", "ASSET", "LOT"],
+  KIT: ["KIT_ORDER", "LOT", "ASSET"],
+  DEVICE: ["DEVICE_UNIT", "DEVICE_ORDER", "ASSET", "LOT"],
+  RD: ["ASSET", "LOT"],
+  QMS: ["LOT", "KIT_ORDER", "OLIGO_SEQUENCE", "SYNTHESIS_BATCH", "DEVICE_UNIT", "ASSET"],
+  ALL: ["LOT", "KIT_ORDER", "OLIGO_SEQUENCE", "SYNTHESIS_BATCH", "DEVICE_UNIT", "ASSET"],
+};
+
+const MODULE_TITLE: Record<IncidentModuleKey, string> = {
+  ALL: "Sự cố chất lượng & CAPA (Toàn nhà máy)",
+  QMS: "Sự cố chất lượng & CAPA (Toàn nhà máy — QA/QC giám sát)",
+  KIT: "Sự cố chất lượng & CAPA — Sản xuất Kit",
+  OLIGO: "Sự cố chất lượng & CAPA — Tổng hợp Oligo",
+  DEVICE: "Sự cố chất lượng & CAPA — Kỹ thuật & Sản xuất Thiết bị",
+  RD: "Sự cố Thiết bị & Nghiên cứu — Phòng R&D",
+};
+
+function ReportForm({
+  onDone,
+  presetCode,
+  moduleKey = "ALL",
+}: {
+  onDone: () => void;
+  presetCode?: string;
+  moduleKey?: IncidentModuleKey;
+}) {
+  const allowedSubjects = MODULE_SUBJECT_CHOICES[moduleKey] ?? MODULE_SUBJECT_CHOICES.ALL;
+  const defaultEntityType = allowedSubjects[0] ?? "LOT";
+  const [f, setF] = useState({
+    entity_type: defaultEntityType,
+    entity_code: presetCode ?? "",
+    title: "",
+    severity: "MEDIUM",
+    step_ref: "",
+    description: "",
+    product_affected: false,
+  });
   const report = useMutation({
-    mutationFn: () => api<{ deviation_id: string }>("/api/factory/qms/deviations", { method: "POST", idempotent: true, json: { ...f, step_ref: f.step_ref || null } }),
+    mutationFn: () =>
+      api<{ deviation_id: string }>("/api/factory/qms/deviations", {
+        method: "POST",
+        idempotent: true,
+        json: {
+          ...f,
+          step_ref: f.step_ref || null,
+          ...(moduleKey !== "ALL" && moduleKey !== "QMS" ? { source_module: moduleKey } : {}),
+        },
+      }),
     onSuccess: () => {
       setF({ ...f, entity_code: "", title: "", step_ref: "", description: "", product_affected: false });
       onDone();
@@ -29,7 +87,7 @@ function ReportForm({ onDone, presetCode }: { onDone: () => void; presetCode?: s
     <form className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6 items-end mb-4 p-3 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800" onSubmit={(e) => { e.preventDefault(); report.mutate(); }}>
       <Field label="Đối tượng">
         <select className={inputClass} value={f.entity_type} onChange={(e) => setF({ ...f, entity_type: e.target.value })}>
-          {["OLIGO_SEQUENCE", "SYNTHESIS_BATCH", "ASSET"].map((k) => <option key={k} value={k}>{SUBJECT[k]}</option>)}
+          {allowedSubjects.map((k) => <option key={k} value={k}>{SUBJECT[k] ?? k}</option>)}
         </select>
       </Field>
       <Field label="Mã *"><input className={`${inputClass} font-mono`} value={f.entity_code} onChange={(e) => setF({ ...f, entity_code: e.target.value })} required /></Field>
@@ -76,26 +134,55 @@ function CapaForm({ d, onDone }: { d: Dev; onDone: () => void }) {
 }
 
 /** "Sự cố & CAPA" (as OligoFlow's quality incidents): report, investigate, CAPA, signed closure. */
-export function IncidentsView({ canReport, presetCode }: { canReport: boolean; presetCode?: string }) {
+export function IncidentsView({
+  canReport,
+  presetCode,
+  moduleKey = "ALL",
+}: {
+  canReport: boolean;
+  presetCode?: string;
+  moduleKey?: IncidentModuleKey;
+}) {
   const qc = useQueryClient();
   const [status, setStatus] = useState("ACTIVE");
   const [q, setQ] = useState("");
+  const [scopeFilter, setScopeFilter] = useState<IncidentModuleKey>(moduleKey);
   const [open, setOpen] = useState<string | null>(null);
   const [showReport, setShowReport] = useState(Boolean(presetCode));
-  const list = useQuery({ queryKey: ["factory", "deviations", status, q], queryFn: () => api<Dev[]>(`/api/factory/qms/deviations?status=${status}&q=${encodeURIComponent(q)}`) });
+  const list = useQuery({
+    queryKey: ["factory", "deviations", status, q, scopeFilter],
+    queryFn: () =>
+      api<Dev[]>(
+        `/api/factory/qms/deviations?status=${status}&q=${encodeURIComponent(q)}&module_key=${encodeURIComponent(scopeFilter)}`
+      ),
+  });
   const refresh = () => {
     setShowReport(false);
     ["deviations", "ncrs", "ncr"].forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k] }));
   };
   return (
     <Card
-      title="Sự cố chất lượng & CAPA"
+      title={MODULE_TITLE[scopeFilter] ?? "Sự cố chất lượng & CAPA"}
       actions={
         <div className="flex flex-wrap items-center gap-1.5">
           {canReport && (
             <Button onClick={() => setShowReport((v) => !v)}>
               {showReport ? "Đóng form báo sự cố" : "+ Báo cáo sự cố"}
             </Button>
+          )}
+          {(moduleKey === "ALL" || moduleKey === "QMS") && (
+            <select
+              className={`${inputClass} w-44`}
+              value={scopeFilter}
+              onChange={(e) => setScopeFilter(e.target.value as IncidentModuleKey)}
+              aria-label="Phân hệ"
+            >
+              <option value="ALL">🏢 Tất cả phân hệ</option>
+              <option value="KIT">🧬 Sản xuất Kit</option>
+              <option value="OLIGO">🧪 Tổng hợp Oligo</option>
+              <option value="DEVICE">⚙️ Kỹ thuật – Thiết bị</option>
+              <option value="RD">🔬 Nghiên cứu R&amp;D</option>
+            </select>
           )}
           <input className={`${inputClass} w-48`} placeholder="Tìm mã, tiêu đề…" value={q} onChange={(e) => setQ(e.target.value)} />
           <select className={`${inputClass} w-40`} value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Trạng thái">
@@ -105,7 +192,7 @@ export function IncidentsView({ canReport, presetCode }: { canReport: boolean; p
         </div>
       }
     >
-      {canReport && showReport && <ReportForm onDone={refresh} presetCode={presetCode} />}
+      {canReport && showReport && <ReportForm onDone={refresh} presetCode={presetCode} moduleKey={moduleKey} />}
       <ErrorNote error={list.error} />
       {list.data?.length === 0 && <Empty>Không có sự cố.</Empty>}
       {list.data && list.data.length > 0 && (

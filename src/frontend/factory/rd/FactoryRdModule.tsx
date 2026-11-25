@@ -121,7 +121,7 @@ export function FactoryRdModule() {
       {tab === "equipment" && (
         <div className="flex flex-col gap-3">
           <DepartmentEquipmentView deptCode="P-RD" deptLabel="Phòng Nghiên cứu & Phát triển (R&D)" />
-          <IncidentsView canReport={perms.has("qms.deviation.report")} />
+          <IncidentsView moduleKey="RD" canReport={perms.has("qms.deviation.report")} />
         </div>
       )}
     </div>

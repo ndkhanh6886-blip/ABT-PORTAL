@@ -60,7 +60,7 @@ export function FactoryQaModule() {
       {tab === "standards" && <ReferenceStandardsView />}
       {tab === "methods" && <QcMethodsRetentionView />}
       {tab === "ncr" && <NcrView />}
-      {tab === "incidents" && <IncidentsView canReport={perms.has("qms.deviation.report")} />}
+      {tab === "incidents" && <IncidentsView moduleKey="QMS" canReport={perms.has("qms.deviation.report")} />}
       {tab === "equipment" && <DepartmentEquipmentView deptCode="P-QA" deptLabel="Phòng Đảm bảo & Kiểm soát Chất lượng (QA/QC)" />}
     </div>
   );

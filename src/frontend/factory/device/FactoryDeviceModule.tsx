@@ -115,7 +115,7 @@ export function FactoryDeviceModule() {
       {tab === "assembly" && <AssemblyDhrView />}
       {tab === "subcontract" && <SubcontractView />}
       {tab === "service" && <ServiceTicketsView />}
-      {tab === "incidents" && <IncidentsView canReport={perms.has("qms.deviation.report")} />}
+      {tab === "incidents" && <IncidentsView moduleKey="DEVICE" canReport={perms.has("qms.deviation.report")} />}
     </div>
   );
 }

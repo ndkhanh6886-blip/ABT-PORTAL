@@ -1810,7 +1810,7 @@ export async function cascadeQuarantineLotTree(tx: Tx, actor: AuthzActor, input:
 
   // Open an official Deviation + NCR for the root lot
   const devRes = await raiseDeviation(tx, actor, {
-    source_module: "QMS",
+    source_module: "KIT",
     entity_type: "LOT",
     entity_id: rootLot.id,
     severity: "CRITICAL",
