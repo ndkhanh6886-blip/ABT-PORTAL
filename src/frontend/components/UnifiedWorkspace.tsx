@@ -14304,51 +14304,6 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               </div>
             </div>
 
-            {/* Quick Department Filter Chips in Daily Log (Dành cho Ban Giám Đốc bấm chọn nhanh từng Phòng ban 1 chạm) */}
-            {rolePerspective === "director" && (
-              <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center gap-1.5 overflow-x-auto no-scrollbar text-xs">
-                <span className="text-[11px] font-bold text-slate-500 shrink-0 mr-1 flex items-center gap-1">
-                  <Building2 className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Xem theo phòng ban:</span>
-                </span>
-                {[
-                  { id: "all", label: "🏢 Toàn công ty" },
-                  { id: "BLOCK_COMMERCIAL", label: "💼 Khối KD & VP" },
-                  { id: "BLOCK_TECHNICAL", label: "🏭 Khối Kỹ Thuật" },
-                  ...DEPARTMENTS.filter((d) => d.id !== "all").map((d) => ({
-                    id: d.id,
-                    label: d.id
-                  })),
-                  ...functionalGroups.map((fg) => ({
-                    id: fg.id,
-                    label: `${fg.icon || "🏛️"} ${fg.id}`
-                  }))
-                ].map((deptChip) => {
-                  const isSelected =
-                    selectedDept === deptChip.id ||
-                    (deptChip.id !== "all" && !isWorkspaceBlockKey(deptChip.id) && isSameWorkspaceDept(selectedDept, deptChip.id));
-                  return (
-                    <button
-                      key={deptChip.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedDept(deptChip.id);
-                        setSelectedDailyStaff("all");
-                        setDailyLogStaffScope("dept");
-                      }}
-                      className={`px-2.5 py-1 rounded-xl text-xs transition-all shrink-0 cursor-pointer border ${
-                        isSelected
-                          ? "bg-amber-600 text-white border-amber-600 font-extrabold shadow-2xs"
-                          : "bg-amber-50/50 dark:bg-slate-800/70 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-amber-400 hover:bg-amber-50 font-semibold"
-                      }`}
-                    >
-                      {deptChip.label}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
             {/* Quick Department-Scoped Staff Chips in Daily Log */}
             {(rolePerspective === "director" || rolePerspective === "manager") && departmentStaffList.length > 0 && (
               <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center gap-1.5 overflow-x-auto no-scrollbar text-xs">
