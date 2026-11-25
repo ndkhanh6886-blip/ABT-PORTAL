@@ -362,17 +362,35 @@ export async function GET(req: NextRequest) {
     for (const rawN of storedList) {
       if (!rawN) continue;
       const evKey = rawN.eventKey;
+      const isRoutinePlanOrDaily =
+        evKey === "plan_weekly_submit" ||
+        evKey === "daily_report_submitted" ||
+        rawN.category === "plan" ||
+        rawN.category === "daily" ||
+        String(rawN.title || "").includes("Lịch Công Tác / Điều Phối Tuần Mới");
       if (evKey) {
         const mRule = resolveMatrixRule(evKey, storedMatrix, Array.isArray(rawN.targetRoles) ? rawN.targetRoles : []);
         if (!mRule.enabled) continue;
+        const cleanedRoles = isRoutinePlanOrDaily
+          ? mRule.targetRoles.filter((r: string) => {
+              const rl = String(r || "").toLowerCase();
+              return rl !== "admin" && rl !== "director";
+            })
+          : mRule.targetRoles;
         feed.push({
           ...rawN,
-          targetRoles: mRule.targetRoles,
+          targetRoles: cleanedRoles,
           targetEmployeeNames: Array.from(new Set([...(Array.isArray(rawN.targetEmployeeNames) ? rawN.targetEmployeeNames : []), ...mRule.targetEmployeeNames])),
           targetEmployeeIds: Array.from(new Set([...(Array.isArray(rawN.targetEmployeeIds) ? rawN.targetEmployeeIds : []), ...mRule.targetEmployeeIds])),
         });
       } else {
-        feed.push({ ...rawN });
+        const cleanedRoles = isRoutinePlanOrDaily && Array.isArray(rawN.targetRoles)
+          ? rawN.targetRoles.filter((r: string) => {
+              const rl = String(r || "").toLowerCase();
+              return rl !== "admin" && rl !== "director";
+            })
+          : rawN.targetRoles;
+        feed.push({ ...rawN, targetRoles: cleanedRoles });
       }
     }
 
@@ -521,8 +539,12 @@ export async function GET(req: NextRequest) {
 
     // 5. Live Daily Reports
     for (const d of dailyRes.rows) {
-      const mRule = resolveMatrixRule("daily_report_submitted", storedMatrix, ["admin", "sales_head", "app_head"]);
+      const mRule = resolveMatrixRule("daily_report_submitted", storedMatrix, ["sales_head", "app_head"]);
       if (!mRule.enabled) continue;
+      const cleanedDailyRoles = mRule.targetRoles.filter((r: string) => {
+        const rl = String(r || "").toLowerCase();
+        return rl !== "admin" && rl !== "director";
+      });
       const ts = toIso(d.created_at, d.log_date ? `${String(d.log_date).slice(0, 10)}T17:00:00+07:00` : undefined);
       const preview = String(d.work_content || d.result || "Đã nộp báo cáo công việc ngày").slice(0, 140);
       feed.push({
@@ -539,7 +561,7 @@ export async function GET(req: NextRequest) {
         targetEmployeeIds: mRule.targetEmployeeIds.length > 0 ? mRule.targetEmployeeIds : undefined,
         creator: d.employee_name || undefined,
         recipientDept: d.department || undefined,
-        targetRoles: mRule.targetRoles,
+        targetRoles: cleanedDailyRoles,
         link: { tab: "workspace", subTab: "reports", itemId: String(d.id) },
       });
     }

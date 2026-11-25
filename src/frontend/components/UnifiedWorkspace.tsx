@@ -94,7 +94,8 @@ import {
   isProposalWaitingForUser,
   isPersonDeptHeadOrDeputy,
   normalizeProposalStepsForRequester,
-  isBusinessTripProposal
+  isBusinessTripProposal,
+  resolveDeptLeaderInfo
 } from "@/frontend/components/ProposalsApprovalView";
 import { Pager, usePaged } from "@/frontend/components/Pager";
 import type { HubProject, HubWeeklyPlanEvent, HubWorkItem } from "@/factory/workhub/service";
@@ -8142,17 +8143,28 @@ export const UnifiedWorkspace: React.FC = () => {
         setDailyTomorrowPlan("");
         fetchData();
 
-        // Send Activity Notification to Manager/Department
-        notifyActivity({
-          title: "Báo Cáo Nhật Ký Ngày",
-          message: `${targetStaff} (${targetDept}) vừa nộp báo cáo Daily ngày ${formatVNDate(new Date())}.${issuesSummary ? ' Ghi nhận vướng mắc cần hỗ trợ!' : ''}`,
-          type: issuesSummary ? "warning" : "info",
-          category: "daily",
-          sender: { name: targetStaff },
-          targetDept: targetDept,
-          targetRole: "manager",
-          link: { tab: "workspace", subTab: "daily" }
-        });
+        // Send Activity Notification to Department Leader (Trưởng/Phó phòng phụ trách trực tiếp, không gửi làm phiền Ban Giám Đốc trừ khi có vướng mắc cần hỗ trợ)
+        const dailyDeptLeader = resolveDeptLeaderInfo(targetDept, personnelList);
+        const dailyNotifyTargets = Array.from(
+          new Set(
+            [...(dailyDeptLeader?.name ? [dailyDeptLeader.name] : [])].filter(
+              (n) => n && !sameStaffName(n, targetStaff)
+            )
+          )
+        );
+        if (dailyNotifyTargets.length > 0 || issuesSummary) {
+          notifyActivity({
+            title: "Báo Cáo Nhật Ký Ngày",
+            message: `${targetStaff} (${targetDept}) vừa nộp báo cáo Daily ngày ${formatVNDate(new Date())}.${issuesSummary ? ' Ghi nhận vướng mắc cần hỗ trợ!' : ''}`,
+            type: issuesSummary ? "warning" : "info",
+            category: "daily",
+            sender: { name: targetStaff },
+            targetEmployeeNames: dailyNotifyTargets,
+            targetDept: targetDept,
+            targetRole: "manager",
+            link: { tab: "workspace", subTab: "daily" }
+          });
+        }
       } else {
         showToast(data.error || "Lỗi khi lưu nhật ký", "error");
       }
@@ -8587,21 +8599,33 @@ export const UnifiedWorkspace: React.FC = () => {
       return;
     }
 
-    // Nếu là lịch công tác thường (không phải lịch họp đã gửi broadcast ở trên), gửi Activity Notification
+    // Nếu là lịch công tác thường (không phải lịch họp đã gửi broadcast ở trên):
+    // Chỉ gửi thông báo cho các thành viên khác cùng tham gia và Trưởng/Phó phòng trực tiếp của bộ phận đó (KHÔNG gửi làm phiền Ban Giám Đốc khi nhân viên tự lên lịch cá nhân hàng ngày)
     if (!isMeeting) {
       const scheduleActors = combinedActorDisplay
         ? combinedActorDisplay.split(/[,;\n]+/).map((s: string) => s.trim()).filter(Boolean)
         : [];
-      notifyActivity({
-        title: "Lịch Công Tác / Điều Phối Tuần Mới",
-        message: `${currentStaffName} đã lên lịch "${scheduleForm.title}" vào ${rangeSummary} (${scheduleForm.time}) tại ${scheduleForm.location || "Công ty"}.`,
-        type: "info",
-        category: "plan",
-        sender: { name: currentStaffName },
-        targetEmployeeNames: scheduleActors,
-        targetDept: scheduleForm.category,
-        link: { tab: "workspace", subTab: "planner" }
-      });
+      const deptLeader = resolveDeptLeaderInfo(scheduleForm.category, personnelList);
+      const notifyRecipients = Array.from(
+        new Set(
+          [
+            ...scheduleActors,
+            ...(deptLeader?.name ? [deptLeader.name] : [])
+          ].filter((n) => n && !sameStaffName(n, currentStaffName))
+        )
+      );
+      if (notifyRecipients.length > 0) {
+        notifyActivity({
+          title: "Lịch Công Tác / Điều Phối Tuần Mới",
+          message: `${currentStaffName} đã lên lịch "${scheduleForm.title}" vào ${rangeSummary} (${scheduleForm.time}) tại ${scheduleForm.location || "Công ty"}.`,
+          type: "info",
+          category: "plan",
+          sender: { name: currentStaffName },
+          targetEmployeeNames: notifyRecipients,
+          targetDept: scheduleForm.category,
+          link: { tab: "workspace", subTab: "planner" }
+        });
+      }
     }
 
     setScheduleForm((prev) => ({ ...prev, title: "", linkedTaskCodes: [], autoCreateTask: false, attachments: [] }));

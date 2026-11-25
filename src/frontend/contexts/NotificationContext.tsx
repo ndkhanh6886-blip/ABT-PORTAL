@@ -240,10 +240,10 @@ const COMMERCIAL_NOTIFICATION_MATRIX: Record<string, NotificationMatrixEvent> = 
         category: "workspace",
         categoryLabel: "Kế Hoạch & Công Việc",
         block: "commercial",
-        description: "Thông báo khi nhân viên gửi kế hoạch công tác / lịch trình tuần mới để quản lý phê duyệt.",
+        description: "Thông báo khi nhân viên gửi kế hoạch công tác / lịch trình tuần mới cho Trưởng bộ phận và các nhân sự cùng thực hiện (không làm phiền Ban Giám Đốc trừ khi BGĐ trực tiếp tham gia).",
         enabled: true,
         enableToast: true,
-        targetRoles: ["admin", "sales_head", "app_head"],
+        targetRoles: ["sales_head", "app_head"],
         targetEmployeeIds: []
     },
     task_assigned: {
@@ -288,10 +288,10 @@ const COMMERCIAL_NOTIFICATION_MATRIX: Record<string, NotificationMatrixEvent> = 
         category: "workspace",
         categoryLabel: "Kế Hoạch & Công Việc",
         block: "commercial",
-        description: "Thông báo khi nhân sự nộp báo cáo kết quả hoạt động hoặc nhật ký thị trường cuối ngày.",
+        description: "Thông báo khi nhân sự nộp báo cáo kết quả hoạt động hoặc nhật ký công việc cuối ngày cho Trưởng bộ phận phụ trách.",
         enabled: true,
         enableToast: true,
-        targetRoles: ["admin", "sales_head", "app_head"],
+        targetRoles: ["sales_head", "app_head"],
         targetEmployeeIds: []
     },
     hr_birthday_celebration: {
@@ -1177,7 +1177,24 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                 }
 
                 // 5. Role match against effectiveMatrixRoles (governed by Notification Matrix)
-                if (effectiveMatrixRoles.length > 0 && matchRoleAgainstPerson(effectiveMatrixRoles, effectiveDept, effectivePos, uRole, uName)) {
+                // Riêng với Kế hoạch / Lịch công tác tuần (`plan_weekly_submit` / `category === "plan"`) và Báo cáo Nhật ký ngày (`daily_report_submitted` / `category === "daily"`):
+                // Không tự động đẩy thông báo của toàn bộ nhân viên các phòng ban vào hộp thư cá nhân ("Hoạt động của tôi") của Ban Giám Đốc / Admin,
+                // trừ khi thành viên Ban Giám Đốc có tên trực tiếp trong danh sách tham gia / người nhận hoặc được chỉ định đích danh trong Ma trận.
+                const isRoutinePlanOrDaily =
+                    n.eventKey === "plan_weekly_submit" ||
+                    n.eventKey === "daily_report_submitted" ||
+                    n.category === "plan" ||
+                    n.category === "daily" ||
+                    String(n.title || "").includes("Lịch Công Tác / Điều Phối Tuần Mới");
+                const rolesForMineMatch =
+                    isViewerAdminOrDirector && isRoutinePlanOrDaily && !isExplicitlyInMatrixEmployees
+                        ? effectiveMatrixRoles.filter((r) => {
+                              const rl = String(r || "").toLowerCase();
+                              return rl !== "admin" && rl !== "director";
+                          })
+                        : effectiveMatrixRoles;
+
+                if (rolesForMineMatch.length > 0 && matchRoleAgainstPerson(rolesForMineMatch, effectiveDept, effectivePos, uRole, uName)) {
                     return true;
                 }
 
