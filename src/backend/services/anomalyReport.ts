@@ -306,7 +306,9 @@ export async function buildAnomalyReport(days = 7): Promise<AnomalyReport> {
       `SELECT action, module, details, actor_name, created_at
          FROM audit_logs
         WHERE created_at >= ${since}
-          AND (action = 'SYNC_ERROR' OR (action = 'GUARD' AND module = 'STORAGE'))
+          AND (action = 'SYNC_ERROR' OR (action = 'GUARD' AND module = 'STORAGE'
+               -- chỉ cấp lại mã đề xuất trùng (không chặn gì): xem mục "Mã đề xuất được cấp lại" mức thấp
+               AND NOT (details ILIKE '%cấp lại mã%' AND details NOT ILIKE '%chặn%' AND details NOT ILIKE '%giữ lại%')))
         ORDER BY created_at DESC LIMIT ${MAX_ROWS}`
     );
     sections.push({
@@ -380,6 +382,28 @@ export async function buildAnomalyReport(days = 7): Promise<AnomalyReport> {
       why: "Cùng một chứng từ nhưng màn hình và cơ sở dữ liệu ghi khác nhau: người xem màn hình thấy sai (đơn ma, đơn khóa nợ hiện đã duyệt, phiếu hủy vẫn tính).",
       fix: "Đơn chỉ có trên màn hình: NVKD mở đơn bấm Lưu lại. Các trường hợp khác: tải lại trang Đơn hàng; vẫn còn thì báo Quản trị viên kèm mã chứng từ.",
       rows: rows.map(r => ({ ref: r.ref, detail: `${r.kind}: ${r.detail}`, actor: r.actor || undefined })),
+    });
+  }
+
+  // 13. Mã đơn đề xuất bị trùng và đã được máy chủ cấp lại (thông tin: dữ liệu không sai, người lập có thể đang giữ mã cũ)
+  {
+    const rows = await safeRows(
+      `SELECT details, actor_name, created_at FROM audit_logs
+        WHERE created_at >= ${since} AND action = 'GUARD' AND module = 'STORAGE' AND details ILIKE '%cấp lại mã%'
+        ORDER BY created_at DESC LIMIT ${MAX_ROWS}`
+    );
+    sections.push({
+      key: "proposal_recoded",
+      title: "Mã đơn đề xuất được cấp lại",
+      severity: "low",
+      why: "Hai người lập đơn gần như cùng lúc ra cùng một mã; máy chủ giữ mã cho đơn lập trước, cấp số kế tiếp cho đơn sau (ghi trong lịch sử đơn).",
+      fix: "Không cần sửa dữ liệu. Người lập dùng mã mới khi trao đổi; mã mới hiện ngay sau khi gửi đơn.",
+      rows: rows.map(r => ({
+        ref: (String(r.details).match(/[A-Z]+-\d{4}-\d+ -> [A-Z]+-\d{4}-\d+/) || ["Đề xuất"])[0].replace(" -> ", " → "),
+        detail: String(r.details || "").replace(/^workspace_proposals:\s*/, "").slice(0, 300),
+        actor: r.actor_name,
+        at: fmt(r.created_at),
+      })),
     });
   }
 
