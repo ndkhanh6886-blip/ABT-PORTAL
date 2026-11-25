@@ -7,7 +7,7 @@ import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import { isDiscreteUomCode, isPlaceholderUom, normalizeUomAlias } from "../master/service";
 import { saveMethod, saveWorkflow, type StepField } from "../oligo/postSop";
 import { ensureKitBomRoutingAndIfuSchema } from "../kit/bomRouting";
-import { normalizePrepDeptScope } from "../prep/service";
+import { normalizeFormulaOutputItems, normalizePrepDeptScope } from "../prep/service";
 import { ensureQaOpsSchema } from "../qms/qaOps";
 import { ensureRdProjectOpsSchema } from "../rd/projectOps";
 import "../master/permissions";
@@ -277,6 +277,7 @@ async function ensureItemByCode(
     shelf_life_days?: number | null;
     min_stock?: number;
     notes?: string | null;
+    preserve_existing_name?: boolean;
   },
   uomCache?: Map<string, string>
 ): Promise<{ id: string; code: string; base_uom: string; tracking: string; created: boolean }> {
@@ -286,7 +287,7 @@ async function ensureItemByCode(
   const itemType = mapItemType(params.item_type || "RAW_MATERIAL");
   const storage = mapStorageCondition(params.storage_condition || "RT");
   const existing = (
-    await tx.query("SELECT id, code, base_uom, tracking, item_type FROM master.item WHERE upper(code) = upper($1) LIMIT 1", [code])
+    await tx.query("SELECT id, code, name, base_uom, tracking, item_type FROM master.item WHERE upper(code) = upper($1) LIMIT 1", [code])
   ).rows[0];
 
   if (existing) {
@@ -297,6 +298,14 @@ async function ensureItemByCode(
       ["FINISHED_KIT", "SEMI_FINISHED", "DEVICE"].includes(itemType) ||
       (existing.item_type === "RAW_MATERIAL" && itemType !== "RAW_MATERIAL");
     const nextItemType = shouldUpgradeType ? itemType : (existing.item_type as string);
+    const incomingName = (params.name || "").trim();
+    const existingName = String(existing.name || "").trim();
+    const existingHasMeaningfulName = Boolean(existingName && existingName.toUpperCase() !== code.toUpperCase());
+    const incomingIsCodePlaceholder = !incomingName || incomingName.toUpperCase() === code.toUpperCase();
+    const nextName =
+      (params.preserve_existing_name && existingHasMeaningfulName) || (incomingIsCodePlaceholder && existingHasMeaningfulName)
+        ? existingName
+        : incomingName || existingName || code;
     await tx.query(
       `UPDATE master.item
           SET name = COALESCE(NULLIF($2, ''), name),
@@ -313,7 +322,7 @@ async function ensureItemByCode(
         WHERE id = $1`,
       [
         existing.id,
-        params.name,
+        nextName,
         storage,
         params.shelf_life_days && params.shelf_life_days > 0 ? params.shelf_life_days : null,
         Math.max(0, params.min_stock ?? 0),
@@ -1477,6 +1486,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
               name: ingName,
               item_type: "REAGENT",
               base_uom: ingUom,
+              preserve_existing_name: true,
             },
             uomCache
           );
@@ -1496,6 +1506,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
         errors.push({ row_no: groupIdx, code: formulaCode, message: e?.message || String(e) });
       }
     }
+    await normalizeFormulaOutputItems(tx);
   } else if (templateKey === "DEVICE_MODEL_BOM") {
     await authorizeAnywhereOneOf(tx, actor, [
       "device.model.manage",

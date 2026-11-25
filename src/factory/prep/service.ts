@@ -109,6 +109,15 @@ export async function saveFormula(tx: Tx, actor: AuthzActor, id: string | null, 
     }
     if (existingItem) {
       resolvedOutputItemId = existingItem.id as string;
+      await tx.query(
+        `UPDATE master.item
+            SET name = COALESCE(NULLIF($2, ''), name),
+                item_type = CASE WHEN item_type = 'RAW_MATERIAL' THEN 'SEMI_FINISHED' ELSE item_type END,
+                is_manufacturable = true,
+                updated_at = now()
+          WHERE id = $1`,
+        [resolvedOutputItemId, d.name]
+      );
     } else {
       await tx.query(
         `INSERT INTO master.uom (code, name, dimension)
@@ -162,6 +171,14 @@ export async function saveFormula(tx: Tx, actor: AuthzActor, id: string | null, 
               incubation_days = $12, version = version + 1, updated_at = now(), updated_by = $11 WHERE id = $1`,
       [id, d.name, d.category ?? null, resolvedOutputItemId, d.basis_qty, d.basis_uom, d.shelf_life_days ?? null, d.requires_qc, d.instructions ?? null, d.status, actor.userId, d.incubation_days]
     );
+    await tx.query(
+      `UPDATE master.item
+          SET name = COALESCE(NULLIF($2, ''), name),
+              updated_at = now()
+        WHERE id = $1
+          AND (upper(code) = upper($3) OR upper(code) = upper('PREP-' || $3))`,
+      [resolvedOutputItemId, d.name, d.code]
+    );
     await tx.query("DELETE FROM prep.formula_line WHERE formula_id = $1", [id]);
     await writeAudit(tx, actor, {
       entityType: "prep_formula",
@@ -188,8 +205,22 @@ export async function getFormula(tx: Tx, id: string) {
   if (!f) throw notFound("công thức");
   f.lines = (
     await tx.query(
-      "SELECT l.line_no, l.item_id, l.qty::float AS qty, l.uom, i.code AS item_code, i.name AS item_name FROM prep.formula_line l JOIN master.item i ON i.id = l.item_id WHERE l.formula_id = $1 ORDER BY l.line_no",
-      [id]
+      `SELECT l.line_no, l.item_id, l.qty::float AS qty, l.uom,
+              i.code AS item_code,
+              COALESCE(
+                (SELECT pf.name
+                   FROM prep.formula pf
+                  WHERE (pf.output_item_id = i.id OR upper(pf.code) = upper(i.code))
+                    AND pf.id <> l.formula_id
+                  ORDER BY (pf.status = 'ACTIVE') DESC, (pf.dept_scope = $2) DESC, pf.updated_at DESC NULLS LAST
+                  LIMIT 1),
+                i.name
+              ) AS item_name
+         FROM prep.formula_line l
+         JOIN master.item i ON i.id = l.item_id
+        WHERE l.formula_id = $1
+        ORDER BY l.line_no`,
+      [id, f.dept_scope ?? "OLIGO"]
     )
   ).rows;
   return f;
@@ -203,6 +234,26 @@ let unifiedOutItemsNormalized = false;
  * stock documents, reagent rules, and synthesizer/equipment ports cleanly.
  */
 export async function normalizeFormulaOutputItems(tx: Tx): Promise<void> {
+  // Luôn đồng bộ tên master.item (VD: STO015, STO022...) khớp với tên chuẩn của công thức prep.formula có cùng mã
+  // để tránh trường hợp dòng nguyên liệu trong file Excel ghi nhầm tên của mã khác đè lên master.item.name.
+  await tx.query("SAVEPOINT sp_sync_formula_item_names");
+  try {
+    await tx.query(
+      `UPDATE master.item i
+          SET name = f.name,
+              item_type = CASE WHEN i.item_type = 'RAW_MATERIAL' THEN 'SEMI_FINISHED' ELSE i.item_type END,
+              is_manufacturable = true,
+              updated_at = now()
+         FROM prep.formula f
+        WHERE (i.id = f.output_item_id OR upper(i.code) = upper(f.code))
+          AND NULLIF(trim(f.name), '') IS NOT NULL
+          AND i.name IS DISTINCT FROM f.name`
+    );
+    await tx.query("RELEASE SAVEPOINT sp_sync_formula_item_names");
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_sync_formula_item_names").catch(() => {});
+  }
+
   if (unifiedOutItemsNormalized) return;
   const rows = (
     await tx.query(
