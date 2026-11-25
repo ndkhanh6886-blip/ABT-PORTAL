@@ -104,6 +104,19 @@ interface HubOverview {
     open_pr_qty: number;
     open_po_qty: number;
   }[];
+  can_approve_transfer?: boolean;
+  pending_transfer_requests?: {
+    id: string;
+    code: string;
+    reason_code: string;
+    status: string;
+    created_at: string;
+    notes: string | null;
+    source_warehouse_code: string;
+    target_warehouse_codes?: string[];
+    created_by_name: string | null;
+    line_summaries: string[];
+  }[];
   recent_transfers: {
     id: string;
     code: string;
@@ -114,6 +127,7 @@ interface HubOverview {
     notes: string | null;
     source_warehouse_code: string;
     created_by_name: string | null;
+    posted_by_name?: string | null;
     line_summaries: string[];
   }[];
 }
@@ -251,6 +265,32 @@ export function WarehouseHubView({ onOpenStock }: { onOpenStock?: (warehouseId: 
       }),
     onSuccess: () => {
       setToast("🔒 Đã chuyển trạng thái lô sang Tạm giữ (ON_HOLD), khóa xuất FEFO.");
+      refreshAll();
+    },
+  });
+
+  const approveTransferMut = useMutation({
+    mutationFn: (document_id: string) =>
+      api<{ code: string }>("/api/factory/inv/ops", {
+        method: "POST",
+        idempotent: true,
+        json: { op: "approve_transfer_request", document_id },
+      }),
+    onSuccess: (res) => {
+      setToast(`✅ Đã phê duyệt & xuất cấp phát phiếu điều chuyển ${res.code} từ Kho Trung Tâm về Kho Phòng Ban!`);
+      refreshAll();
+    },
+  });
+
+  const rejectTransferMut = useMutation({
+    mutationFn: (payload: { document_id: string; reason?: string }) =>
+      api<{ code: string }>("/api/factory/inv/ops", {
+        method: "POST",
+        idempotent: true,
+        json: { op: "reject_transfer_request", ...payload },
+      }),
+    onSuccess: (res) => {
+      setToast(`Đã từ chối / hủy phiếu yêu cầu chuyển kho ${res.code}.`);
       refreshAll();
     },
   });
@@ -512,6 +552,57 @@ export function WarehouseHubView({ onOpenStock }: { onOpenStock?: (warehouseId: 
       {/* TAB 1: CẤP PHÁT LIÊN KHO FEFO */}
       {radarTab === "dispatch" && (
         <Card title="🚚 Cấp phát / Điều chuyển Vật tư Liên Kho (Từ Kho Trung Tâm KHO-TONG về 5 Kho Bộ Phận theo chuẩn FEFO)">
+          {(data?.pending_transfer_requests?.length ?? 0) > 0 && (
+            <div className="mb-4 p-3.5 rounded-2xl border-2 border-amber-400 dark:border-amber-700 bg-amber-50/80 dark:bg-amber-950/30 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs font-extrabold text-amber-900 dark:text-amber-200">
+                  🔔 Yêu cầu Chuyển NVL từ Kho Tổng về Kho Phòng đang chờ Thủ kho / Trưởng phòng Cung ứng phê duyệt ({data?.pending_transfer_requests?.length} phiếu)
+                </div>
+                <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+                  {data?.can_approve_transfer
+                    ? "Bấm '✅ Duyệt & Xuất kho' để xác nhận trừ tồn KHO-TONG và chuyển về Kho Phòng Ban"
+                    : "Chỉ Thủ kho hoặc Trưởng bộ phận Cung ứng Kho mới có quyền bấm Duyệt xuất kho"}
+                </span>
+              </div>
+              <Table head={["Mã phiếu", "Kho nguồn ➔ Kho nhận", "Người đề xuất", "Chi tiết Vật tư & Lô đề xuất chuyển", "Lý do / Mục đích", "Thời gian", "Quyết định Thủ kho / Cung ứng"]}>
+                {(data?.pending_transfer_requests ?? []).map((t) => (
+                  <tr key={t.id}>
+                    <td className="py-2 pr-3 font-mono font-bold text-sky-700 dark:text-sky-400 whitespace-nowrap">{t.code}</td>
+                    <td className="py-2 pr-3 font-mono text-xs font-semibold whitespace-nowrap">
+                      {t.source_warehouse_code} ➔ {(t.target_warehouse_codes ?? []).join(", ") || "Kho Phòng"}
+                    </td>
+                    <td className="py-2 pr-3 text-xs whitespace-nowrap">{t.created_by_name ?? "Nhân sự phòng"}</td>
+                    <td className="py-2 pr-3 text-xs font-mono">{t.line_summaries.join(" · ")}</td>
+                    <td className="py-2 pr-3 text-xs text-slate-600 dark:text-slate-300">{t.notes ?? "—"}</td>
+                    <td className="py-2 pr-3 text-xs whitespace-nowrap">{fmtDate(t.created_at)}</td>
+                    <td className="py-2 pr-2 whitespace-nowrap">
+                      {data?.can_approve_transfer ? (
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            type="button"
+                            onClick={() => approveTransferMut.mutate(t.id)}
+                            disabled={approveTransferMut.isPending}
+                          >
+                            ✅ Duyệt &amp; Xuất kho
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            onClick={() => rejectTransferMut.mutate({ document_id: t.id, reason: "Từ chối yêu cầu chuyển kho" })}
+                            disabled={rejectTransferMut.isPending}
+                          >
+                            ✕ Từ chối
+                          </Button>
+                        </div>
+                      ) : (
+                        <StatusBadge status="QUARANTINE" label="Chờ Thủ kho / Cung ứng duyệt" />
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </Table>
+            </div>
+          )}
           <form
             className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 items-end p-3.5 rounded-2xl border border-sky-200 dark:border-sky-900/70 bg-sky-50/50 dark:bg-sky-950/20 mb-4"
             onSubmit={(e) => {
@@ -623,7 +714,10 @@ export function WarehouseHubView({ onOpenStock }: { onOpenStock?: (warehouseId: 
                   <td className="py-2 pr-3">{t.created_by_name ?? "Hệ thống"}</td>
                   <td className="py-2 pr-3 whitespace-nowrap">{fmtDate(t.posted_at ?? t.created_at)}</td>
                   <td className="py-2 pr-3">
-                    <StatusBadge status="RELEASED" label={t.status === "POSTED" ? "Đã ghi sổ" : t.status} />
+                    <StatusBadge
+                      status={t.status === "POSTED" ? "RELEASED" : t.status === "DRAFT" ? "QUARANTINE" : "REJECTED"}
+                      label={t.status === "POSTED" ? "Đã duyệt & xuất kho" : t.status === "DRAFT" ? "Chờ Thủ kho / Cung ứng duyệt" : t.status}
+                    />
                   </td>
                 </tr>
               ))}

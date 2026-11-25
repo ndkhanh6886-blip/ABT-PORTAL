@@ -211,45 +211,117 @@ export function DeptMaterialActionBar({
     enabled: panel === "transfer" && Boolean(effectiveTransferSrcWhId) && Boolean(transferPickQ.trim()),
   });
 
+  const hubTransferOverview = useQuery({
+    queryKey: ["factory", "warehouse-hub-ops"],
+    queryFn: () =>
+      api<{
+        can_approve_transfer?: boolean;
+        pending_transfer_requests?: {
+          id: string;
+          code: string;
+          status: string;
+          created_at: string;
+          notes: string | null;
+          source_warehouse_code: string;
+          target_warehouse_ids?: string[];
+          target_warehouse_codes?: string[];
+          created_by_name: string | null;
+          line_summaries: string[];
+        }[];
+      }>("/api/factory/inv/ops"),
+    enabled: panel === "transfer" || panel === "history",
+  });
+
+  const deptPendingTransfers = React.useMemo(() => {
+    const all = hubTransferOverview.data?.pending_transfer_requests ?? [];
+    const deptWhIds = new Set(deptWarehouses.map((w) => w.id));
+    const deptWhCodes = new Set(deptWarehouses.map((w) => w.code));
+    if (deptWhIds.size === 0 && deptWhCodes.size === 0) return all;
+    return all.filter(
+      (t) =>
+        (t.target_warehouse_ids ?? []).some((id) => deptWhIds.has(id)) ||
+        (t.target_warehouse_codes ?? []).some((code) => deptWhCodes.has(code))
+    );
+  }, [hubTransferOverview.data?.pending_transfer_requests, deptWarehouses]);
+
   const postTransferMut = useMutation({
     mutationFn: async () => {
-      const results = [];
-      for (const l of transferLines) {
-        const qtyNum = Number(String(l.qty || "").replace(",", "."));
-        if (!(qtyNum > 0)) continue;
-        const res = await api<{ document: { code: string }; from_warehouse: string; to_warehouse: string }>(
-          "/api/factory/inv/ops",
-          {
-            method: "POST",
-            idempotent: true,
-            json: {
-              op: "dispatch_inter_warehouse",
-              source_warehouse_id: effectiveTransferSrcWhId,
-              target_warehouse_id: effectiveTransferDstWhId,
-              item_id: l.row.item_id,
-              lot_id: l.row.lot_id,
-              qty: qtyNum,
-              notes:
-                transferNotes.trim() ||
-                `Chuyển NVL từ Kho Trung Tâm về Kho ${deptLabel} (Dự trữ / sử dụng chung, chưa gắn Lệnh SX / Dự án cụ thể)`,
-            },
-          }
-        );
-        results.push(res);
-      }
-      return results;
+      const validLines = transferLines
+        .map((l) => ({
+          item_id: l.row.item_id,
+          lot_id: l.row.lot_id,
+          qty: Number(String(l.qty || "").replace(",", ".")),
+        }))
+        .filter((l) => l.qty > 0);
+      return api<{
+        document: { code: string };
+        status?: "DRAFT" | "POSTED";
+        pending_approval?: boolean;
+        from_warehouse: string;
+        to_warehouse: string;
+        lines_count?: number;
+      }>("/api/factory/inv/ops", {
+        method: "POST",
+        idempotent: true,
+        json: {
+          op: "dispatch_inter_warehouse",
+          source_warehouse_id: effectiveTransferSrcWhId,
+          target_warehouse_id: effectiveTransferDstWhId,
+          lines: validLines,
+          auto_post: false,
+          notes:
+            transferNotes.trim() ||
+            `Đề xuất chuyển NVL từ Kho Trung Tâm về Kho ${deptLabel} (Dự trữ / sử dụng chung, chưa gắn Lệnh SX / Dự án cụ thể)`,
+        },
+      });
     },
-    onSuccess: (results) => {
-      const docCodes = results.map((r) => r.document?.code).filter(Boolean);
+    onSuccess: (res) => {
+      const docCode = res.document?.code || "Phiếu mới";
       setTransferLines([]);
+      setTransferPickQ("");
       setTransferSuccessMsg(
-        `Đã chuyển thành công ${results.length} dòng nguyên vật liệu về kho phòng ban (${docCodes.join(", ") || "Đã ghi sổ"}).`
+        `⏳ Đã gửi Phiếu đề xuất chuyển kho ${docCode} (${res.from_warehouse} ➔ ${res.to_warehouse}). Phiếu đang ở trạng thái CHỜ THỦ KHO / TRƯỞNG PHÒNG CUNG ỨNG DUYỆT XUẤT KHO.`
       );
+      qc.invalidateQueries({ queryKey: ["factory", "warehouse-hub-ops"] });
+      qc.invalidateQueries({ queryKey: ["factory", "supply-chain-ops"] });
       qc.invalidateQueries({ queryKey: ["factory", "stock"] });
       qc.invalidateQueries({ queryKey: ["factory", "dept-quick-stock"] });
       qc.invalidateQueries({ queryKey: ["factory", "dept-quick-history"] });
       qc.invalidateQueries({ queryKey: ["factory", "documents"] });
-      qc.invalidateQueries({ queryKey: ["factory", "wh-hub-overview"] });
+    },
+  });
+
+  const approveTransferMut = useMutation({
+    mutationFn: (document_id: string) =>
+      api<{ code: string }>("/api/factory/inv/ops", {
+        method: "POST",
+        idempotent: true,
+        json: { op: "approve_transfer_request", document_id },
+      }),
+    onSuccess: (res) => {
+      setTransferSuccessMsg(`✅ Thủ kho / Cung ứng đã phê duyệt & xuất cấp phát phiếu ${res.code} về kho phòng ban!`);
+      qc.invalidateQueries({ queryKey: ["factory", "warehouse-hub-ops"] });
+      qc.invalidateQueries({ queryKey: ["factory", "supply-chain-ops"] });
+      qc.invalidateQueries({ queryKey: ["factory", "stock"] });
+      qc.invalidateQueries({ queryKey: ["factory", "dept-quick-stock"] });
+      qc.invalidateQueries({ queryKey: ["factory", "dept-quick-history"] });
+      qc.invalidateQueries({ queryKey: ["factory", "documents"] });
+    },
+  });
+
+  const rejectTransferMut = useMutation({
+    mutationFn: (payload: { document_id: string; reason?: string }) =>
+      api<{ code: string }>("/api/factory/inv/ops", {
+        method: "POST",
+        idempotent: true,
+        json: { op: "reject_transfer_request", ...payload },
+      }),
+    onSuccess: (res) => {
+      setTransferSuccessMsg(`Đã hủy / từ chối phiếu yêu cầu chuyển kho ${res.code}.`);
+      qc.invalidateQueries({ queryKey: ["factory", "warehouse-hub-ops"] });
+      qc.invalidateQueries({ queryKey: ["factory", "supply-chain-ops"] });
+      qc.invalidateQueries({ queryKey: ["factory", "dept-quick-history"] });
+      qc.invalidateQueries({ queryKey: ["factory", "documents"] });
     },
   });
 
@@ -818,7 +890,7 @@ export function DeptMaterialActionBar({
       {/* 2A. Quick Inter-Warehouse Material Transfer Drawer (Kho Trung Tâm KHO-TONG -> Kho Phòng Ban) */}
       {panel === "transfer" && (
         <Card
-          title={`🚚 Đề xuất / Chuyển nguyên vật liệu từ Kho Trung Tâm về Kho ${deptLabel}`}
+          title={`🚚 Đề xuất chuyển nguyên vật liệu từ Kho Trung Tâm về Kho ${deptLabel} (Chờ Thủ kho / Trưởng phòng Cung ứng duyệt)`}
           actions={<Button variant="ghost" onClick={() => setPanel("none")}>Đóng</Button>}
         >
           <form
@@ -831,7 +903,7 @@ export function DeptMaterialActionBar({
           >
             <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-teal-50/80 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-800/80">
               <div className="text-[11px] text-teal-900 dark:text-teal-200">
-                💡 <b>Chuyển kho nội bộ (KHO-TONG ➔ Kho Phòng Ban):</b> Dùng khi bạn muốn rút nguyên vật liệu từ <b>Kho Trung Tâm</b> về dự trữ hoặc sử dụng dần tại <b>Kho nhánh {deptLabel}</b> mà <b>chưa cần có Lệnh sản xuất hay Dự án cụ thể</b>.
+                🔒 <b>Quy trình kiểm soát Kho Tổng (KHO-TONG ➔ Kho Phòng Ban):</b> Khi phòng ban gửi đề xuất chuyển kho tại đây, hệ thống sẽ tạo <b>Phiếu yêu cầu chuyển kho (Chờ duyệt)</b>. Tồn Kho Tổng chỉ được xuất chuyển sang <b>Kho nhánh {deptLabel}</b> sau khi <b>Thủ kho</b> hoặc <b>Trưởng bộ phận Cung ứng Kho</b> phê duyệt xuất cấp phát.
               </div>
               <div className="flex items-center gap-1.5">
                 <button
@@ -857,6 +929,55 @@ export function DeptMaterialActionBar({
                 </button>
               </div>
             </div>
+
+            {deptPendingTransfers.length > 0 && (
+              <div className="p-3 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/30 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-bold text-amber-900 dark:text-amber-200 text-xs">
+                    ⏳ Phiếu yêu cầu chuyển kho từ Kho Tổng đang chờ Thủ kho / Trưởng phòng Cung ứng duyệt ({deptPendingTransfers.length} phiếu)
+                  </span>
+                  {!hubTransferOverview.data?.can_approve_transfer && (
+                    <span className="text-[11px] text-amber-700 dark:text-amber-300">
+                      Liên hệ Thủ kho hoặc Trưởng phòng Cung ứng để phê duyệt xuất kho
+                    </span>
+                  )}
+                </div>
+                <Table head={["Mã phiếu", "Người đề xuất", "Chi tiết vật tư & Lô đề xuất chuyển", "Lý do / Mục đích", "Trạng thái", "Thao tác"]}>
+                  {deptPendingTransfers.map((t) => (
+                    <tr key={t.id}>
+                      <td className="py-1.5 pr-3 font-mono font-bold text-sky-700 dark:text-sky-400 whitespace-nowrap">{t.code}</td>
+                      <td className="py-1.5 pr-3 whitespace-nowrap">{t.created_by_name ?? "Nhân sự phòng"}</td>
+                      <td className="py-1.5 pr-3 text-xs font-mono">{t.line_summaries.join(" · ")}</td>
+                      <td className="py-1.5 pr-3 text-xs text-slate-600 dark:text-slate-300">{t.notes ?? "—"}</td>
+                      <td className="py-1.5 pr-3 whitespace-nowrap">
+                        <StatusBadge status="QUARANTINE" label="Chờ Thủ kho / Cung ứng duyệt" />
+                      </td>
+                      <td className="py-1.5 pr-2 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          {hubTransferOverview.data?.can_approve_transfer && (
+                            <Button
+                              type="button"
+                              onClick={() => approveTransferMut.mutate(t.id)}
+                              disabled={approveTransferMut.isPending}
+                            >
+                              ✅ Duyệt &amp; Xuất kho
+                            </Button>
+                          )}
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            onClick={() => rejectTransferMut.mutate({ document_id: t.id, reason: "Hủy yêu cầu chuyển kho" })}
+                            disabled={rejectTransferMut.isPending}
+                          >
+                            ✕ Hủy phiếu
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </Table>
+              </div>
+            )}
 
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-12">
               <div className="lg:col-span-3">
@@ -1042,7 +1163,7 @@ export function DeptMaterialActionBar({
                 ✅ {transferSuccessMsg}
               </div>
             )}
-            <ErrorNote error={postTransferMut.error} />
+            <ErrorNote error={postTransferMut.error ?? approveTransferMut.error ?? rejectTransferMut.error} />
             <div className="flex justify-end gap-2">
               <Button type="button" variant="ghost" onClick={() => setPanel("none")}>Hủy</Button>
               <Button
@@ -1056,8 +1177,8 @@ export function DeptMaterialActionBar({
                 }
               >
                 {postTransferMut.isPending
-                  ? "Đang chuyển kho…"
-                  : `🚚 Thực hiện chuyển về Kho Phòng (${transferLines.length} dòng)`}
+                  ? "Đang gửi yêu cầu…"
+                  : `📨 Gửi yêu cầu chuyển kho chờ Thủ kho / Cung ứng duyệt (${transferLines.length} dòng)`}
               </Button>
             </div>
           </form>

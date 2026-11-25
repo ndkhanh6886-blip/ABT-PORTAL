@@ -1,12 +1,14 @@
 import { factoryRoute } from "@/factory/http";
 import { invalid } from "@/factory/core/errors";
 import {
+  approveInterWarehouseTransferRequest,
   createReplenishmentPrFromWarehouse,
   dispatchInterWarehouseFefo,
   getMaterialWhereUsedAndCapacity,
   getWarehouseHubOverview,
   holdNearExpiryLot,
   putAwayReleasedLotOneClick,
+  rejectInterWarehouseTransferRequest,
 } from "@/factory/inv/warehouseOps";
 
 export const GET = factoryRoute((tx, { actor, url }) => {
@@ -27,6 +29,10 @@ export const POST = factoryRoute(async (tx, { actor, body: rawBody }) => {
   switch (op) {
     case "dispatch_inter_warehouse":
       return dispatchInterWarehouseFefo(tx, actor, body);
+    case "approve_transfer_request":
+      return approveInterWarehouseTransferRequest(tx, actor, body);
+    case "reject_transfer_request":
+      return rejectInterWarehouseTransferRequest(tx, actor, body);
     case "put_away_one_click":
       return putAwayReleasedLotOneClick(tx, actor, body);
     case "create_replenish_pr":

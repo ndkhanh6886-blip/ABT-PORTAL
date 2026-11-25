@@ -7,6 +7,7 @@ import { api, fmtDate, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, StatusBadge, Table } from "../ui";
 
 interface SupplyChainOverview {
+  can_approve_transfer?: boolean;
   kpis: {
     urgent_pr_count: number;
     open_inbox_lines_count: number;
@@ -14,7 +15,19 @@ interface SupplyChainOverview {
     active_po_count: number;
     overdue_po_count: number;
     low_stock_items_count: number;
+    pending_transfer_count?: number;
   };
+  pending_transfer_requests?: {
+    id: string;
+    code: string;
+    status: string;
+    created_at: string;
+    notes: string | null;
+    source_warehouse_code: string;
+    target_warehouse_codes?: string[];
+    created_by_name: string | null;
+    line_summaries: string[];
+  }[];
   open_pr_lines_dispatch: {
     pr_line_id: string;
     pr_id: string;
@@ -112,6 +125,32 @@ export function SupplyChainRadarView({
       setToast(
         `⚡ Đã điều chuyển tức thì ${fmtQty(res.transferred_qty)} từ KHO-TONG sang ${res.to_warehouse} (Phiếu ${res.document_code}) — Không cần chờ mua ngoài!`
       );
+      refreshAll();
+    },
+  });
+
+  const approveTransferMut = useMutation({
+    mutationFn: (document_id: string) =>
+      api<{ code: string }>("/api/factory/inv/ops", {
+        method: "POST",
+        idempotent: true,
+        json: { op: "approve_transfer_request", document_id },
+      }),
+    onSuccess: (res) => {
+      setToast(`✅ Trưởng phòng Cung ứng / Thủ kho đã phê duyệt & xuất cấp phát phiếu chuyển kho ${res.code} từ KHO-TONG!`);
+      refreshAll();
+    },
+  });
+
+  const rejectTransferMut = useMutation({
+    mutationFn: (payload: { document_id: string; reason?: string }) =>
+      api<{ code: string }>("/api/factory/inv/ops", {
+        method: "POST",
+        idempotent: true,
+        json: { op: "reject_transfer_request", ...payload },
+      }),
+    onSuccess: (res) => {
+      setToast(`Đã từ chối / hủy phiếu yêu cầu chuyển kho ${res.code}.`);
       refreshAll();
     },
   });
@@ -224,6 +263,47 @@ export function SupplyChainRadarView({
           </div>
         </div>
       </div>
+
+      {/* BẢNG 0: YÊU CẦU CHUYỂN NVL TỪ KHO TỔNG VỀ KHO PHÒNG BAN CHỜ THỦ KHO / TRƯỞNG PHÒNG CUNG ỨNG DUYỆT */}
+      {(d?.pending_transfer_requests?.length ?? 0) > 0 && (
+        <Card title={`🔔 Yêu cầu Chuyển NVL từ Kho Tổng (KHO-TONG) về Kho Phòng Ban chờ Thủ kho / Trưởng phòng Cung ứng duyệt (${d?.pending_transfer_requests?.length} phiếu)`}>
+          <Table head={["Mã phiếu", "Từ Kho ➔ Kho Phòng", "Người đề xuất", "Vật tư & Lô yêu cầu chuyển", "Lý do / Mục đích", "Ngày gửi", "Phê duyệt xuất kho"]}>
+            {(d?.pending_transfer_requests ?? []).map((t) => (
+              <tr key={t.id}>
+                <td className="py-2 pr-3 font-mono font-bold text-sky-700 dark:text-sky-400 whitespace-nowrap">{t.code}</td>
+                <td className="py-2 pr-3 font-mono text-xs font-semibold whitespace-nowrap">
+                  {t.source_warehouse_code} ➔ {(t.target_warehouse_codes ?? []).join(", ") || "Kho Phòng"}
+                </td>
+                <td className="py-2 pr-3 text-xs whitespace-nowrap">{t.created_by_name ?? "Nhân sự phòng"}</td>
+                <td className="py-2 pr-3 text-xs font-mono">{t.line_summaries.join(" · ")}</td>
+                <td className="py-2 pr-3 text-xs text-slate-600 dark:text-slate-300">{t.notes ?? "—"}</td>
+                <td className="py-2 pr-3 text-xs whitespace-nowrap">{fmtDate(t.created_at)}</td>
+                <td className="py-2 pr-2 whitespace-nowrap">
+                  {d?.can_approve_transfer ? (
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        onClick={() => approveTransferMut.mutate(t.id)}
+                        disabled={approveTransferMut.isPending}
+                      >
+                        ✅ Duyệt &amp; Xuất từ KHO-TONG
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        onClick={() => rejectTransferMut.mutate({ document_id: t.id, reason: "Cung ứng từ chối yêu cầu chuyển kho" })}
+                        disabled={rejectTransferMut.isPending}
+                      >
+                        ✕ Từ chối
+                      </Button>
+                    </div>
+                  ) : (
+                    <StatusBadge status="QUARANTINE" label="Chờ Thủ kho / Cung ứng duyệt" />
+                  )}
+                </td>
+              </tr>
+            ))}
+          </Table>
+        </Card>
+      )}
 
       {/* BẢNG 1: ĐIỀU PHỐI THÔNG MINH NHU CẦU VẬT TƯ TỪ 5 PHÒNG BAN */}
       <Card

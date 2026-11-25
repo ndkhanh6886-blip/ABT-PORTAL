@@ -5,7 +5,7 @@ import { vnToday } from "../core/dates";
 import { invalid, notFound } from "../core/errors";
 import { parseInput } from "../core/records";
 import { runTransition } from "../core/stateMachine";
-import { dispatchInterWarehouseFefo, ensureWarehouseOpsSchema } from "../inv/warehouseOps";
+import { canActorApproveCentralWarehouseTransfer, dispatchInterWarehouseFefo, ensureWarehouseOpsSchema } from "../inv/warehouseOps";
 import { createRequest, prMachine } from "./requests";
 import { createOrder, poMachine, syncRequestStatus } from "./orders";
 import "./permissions";
@@ -193,6 +193,43 @@ export async function getSupplyChainOverview(tx: Tx, actor: AuthzActor) {
     };
   });
 
+  const pending_transfer_requests = (
+    await tx.query(
+      `SELECT d.id, d.code, d.reason_code, d.status, d.version, d.created_at, d.notes, d.created_by,
+              w.id AS source_warehouse_id, w.code AS source_warehouse_code, up.display_name AS created_by_name,
+              ARRAY(
+                SELECT DISTINCT tw.code
+                  FROM inv.stock_document_line dl
+                  LEFT JOIN master.location tl ON tl.id = dl.to_location_id
+                  LEFT JOIN master.warehouse tw ON tw.id = tl.warehouse_id
+                 WHERE dl.document_id = d.id AND tw.code IS NOT NULL
+              ) AS target_warehouse_codes,
+              ARRAY(
+                SELECT i.code || ' — ' || i.name || ' (' || dl.qty::float || ' ' || dl.uom ||
+                       CASE WHEN lot.code IS NOT NULL THEN ' · Lô ' || lot.code ELSE '' END || ' · ' ||
+                       COALESCE(fl.code, '') || ' ➔ ' ||
+                       CASE WHEN tw.id IS NOT NULL AND tw.id <> d.warehouse_id THEN tw.code || '·' || tl.code ELSE COALESCE(tl.code, '') END || ')'
+                  FROM inv.stock_document_line dl
+                  JOIN master.item i ON i.id = dl.item_id
+                  LEFT JOIN inv.lot lot ON lot.id = dl.lot_id
+                  LEFT JOIN master.location fl ON fl.id = dl.from_location_id
+                  LEFT JOIN master.location tl ON tl.id = dl.to_location_id
+                  LEFT JOIN master.warehouse tw ON tw.id = tl.warehouse_id
+                 WHERE dl.document_id = d.id
+                 ORDER BY dl.line_no
+              ) AS line_summaries
+         FROM inv.stock_document d
+         JOIN master.warehouse w ON w.id = d.warehouse_id
+         LEFT JOIN core.user_profile up ON up.user_id = d.created_by
+        WHERE d.doc_type = 'TRANSFER'
+          AND d.status = 'DRAFT'
+        ORDER BY d.created_at DESC
+        LIMIT 50`
+    )
+  ).rows;
+
+  const can_approve_transfer = await canActorApproveCentralWarehouseTransfer(tx, actor);
+
   const kpis = {
     urgent_pr_count: open_pr_lines_dispatch.filter((x) => x.priority === "URGENT" || (x.days_until_needed !== null && x.days_until_needed <= 3)).length,
     open_inbox_lines_count: open_pr_lines_dispatch.filter((x) => ["APPROVED", "ORDERED"].includes(x.pr_status)).length,
@@ -200,10 +237,13 @@ export async function getSupplyChainOverview(tx: Tx, actor: AuthzActor) {
     active_po_count: active_pos_tracking.length,
     overdue_po_count: active_pos_tracking.filter((p) => p.days_to_eta !== null && p.days_to_eta < 0).length,
     low_stock_items_count: mrp_shortage_radar.filter((m) => Number(m.hub_available) + Number(m.branch_available) < Number(m.min_safety_stock)).length,
+    pending_transfer_count: pending_transfer_requests.length,
   };
 
   return {
+    can_approve_transfer,
     kpis,
+    pending_transfer_requests,
     open_pr_lines_dispatch,
     mrp_shortage_radar,
     active_pos_tracking,

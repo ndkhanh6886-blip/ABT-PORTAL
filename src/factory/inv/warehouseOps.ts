@@ -1,8 +1,8 @@
 import { z } from "zod/v3";
 import type { Tx } from "../core/db";
-import { authorize, authorizeAnywhere, hasFactoryPermission, SYSTEM_ACTOR, type AuthzActor } from "../core/authz";
+import { authorize, authorizeAnywhere, authorizeAnywhereOneOf, hasFactoryPermission, SYSTEM_ACTOR, type AuthzActor } from "../core/authz";
 import { vnToday } from "../core/dates";
-import { invalid, notFound } from "../core/errors";
+import { forbidden, invalid, notFound } from "../core/errors";
 import { writeAudit } from "../core/audit";
 import { parseInput } from "../core/records";
 import { runTransition } from "../core/stateMachine";
@@ -18,6 +18,49 @@ let warehouseOpsSchemaEnsured = false;
 export async function ensureWarehouseOpsSchema(_tx: Tx): Promise<void> {
   if (warehouseOpsSchemaEnsured) return;
   warehouseOpsSchemaEnsured = true;
+}
+
+/**
+ * Kiểm tra người dùng hiện tại có thẩm quyền của Thủ kho / Trưởng bộ phận Cung ứng Kho (hoặc Ban Giám Đốc)
+ * để phê duyệt & xuất cấp phát nguyên vật liệu từ Kho Trung Tâm (KHO-TONG) về các Kho Nhánh Phòng Ban hay không.
+ * Nhân sự các phòng ban chuyên môn (R&D, Sản xuất Kit, Oligo, Kỹ thuật Thiết bị, QA/QC) chỉ được lập Phiếu yêu cầu chuyển kho (DRAFT)
+ * và phải chờ Thủ kho hoặc Trưởng phòng Cung ứng phê duyệt.
+ */
+export async function canActorApproveCentralWarehouseTransfer(
+  tx: Tx,
+  actor: AuthzActor,
+  sourceWarehouseId?: string | null
+): Promise<boolean> {
+  if (actor.isSystem || actor.isRootAdmin) return true;
+
+  // Kiểm tra vai trò Thủ kho / Trưởng bộ phận Kho & Cung ứng trong phân quyền nhà máy
+  const whRoleRes = await tx.query(
+    `SELECT 1
+       FROM core.user_role ur
+       JOIN core.role r ON r.id = ur.role_id AND r.status = 'ACTIVE'
+       LEFT JOIN core.org_unit o ON o.id = ur.scope_org_unit_id
+      WHERE ur.user_id = $1
+        AND ur.revoked_at IS NULL
+        AND ur.valid_from <= now()
+        AND (ur.valid_to IS NULL OR ur.valid_to > now())
+        AND (
+          r.code IN ('WH_HEAD', 'WH_STAFF', 'PURCHASE_HEAD', 'PURCHASE_STAFF')
+          OR o.module_key IN ('WH', 'PURCHASE')
+        )
+      LIMIT 1`,
+    [actor.userId]
+  );
+  if ((whRoleRes.rowCount ?? 0) > 0) return true;
+
+  if (sourceWarehouseId) {
+    const srcWh = (
+      await tx.query("SELECT owner_org_unit_id, code FROM master.warehouse WHERE id = $1", [sourceWarehouseId])
+    ).rows[0];
+    if (srcWh && srcWh.code !== "KHO-TONG" && srcWh.owner_org_unit_id) {
+      return hasFactoryPermission(tx, actor, "inv.document.post", srcWh.owner_org_unit_id);
+    }
+  }
+  return false;
 }
 
 export async function getWarehouseHubOverview(tx: Tx, actor: AuthzActor) {
@@ -208,10 +251,53 @@ export async function getWarehouseHubOverview(tx: Tx, actor: AuthzActor) {
     )
   ).rows;
 
+  const pending_transfer_requests = (
+    await tx.query(
+      `SELECT d.id, d.code, d.reason_code, d.status, d.version, d.created_at, d.notes, d.created_by,
+              w.id AS source_warehouse_id, w.code AS source_warehouse_code, up.display_name AS created_by_name,
+              ARRAY(
+                SELECT DISTINCT tw.id::text
+                  FROM inv.stock_document_line dl
+                  LEFT JOIN master.location tl ON tl.id = dl.to_location_id
+                  LEFT JOIN master.warehouse tw ON tw.id = tl.warehouse_id
+                 WHERE dl.document_id = d.id AND tw.id IS NOT NULL
+              ) AS target_warehouse_ids,
+              ARRAY(
+                SELECT DISTINCT tw.code
+                  FROM inv.stock_document_line dl
+                  LEFT JOIN master.location tl ON tl.id = dl.to_location_id
+                  LEFT JOIN master.warehouse tw ON tw.id = tl.warehouse_id
+                 WHERE dl.document_id = d.id AND tw.code IS NOT NULL
+              ) AS target_warehouse_codes,
+              ARRAY(
+                SELECT i.code || ' — ' || i.name || ' (' || dl.qty::float || ' ' || dl.uom ||
+                       CASE WHEN lot.code IS NOT NULL THEN ' · Lô ' || lot.code ELSE '' END || ' · ' ||
+                       COALESCE(fl.code, '') || ' ➔ ' ||
+                       CASE WHEN tw.id IS NOT NULL AND tw.id <> d.warehouse_id THEN tw.code || '·' || tl.code ELSE COALESCE(tl.code, '') END || ')'
+                  FROM inv.stock_document_line dl
+                  JOIN master.item i ON i.id = dl.item_id
+                  LEFT JOIN inv.lot lot ON lot.id = dl.lot_id
+                  LEFT JOIN master.location fl ON fl.id = dl.from_location_id
+                  LEFT JOIN master.location tl ON tl.id = dl.to_location_id
+                  LEFT JOIN master.warehouse tw ON tw.id = tl.warehouse_id
+                 WHERE dl.document_id = d.id
+                 ORDER BY dl.line_no
+              ) AS line_summaries
+         FROM inv.stock_document d
+         JOIN master.warehouse w ON w.id = d.warehouse_id
+         LEFT JOIN core.user_profile up ON up.user_id = d.created_by
+        WHERE d.doc_type = 'TRANSFER'
+          AND d.status = 'DRAFT'
+        ORDER BY d.created_at DESC
+        LIMIT 50`
+    )
+  ).rows;
+
   const recent_transfers = (
     await tx.query(
       `SELECT d.id, d.code, d.reason_code, d.status, d.posted_at, d.created_at, d.notes,
               w.code AS source_warehouse_code, up.display_name AS created_by_name,
+              ap.display_name AS posted_by_name,
               ARRAY(
                 SELECT i.code || ' (' || dl.qty::float || ' ' || dl.uom || ' · ' ||
                        COALESCE(fl.code, '') || ' ➔ ' ||
@@ -227,42 +313,73 @@ export async function getWarehouseHubOverview(tx: Tx, actor: AuthzActor) {
          FROM inv.stock_document d
          JOIN master.warehouse w ON w.id = d.warehouse_id
          LEFT JOIN core.user_profile up ON up.user_id = d.created_by
+         LEFT JOIN core.user_profile ap ON ap.user_id = d.posted_by
         WHERE d.doc_type = 'TRANSFER'
         ORDER BY d.created_at DESC
-        LIMIT 15`
+        LIMIT 20`
     )
   ).rows;
 
+  const can_approve_transfer = await canActorApproveCentralWarehouseTransfer(tx, actor);
+
   return {
+    can_approve_transfer,
     warehouses,
     all_locations,
     central_hub_stock,
     putaway_queue,
     expiry_radar,
     low_stock_radar,
+    pending_transfer_requests,
     recent_transfers,
   };
 }
+
+const dispatchLineItemSchema = z.object({
+  item_id: z.string().uuid("Chọn vật tư cần cấp phát"),
+  lot_id: z.string().uuid().optional().nullable(),
+  qty: z.coerce.number().positive("Số lượng cấp phát phải lớn hơn 0"),
+});
 
 const dispatchSchema = z.object({
   source_warehouse_id: z.string().uuid().optional().nullable(),
   target_warehouse_id: z.string().uuid("Chọn kho nhánh bộ phận nhận hàng"),
   target_location_id: z.string().uuid().optional().nullable(),
-  item_id: z.string().uuid("Chọn vật tư cần cấp phát"),
+  item_id: z.string().uuid().optional().nullable(),
   lot_id: z.string().uuid().optional().nullable(),
-  qty: z.coerce.number().positive("Số lượng cấp phát phải lớn hơn 0"),
+  qty: z.coerce.number().positive().optional().nullable(),
+  lines: z.array(dispatchLineItemSchema).optional(),
   notes: z.string().trim().max(500).optional().nullable(),
+  /**
+   * `auto_post`:
+   * - Khi phòng ban lập yêu cầu từ thanh công cụ Kho Phòng (`auto_post: false`), hệ thống tạo Phiếu Yêu Cầu Chuyển Kho ở trạng thái `DRAFT`
+   *   chờ Thủ kho hoặc Trưởng bộ phận Cung ứng Kho duyệt xuất.
+   * - Chỉ khi Thủ kho / Trưởng phòng Cung ứng thao tác xuất cấp phát trực tiếp (`auto_post: true` và có thẩm quyền kho tổng) mới ghi sổ (`POSTED`) ngay.
+   */
+  auto_post: z.boolean().optional(),
 });
 
 /**
- * 1-Click FEFO Inter-Warehouse Distribution:
- * Dispatches stock from Central Hub (`KHO-TONG · A1`, or selected source warehouse)
- * to a Department Branch Warehouse (`KHO-KIT`, `KHO-OLIGO`, `KHO-DEVICE`, `KHO-RD`, `KHO-QA`).
- * Automatically picks FEFO released lots if `lot_id` is omitted.
+ * FEFO Inter-Warehouse Transfer Request & Dispatch:
+ * - Khi nhân sự các phòng ban (R&D, Sản xuất Kit, Oligo, Kỹ thuật Thiết bị, QA/QC) bấm "+ Chuyển NVL từ Kho Tổng về Kho Phòng"
+ *   (`auto_post === false` hoặc người tạo không phải Thủ kho / Trưởng phòng Cung ứng), hệ thống lập Phiếu Yêu Cầu Chuyển Kho ở trạng thái `DRAFT`
+ *   để Thủ kho hoặc Trưởng phòng Cung ứng kiểm tra và bấm Duyệt xuất kho.
+ * - Khi Thủ kho / Trưởng phòng Cung ứng trực tiếp điều phối tại Kho Nhà Máy hoặc duyệt dòng PR từ Kho Tổng (`auto_post !== false` và có quyền duyệt Kho Tổng),
+ *   hệ thống ghi sổ (`POSTED`) điều chuyển FEFO ngay.
  */
 export async function dispatchInterWarehouseFefo(tx: Tx, actor: AuthzActor, input: unknown) {
-  await authorizeAnywhere(tx, actor, "inv.document.create");
+  await authorizeAnywhereOneOf(tx, actor, ["inv.stock.view", "inv.document.create"]);
   const d = parseInput(dispatchSchema, input);
+
+  const rawRequestedLines: { item_id: string; lot_id?: string | null; qty: number }[] =
+    Array.isArray(d.lines) && d.lines.length > 0
+      ? d.lines
+      : d.item_id && d.qty && d.qty > 0
+        ? [{ item_id: d.item_id, lot_id: d.lot_id ?? null, qty: d.qty }]
+        : [];
+  if (rawRequestedLines.length === 0) {
+    throw invalid("Vui lòng chọn ít nhất một nguyên vật liệu và nhập số lượng cần chuyển.");
+  }
 
   const srcWh = d.source_warehouse_id
     ? (await tx.query("SELECT id, code, name FROM master.warehouse WHERE id = $1 AND status = 'ACTIVE'", [d.source_warehouse_id])).rows[0]
@@ -278,37 +395,7 @@ export async function dispatchInterWarehouseFefo(tx: Tx, actor: AuthzActor, inpu
     : (await tx.query("SELECT id, code, is_quarantine FROM master.location WHERE warehouse_id = $1 AND is_quarantine = false AND status = 'ACTIVE' ORDER BY code LIMIT 1", [dstWh.id])).rows[0];
   if (!dstLoc) throw invalid(`Kho nhận ${dstWh.code} chưa có kệ chính thức (A1) đang hoạt động.`);
 
-  const item = (await tx.query("SELECT id, code, name, base_uom, tracking FROM master.item WHERE id = $1", [d.item_id])).rows[0];
-  if (!item) throw notFound("Vật tư");
-
   const today = vnToday();
-  const candidateRows = (
-    await tx.query(
-      `SELECT b.id, b.lot_id, b.location_id, (b.qty_on_hand - b.qty_reserved)::float AS avail,
-              lot.code AS lot_code, lot.expiry_date::text AS expiry_date, loc.code AS loc_code
-         FROM inv.stock_balance b
-         JOIN master.location loc ON loc.id = b.location_id
-         LEFT JOIN inv.lot lot ON lot.id = b.lot_id
-        WHERE loc.warehouse_id = $1
-          AND b.item_id = $2
-          AND loc.is_quarantine = false
-          AND COALESCE(lot.status, 'RELEASED') = 'RELEASED'
-          AND (lot.expiry_date IS NULL OR lot.expiry_date >= $3)
-          AND ($4::uuid IS NULL OR b.lot_id = $4)
-          AND (b.qty_on_hand - b.qty_reserved) > 0
-        ORDER BY lot.expiry_date ASC NULLS LAST, lot.received_date ASC NULLS LAST`,
-      [srcWh.id, item.id, today, d.lot_id ?? null]
-    )
-  ).rows;
-
-  const totalAvail = candidateRows.reduce((s, r) => s + Number(r.avail), 0);
-  if (totalAvail + 1e-9 < d.qty) {
-    throw invalid(
-      `Tồn kho khả dụng của ${item.code} tại ${srcWh.code} chỉ còn ${totalAvail} ${item.base_uom} (cần cấp ${d.qty} ${item.base_uom}).`
-    );
-  }
-
-  let remaining = d.qty;
   const transferLines: {
     item_id: string;
     lot_id: string | null;
@@ -318,18 +405,50 @@ export async function dispatchInterWarehouseFefo(tx: Tx, actor: AuthzActor, inpu
     uom: string;
   }[] = [];
 
-  for (const row of candidateRows) {
-    if (remaining <= 1e-9) break;
-    const take = Math.min(remaining, Number(row.avail));
-    transferLines.push({
-      item_id: item.id,
-      lot_id: row.lot_id,
-      from_location_id: row.location_id,
-      to_location_id: dstLoc.id,
-      qty: Math.round(take * 1e6) / 1e6,
-      uom: item.base_uom,
-    });
-    remaining -= take;
+  for (const reqLine of rawRequestedLines) {
+    const item = (await tx.query("SELECT id, code, name, base_uom, tracking FROM master.item WHERE id = $1", [reqLine.item_id])).rows[0];
+    if (!item) throw notFound("Vật tư");
+
+    const candidateRows = (
+      await tx.query(
+        `SELECT b.id, b.lot_id, b.location_id, (b.qty_on_hand - b.qty_reserved)::float AS avail,
+                lot.code AS lot_code, lot.expiry_date::text AS expiry_date, loc.code AS loc_code
+           FROM inv.stock_balance b
+           JOIN master.location loc ON loc.id = b.location_id
+           LEFT JOIN inv.lot lot ON lot.id = b.lot_id
+          WHERE loc.warehouse_id = $1
+            AND b.item_id = $2
+            AND loc.is_quarantine = false
+            AND COALESCE(lot.status, 'RELEASED') = 'RELEASED'
+            AND (lot.expiry_date IS NULL OR lot.expiry_date >= $3)
+            AND ($4::uuid IS NULL OR b.lot_id = $4)
+            AND (b.qty_on_hand - b.qty_reserved) > 0
+          ORDER BY lot.expiry_date ASC NULLS LAST, lot.received_date ASC NULLS LAST`,
+        [srcWh.id, item.id, today, reqLine.lot_id ?? null]
+      )
+    ).rows;
+
+    const totalAvail = candidateRows.reduce((s, r) => s + Number(r.avail), 0);
+    if (totalAvail + 1e-9 < reqLine.qty) {
+      throw invalid(
+        `Tồn kho khả dụng của ${item.code} tại ${srcWh.code} chỉ còn ${totalAvail} ${item.base_uom} (yêu cầu chuyển ${reqLine.qty} ${item.base_uom}).`
+      );
+    }
+
+    let remaining = reqLine.qty;
+    for (const row of candidateRows) {
+      if (remaining <= 1e-9) break;
+      const take = Math.min(remaining, Number(row.avail));
+      transferLines.push({
+        item_id: item.id,
+        lot_id: row.lot_id,
+        from_location_id: row.location_id,
+        to_location_id: dstLoc.id,
+        qty: Math.round(take * 1e6) / 1e6,
+        uom: item.base_uom,
+      });
+      remaining -= take;
+    }
   }
 
   const doc = await createStockDocument(
@@ -339,19 +458,152 @@ export async function dispatchInterWarehouseFefo(tx: Tx, actor: AuthzActor, inpu
       doc_type: "TRANSFER",
       reason_code: "DEPT_SUPPLY",
       warehouse_id: srcWh.id,
-      notes: d.notes || `Cấp phát vật tư FEFO từ ${srcWh.code} sang ${dstWh.code} (${dstLoc.code})`,
+      notes: d.notes || `Đề xuất chuyển vật tư FEFO từ ${srcWh.code} về ${dstWh.code} (${dstLoc.code})`,
       lines: transferLines,
     },
     { trusted: true }
   );
-  const posted = await runTransition(tx, stockDocumentMachine, actor, { id: doc.id, action: "post", expectedVersion: doc.version }, { trusted: true });
+
+  const canApprove = await canActorApproveCentralWarehouseTransfer(tx, actor, srcWh.id);
+  const shouldPostImmediately = d.auto_post !== false && canApprove;
+
+  if (!shouldPostImmediately) {
+    await writeAudit(tx, actor, {
+      entityType: "stock_document",
+      entityId: doc.id,
+      action: "inter_warehouse_transfer_request",
+      changes: {
+        from_wh: [null, srcWh.code],
+        to_wh: [null, dstWh.code],
+        status: [null, "DRAFT (Chờ Thủ kho / Trưởng phòng Cung ứng duyệt)"],
+        lines: [null, transferLines.length],
+      },
+    });
+    return {
+      document: doc,
+      status: "DRAFT" as const,
+      pending_approval: true,
+      from_warehouse: srcWh.code,
+      to_warehouse: dstWh.code,
+      lines_count: transferLines.length,
+    };
+  }
+
+  const posted = await runTransition(
+    tx,
+    stockDocumentMachine,
+    actor,
+    { id: doc.id, action: "post", expectedVersion: doc.version },
+    { trusted: true }
+  );
   await writeAudit(tx, actor, {
     entityType: "stock_document",
     entityId: posted.id,
     action: "inter_warehouse_dispatch",
-    changes: { from_wh: [null, srcWh.code], to_wh: [null, dstWh.code], item: [null, item.code], qty: [null, d.qty] },
+    changes: { from_wh: [null, srcWh.code], to_wh: [null, dstWh.code], lines: [null, transferLines.length] },
   });
-  return { document: posted, from_warehouse: srcWh.code, to_warehouse: dstWh.code, lines_count: transferLines.length };
+  return {
+    document: posted,
+    status: "POSTED" as const,
+    pending_approval: false,
+    from_warehouse: srcWh.code,
+    to_warehouse: dstWh.code,
+    lines_count: transferLines.length,
+  };
+}
+
+const approveTransferRequestSchema = z.object({
+  document_id: z.string().uuid("Chọn phiếu yêu cầu chuyển kho cần duyệt"),
+});
+
+/**
+ * Thủ kho / Trưởng phòng Cung ứng (hoặc Ban Giám Đốc) phê duyệt & xuất cấp phát Phiếu Yêu Cầu Chuyển Kho (`DRAFT` -> `POSTED`).
+ */
+export async function approveInterWarehouseTransferRequest(tx: Tx, actor: AuthzActor, input: unknown) {
+  const d = parseInput(approveTransferRequestSchema, input);
+  const doc = (
+    await tx.query(
+      `SELECT sd.*, w.code AS source_warehouse_code
+         FROM inv.stock_document sd
+         JOIN master.warehouse w ON w.id = sd.warehouse_id
+        WHERE sd.id = $1 FOR UPDATE OF sd`,
+      [d.document_id]
+    )
+  ).rows[0];
+  if (!doc) throw notFound("Phiếu yêu cầu chuyển kho");
+  if (doc.doc_type !== "TRANSFER") throw invalid("Chỉ áp dụng cho phiếu điều chuyển kho (TRANSFER).");
+  if (doc.status !== "DRAFT") {
+    throw invalid(`Phiếu ${doc.code} không còn ở trạng thái chờ duyệt (trạng thái hiện tại: ${doc.status}).`);
+  }
+
+  const canApprove = await canActorApproveCentralWarehouseTransfer(tx, actor, doc.warehouse_id);
+  if (!canApprove) {
+    throw forbidden(
+      "Chỉ Thủ kho, Trưởng bộ phận Cung ứng Kho hoặc Ban Giám Đốc mới có thẩm quyền phê duyệt xuất chuyển nguyên vật liệu từ Kho Trung Tâm (KHO-TONG)."
+    );
+  }
+
+  const posted = await runTransition(
+    tx,
+    stockDocumentMachine,
+    actor,
+    { id: doc.id, action: "post", expectedVersion: doc.version },
+    { trusted: true }
+  );
+  await writeAudit(tx, actor, {
+    entityType: "stock_document",
+    entityId: posted.id,
+    action: "approve_inter_warehouse_transfer",
+    changes: { status: ["DRAFT", "POSTED"], code: [null, doc.code] },
+  });
+  return { document: posted, code: doc.code, source_warehouse_code: doc.source_warehouse_code };
+}
+
+const rejectTransferRequestSchema = z.object({
+  document_id: z.string().uuid("Chọn phiếu yêu cầu chuyển kho cần từ chối / hủy"),
+  reason: z.string().trim().max(500).optional().nullable(),
+});
+
+/**
+ * Thủ kho / Trưởng phòng Cung ứng từ chối phiếu yêu cầu chuyển kho, hoặc người lập tự hủy phiếu khi đang ở trạng thái chờ duyệt (`DRAFT` -> `CANCELLED`).
+ */
+export async function rejectInterWarehouseTransferRequest(tx: Tx, actor: AuthzActor, input: unknown) {
+  const d = parseInput(rejectTransferRequestSchema, input);
+  const doc = (
+    await tx.query("SELECT * FROM inv.stock_document WHERE id = $1 FOR UPDATE", [d.document_id])
+  ).rows[0];
+  if (!doc) throw notFound("Phiếu yêu cầu chuyển kho");
+  if (doc.doc_type !== "TRANSFER") throw invalid("Chỉ áp dụng cho phiếu điều chuyển kho (TRANSFER).");
+  if (doc.status !== "DRAFT") {
+    throw invalid(`Phiếu ${doc.code} đã được xử lý (${doc.status}), không thể hủy nháp.`);
+  }
+
+  const canApprove = await canActorApproveCentralWarehouseTransfer(tx, actor, doc.warehouse_id);
+  const isCreator = doc.created_by === actor.userId;
+  if (!canApprove && !isCreator) {
+    throw forbidden("Chỉ Thủ kho, Trưởng bộ phận Cung ứng Kho hoặc chính người lập phiếu mới có quyền hủy / từ chối yêu cầu này.");
+  }
+
+  if (d.reason && d.reason.trim()) {
+    const suffix = ` [Từ chối / Hủy bởi ${actor.name}: ${d.reason.trim()}]`;
+    await tx.query("UPDATE inv.stock_document SET notes = COALESCE(notes, '') || $2 WHERE id = $1", [doc.id, suffix]);
+  }
+
+  const cancelled = await runTransition(
+    tx,
+    stockDocumentMachine,
+    actor,
+    { id: doc.id, action: "cancel", expectedVersion: doc.version, reason: d.reason || undefined },
+    { trusted: true }
+  );
+  await writeAudit(tx, actor, {
+    entityType: "stock_document",
+    entityId: cancelled.id,
+    action: "reject_inter_warehouse_transfer",
+    changes: { status: ["DRAFT", "CANCELLED"], code: [null, doc.code] },
+    reason: d.reason || undefined,
+  });
+  return { document: cancelled, code: doc.code };
 }
 
 const putAwayOneClickSchema = z.object({
