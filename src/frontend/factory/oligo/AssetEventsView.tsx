@@ -119,7 +119,7 @@ function Files({ ev }: { ev: Ev }) {
       {files.data?.map((f) => <a key={f.id} className="text-sky-700 dark:text-sky-400 underline" href={`/api/factory/assets/events/${ev.id}/files/${f.id}`} target="_blank" rel="noreferrer">{f.file_name}</a>)}
       <label className="cursor-pointer text-slate-500 hover:text-sky-700">
         + Đính kèm (biên bản, hóa đơn, báo cáo)
-        <input type="file" className="hidden" accept=".pdf,.docx,.xlsx,image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload.mutate(f); e.target.value = ""; }} />
+        <input type="file" className="hidden" accept=".pdf,.doc,.docx,.xls,.xlsx,image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload.mutate(f); e.target.value = ""; }} />
       </label>
       {upload.error != null && <ErrorNote error={upload.error} />}
     </div>

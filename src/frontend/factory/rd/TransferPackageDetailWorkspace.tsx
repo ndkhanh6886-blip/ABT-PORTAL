@@ -303,7 +303,7 @@ function ChecklistItemCard({
                 type="file"
                 multiple
                 className="hidden"
-                accept=".pdf,.docx,.xlsx,.csv,.txt,.zip,.png,.jpg,.jpeg,.webp"
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip,.png,.jpg,.jpeg,.webp"
                 disabled={uploadFilesMut.isPending}
                 onChange={(e) => {
                   const files = Array.from(e.target.files ?? []);
@@ -811,7 +811,7 @@ export function TransferPackageDetailWorkspace({
                   type="file"
                   multiple
                   className="hidden"
-                  accept=".pdf,.docx,.xlsx,.csv,.txt,.zip,.png,.jpg,.jpeg,.webp"
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip,.png,.jpg,.jpeg,.webp"
                   disabled={generalUploadMut.isPending}
                   onChange={(e) => {
                     const files = Array.from(e.target.files ?? []);

@@ -429,7 +429,7 @@ function ExperimentPanel({
                   <Button type="submit" disabled={addEntryMut.isPending}>+ Ghi nhật ký ELN</Button>
                   <input
                     type="file"
-                    accept="application/pdf,image/png,image/jpeg,text/csv,.xlsx,.zip"
+                    accept="application/pdf,image/png,image/jpeg,text/csv,.doc,.docx,.xls,.xlsx,.zip"
                     onChange={(ev) => ev.target.files?.[0] && uploadFileMut.mutate(ev.target.files[0])}
                     className="text-[10px]"
                   />

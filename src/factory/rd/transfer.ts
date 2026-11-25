@@ -1585,11 +1585,17 @@ function normalizeTransferUploadMime(fileName: string, declaredMime: string, dat
   if (ext === ".pdf" || sniffed === "application/pdf") {
     return { mimeType: "application/pdf", category: "DOCUMENT" };
   }
-  if (ext === ".docx") {
+  if (ext === ".docx" || ext === ".dotx") {
     return { mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", category: "DOCUMENT" };
+  }
+  if (ext === ".doc" || ext === ".dot") {
+    return { mimeType: "application/msword", category: "DOCUMENT" };
   }
   if (ext === ".xlsx") {
     return { mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", category: "DOCUMENT" };
+  }
+  if (ext === ".xls") {
+    return { mimeType: "application/vnd.ms-excel", category: "DOCUMENT" };
   }
   if (ext === ".png" || sniffed === "image/png") {
     return { mimeType: "image/png", category: "IMAGE" };

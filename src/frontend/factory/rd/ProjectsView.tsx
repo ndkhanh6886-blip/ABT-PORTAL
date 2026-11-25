@@ -476,7 +476,7 @@ function DeliverableRow({
             <div className="flex flex-wrap items-center gap-2">
               <input
                 type="file"
-                accept="application/pdf,image/png,image/jpeg,.docx,.xlsx"
+                accept="application/pdf,image/png,image/jpeg,.doc,.docx,.xls,.xlsx"
                 onChange={(e) => e.target.files?.[0] && uploadMut.mutate(e.target.files[0])}
                 className="text-[11px] max-w-48"
               />
@@ -1880,7 +1880,7 @@ function ProjectPanel({
                       <div className="flex flex-wrap items-center gap-2">
                         <input
                           type="file"
-                          accept=".pdf,.png,.jpg,.jpeg,.xlsx,.csv,.docx,.zip"
+                          accept=".pdf,.png,.jpg,.jpeg,.xls,.xlsx,.csv,.doc,.docx,.zip"
                           className="text-[11px]"
                           onChange={(e) => {
                             const f = e.target.files?.[0];

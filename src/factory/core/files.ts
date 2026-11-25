@@ -51,6 +51,8 @@ const IMAGES = ["image/png", "image/jpeg", "image/webp"];
 const OFFICE = [
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/msword",
+  "application/vnd.ms-excel",
 ];
 const RULES: Record<FileCategory, { mimes: string[]; maxBytes: number }> = {
   COA: { mimes: [PDF, ...IMAGES], maxBytes: 20 * MB },
@@ -70,14 +72,42 @@ export function sniffMime(data: Buffer): string | null {
   if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return "image/jpeg";
   if (head.subarray(0, 4).toString("latin1") === "RIFF" && head.subarray(8, 12).toString("latin1") === "WEBP") return "image/webp";
   if (head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04) return "application/zip"; // also docx/xlsx
+  // OLE2 Compound Document header (D0 CF 11 E0 A1 B1 1A E1): legacy MS Word (.doc) and MS Excel (.xls)
+  if (
+    head.length >= 8 &&
+    head[0] === 0xd0 &&
+    head[1] === 0xcf &&
+    head[2] === 0x11 &&
+    head[3] === 0xe0 &&
+    head[4] === 0xa1 &&
+    head[5] === 0xb1 &&
+    head[6] === 0x1a &&
+    head[7] === 0xe1
+  ) {
+    return "application/msword";
+  }
   if (!data.subarray(0, 4096).includes(0)) return "text/plain";
   return null;
+}
+
+function inferOfficeMimeFromFileName(fileName: string, declared: string): string {
+  const trimmed = (declared || "").trim();
+  const ext = path.extname(fileName || "").toLowerCase();
+  if (!trimmed || trimmed === "application/octet-stream" || trimmed === "application/x-zip-compressed" || trimmed === "application/zip") {
+    if (ext === ".docx" || ext === ".dotx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    if (ext === ".xlsx") return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    if (ext === ".doc" || ext === ".dot") return "application/msword";
+    if (ext === ".xls") return "application/vnd.ms-excel";
+    if (ext === ".pdf") return PDF;
+  }
+  return trimmed;
 }
 
 function mimeMatches(declared: string, sniffed: string | null): boolean {
   if (!sniffed) return false;
   if (declared === sniffed) return true;
   if (sniffed === "application/zip") return declared === "application/zip" || OFFICE.includes(declared);
+  if (sniffed === "application/msword") return declared === "application/msword" || declared === "application/vnd.ms-excel";
   if (sniffed === "text/plain") return declared === "text/csv" || declared === "text/plain";
   return false;
 }
@@ -91,8 +121,9 @@ export async function saveAttachment(
   if (!rule) throw invalid("Loại tài liệu không hợp lệ.");
   if (!input.data.length) throw invalid("File rỗng.");
   if (input.data.length > rule.maxBytes) throw invalid(`File vượt quá ${rule.maxBytes / MB} MB cho loại ${input.category}.`);
-  if (!rule.mimes.includes(input.mimeType)) throw invalid(`Định dạng ${input.mimeType} không được chấp nhận cho loại ${input.category}.`);
-  if (!mimeMatches(input.mimeType, sniffMime(input.data))) throw invalid("Nội dung file không khớp với định dạng khai báo.");
+  const effectiveMime = inferOfficeMimeFromFileName(input.fileName, input.mimeType);
+  if (!rule.mimes.includes(effectiveMime)) throw invalid(`Định dạng ${effectiveMime || input.mimeType} không được chấp nhận cho loại ${input.category}.`);
+  if (!mimeMatches(effectiveMime, sniffMime(input.data))) throw invalid("Nội dung file không khớp với định dạng khai báo.");
   const fileName = path.basename(input.fileName).replace(/[\u0000-\u001f]/g, "").slice(0, 255) || "file";
   const sha256 = crypto.createHash("sha256").update(input.data).digest("hex");
   const key = `${sha256.slice(0, 2)}/${sha256}`; // content-addressed: same file stored once
@@ -101,7 +132,7 @@ export async function saveAttachment(
   const res = await tx.query(
     `INSERT INTO core.attachment (entity_type, entity_id, category, file_name, mime_type, size_bytes, sha256, storage_key, uploaded_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-    [input.entityType, input.entityId, input.category, fileName, input.mimeType, input.data.length, sha256, key, actor.userId]
+    [input.entityType, input.entityId, input.category, fileName, effectiveMime, input.data.length, sha256, key, actor.userId]
   );
   await writeAudit(tx, actor, {
     entityType: input.entityType,

@@ -2897,12 +2897,12 @@ export const LegalModule: React.FC = () => {
                   Nhấp hoặc kéo thả file scan giấy phép vào đây
                 </span>
                 <span className="text-[10px] text-slate-400 mt-0.5">
-                  Hỗ trợ .PDF, ảnh scan .PNG, .JPG (Đọc trực tiếp trong ứng dụng không cần tải về)
+                  Hỗ trợ .PDF, .DOC, .DOCX, ảnh scan .PNG, .JPG (Đọc trực tiếp trong ứng dụng không cần tải về)
                 </span>
                 <input
                   type="file"
                   multiple
-                  accept=".pdf,.png,.jpg,.jpeg"
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.zip,.rar,.7z"
                   onChange={handleLicenseFileUpload}
                   className="hidden"
                 />

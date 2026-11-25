@@ -26,7 +26,7 @@ const DANGEROUS_EXTENSIONS = new Set([
 // Danh sách định dạng được phép (Hỗ trợ đầy đủ tài liệu kinh doanh, thầu y tế, kỹ thuật, kế toán)
 const ALLOWED_EXTENSIONS = new Set([
   // Văn phòng & Hồ sơ mời/dự thầu
-  ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".xlsm", ".xlsb", ".ppt", ".pptx", ".csv", ".txt", ".rtf", ".odt", ".ods", ".odp",
+  ".pdf", ".doc", ".docx", ".docm", ".dot", ".dotx", ".xls", ".xlsx", ".xlsm", ".xlsb", ".ppt", ".pptx", ".csv", ".txt", ".rtf", ".odt", ".ods", ".odp",
   // Hồ sơ nén thầu & dữ liệu đóng gói
   ".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz",
   // Hình ảnh chứng từ, CO/CQ, tem nhãn, chụp hiện trường
