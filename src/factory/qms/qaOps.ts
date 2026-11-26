@@ -612,16 +612,27 @@ export async function receiveAndCreateQcTest(tx: Tx, actor: AuthzActor, input: u
     }
     const existingUnitTest = (
       await tx.query(
-        `SELECT id, code, status FROM qms.qc_test
+        `SELECT id, code, status, overall_result FROM qms.qc_test
           WHERE (id = $1 OR (entity_type = 'DEVICE_UNIT' AND entity_id = $2))
           ORDER BY (status <> 'CANCELLED') DESC, created_at DESC LIMIT 1`,
         [unit.fqc_test_id, unit.id]
       )
     ).rows[0];
-    if (existingUnitTest) {
+    if (existingUnitTest && existingUnitTest.status !== "REVIEWED") {
       if (existingUnitTest.status === "CANCELLED") {
-        await tx.query("UPDATE qms.qc_test SET status = 'PLANNED', updated_at = now() WHERE id = $1", [existingUnitTest.id]);
+        await tx.query("UPDATE qms.qc_test SET status = 'PLANNED', overall_result = NULL, updated_at = now() WHERE id = $1", [existingUnitTest.id]);
       }
+      await tx.query(
+        `UPDATE device.device_unit
+            SET status = CASE WHEN status = 'QA_PASSED' THEN 'FQC' ELSE status END,
+                fqc_passed = false,
+                fqc_test_id = $2,
+                qa_released_by = CASE WHEN status = 'QA_PASSED' THEN NULL ELSE qa_released_by END,
+                qa_released_at = CASE WHEN status = 'QA_PASSED' THEN NULL ELSE qa_released_at END,
+                updated_at = now()
+          WHERE id = $1`,
+        [unit.id, existingUnitTest.id]
+      );
       if (assigneeId || assigneeName) {
         await tx.query(
           "UPDATE qms.qc_test SET qa_assignee_id = COALESCE($2, qa_assignee_id), qa_assignee_name = COALESCE($3, qa_assignee_name), analyst_id = COALESCE($2, analyst_id) WHERE id = $1",
@@ -646,7 +657,15 @@ export async function receiveAndCreateQcTest(tx: Tx, actor: AuthzActor, input: u
       test_kind: "FQC",
     });
     await tx.query(
-      "UPDATE device.device_unit SET fqc_test_id = $2 WHERE id = $1",
+      `UPDATE device.device_unit
+          SET status = CASE WHEN status = 'QA_PASSED' THEN 'FQC' ELSE status END,
+              fqc_passed = false,
+              fqc_test_id = $2,
+              fqc_summary = NULL,
+              qa_released_by = CASE WHEN status = 'QA_PASSED' THEN NULL ELSE qa_released_by END,
+              qa_released_at = CASE WHEN status = 'QA_PASSED' THEN NULL ELSE qa_released_at END,
+              updated_at = now()
+        WHERE id = $1`,
       [unit.id, newTest.id]
     );
     if (assigneeId || assigneeName) {
@@ -905,24 +924,52 @@ export async function reopenCancelledQcTest(tx: Tx, actor: AuthzActor, input: un
   const d = parseInput(z.object({ test_id: z.string().uuid() }), input);
   const test = (await tx.query("SELECT * FROM qms.qc_test WHERE id = $1 FOR UPDATE", [d.test_id])).rows[0];
   if (!test) throw notFound("phiếu QC");
+  const nextStatus = test.status === "REVIEWED" ? "IN_PROGRESS" : "PLANNED";
   await tx.query(
     `UPDATE qms.qc_test
-        SET status = 'PLANNED',
+        SET status = $3,
             overall_result = NULL,
+            reviewer_id = NULL,
+            reviewed_at = NULL,
             version = version + 1,
             updated_at = now(),
             updated_by = $2
       WHERE id = $1`,
-    [test.id, actor.userId]
+    [test.id, actor.userId, nextStatus]
   );
   if (test.entity_type === "DEVICE_UNIT") {
-    await tx.query("UPDATE device.device_unit SET fqc_test_id = $2 WHERE id = $1", [test.entity_id, test.id]);
+    const unitRow = (
+      await tx.query(
+        `UPDATE device.device_unit
+            SET status = CASE WHEN status = 'QA_PASSED' THEN 'FQC' ELSE status END,
+                fqc_passed = false,
+                fqc_test_id = $2,
+                fqc_summary = NULL,
+                qa_released_by = CASE WHEN status = 'QA_PASSED' THEN NULL ELSE qa_released_by END,
+                qa_released_at = CASE WHEN status = 'QA_PASSED' THEN NULL ELSE qa_released_at END,
+                version = version + 1,
+                updated_at = now()
+          WHERE id = $1
+          RETURNING order_id`,
+        [test.entity_id, test.id]
+      )
+    ).rows[0];
+    if (unitRow?.order_id) {
+      await tx.query(
+        `UPDATE device.device_order
+            SET status = 'QC_TESTING',
+                version = version + 1,
+                updated_at = now()
+          WHERE id = $1 AND status = 'READY'`,
+        [unitRow.order_id]
+      );
+    }
   }
   await writeAudit(tx, actor, {
     entityType: "qc_test",
     entityId: test.id,
     action: "reopen",
-    changes: { status: [test.status, "PLANNED"] },
+    changes: { status: [test.status, nextStatus] },
   });
   return getQcTest(tx, test.id);
 }

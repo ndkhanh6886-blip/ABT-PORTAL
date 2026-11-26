@@ -26,6 +26,7 @@ const UNIT_ACTION_LABELS: Record<string, string> = {
   to_fqc: "Chuyển sang Đo kiểm xuất xưởng (FQC)",
   fail_fqc: "FQC Không đạt (Mở NCR & trả về lắp ráp)",
   qa_pass: "QA Ký giải phóng xuất xưởng (DHR)",
+  return_fqc: "Chuyển lại bước Đang chờ đánh giá QC (FQC)",
   deliver: "Bàn giao khách hàng & Kích hoạt bảo hành",
   commission: "Nghiệm thu vận hành tại hiện trường",
   decommission: "Ngừng lưu hành thiết bị",
@@ -775,10 +776,20 @@ export function AssemblyDhrView() {
                         unit.status === "IN_ASSEMBLY" &&
                         Number(unit.component_count ?? 0) === 0 &&
                         d.status !== "IN_PRODUCTION";
+                      const isTestPendingReview =
+                        unit.fqc_test_status != null &&
+                        ["PLANNED", "IN_PROGRESS", "RESULTS_ENTERED", "CANCELLED"].includes(unit.fqc_test_status);
                       const ust = unitBlockedByShortage
                         ? ["REJECTED", "Chờ đủ linh kiện BOM (Chưa lắp)"]
                         : unitWaitingStart
                         ? ["PENDING_QC", "Đã cấp S/N — Chờ xuất Kitting"]
+                        : unit.status === "FQC" && isTestPendingReview
+                        ? [
+                            "QUARANTINE",
+                            unit.fqc_test_status === "RESULTS_ENTERED"
+                              ? "Đang chờ duyệt đánh giá QC (FQC)"
+                              : "Đang chờ đánh giá QC (FQC)",
+                          ]
                         : unit.status === "FQC" && unit.fqc_passed === true
                         ? ["RELEASED", "Đã FQC (ĐẠT) — Chờ QA giải phóng"]
                         : (UNIT_STATUS[unit.status] ?? ["PENDING_QC", unit.status]);
@@ -845,24 +856,28 @@ export function AssemblyDhrView() {
                             )}
                           </td>
                           <td className="py-2 pr-3">
-                            {unit.fqc_passed === true || ["QA_PASSED", "DELIVERED", "IN_SERVICE_FIELD"].includes(unit.status) ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                                ✅ Đã FQC: ĐẠT{unit.fqc_test_code ? ` (${unit.fqc_test_code})` : ""}
-                              </span>
-                            ) : unit.fqc_test_status === "RESULTS_ENTERED" ? (
+                            {unit.fqc_test_status === "RESULTS_ENTERED" ? (
                               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300">
-                                📋 QC đã chấm ({unit.fqc_test_result === "PASS" ? "ĐẠT" : "KĐ"})
+                                📋 Chờ duyệt đánh giá QC{unit.fqc_test_code ? ` (${unit.fqc_test_code})` : ""}
                               </span>
                             ) : unit.fqc_test_status === "IN_PROGRESS" ? (
                               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-                                ⏳ QC đang đo{unit.fqc_test_code ? ` (${unit.fqc_test_code})` : ""}
+                                ⏳ Đang chờ đánh giá QC{unit.fqc_test_code ? ` (${unit.fqc_test_code})` : ""}
                               </span>
-                            ) : unit.fqc_summary ? (
+                            ) : unit.fqc_test_status === "PLANNED" ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                                ⏳ Chờ QC tiếp nhận{unit.fqc_test_code ? ` (${unit.fqc_test_code})` : ""}
+                              </span>
+                            ) : (unit.fqc_passed === true && unit.fqc_test_status !== "CANCELLED") || ["QA_PASSED", "DELIVERED", "IN_SERVICE_FIELD"].includes(unit.status) ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                                ✅ Đã FQC: ĐẠT{unit.fqc_test_code ? ` (${unit.fqc_test_code})` : ""}
+                              </span>
+                            ) : unit.fqc_summary && unit.fqc_passed === false && unit.status !== "FQC" ? (
                               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300">
                                 ❌ KHÔNG ĐẠT
                               </span>
                             ) : unit.fqc_test_code ? (
-                              <span className="text-xs text-slate-500 font-mono">Chờ QC ({unit.fqc_test_code})</span>
+                              <span className="text-xs text-slate-500 font-mono">Chờ đánh giá QC ({unit.fqc_test_code})</span>
                             ) : (
                               "Chưa đo"
                             )}
@@ -1052,11 +1067,11 @@ export function AssemblyDhrView() {
                 2. Kiểm tra thử nghiệm (Đạt / Không đạt), Ký phiếu thử nghiệm &amp; Chuyển QC
               </h3>
 
-              {(u.status === "BURN_IN" || u.status === "FQC" || (u.status === "IN_ASSEMBLY" && u.components.length > 0)) && (
+              {(u.status === "BURN_IN" || u.status === "FQC" || u.status === "QA_PASSED" || (u.status === "IN_ASSEMBLY" && u.components.length > 0)) && (
                 <div className="p-3.5 rounded-xl border-2 border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/40 dark:bg-slate-950/60 flex flex-col gap-3">
                   <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-indigo-200/70 dark:border-slate-800">
                     <div className="text-xs font-extrabold text-indigo-950 dark:text-indigo-200">
-                      {u.status === "FQC"
+                      {u.status === "FQC" || u.status === "QA_PASSED"
                         ? "📎 Bổ sung / Cập nhật File Phiếu thử nghiệm đã ký & Đường dẫn NAS (Đồng bộ sang Phiếu FQC tại QA/QC)"
                         : "🧪 Phiếu Kiểm Tra Thử Nghiệm Thiết Bị (Trạm cuối KTCN trước khi chuyển QC)"}
                     </div>
@@ -1178,16 +1193,16 @@ export function AssemblyDhrView() {
 
                   <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
                     <Button
-                      variant={u.status === "FQC" ? "primary" : "ghost"}
+                      variant={u.status === "FQC" || u.status === "QA_PASSED" ? "primary" : "ghost"}
                       disabled={unitWorkMut.isPending}
                       onClick={() =>
                         unitWorkMut.mutate({
                           kind: "burn_in",
-                          result: u.status === "FQC" ? "PASS" : burnForm.result,
+                          result: u.status === "FQC" || u.status === "QA_PASSED" ? "PASS" : burnForm.result,
                           nas_path: burnForm.nas_path.trim() || null,
                           notes:
                             burnForm.notes.trim() ||
-                            (u.status === "FQC" ? "Bổ sung file Phiếu kiểm tra thử nghiệm thiết bị cho QC" : null),
+                            (u.status === "FQC" || u.status === "QA_PASSED" ? "Bổ sung file Phiếu kiểm tra thử nghiệm thiết bị cho QC" : null),
                           checklist: burnForm.checklist,
                           attachment_name: burnForm.attachment_name || null,
                           attachment_data: burnForm.attachment_data || null,
@@ -1195,11 +1210,11 @@ export function AssemblyDhrView() {
                         })
                       }
                     >
-                      {u.status === "FQC"
+                      {u.status === "FQC" || u.status === "QA_PASSED"
                         ? "💾 Lưu bổ sung File Phiếu thử nghiệm & NAS cho QC"
                         : "💾 Ghi kết quả Kiểm tra thử nghiệm"}
                     </Button>
-                    {u.status !== "FQC" && (
+                    {u.status !== "FQC" && u.status !== "QA_PASSED" && (
                       <Button
                         disabled={unitWorkMut.isPending}
                         onClick={() => {

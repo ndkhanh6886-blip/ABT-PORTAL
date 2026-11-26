@@ -43,6 +43,7 @@ export interface QcSubjectHandler {
   reference?(tx: Tx, entityId: string): Promise<Record<string, unknown>>;
   onResultsSubmitted?(tx: Tx, actor: AuthzActor, test: QcTest): Promise<void>;
   onReviewed?(tx: Tx, actor: AuthzActor, test: QcTest): Promise<void>;
+  onReturned?(tx: Tx, actor: AuthzActor, test: QcTest, reason: string): Promise<void>;
   onCancelled?(tx: Tx, actor: AuthzActor, test: QcTest, reason: string): Promise<void>;
 }
 const subjects = new Map<string, QcSubjectHandler>();
@@ -164,10 +165,20 @@ export const qcTestMachine = defineMachine<QcStatus, QcTest>({
         await subjects.get(updated.entity_type)?.onReviewed?.(tx, actor, updated);
       },
     },
-    { action: "return", from: "RESULTS_ENTERED", to: "IN_PROGRESS", permission: "qms.qc.review", reasonRequired: true, patch: () => ({ overall_result: null }) },
+    {
+      action: "return",
+      from: "RESULTS_ENTERED",
+      to: "IN_PROGRESS",
+      permission: "qms.qc.review",
+      reasonRequired: true,
+      patch: () => ({ overall_result: null }),
+      effects: async ({ tx, actor, updated, reason }) => {
+        await subjects.get(updated.entity_type)?.onReturned?.(tx, actor, updated, reason ?? "");
+      },
+    },
     {
       action: "cancel",
-      from: ["PLANNED", "IN_PROGRESS"],
+      from: ["PLANNED", "IN_PROGRESS", "RESULTS_ENTERED"],
       to: "CANCELLED",
       permission: "qms.qc.lead",
       reasonRequired: true,
@@ -306,15 +317,13 @@ export async function saveResults(tx: Tx, actor: AuthzActor, testId: string, inp
     "UPDATE qms.qc_test SET overall_result = $3, version = version + 1, updated_at = now(), updated_by = $2 WHERE id = $1",
     [testId, actor.userId, computedOverall]
   );
-  if (test.entity_type === "DEVICE_UNIT" && computedOverall === "PASS") {
+  if (test.entity_type === "DEVICE_UNIT") {
     await tx.query(
       `UPDATE device.device_unit
-          SET fqc_passed = true,
-              fqc_test_id = COALESCE(fqc_test_id, $2),
-              fqc_summary = COALESCE(fqc_summary, $3),
+          SET fqc_test_id = COALESCE(fqc_test_id, $2),
               updated_at = now()
         WHERE id = $1`,
-      [test.entity_id, testId, `Đạt phiếu FQC ${test.code}`]
+      [test.entity_id, testId]
     );
   }
   return getQcTest(tx, testId);

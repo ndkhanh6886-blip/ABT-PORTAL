@@ -464,6 +464,37 @@ export const deviceUnitMachine = defineMachine<DeviceUnitStatus, DeviceUnitRow>(
       },
     },
     {
+      action: "return_fqc",
+      from: "QA_PASSED",
+      to: "FQC",
+      permission: "device.unit.release",
+      reasonRequired: true,
+      patch: ({ reason }) => ({
+        fqc_passed: false,
+        fqc_summary: reason ? `Chuyển lại chờ đánh giá QC: ${reason}` : null,
+        qa_released_by: null,
+        qa_released_at: null,
+      }),
+      effects: async ({ tx, actor, updated, reason }) => {
+        if (updated.fqc_test_id) {
+          await tx.query(
+            `UPDATE qms.qc_test
+                SET status = CASE WHEN status IN ('REVIEWED', 'RESULTS_ENTERED', 'CANCELLED') THEN 'IN_PROGRESS' ELSE status END,
+                    overall_result = NULL,
+                    reviewer_id = NULL,
+                    reviewed_at = NULL,
+                    retest_reason = COALESCE($2, retest_reason),
+                    version = version + 1,
+                    updated_at = now(),
+                    updated_by = $3
+              WHERE id = $1`,
+            [updated.fqc_test_id, reason ?? null, actor.userId]
+          );
+        }
+        await syncOrderStatusFromUnits(tx, updated.order_id, actor.userId);
+      },
+    },
+    {
       action: "deliver",
       from: "QA_PASSED",
       to: "DELIVERED",
@@ -589,16 +620,60 @@ registerQcSubject("DEVICE_UNIT", {
       | DeviceUnitRow
       | undefined;
     if (!unit) return;
+    // Do NOT mark fqc_passed = true prematurely while the test is only RESULTS_ENTERED (awaiting QC Reviewer approval).
+    // Keep fqc_test_id linked so KTCN sees "Chờ duyệt QC" and can still update the trial inspection sheet if needed.
+    await tx.query(
+      `UPDATE device.device_unit
+          SET fqc_test_id = $2,
+              updated_at = now(),
+              updated_by = $3
+        WHERE id = $1`,
+      [unit.id, test.id, actor.userId]
+    );
     if (test.overall_result === "PASS") {
-      await tx.query(
-        `UPDATE device.device_unit
-            SET fqc_passed = true, fqc_test_id = $2, fqc_summary = $3,
-                updated_at = now(), updated_by = $4
-          WHERE id = $1`,
-        [unit.id, test.id, `Đạt phiếu FQC ${test.code}`, actor.userId]
-      );
-      await notifyDeviceUnitFqcOutcome(tx, unit.id, `Phiếu FQC ${test.code}: ĐẠT`, "SUBMITTED_PASS", actor.userId);
+      await notifyDeviceUnitFqcOutcome(tx, unit.id, `Phiếu FQC ${test.code}: ĐẠT (Chờ duyệt)`, "SUBMITTED_PASS", actor.userId);
     }
+  },
+  onReturned: async (tx, actor, test, reason) => {
+    const unit = (await tx.query("SELECT * FROM device.device_unit WHERE id = $1 FOR UPDATE", [test.entity_id])).rows[0] as
+      | DeviceUnitRow
+      | undefined;
+    if (!unit) return;
+    await tx.query(
+      `UPDATE device.device_unit
+          SET status = CASE WHEN status = 'QA_PASSED' THEN 'FQC' ELSE status END,
+              fqc_passed = false,
+              fqc_test_id = $2,
+              fqc_summary = $3,
+              qa_released_by = CASE WHEN status = 'QA_PASSED' THEN NULL ELSE qa_released_by END,
+              qa_released_at = CASE WHEN status = 'QA_PASSED' THEN NULL ELSE qa_released_at END,
+              version = version + 1,
+              updated_at = now(),
+              updated_by = $4
+        WHERE id = $1`,
+      [unit.id, test.id, reason ? `Chờ đánh giá QC (${test.code}): ${reason}` : null, actor.userId]
+    );
+    await syncOrderStatusFromUnits(tx, unit.order_id, actor.userId);
+  },
+  onCancelled: async (tx, actor, test) => {
+    const unit = (await tx.query("SELECT * FROM device.device_unit WHERE id = $1 FOR UPDATE", [test.entity_id])).rows[0] as
+      | DeviceUnitRow
+      | undefined;
+    if (!unit) return;
+    await tx.query(
+      `UPDATE device.device_unit
+          SET status = CASE WHEN status = 'QA_PASSED' THEN 'FQC' ELSE status END,
+              fqc_passed = false,
+              fqc_summary = NULL,
+              qa_released_by = CASE WHEN status = 'QA_PASSED' THEN NULL ELSE qa_released_by END,
+              qa_released_at = CASE WHEN status = 'QA_PASSED' THEN NULL ELSE qa_released_at END,
+              version = version + 1,
+              updated_at = now(),
+              updated_by = $2
+        WHERE id = $1`,
+      [unit.id, actor.userId]
+    );
+    await syncOrderStatusFromUnits(tx, unit.order_id, actor.userId);
   },
   onReviewed: async (tx, actor, test) => {
     const unit = (await tx.query("SELECT * FROM device.device_unit WHERE id = $1 FOR UPDATE", [test.entity_id])).rows[0] as
@@ -720,58 +795,93 @@ async function notifyDeviceUnitFqcOutcome(
 async function reconcileDeviceUnitsFqcFromQcTests(tx: Tx, orderId?: string | null): Promise<void> {
   await tx.query("SAVEPOINT sp_reconcile_device_fqc");
   try {
-    // 1. Những phiếu QC FQC của DEVICE_UNIT đã được nhập đủ các chỉ tiêu đều ĐẠT (passed = true) nhưng chưa cập nhật overall_result / status
-    await tx.query(
-      `UPDATE qms.qc_test t
-          SET overall_result = 'PASS',
-              status = 'REVIEWED',
-              reviewer_id = COALESCE(t.reviewer_id, t.analyst_id, t.updated_by),
-              reviewed_at = COALESCE(t.reviewed_at, now()),
-              updated_at = now()
-         FROM device.device_unit du
-        WHERE t.entity_type = 'DEVICE_UNIT'
-          AND t.entity_id = du.id
-          AND ($1::uuid IS NULL OR du.order_id = $1)
-          AND t.status IN ('IN_PROGRESS', 'RESULTS_ENTERED')
-          AND (
-            t.overall_result = 'PASS'
-            OR (
-              EXISTS (SELECT 1 FROM qms.qc_result r WHERE r.test_id = t.id AND r.passed = true)
-              AND NOT EXISTS (SELECT 1 FROM qms.qc_result r WHERE r.test_id = t.id AND r.passed IS DISTINCT FROM true)
-              AND NOT EXISTS (
-                SELECT 1 FROM qms.qc_spec_parameter p
-                 WHERE p.spec_id = t.spec_id
-                   AND NOT EXISTS (SELECT 1 FROM qms.qc_result r2 WHERE r2.test_id = t.id AND r2.parameter_id = p.id AND r2.passed = true)
-              )
-            )
-          )`,
-      [orderId ?? null]
-    );
-
-    // 2. Đồng bộ các máy đang ở trạng thái FQC mà có phiếu QC đã PASS (hoặc fqc_passed = true và phiếu QC đã REVIEWED) sang QA_PASSED
-    const syncedUnits = (
+    // 1. Якщо máy (device_unit) có phiếu FQC mới nhất đang ở trạng thái chờ đánh giá QC (PLANNED, IN_PROGRESS, RESULTS_ENTERED, CANCELLED)
+    //    mà máy đang bị giữ trạng thái cũ QA_PASSED hoặc fqc_passed = true (do QC mở lại / trả lại phiếu để KTCN bổ sung phiếu thử nghiệm),
+    //    tự động đồng bộ máy về lại bước Đang chờ QC (status = 'FQC', fqc_passed = false) để KTCN cập nhật được phiếu thử nghiệm và hiển thị đúng trạng thái!
+    const revertedUnits = (
       await tx.query(
-        `UPDATE device.device_unit du
-            SET fqc_passed = true,
-                fqc_test_id = COALESCE(du.fqc_test_id, t.id),
-                fqc_summary = COALESCE(du.fqc_summary, 'Đạt phiếu FQC ' || t.code),
-                status = 'QA_PASSED',
-                qa_released_by = COALESCE(du.qa_released_by, t.reviewer_id, t.analyst_id, t.updated_by, du.updated_by),
-                qa_released_at = COALESCE(du.qa_released_at, t.reviewed_at, now()),
+        `WITH latest_unit_test AS (
+           SELECT DISTINCT ON (du.id)
+                  du.id AS unit_id,
+                  du.order_id,
+                  du.status AS unit_status,
+                  du.fqc_passed,
+                  t.id AS test_id,
+                  t.code AS test_code,
+                  t.status AS test_status,
+                  t.overall_result
+             FROM device.device_unit du
+             JOIN qms.qc_test t
+               ON (t.id = du.fqc_test_id OR (t.entity_type = 'DEVICE_UNIT' AND t.entity_id = du.id))
+            WHERE ($1::uuid IS NULL OR du.order_id = $1)
+              AND du.status IN ('FQC', 'QA_PASSED')
+            ORDER BY du.id, (t.status <> 'CANCELLED') DESC, t.created_at DESC, (t.id = du.fqc_test_id) DESC
+         )
+         UPDATE device.device_unit du
+            SET status = 'FQC',
+                fqc_passed = false,
+                fqc_test_id = lut.test_id,
+                fqc_summary = CASE
+                  WHEN du.fqc_summary LIKE 'Đạt phiếu FQC%' THEN NULL
+                  ELSE du.fqc_summary
+                END,
+                qa_released_by = NULL,
+                qa_released_at = NULL,
                 version = du.version + 1,
                 updated_at = now()
-           FROM qms.qc_test t
-          WHERE (t.id = du.fqc_test_id OR (t.entity_type = 'DEVICE_UNIT' AND t.entity_id = du.id))
-            AND ($1::uuid IS NULL OR du.order_id = $1)
+           FROM latest_unit_test lut
+          WHERE du.id = lut.unit_id
+            AND lut.test_status IN ('PLANNED', 'IN_PROGRESS', 'RESULTS_ENTERED', 'CANCELLED')
+            AND (du.status = 'QA_PASSED' OR du.fqc_passed = true OR du.fqc_test_id IS DISTINCT FROM lut.test_id)
+          RETURNING du.id, du.order_id`,
+        [orderId ?? null]
+      )
+    ).rows;
+
+    // 2. Đồng bộ các máy đang ở trạng thái FQC mà có phiếu QC mới nhất đã REVIEWED + PASS sang QA_PASSED
+    const syncedUnits = (
+      await tx.query(
+        `WITH latest_unit_test AS (
+           SELECT DISTINCT ON (du.id)
+                  du.id AS unit_id,
+                  t.id AS test_id,
+                  t.code AS test_code,
+                  t.status AS test_status,
+                  t.overall_result,
+                  t.reviewer_id,
+                  t.analyst_id,
+                  t.updated_by,
+                  t.reviewed_at
+             FROM device.device_unit du
+             JOIN qms.qc_test t
+               ON (t.id = du.fqc_test_id OR (t.entity_type = 'DEVICE_UNIT' AND t.entity_id = du.id))
+            WHERE ($1::uuid IS NULL OR du.order_id = $1)
+              AND du.status = 'FQC'
+            ORDER BY du.id, (t.status <> 'CANCELLED') DESC, t.created_at DESC, (t.id = du.fqc_test_id) DESC
+         )
+         UPDATE device.device_unit du
+            SET fqc_passed = true,
+                fqc_test_id = lut.test_id,
+                fqc_summary = COALESCE(du.fqc_summary, 'Đạt phiếu FQC ' || lut.test_code),
+                status = 'QA_PASSED',
+                qa_released_by = COALESCE(du.qa_released_by, lut.reviewer_id, lut.analyst_id, lut.updated_by, du.updated_by),
+                qa_released_at = COALESCE(du.qa_released_at, lut.reviewed_at, now()),
+                version = du.version + 1,
+                updated_at = now()
+           FROM latest_unit_test lut
+          WHERE du.id = lut.unit_id
             AND du.status = 'FQC'
-            AND t.status = 'REVIEWED'
-            AND t.overall_result = 'PASS'
-          RETURNING du.id, du.order_id, t.code AS test_code, COALESCE(du.qa_released_by, 1) AS actor_id`,
+            AND lut.test_status = 'REVIEWED'
+            AND lut.overall_result = 'PASS'
+          RETURNING du.id, du.order_id, lut.test_code AS test_code, COALESCE(du.qa_released_by, 1) AS actor_id`,
         [orderId ?? null]
       )
     ).rows;
 
     const affectedOrders = new Set<string>();
+    for (const r of revertedUnits) {
+      affectedOrders.add(r.order_id as string);
+    }
     for (const u of syncedUnits) {
       affectedOrders.add(u.order_id as string);
       await notifyDeviceUnitFqcOutcome(tx, u.id as string, `Đạt phiếu FQC ${u.test_code}`, "PASS", Number(u.actor_id || 1));
@@ -1267,10 +1377,10 @@ export async function recordBurnInRun(tx: Tx, actor: AuthzActor, unitId: string,
       { trusted: true }
     );
   }
-  if (unit.status !== "BURN_IN" && unit.status !== "FQC") {
-    throw invalid("Máy phải đang ở bước Kiểm tra thử nghiệm (BURN_IN) hoặc Đang chờ QC (FQC) mới ghi / bổ sung được Phiếu kiểm tra thử nghiệm.");
+  if (unit.status !== "BURN_IN" && unit.status !== "FQC" && unit.status !== "QA_PASSED") {
+    throw invalid("Máy phải đang ở bước Kiểm tra thử nghiệm (BURN_IN), Đang chờ QC (FQC) hoặc Chờ bàn giao (QA_PASSED) mới ghi / bổ sung được Phiếu kiểm tra thử nghiệm.");
   }
-  if (unit.status === "FQC" && d.result === "FAIL") {
+  if ((unit.status === "FQC" || unit.status === "QA_PASSED") && d.result === "FAIL") {
     throw invalid("Máy đã chuyển sang bước Kiểm tra xuất xưởng (FQC). Ở bước này chỉ được phép bổ sung / cập nhật File phiếu thử nghiệm hoặc đường dẫn NAS.");
   }
   if (d.test_asset_id) {

@@ -95,7 +95,7 @@ const ACTION_LABEL: Record<string, string> = {
   start: "Bắt đầu kiểm nghiệm",
   submit_results: "Gửi kết quả",
   review: "Duyệt kết quả",
-  return: "Trả lại",
+  return: "Chuyển lại chờ đánh giá QC (Mở lại kiểm nghiệm)",
   cancel: "Hủy phiếu",
 };
 
@@ -845,6 +845,26 @@ function QcDetailPanel({
                     </div>
                   </>
                 )}
+                {t.entity_type === "DEVICE_UNIT" && (
+                  <Button
+                    variant="secondary"
+                    disabled={retest.isPending}
+                    onClick={() => {
+                      const r = window.prompt("Lý do chuyển máy lại bước Đang chờ đánh giá QC (để KTCN cập nhật lại phiếu thử nghiệm):", "Bổ sung / cập nhật lại phiếu thử nghiệm thiết bị");
+                      if (r !== null) {
+                        api("/api/factory/qms/ops", {
+                          method: "POST",
+                          json: { op: "reopen_qc_test", test_id: t.id },
+                        }).then(() => {
+                          refresh();
+                          onClose();
+                        });
+                      }
+                    }}
+                  >
+                    🔄 Chuyển lại bước Đang chờ đánh giá QC
+                  </Button>
+                )}
                 {me.data?.permissions.includes("qms.qc.lead") && (
                   <Button variant="ghost" onClick={() => { const r = window.prompt("Lý do kiểm lại:"); if (r) retest.mutate(r); }}>
                     🔄 Tạo phiếu kiểm lại (Retest)
@@ -1578,13 +1598,13 @@ export function QcTestsView() {
                     </td>
                     <td className="py-2 pr-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1.5">
-                        {r.status === "CANCELLED" && (
+                        {(r.status === "CANCELLED" || (r.status === "REVIEWED" && (r.entity_type === "DEVICE_UNIT" || r.device_serial_no))) && (
                           <Button
                             variant="secondary"
                             disabled={reopenTestMut.isPending}
                             onClick={() => reopenTestMut.mutate(r.id)}
                           >
-                            🔄 Mở lại phiếu
+                            {r.status === "REVIEWED" ? "🔄 Chuyển lại chờ QC" : "🔄 Mở lại phiếu"}
                           </Button>
                         )}
                         <Button
