@@ -398,7 +398,7 @@ export const DEFAULT_PROPOSAL_TEMPLATES: ProposalTemplate[] = [
     hasLineItems: false,
     slaTotalHours: 8,
     fields: [
-      { key: "leaveType", label: "Loại hình nghỉ", type: "select", options: ["Nghỉ phép năm (Có hưởng lương)", "Nghỉ việc riêng (Không hưởng lương)", "Nghỉ ốm / Khám chữa bệnh (BHXH)", "Nghỉ chế độ Kết hôn / Hiếu hỷ", "Nghỉ Thai sản", "Làm việc từ xa (WFH)"], required: true },
+      { key: "leaveType", label: "Loại hình nghỉ", type: "select", options: ["Nghỉ phép năm (Có hưởng lương)", "Xin đi trễ / về sớm (Cộng dồn quy đổi ngày phép)", "Nghỉ việc riêng (Không hưởng lương)", "Nghỉ ốm / Khám chữa bệnh (BHXH)", "Nghỉ chế độ Kết hôn / Hiếu hỷ", "Nghỉ Thai sản", "Làm việc từ xa (WFH)"], required: true },
       { key: "fromDate", label: "Nghỉ từ ngày", type: "date", required: true },
       { key: "toDate", label: "Đến hết ngày", type: "date", required: true },
       { key: "totalDays", label: "Tổng số ngày nghỉ", type: "number", placeholder: "VD: 1 hoặc 0.5", required: true },
@@ -1750,6 +1750,53 @@ export function ProposalsApprovalView({
   const [leaveTypeFilter, setLeaveTypeFilter] = useState<string>("all");
   const [leaveStatusFilter, setLeaveStatusFilter] = useState<string>("all");
   const [hideStaffLeaveForDirector, setHideStaffLeaveForDirector] = useState<boolean>(false);
+  const [leaveQuotaByStaff, setLeaveQuotaByStaff] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("workspace_hr_leave_quotas");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed && typeof parsed === "object") setLeaveQuotaByStaff(parsed);
+        }
+      } catch {}
+    }
+    fetch("/api/storage?key=workspace_hr_leave_quotas", { headers: { "x-no-cache": "1" } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (j?.data && typeof j.data === "object") {
+          setLeaveQuotaByStaff((prev) => {
+            const merged = { ...prev, ...j.data };
+            try {
+              if (typeof window !== "undefined") {
+                localStorage.setItem("workspace_hr_leave_quotas", JSON.stringify(merged));
+              }
+            } catch {}
+            return merged;
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const updateStaffLeaveQuota = (staffName: string, nextVal: number) => {
+    const cleanVal = Number.isFinite(nextVal) && nextVal >= 0 ? Math.round(nextVal * 1000) / 1000 : 0;
+    setLeaveQuotaByStaff((prev) => {
+      const next = { ...prev, [staffName]: cleanVal };
+      try {
+        if (typeof window !== "undefined") {
+          localStorage.setItem("workspace_hr_leave_quotas", JSON.stringify(next));
+        }
+      } catch {}
+      fetch("/api/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "workspace_hr_leave_quotas", data: next })
+      }).catch(() => {});
+      return next;
+    });
+  };
   const [categoryFilter, setCategoryFilter] = useState<"all" | ProposalCategoryKey>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | ProposalStatus>("all");
   const [priorityFilter, setPriorityFilter] = useState<"all" | "NORMAL" | "HIGH" | "URGENT">("all");
@@ -1820,8 +1867,21 @@ export function ProposalsApprovalView({
       }
       return st;
     });
+    let nextFields = tmpl.fields || [];
+    if (tmpl.id === "tmpl_leave_request" || tmpl.codePrefix === "DXNP") {
+      const lateEarlyOpt = "Xin đi trễ / về sớm (Cộng dồn quy đổi ngày phép)";
+      nextFields = nextFields.map((f) => {
+        if (f.key === "leaveType" && Array.isArray(f.options) && !f.options.includes(lateEarlyOpt)) {
+          changed = true;
+          const opts = [...f.options];
+          opts.splice(1, 0, lateEarlyOpt);
+          return { ...f, options: opts };
+        }
+        return f;
+      });
+    }
     return {
-      template: changed ? { ...tmpl, defaultSteps: nextSteps } : tmpl,
+      template: changed ? { ...tmpl, defaultSteps: nextSteps, fields: nextFields } : tmpl,
       changed
     };
   };
@@ -2369,7 +2429,31 @@ export function ProposalsApprovalView({
     }));
   };
 
-  const switchLeaveMode = (mode: "RANGE" | "DATES") => {
+  const switchLeaveMode = (mode: "RANGE" | "DATES" | "LATE_EARLY") => {
+    if (mode === "LATE_EARLY") {
+      setFormState((prev) => {
+        const { leaveDates, ...rest } = prev.formValues || {};
+        void leaveDates;
+        const fd = String(rest.fromDate || todayVN()).slice(0, 10);
+        const mins = Number(rest.lateEarlyMinutes) > 0 ? Number(rest.lateEarlyMinutes) : 60;
+        const convDays = Math.round((mins / 480) * 10000) / 10000;
+        const kind = String(rest.lateEarlyKind || "Đi trễ");
+        return {
+          ...prev,
+          formValues: {
+            ...rest,
+            leaveMode: "LATE_EARLY",
+            leaveType: "Xin đi trễ / về sớm (Cộng dồn quy đổi ngày phép)",
+            lateEarlyKind: kind,
+            lateEarlyMinutes: String(mins),
+            fromDate: fd,
+            toDate: fd,
+            totalDays: String(convDays)
+          }
+        };
+      });
+      return;
+    }
     if (mode === "DATES") {
       const fv = formState.formValues || {};
       setRepeatFrom(String(fv.fromDate || todayVN()).slice(0, 10));
@@ -2378,18 +2462,31 @@ export function ProposalsApprovalView({
       return;
     }
     setFormState((prev) => {
-      const { leaveMode, leaveDates, ...rest } = prev.formValues || {};
-      void leaveMode; void leaveDates;
+      const { leaveMode, leaveDates, lateEarlyMinutes, lateEarlyKind, lateEarlyTimeSlot, ...rest } = prev.formValues || {};
+      void leaveMode; void leaveDates; void lateEarlyMinutes; void lateEarlyKind; void lateEarlyTimeSlot;
       const fd = String(rest.fromDate || todayVN()).slice(0, 10);
       const td = String(rest.toDate || fd).slice(0, 10);
       const diff = td >= fd ? Math.round((new Date(td).getTime() - new Date(fd).getTime()) / 86400000) + 1 : 1;
-      return { ...prev, formValues: { ...rest, fromDate: fd, toDate: td, totalDays: String(Math.max(1, diff)) } };
+      const curType = String(rest.leaveType || "");
+      const nextType = curType.toLowerCase().includes("đi trễ") || curType.toLowerCase().includes("về sớm")
+        ? "Nghỉ phép năm (Có hưởng lương)"
+        : curType || "Nghỉ phép năm (Có hưởng lương)";
+      return { ...prev, formValues: { ...rest, leaveType: nextType, fromDate: fd, toDate: td, totalDays: String(Math.max(1, diff)) } };
     });
   };
 
   const renderLeaveDatesEditor = () => {
-    const datesMode = isDatesMode(formState.formValues);
-    const days = parseLeaveDays(formState.formValues) || [];
+    const fv = formState.formValues || {};
+    const datesMode = isDatesMode(fv);
+    const isLateEarlyMode =
+      fv.leaveMode === "LATE_EARLY" ||
+      String(fv.leaveType || "").toLowerCase().includes("đi trễ") ||
+      String(fv.leaveType || "").toLowerCase().includes("về sớm");
+    const days = parseLeaveDays(fv) || [];
+    const lateEarlyKind = String(fv.lateEarlyKind || "Đi trễ");
+    const lateEarlyMins = Number(fv.lateEarlyMinutes) > 0 ? Number(fv.lateEarlyMinutes) : Math.max(15, Math.round((Number(fv.totalDays) || 0.125) * 480));
+    const lateEarlyHours = Math.round((lateEarlyMins / 60) * 100) / 100;
+    const lateEarlyConvertedDays = Math.round((lateEarlyMins / 480) * 10000) / 10000;
     const chip = (on: boolean) =>
       `px-2.5 py-1 rounded-lg text-[11px] font-bold border cursor-pointer transition-colors ${on
         ? "bg-indigo-600 text-white border-indigo-600"
@@ -2397,10 +2494,125 @@ export function ProposalsApprovalView({
     return (
       <div className="space-y-2.5 p-3 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/60 dark:bg-indigo-950/30">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">Kiểu nghỉ:</span>
-          <button type="button" className={chip(!datesMode)} onClick={() => switchLeaveMode("RANGE")}>Khoảng liên tục</button>
-          <button type="button" className={chip(datesMode)} onClick={() => switchLeaveMode("DATES")}>Các ngày cụ thể (vd thứ 6, thứ 7 hằng tuần)</button>
+          <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">Kiểu đăng ký:</span>
+          <button type="button" className={chip(!datesMode && !isLateEarlyMode)} onClick={() => switchLeaveMode("RANGE")}>Khoảng ngày liên tục</button>
+          <button type="button" className={chip(datesMode && !isLateEarlyMode)} onClick={() => switchLeaveMode("DATES")}>Các ngày cụ thể (vd T6, T7 hằng tuần)</button>
+          <button type="button" className={chip(isLateEarlyMode)} onClick={() => switchLeaveMode("LATE_EARLY")}>⏰ Xin đi trễ / về sớm (Tính phút/giờ cộng dồn trừ phép)</button>
         </div>
+        {isLateEarlyMode && (
+          <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700/80 space-y-2.5 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="font-extrabold text-amber-900 dark:text-amber-200">
+                ⏰ Đăng ký Đi trễ / Về sớm — Tự động cộng dồn thời gian theo ngày (Chuẩn 8 giờ = 480 phút = 1 ngày công)
+              </div>
+              <span className="px-2 py-0.5 rounded-lg bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-200 font-black text-[11px]">
+                {lateEarlyMins} phút ({lateEarlyHours} giờ) = {lateEarlyConvertedDays} ngày công
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">Hình thức</label>
+                <select
+                  value={lateEarlyKind}
+                  onChange={(e) => {
+                    const k = e.target.value;
+                    setFormState((prev) => ({
+                      ...prev,
+                      formValues: { ...prev.formValues, lateEarlyKind: k }
+                    }));
+                  }}
+                  className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 font-bold"
+                >
+                  <option value="Đi trễ">⏰ Xin đi trễ đầu ca</option>
+                  <option value="Về sớm">🏃 Xin về sớm cuối ca</option>
+                  <option value="Ra ngoài giờ làm">🚗 Xin ra ngoài việc riêng trong giờ</option>
+                  <option value="Đi trễ & Về sớm">⏰ Đi trễ &amp; Về sớm trong ngày</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">Số phút xin phép (1 giờ = 60 phút)</label>
+                <input
+                  type="number"
+                  min={5}
+                  max={480}
+                  step={5}
+                  value={lateEarlyMins}
+                  onChange={(e) => {
+                    const m = Math.max(1, Number(e.target.value) || 0);
+                    const dVal = Math.round((m / 480) * 10000) / 10000;
+                    setFormState((prev) => ({
+                      ...prev,
+                      formValues: {
+                        ...prev.formValues,
+                        leaveMode: "LATE_EARLY",
+                        leaveType: "Xin đi trễ / về sớm (Cộng dồn quy đổi ngày phép)",
+                        lateEarlyMinutes: String(m),
+                        totalDays: String(dVal)
+                      }
+                    }));
+                  }}
+                  className="w-full px-2.5 py-1.5 rounded-lg border border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-950 font-extrabold text-amber-800 dark:text-amber-300"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">Khung giờ cụ thể (Tùy chọn)</label>
+                <input
+                  type="text"
+                  value={fv.lateEarlyTimeSlot || ""}
+                  onChange={(e) =>
+                    setFormState((prev) => ({
+                      ...prev,
+                      formValues: { ...prev.formValues, lateEarlyTimeSlot: e.target.value }
+                    }))
+                  }
+                  placeholder="VD: Đến lúc 09:00 hoặc Về lúc 16:00"
+                  className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950"
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+              <span className="text-[10px] font-bold text-slate-500">Chọn nhanh thời lượng:</span>
+              {[
+                { label: "15 phút (0.031 ngày)", mins: 15 },
+                { label: "30 phút (0.0625 ngày)", mins: 30 },
+                { label: "45 phút (0.094 ngày)", mins: 45 },
+                { label: "1 giờ (0.125 ngày)", mins: 60 },
+                { label: "1.5 giờ (0.1875 ngày)", mins: 90 },
+                { label: "2 giờ (0.25 ngày)", mins: 120 },
+                { label: "3 giờ (0.375 ngày)", mins: 180 },
+                { label: "4 giờ / Nửa ngày (0.5 ngày)", mins: 240 }
+              ].map((preset) => (
+                <button
+                  key={preset.mins}
+                  type="button"
+                  onClick={() => {
+                    const dVal = Math.round((preset.mins / 480) * 10000) / 10000;
+                    setFormState((prev) => ({
+                      ...prev,
+                      formValues: {
+                        ...prev.formValues,
+                        leaveMode: "LATE_EARLY",
+                        leaveType: "Xin đi trễ / về sớm (Cộng dồn quy đổi ngày phép)",
+                        lateEarlyMinutes: String(preset.mins),
+                        totalDays: String(dVal)
+                      }
+                    }));
+                  }}
+                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold border cursor-pointer ${
+                    lateEarlyMins === preset.mins
+                      ? "bg-amber-600 text-white border-amber-600"
+                      : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-amber-400"
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              💡 Cuối tháng hệ thống tự động <strong>cộng dồn toàn bộ số phút/giờ đi trễ, về sớm</strong> của nhân viên quy đổi ra ngày công (chia 8 giờ) để <strong>trừ vào Quỹ phép năm còn lại</strong>; nếu nhân viên đã <strong>hết phép năm (Quỹ phép = 0)</strong> hoặc vượt quá số phép còn lại thì phần vượt sẽ <strong>tự động chuyển sang Nghỉ không lương</strong>.
+            </p>
+          </div>
+        )}
         {datesMode && (
           <>
             <div className="flex flex-wrap items-end gap-2">
@@ -3650,6 +3862,7 @@ export function ProposalsApprovalView({
   }, [accessibleProposals, todayIsoStr]);
 
   const leaveSummaryByStaff = useMemo(() => {
+    const round3 = (n: number) => Math.round(n * 1000) / 1000;
     const map = new Map<
       string,
       {
@@ -3658,8 +3871,16 @@ export function ProposalsApprovalView({
         totalRequests: number;
         approvedRequests: number;
         pendingRequests: number;
+        rawPaidLeaveDays: number;
+        rawUnpaidLeaveDays: number;
+        lateEarlyCount: number;
+        lateEarlyMinutes: number;
+        lateEarlyDays: number;
+        availableQuota: number;
         paidLeaveDays: number;
+        overflowUnpaidDays: number;
         unpaidLeaveDays: number;
+        remainingQuota: number;
         socialOrPolicyDays: number;
         wfhDays: number;
         totalAbsentDays: number;
@@ -3671,14 +3892,24 @@ export function ProposalsApprovalView({
       if (p.status === "REJECTED") return;
       const key = String(p.requesterName || "Nhân sự").trim();
       const { fDate, tDate, days, leaveType, handoverStaff, rangeLabel } = getLeaveDatesAndDays(p, leaveMonthArg());
+      const fv = p.formValues || {};
+      const quota = leaveQuotaByStaff[key] !== undefined ? Number(leaveQuotaByStaff[key]) : 12;
       const existing = map.get(key) || {
         staffName: key,
         dept: p.requesterDept || "—",
         totalRequests: 0,
         approvedRequests: 0,
         pendingRequests: 0,
+        rawPaidLeaveDays: 0,
+        rawUnpaidLeaveDays: 0,
+        lateEarlyCount: 0,
+        lateEarlyMinutes: 0,
+        lateEarlyDays: 0,
+        availableQuota: quota,
         paidLeaveDays: 0,
+        overflowUnpaidDays: 0,
         unpaidLeaveDays: 0,
+        remainingQuota: quota,
         socialOrPolicyDays: 0,
         wfhDays: 0,
         totalAbsentDays: 0,
@@ -3693,25 +3924,45 @@ export function ProposalsApprovalView({
       }
 
       const ltLower = leaveType.toLowerCase();
-      if (ltLower.includes("wfh") || ltLower.includes("từ xa")) {
-        existing.wfhDays += days;
+      const isLateEarly =
+        fv.leaveMode === "LATE_EARLY" ||
+        ltLower.includes("đi trễ") ||
+        ltLower.includes("về sớm");
+
+      if (isLateEarly) {
+        const mins = Number(fv.lateEarlyMinutes) > 0 ? Number(fv.lateEarlyMinutes) : Math.round(days * 480);
+        const convDays = round3(mins / 480);
+        existing.lateEarlyCount += 1;
+        existing.lateEarlyMinutes += mins;
+        existing.lateEarlyDays = round3(existing.lateEarlyDays + convDays);
+        existing.totalAbsentDays = round3(existing.totalAbsentDays + convDays);
+      } else if (ltLower.includes("wfh") || ltLower.includes("từ xa")) {
+        existing.wfhDays = round3(existing.wfhDays + days);
       } else if (ltLower.includes("không hưởng lương") || ltLower.includes("việc riêng")) {
-        existing.unpaidLeaveDays += days;
-        existing.totalAbsentDays += days;
+        existing.rawUnpaidLeaveDays = round3(existing.rawUnpaidLeaveDays + days);
+        existing.totalAbsentDays = round3(existing.totalAbsentDays + days);
       } else if (ltLower.includes("bhxh") || ltLower.includes("ốm") || ltLower.includes("hiếu") || ltLower.includes("hỷ") || ltLower.includes("thai sản")) {
-        existing.socialOrPolicyDays += days;
-        existing.totalAbsentDays += days;
+        existing.socialOrPolicyDays = round3(existing.socialOrPolicyDays + days);
+        existing.totalAbsentDays = round3(existing.totalAbsentDays + days);
       } else {
-        existing.paidLeaveDays += days;
-        existing.totalAbsentDays += days;
+        existing.rawPaidLeaveDays = round3(existing.rawPaidLeaveDays + days);
+        existing.totalAbsentDays = round3(existing.totalAbsentDays + days);
       }
+
+      const lateEarlyDetail = isLateEarly
+        ? `${fv.lateEarlyKind || "Đi trễ/Về sớm"} ${Number(fv.lateEarlyMinutes) || Math.round(days * 480)}p${fv.lateEarlyTimeSlot ? ` (${fv.lateEarlyTimeSlot})` : ""}`
+        : "";
 
       existing.periods.push({
         code: p.proposalCode,
         fromDate: fDate,
         toDate: tDate,
         days,
-        type: rangeLabel ? `${leaveType} — các ngày: ${rangeLabel}` : leaveType,
+        type: lateEarlyDetail
+          ? `${leaveType} — ${lateEarlyDetail}`
+          : rangeLabel
+          ? `${leaveType} — các ngày: ${rangeLabel}`
+          : leaveType,
         handover: handoverStaff,
         status: p.status
       });
@@ -3719,8 +3970,25 @@ export function ProposalsApprovalView({
       map.set(key, existing);
     });
 
-    return Array.from(map.values()).sort((a, b) => b.totalAbsentDays - a.totalAbsentDays || a.staffName.localeCompare(b.staffName));
-  }, [monthlyLeaveProposals]);
+    return Array.from(map.values())
+      .map((row) => {
+        const quota = Math.max(0, Number(leaveQuotaByStaff[row.staffName] ?? 12));
+        const totalPaidDemand = round3(row.rawPaidLeaveDays + row.lateEarlyDays);
+        const effectivePaid = round3(Math.min(totalPaidDemand, quota));
+        const overflowUnpaid = round3(Math.max(0, totalPaidDemand - effectivePaid));
+        const effectiveUnpaid = round3(row.rawUnpaidLeaveDays + overflowUnpaid);
+        const remainingQuota = round3(Math.max(0, quota - effectivePaid));
+        return {
+          ...row,
+          availableQuota: quota,
+          paidLeaveDays: effectivePaid,
+          overflowUnpaidDays: overflowUnpaid,
+          unpaidLeaveDays: effectiveUnpaid,
+          remainingQuota
+        };
+      })
+      .sort((a, b) => b.totalAbsentDays - a.totalAbsentDays || a.staffName.localeCompare(b.staffName));
+  }, [monthlyLeaveProposals, leaveQuotaByStaff]);
 
   const handleExportMonthlyLeaveCSV = () => {
     if (monthlyLeaveProposals.length === 0) {
@@ -3731,7 +3999,7 @@ export function ProposalsApprovalView({
     const lines: string[] = [];
     lines.push(`"BẢNG TỔNG HỢP CHẤM CÔNG NGHỈ PHÉP TOÀN CÔNG TY - KỲ: ${leaveMonthFilter === "all" ? "TẤT CẢ" : leaveMonthFilter}"`);
     lines.push("");
-    lines.push(`"I. TỔNG HỢP SỐ NGÀY NGHỈ THEO NHÂN VIÊN (PHỤC VỤ KẾ TOÁN TÍNH LƯƠNG CUỐI THÁNG)"`);
+    lines.push(`"I. TỔNG HỢP SỐ NGÀY NGHỈ & CỘNG DỒN ĐI TRỄ / VỀ SỚM THEO NHÂN VIÊN (PHỤC VỤ KẾ TOÁN TÍNH LƯƠNG CUỐI THÁNG)"`);
     lines.push(
       [
         "STT",
@@ -3740,8 +4008,12 @@ export function ProposalsApprovalView({
         "Số đơn trong tháng",
         "Đơn đã duyệt",
         "Đơn chờ duyệt",
-        "Nghỉ phép năm có lương (Ngày)",
-        "Nghỉ việc riêng không lương (Ngày)",
+        "Đi trễ / Về sớm cộng dồn (Phút / Giờ -> Ngày quy đổi ÷8h)",
+        "Quỹ phép còn đầu kỳ (Ngày)",
+        "Thực trừ Phép năm có lương (Ngày)",
+        "Chuyển Không lương do hết/vượt phép (Ngày)",
+        "Tổng Nghỉ không lương thực tính (Ngày)",
+        "Phép năm còn cuối kỳ (Ngày)",
         "Nghỉ ốm / BHXH / Chế độ (Ngày)",
         "Làm việc từ xa WFH (Ngày)",
         "Tổng ngày nghỉ vắng mặt",
@@ -3755,6 +4027,10 @@ export function ProposalsApprovalView({
       const detailText = row.periods
         .map((pr) => `${formatDayVN(pr.fromDate)}->${formatDayVN(pr.toDate)} (${pr.days}d - ${pr.type} - Bàn giao: ${pr.handover})`)
         .join("; ");
+      const lateEarlyCol =
+        row.lateEarlyCount > 0
+          ? `${row.lateEarlyCount} lần (${row.lateEarlyMinutes} phút = ${Math.round((row.lateEarlyMinutes / 60) * 100) / 100}h -> ${row.lateEarlyDays} ngày)`
+          : "0";
       lines.push(
         [
           idx + 1,
@@ -3763,8 +4039,12 @@ export function ProposalsApprovalView({
           row.totalRequests,
           row.approvedRequests,
           row.pendingRequests,
+          lateEarlyCol,
+          row.availableQuota,
           row.paidLeaveDays,
+          row.overflowUnpaidDays,
           row.unpaidLeaveDays,
+          row.remainingQuota,
           row.socialOrPolicyDays,
           row.wfhDays,
           row.totalAbsentDays,
@@ -4408,6 +4688,7 @@ export function ProposalsApprovalView({
               >
                 <option value="all">🏖️ Mọi loại hình nghỉ</option>
                 <option value="Nghỉ phép năm (Có hưởng lương)">Nghỉ phép năm (Có hưởng lương)</option>
+                <option value="Xin đi trễ / về sớm (Cộng dồn quy đổi ngày phép)">⏰ Xin đi trễ / về sớm (Cộng dồn quy đổi ngày phép)</option>
                 <option value="Nghỉ việc riêng (Không hưởng lương)">Nghỉ việc riêng (Không hưởng lương)</option>
                 <option value="Nghỉ ốm / Khám chữa bệnh (BHXH)">Nghỉ ốm / Khám chữa bệnh (BHXH)</option>
                 <option value="Nghỉ chế độ Kết hôn / Hiếu hỷ">Nghỉ chế độ Kết hôn / Hiếu hỷ</option>
@@ -4515,10 +4796,10 @@ export function ProposalsApprovalView({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white uppercase flex items-center gap-2">
-                  <span>📊 I. BẢNG TỔNG HỢP CHẤM CÔNG NGHỈ PHÉP THEO NHÂN VIÊN ({leaveSummaryByStaff.length} NHÂN SỰ)</span>
+                  <span>📊 I. BẢNG TỔNG HỢP CHẤM CÔNG NGHỈ PHÉP &amp; CỘNG DỒN ĐI TRỄ / VỀ SỚM THEO NHÂN VIÊN ({leaveSummaryByStaff.length} NHÂN SỰ)</span>
                 </h4>
                 <p className="text-[11px] text-slate-500">
-                  Tự động cộng dồn số ngày nghỉ theo từng phân loại trong kỳ <strong>{leaveMonthFilter === "all" ? "Tất cả các tháng" : leaveMonthFilter}</strong> để Kế toán đối chiếu chấm công cuối tháng.
+                  Tự động cộng dồn thời gian <strong>Đi trễ / Về sớm theo ngày (8 giờ = 480 phút = 1 ngày công)</strong> trong kỳ <strong>{leaveMonthFilter === "all" ? "Tất cả các tháng" : leaveMonthFilter}</strong> để cấn trừ vào <strong>Quỹ phép năm còn lại</strong>; nếu nhân viên hết phép năm (nhập Quỹ phép = <code>0</code> hoặc số ngày vượt quá quỹ phép) thì hệ thống <strong>tự động chuyển phần vượt sang Nghỉ không lương</strong>.
                 </p>
               </div>
             </div>
@@ -4536,8 +4817,11 @@ export function ProposalsApprovalView({
                       <th className="py-2.5 px-3 text-left">Họ tên nhân viên</th>
                       <th className="py-2.5 px-3 text-left">Phòng ban</th>
                       <th className="py-2.5 px-3 text-center">Số đơn</th>
-                      <th className="py-2.5 px-3 text-center text-emerald-700 dark:text-emerald-300">Phép năm (Có lương)</th>
-                      <th className="py-2.5 px-3 text-center text-rose-700 dark:text-rose-300">Nghỉ không lương</th>
+                      <th className="py-2.5 px-3 text-center text-amber-700 dark:text-amber-300">Đi trễ / Về sớm cộng dồn</th>
+                      <th className="py-2.5 px-3 text-center text-indigo-700 dark:text-indigo-300" title="Nhập số ngày phép năm còn lại của nhân viên (nhập 0 nếu đã hết phép)">Quỹ phép còn (Đầu kỳ)</th>
+                      <th className="py-2.5 px-3 text-center text-emerald-700 dark:text-emerald-300">Thực trừ Phép năm (Có lương)</th>
+                      <th className="py-2.5 px-3 text-center text-rose-700 dark:text-rose-300">Nghỉ không lương (Gồm vượt phép)</th>
+                      <th className="py-2.5 px-3 text-center text-teal-700 dark:text-teal-300">Phép còn cuối kỳ</th>
                       <th className="py-2.5 px-3 text-center text-purple-700 dark:text-purple-300">Ốm / BHXH / Chế độ</th>
                       <th className="py-2.5 px-3 text-center text-sky-700 dark:text-sky-300">WFH (Từ xa)</th>
                       <th className="py-2.5 px-3 text-center font-black">Tổng ngày nghỉ</th>
@@ -4556,11 +4840,67 @@ export function ProposalsApprovalView({
                             ({row.approvedRequests} duyệt{row.pendingRequests > 0 ? `, ${row.pendingRequests} chờ` : ""})
                           </span>
                         </td>
+                        <td className="py-2.5 px-3 text-center">
+                          {row.lateEarlyCount > 0 ? (
+                            <div className="space-y-0.5">
+                              <div className="font-extrabold text-amber-700 dark:text-amber-300">
+                                ⏰ {row.lateEarlyMinutes} phút ({Math.round((row.lateEarlyMinutes / 60) * 100) / 100}h)
+                              </div>
+                              <div className="text-[10px] font-bold text-amber-600 dark:text-amber-400">
+                                {row.lateEarlyCount} lần ➔ {row.lateEarlyDays} ngày
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-center">
+                          <div className="inline-flex items-center gap-1">
+                            <input
+                              type="number"
+                              min={0}
+                              max={60}
+                              step={0.25}
+                              value={row.availableQuota}
+                              onChange={(e) => updateStaffLeaveQuota(row.staffName, Number(e.target.value))}
+                              className="w-16 px-1.5 py-1 rounded-lg border border-indigo-300 dark:border-indigo-700 bg-indigo-50/60 dark:bg-indigo-950/60 text-center font-extrabold text-indigo-800 dark:text-indigo-200 text-xs"
+                              title="Chỉnh số ngày phép năm còn lại của nhân viên (Nhập 0 nếu nhân viên đã hết phép để tự động chuyển sang Nghỉ không lương)"
+                            />
+                            <span className="text-[10px] text-slate-400">ngày</span>
+                          </div>
+                        </td>
                         <td className="py-2.5 px-3 text-center font-extrabold text-emerald-600 dark:text-emerald-400">
-                          {row.paidLeaveDays > 0 ? `${row.paidLeaveDays} ngày` : "—"}
+                          {row.paidLeaveDays > 0 ? (
+                            <div>
+                              <div>{row.paidLeaveDays} ngày</div>
+                              {row.lateEarlyDays > 0 && row.paidLeaveDays > row.rawPaidLeaveDays && (
+                                <div className="text-[10px] font-semibold text-emerald-700/80 dark:text-emerald-300/80">
+                                  (Gồm {Math.round((row.paidLeaveDays - Math.min(row.rawPaidLeaveDays, row.paidLeaveDays)) * 1000) / 1000}d trễ/sớm)
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            "—"
+                          )}
                         </td>
                         <td className="py-2.5 px-3 text-center font-extrabold text-rose-600 dark:text-rose-400">
-                          {row.unpaidLeaveDays > 0 ? `${row.unpaidLeaveDays} ngày` : "—"}
+                          {row.unpaidLeaveDays > 0 ? (
+                            <div>
+                              <div>{row.unpaidLeaveDays} ngày</div>
+                              {row.overflowUnpaidDays > 0 && (
+                                <div className="text-[10px] font-bold text-rose-600 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/70 px-1.5 py-0.5 rounded mt-0.5">
+                                  +{row.overflowUnpaidDays}d do hết phép
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-extrabold text-teal-700 dark:text-teal-300">
+                          <span className={`px-2 py-0.5 rounded-lg text-[11px] font-black ${row.remainingQuota === 0 ? "bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300" : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"}`}>
+                            {row.remainingQuota} ngày
+                          </span>
                         </td>
                         <td className="py-2.5 px-3 text-center font-extrabold text-purple-600 dark:text-purple-400">
                           {row.socialOrPolicyDays > 0 ? `${row.socialOrPolicyDays} ngày` : "—"}
@@ -5417,12 +5757,27 @@ export function ProposalsApprovalView({
                         {field.type === "select" ? (
                           <select
                             value={formState.formValues[field.key] || ""}
-                            onChange={(e) =>
-                              setFormState((prev) => ({
-                                ...prev,
-                                formValues: { ...prev.formValues, [field.key]: e.target.value }
-                              }))
-                            }
+                            onChange={(e) => {
+                              const nextVal = e.target.value;
+                              if (
+                                field.key === "leaveType" &&
+                                (nextVal.toLowerCase().includes("đi trễ") || nextVal.toLowerCase().includes("về sớm"))
+                              ) {
+                                switchLeaveMode("LATE_EARLY");
+                                return;
+                              }
+                              setFormState((prev) => {
+                                const nextFV = { ...prev.formValues, [field.key]: nextVal };
+                                if (field.key === "leaveType" && prev.formValues?.leaveMode === "LATE_EARLY") {
+                                  delete nextFV.leaveMode;
+                                  delete nextFV.lateEarlyMinutes;
+                                  delete nextFV.lateEarlyKind;
+                                  delete nextFV.lateEarlyTimeSlot;
+                                  nextFV.totalDays = "1";
+                                }
+                                return { ...prev, formValues: nextFV };
+                              });
+                            }}
                             className="w-full px-3 py-1.5 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
                           >
                             <option value="">-- Chọn {field.label} --</option>
