@@ -234,6 +234,15 @@ let unifiedOutItemsNormalized = false;
  * stock documents, reagent rules, and synthesizer/equipment ports cleanly.
  */
 export async function normalizeFormulaOutputItems(tx: Tx): Promise<void> {
+  // Luôn tự động khôi phục các lô đang ở trạng thái EXPIRED nhưng hạn dùng còn hạn (>= hôm nay) sang RELEASED trước khi tải công thức/pha chế
+  await tx.query(`
+    UPDATE inv.lot
+       SET status = 'RELEASED',
+           version = version + 1,
+           updated_at = now()
+     WHERE status = 'EXPIRED'
+       AND (expiry_date IS NULL OR expiry_date >= (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date)
+  `);
   // Luôn đồng bộ tên master.item (VD: STO015, STO022...) khớp với tên chuẩn của công thức prep.formula có cùng mã
   // để tránh trường hợp dòng nguyên liệu trong file Excel ghi nhầm tên của mã khác đè lên master.item.name.
   await tx.query("SAVEPOINT sp_sync_formula_item_names");
@@ -376,10 +385,17 @@ export async function normalizeFormulaOutputItems(tx: Tx): Promise<void> {
         );
 
         // Delete or retire the duplicate -OUT item
+        await tx.query("SAVEPOINT sp_del_out_item_prep");
         const deleted = await tx
           .query("DELETE FROM master.item WHERE id = $1", [outItemId])
-          .then(() => true)
-          .catch(() => false);
+          .then(async () => {
+            await tx.query("RELEASE SAVEPOINT sp_del_out_item_prep");
+            return true;
+          })
+          .catch(async () => {
+            await tx.query("ROLLBACK TO SAVEPOINT sp_del_out_item_prep").catch(() => {});
+            return false;
+          });
         if (!deleted) {
           await tx.query("UPDATE master.item SET status = 'INACTIVE', code = $2 WHERE id = $1", [
             outItemId,

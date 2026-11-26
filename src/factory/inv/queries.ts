@@ -13,6 +13,16 @@ let lastBomTypeSyncAt = 0;
  * ("Nguyên liệu / Bán thành phẩm / Thành phẩm") stay accurate regardless of Excel import order.
  */
 export async function syncItemTypesFromBomAndFormula(tx: Tx, force = false): Promise<void> {
+  // Luôn tự động khôi phục các lô đang ở trạng thái EXPIRED nhưng đã được gia hạn/cập nhật hạn dùng (expiry_date >= CURRENT_DATE) sang RELEASED
+  // Chạy độc lập ngoài savepoint đồng bộ BOM để không bao giờ bị rollback hoặc bị throttle
+  await tx.query(`
+    UPDATE inv.lot
+       SET status = 'RELEASED',
+           version = version + 1,
+           updated_at = now()
+     WHERE status = 'EXPIRED'
+       AND (expiry_date IS NULL OR expiry_date >= (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date)
+  `);
   const now = Date.now();
   if (!force && now - lastBomTypeSyncAt < 30_000) return;
   await tx.query("SAVEPOINT sp_sync_bom_item_types");
@@ -102,10 +112,17 @@ export async function syncItemTypesFromBomAndFormula(tx: Tx, force = false): Pro
             WHERE fields::text LIKE '%' || $1 || '%'`,
           [outItemId, targetId]
         );
+        await tx.query("SAVEPOINT sp_del_out_item_sync");
         const deleted = await tx
           .query("DELETE FROM master.item WHERE id = $1", [outItemId])
-          .then(() => true)
-          .catch(() => false);
+          .then(async () => {
+            await tx.query("RELEASE SAVEPOINT sp_del_out_item_sync");
+            return true;
+          })
+          .catch(async () => {
+            await tx.query("ROLLBACK TO SAVEPOINT sp_del_out_item_sync").catch(() => {});
+            return false;
+          });
         if (!deleted) {
           await tx.query("UPDATE master.item SET status = 'INACTIVE', code = $2 WHERE id = $1", [
             outItemId,

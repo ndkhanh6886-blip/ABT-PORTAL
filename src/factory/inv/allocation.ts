@@ -61,6 +61,33 @@ export async function findCandidates(
   opts: { lock?: boolean; today?: string } = {}
 ): Promise<Candidate[]> {
   const today = opts.today ?? vnToday();
+  // Tự động khôi phục các lô của vật tư này đang mang trạng thái EXPIRED nhưng hạn dùng đã được cập nhật còn hạn (>= today) sang RELEASED
+  await tx.query(
+    `UPDATE inv.lot
+        SET status = 'RELEASED',
+            version = version + 1,
+            updated_at = now()
+      WHERE item_id = $1
+        AND status = 'EXPIRED'
+        AND (expiry_date IS NULL OR expiry_date >= $2::date)`,
+    [itemId, today]
+  );
+  await tx.query(
+    `UPDATE inv.container c
+        SET status = CASE WHEN c.status = 'EXPIRED' THEN 'AVAILABLE' ELSE c.status END,
+            open_expiry_date = CASE
+              WHEN c.open_expiry_date IS NOT NULL AND c.open_expiry_date < $2::date THEN l.expiry_date
+              ELSE c.open_expiry_date
+            END,
+            version = c.version + 1,
+            updated_at = now()
+       FROM inv.lot l
+      WHERE c.lot_id = l.id
+        AND l.item_id = $1
+        AND (l.expiry_date IS NULL OR l.expiry_date >= $2::date)
+        AND (c.status = 'EXPIRED' OR (c.open_expiry_date IS NOT NULL AND c.open_expiry_date < $2::date))`,
+    [itemId, today]
+  );
   const res = await tx.query(
     `SELECT b.id AS balance_id, b.item_id, b.lot_id, l.code AS lot_code, b.container_id, b.location_id,
             (b.qty_on_hand - b.qty_reserved)::text AS available,

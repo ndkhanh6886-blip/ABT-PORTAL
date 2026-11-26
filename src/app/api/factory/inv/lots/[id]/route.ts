@@ -30,6 +30,19 @@ export const GET = factoryRoute(async (tx, { actor, params }) => {
     )
   ).rows[0];
   if (!lot) throw notFound("lô");
+  const todayForGet = todayVN();
+  if (lot.status === "EXPIRED" && (!lot.expiry_date || lot.expiry_date >= todayForGet)) {
+    await tx.query(
+      `UPDATE inv.lot
+          SET status = 'RELEASED',
+              version = version + 1,
+              updated_at = now()
+        WHERE id = $1 AND status = 'EXPIRED'`,
+      [params.id]
+    );
+    lot.status = "RELEASED";
+    lot.version = Number(lot.version ?? 0) + 1;
+  }
   // QA/QC (company-wide) see every lot; others only lots held in a warehouse they may view
   if (!(await hasFactoryPermission(tx, actor, "qms.qc.view"))) {
     const allowed = (await viewableWarehouses(tx, actor)).map((w) => w.id);
@@ -172,6 +185,20 @@ export const PATCH = factoryRoute(async (tx, { actor, params, body }) => {
       WHERE id = $1`,
     [lotBefore.id, nextCode, nextMfrLot, nextMfgDate, nextExpDate, nextRecDate, nextStatus]
   );
+  if (nextStatus === "RELEASED") {
+    await tx.query(
+      `UPDATE inv.container
+          SET status = CASE WHEN status = 'EXPIRED' THEN 'AVAILABLE' ELSE status END,
+              open_expiry_date = CASE
+                WHEN $2::date IS NOT NULL AND open_expiry_date IS NOT NULL AND open_expiry_date < $2::date THEN $2::date
+                ELSE open_expiry_date
+              END,
+              version = version + 1,
+              updated_at = now()
+        WHERE lot_id = $1`,
+      [lotBefore.id, nextExpDate]
+    );
+  }
 
   // Update master.item basic info if provided
   const nextItemName = data.item_name !== undefined ? data.item_name.trim() : lotBefore.item_name;
@@ -269,7 +296,7 @@ const lotStockOpSchema = z.discriminatedUnion("op", [
 export const POST = factoryRoute(async (tx, { actor, params, body }) => {
   const lot = (
     await tx.query(
-      `SELECT l.*, i.code AS item_code, i.name AS item_name, i.base_uom
+      `SELECT l.*, l.expiry_date::text AS expiry_date, i.code AS item_code, i.name AS item_name, i.base_uom
          FROM inv.lot l
          JOIN master.item i ON i.id = l.item_id
         WHERE l.id = $1
@@ -278,6 +305,19 @@ export const POST = factoryRoute(async (tx, { actor, params, body }) => {
     )
   ).rows[0];
   if (!lot) throw notFound("lô");
+  const todayForGet = todayVN();
+  if (lot.status === "EXPIRED" && (!lot.expiry_date || lot.expiry_date >= todayForGet)) {
+    await tx.query(
+      `UPDATE inv.lot
+          SET status = 'RELEASED',
+              version = version + 1,
+              updated_at = now()
+        WHERE id = $1 AND status = 'EXPIRED'`,
+      [params.id]
+    );
+    lot.status = "RELEASED";
+    lot.version = Number(lot.version ?? 0) + 1;
+  }
 
   const input = parseInput(lotStockOpSchema, body);
   const loc = (
