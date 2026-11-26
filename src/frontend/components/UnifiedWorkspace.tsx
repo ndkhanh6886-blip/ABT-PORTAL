@@ -224,6 +224,33 @@ export function canonStaffName(name: any): string {
   return canonStaffNameCached(String(name || ""));
 }
 
+/**
+ * Lịch công tác "Từ ngày → Đến ngày" (bản cũ) được lưu thành MỖI NGÀY MỘT THẺ nhưng thẻ nào cũng có endDate = ngày cuối,
+ * nên lịch hiển thị thẻ ngày 1 ở mọi ngày, thẻ ngày 2 từ ngày 2… (ngày thứ n hiện n thẻ trùng nhau).
+ * Thẻ kéo dài (endDate > date) mà trong khoảng (date, endDate] đã có thẻ CÙNG NỘI DUNG (giờ, người, tiêu đề, địa điểm)
+ * của riêng ngày đó -> thu thẻ đó về đúng ngày của nó. Thẻ kéo dài thật (không có bản tách từng ngày) giữ nguyên.
+ */
+export function collapseRangeScheduleCopies(list: any[], canon: (v: any) => string = canonStaffName): any[] {
+  if (!Array.isArray(list)) return [];
+  const sigOf = (s: any) => `${String(s?.time || "").trim()}|${canon(s?.actor || "")}|${canon(s?.title || "")}|${canon(s?.location || "")}`;
+  const datesBySig = new Map<string, Set<string>>();
+  for (const s of list) {
+    if (!s || typeof s !== "object" || !s.date) continue;
+    const sig = sigOf(s);
+    if (!datesBySig.has(sig)) datesBySig.set(sig, new Set());
+    datesBySig.get(sig)!.add(String(s.date).slice(0, 10));
+  }
+  return list.map((s) => {
+    if (!s || typeof s !== "object" || !s.date || !s.endDate) return s;
+    const start = String(s.date).slice(0, 10);
+    const end = String(s.endDate).slice(0, 10);
+    if (end <= start) return s;
+    const dates = datesBySig.get(sigOf(s));
+    const hasSplitCopies = dates ? Array.from(dates).some((d) => d > start && d <= end) : false;
+    return hasSplitCopies ? { ...s, endDate: start } : s;
+  });
+}
+
 /** Hai tên là cùng một người (so sánh sau chuẩn hóa; tên đầy đủ chứa tên ngắn vẫn tính là trùng). */
 export function sameStaffName(a: any, b: any): boolean {
   const x = canonStaffName(a);
@@ -3393,7 +3420,10 @@ export const UnifiedWorkspace: React.FC = () => {
     if (!Array.isArray(rawList)) return [];
     const seen = new Set<string>();
     const result: any[] = [];
-    for (const s of rawList) {
+    // Lịch "Từ ngày → Đến ngày" bản cũ lưu MỖI NGÀY một thẻ nhưng thẻ nào cũng kéo tới ngày cuối -> ngày thứ n hiện n thẻ.
+    // Thẻ kéo dài mà trong khoảng đó đã có thẻ riêng cùng nội dung: thu về đúng ngày của nó.
+    const normalized = collapseRangeScheduleCopies(rawList, canonStaffName);
+    for (const s of normalized) {
       if (!s || typeof s !== "object") continue;
       const dateOrDay = s.date ? String(s.date).slice(0, 10) : String(s.day || "").trim();
       const timeStr = String(s.time || "").trim();
@@ -4225,7 +4255,8 @@ export const UnifiedWorkspace: React.FC = () => {
           }
           const cleanedSched = dedupeWeeklySchedules(rawSched);
           setWeeklySchedule(cleanedSched);
-          if (cleanedSched.length !== rawSched.length) {
+          // Lưu lại khi đã khử trùng HOẶC đã sửa ngày kết thúc của thẻ bị kéo dài (số thẻ có thể không đổi)
+          if (cleanedSched.length !== rawSched.length || JSON.stringify(cleanedSched) !== JSON.stringify(rawSched)) {
             if (typeof window !== "undefined") {
               localStorage.setItem("unified_weekly_schedule", JSON.stringify(cleanedSched));
             }
@@ -8958,7 +8989,8 @@ export const UnifiedWorkspace: React.FC = () => {
       id: wasEditing && idx === 0 ? editingScheduleId : baseId + idx,
       day: getDayNameFromIso(isoDate),
       date: isoDate,
-      endDate: scheduleForm.dateMode === "RANGE" ? endIso : isoDate,
+      // Mỗi ngày trong khoảng đã có thẻ riêng: thẻ chỉ thuộc đúng ngày đó (trước đây endDate = ngày cuối -> ngày thứ n hiện n thẻ)
+      endDate: isoDate,
       time: scheduleForm.time || "08:30 - 11:30",
       category: scheduleForm.category,
       title: scheduleForm.title.trim(),
@@ -8997,9 +9029,24 @@ export const UnifiedWorkspace: React.FC = () => {
       }
     }
 
+    // Sửa lịch nhiều ngày: bỏ các thẻ cũ cùng nội dung (bản tách từng ngày của chính lịch này) ở những ngày sắp tạo lại,
+    // tránh mỗi lần sửa lại sinh thêm một bộ thẻ trùng
+    let baseList = weeklySchedule;
+    if (wasEditing) {
+      const orig = weeklySchedule.find((s) => s.id === editingScheduleId);
+      if (orig) {
+        const sigOf = (s: any) => `${String(s?.time || "").trim()}|${canonStaffName(s?.actor || "")}|${canonStaffName(s?.title || "")}|${canonStaffName(s?.location || "")}`;
+        const origSig = sigOf(orig);
+        const targetSet = new Set(targetIsoDates);
+        baseList = weeklySchedule.filter((s) =>
+          s.id === editingScheduleId ||
+          !(s.date && targetSet.has(String(s.date).slice(0, 10)) && sigOf(s) === origSig)
+        );
+      }
+    }
     const updatedRaw = wasEditing
       ? [
-          ...weeklySchedule.map((s) => (s.id === editingScheduleId ? { ...s, ...createdItems[0] } : s)),
+          ...baseList.map((s) => (s.id === editingScheduleId ? { ...s, ...createdItems[0] } : s)),
           ...createdItems.slice(1)
         ]
       : [...weeklySchedule, ...createdItems];
