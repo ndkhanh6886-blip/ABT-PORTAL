@@ -3232,14 +3232,17 @@ export const UnifiedWorkspace: React.FC = () => {
   const [showResourceBoard, setShowResourceBoard] = useState<boolean>(true);
   const [selectedResourceFilter, setSelectedResourceFilter] = useState<string>("all");
   const [isAddingNewResource, setIsAddingNewResource] = useState<boolean>(false);
+  const [editingResourceId, setEditingResourceId] = useState<string | null>(null);
   const [newResourceForm, setNewResourceForm] = useState<{
     name: string;
     category: "MEETING_ROOM" | "DEMO_EQUIPMENT" | "VEHICLE" | "SHARED_ASSET";
     capacityOrSpec: string;
+    icon?: string;
   }>({
     name: "",
     category: "MEETING_ROOM",
-    capacityOrSpec: ""
+    capacityOrSpec: "",
+    icon: "🏢"
   });
 
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
@@ -3436,6 +3439,36 @@ export const UnifiedWorkspace: React.FC = () => {
       console.warn("Could not save company resources:", err);
     }
   }, []);
+
+  const handleOpenEditResource = useCallback((resItem: CompanyResourceItem) => {
+    setEditingResourceId(resItem.id);
+    setNewResourceForm({
+      name: resItem.name,
+      category: resItem.category,
+      capacityOrSpec: resItem.capacityOrSpec || "",
+      icon: resItem.icon || "🏢"
+    });
+    setIsAddingNewResource(true);
+  }, []);
+
+  const handleDeleteResource = useCallback(
+    async (resItem: CompanyResourceItem) => {
+      if (typeof window !== "undefined" && !window.confirm(`Bạn có chắc muốn xóa tài nguyên "${resItem.name}" khỏi danh mục Công ty?`)) {
+        return;
+      }
+      const nextList = companyResources.filter((r) => r.id !== resItem.id);
+      await persistCompanyResources(nextList);
+      if (selectedResourceFilter === resItem.id) {
+        setSelectedResourceFilter("all");
+      }
+      if (editingResourceId === resItem.id) {
+        setEditingResourceId(null);
+        setIsAddingNewResource(false);
+      }
+      showToast(`🗑️ Đã xóa tài nguyên "${resItem.name}" khỏi danh mục!`, "info");
+    },
+    [companyResources, persistCompanyResources, selectedResourceFilter, editingResourceId, showToast]
+  );
 
   // Phân tích chuỗi khung giờ (VD: "08:30 - 10:00", "8h30-11h") thành số phút [startMin, endMin] để kiểm tra trùng lịch phòng họp / tài nguyên
   const parseScheduleTimeRangeMinutes = useCallback((timeStr?: string): [number, number] | null => {
@@ -4300,18 +4333,18 @@ export const UnifiedWorkspace: React.FC = () => {
           console.warn("Could not load functional groups:", err);
         }
 
-        // Load persistent company shared resources (Phòng họp, Máy Demo, Xe công ty...)
+        // Load persistent company shared resources (Phòng họp, Máy Demo, Xe công ty...) — cho phép mảng rỗng nếu người dùng đã xóa hết
         try {
-          if (Array.isArray(batchStorageData.unified_company_resources) && batchStorageData.unified_company_resources.length > 0) {
+          if (Array.isArray(batchStorageData.unified_company_resources)) {
             setCompanyResources(batchStorageData.unified_company_resources);
             if (typeof window !== "undefined") {
               localStorage.setItem("unified_company_resources", JSON.stringify(batchStorageData.unified_company_resources));
             }
           } else {
             const localRes = typeof window !== "undefined" ? localStorage.getItem("unified_company_resources") : null;
-            if (localRes) {
+            if (localRes !== null) {
               const parsedRes = JSON.parse(localRes);
-              if (Array.isArray(parsedRes) && parsedRes.length > 0) setCompanyResources(parsedRes);
+              if (Array.isArray(parsedRes)) setCompanyResources(parsedRes);
             }
           }
         } catch (err) {
@@ -13550,10 +13583,18 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       )}
                       <button
                         type="button"
-                        onClick={() => setIsAddingNewResource((v) => !v)}
+                        onClick={() => {
+                          if (isAddingNewResource && !editingResourceId) {
+                            setIsAddingNewResource(false);
+                          } else {
+                            setEditingResourceId(null);
+                            setNewResourceForm({ name: "", category: "MEETING_ROOM", capacityOrSpec: "", icon: "🏢" });
+                            setIsAddingNewResource(true);
+                          }
+                        }}
                         className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 hover:bg-emerald-50 border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 text-[11px] font-bold cursor-pointer"
                       >
-                        {isAddingNewResource ? "Đóng thêm tài nguyên" : "+ Thêm phòng họp / tài nguyên mới"}
+                        {isAddingNewResource && !editingResourceId ? "Đóng biểu mẫu" : "+ Thêm phòng họp / tài nguyên mới"}
                       </button>
                       <button
                         type="button"
@@ -13566,86 +13607,187 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   </div>
 
                   {isAddingNewResource && (
-                    <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-slate-700 grid grid-cols-1 md:grid-cols-12 gap-2 items-end text-xs">
-                      <div className="md:col-span-4">
-                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Tên Phòng họp / Thiết bị / Xe công ty *</label>
-                        <FastInput
-                          type="text"
-                          value={newResourceForm.name}
-                          onChange={(e) => setNewResourceForm({ ...newResourceForm, name: e.target.value })}
-                          placeholder="VD: Phòng họp Tầng 3, Máy PCR Demo số 2, Xe bán tải..."
-                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 font-semibold"
-                        />
-                      </div>
-                      <div className="md:col-span-3">
-                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Nhóm tài nguyên</label>
-                        <select
-                          value={newResourceForm.category}
-                          onChange={(e) => setNewResourceForm({ ...newResourceForm, category: e.target.value as any })}
-                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 font-semibold"
-                        >
-                          <option value="MEETING_ROOM">🏢 Phòng họp / Phòng hội thảo</option>
-                          <option value="DEMO_EQUIPMENT">🧬 Máy Demo / Thiết bị kỹ thuật lưu động</option>
-                          <option value="VEHICLE">🚐 Xe công ty / Phương tiện</option>
-                          <option value="SHARED_ASSET">📽️ Thiết bị dùng chung khác</option>
-                        </select>
-                      </div>
-                      <div className="md:col-span-3">
-                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Sức chứa / Cấu hình / Ghi chú</label>
-                        <FastInput
-                          type="text"
-                          value={newResourceForm.capacityOrSpec}
-                          onChange={(e) => setNewResourceForm({ ...newResourceForm, capacityOrSpec: e.target.value })}
-                          placeholder="VD: 12 chỗ, có TV & Webcam..."
-                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950"
-                        />
-                      </div>
-                      <div className="md:col-span-2 flex gap-1.5">
+                    <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-700 shadow-xs space-y-2 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="font-extrabold text-emerald-800 dark:text-emerald-300 text-xs">
+                          {editingResourceId ? "✏️ CHỈNH SỬA THÔNG TIN PHÒNG HỌP / TÀI NGUYÊN CÔNG TY" : "➕ THÊM PHÒNG HỌP / TÀI NGUYÊN MỚI"}
+                        </span>
                         <button
                           type="button"
-                          onClick={async () => {
-                            const cleanName = newResourceForm.name.trim();
-                            if (!cleanName) {
-                              showToast("Vui lòng nhập tên phòng họp hoặc tài nguyên", "error");
-                              return;
-                            }
-                            const iconMap: Record<string, string> = {
-                              MEETING_ROOM: "🏢",
-                              DEMO_EQUIPMENT: "🧬",
-                              VEHICLE: "🚐",
-                              SHARED_ASSET: "📽️"
-                            };
-                            const newItem: CompanyResourceItem = {
-                              id: `RES-${Date.now()}`,
-                              name: cleanName,
-                              category: newResourceForm.category,
-                              capacityOrSpec: newResourceForm.capacityOrSpec.trim() || "Tài nguyên dùng chung Công ty",
-                              icon: iconMap[newResourceForm.category] || "🏢"
-                            };
-                            await persistCompanyResources([...companyResources, newItem]);
-                            setNewResourceForm({ name: "", category: "MEETING_ROOM", capacityOrSpec: "" });
+                          onClick={() => {
                             setIsAddingNewResource(false);
-                            showToast(`🏢 Đã thêm tài nguyên "${cleanName}" vào danh mục Công ty!`, "success");
+                            setEditingResourceId(null);
+                            setNewResourceForm({ name: "", category: "MEETING_ROOM", capacityOrSpec: "", icon: "🏢" });
                           }}
-                          className="w-full py-1.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold cursor-pointer"
+                          className="text-[11px] font-bold text-slate-400 hover:text-slate-600 cursor-pointer"
                         >
-                          + Lưu tài nguyên
+                          ✕ Đóng
                         </button>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-end">
+                        <div className="md:col-span-4">
+                          <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Tên Phòng họp / Thiết bị / Xe công ty *</label>
+                          <FastInput
+                            type="text"
+                            value={newResourceForm.name}
+                            onChange={(e) => setNewResourceForm({ ...newResourceForm, name: e.target.value })}
+                            placeholder="VD: Phòng họp Tầng 2, Máy PCR Demo, Xe công ty..."
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 font-semibold"
+                          />
+                        </div>
+                        <div className="md:col-span-3">
+                          <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Nhóm tài nguyên</label>
+                          <select
+                            value={newResourceForm.category}
+                            onChange={(e) => {
+                              const cat = e.target.value as "MEETING_ROOM" | "DEMO_EQUIPMENT" | "VEHICLE" | "SHARED_ASSET";
+                              const iconMap: Record<string, string> = {
+                                MEETING_ROOM: "🏢",
+                                DEMO_EQUIPMENT: "🧬",
+                                VEHICLE: "🚐",
+                                SHARED_ASSET: "📽️"
+                              };
+                              setNewResourceForm({
+                                ...newResourceForm,
+                                category: cat,
+                                icon: iconMap[cat] || "🏢"
+                              });
+                            }}
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 font-semibold"
+                          >
+                            <option value="MEETING_ROOM">🏢 Phòng họp / Phòng hội thảo</option>
+                            <option value="DEMO_EQUIPMENT">🧬 Máy Demo / Thiết bị kỹ thuật lưu động</option>
+                            <option value="VEHICLE">🚐 Xe công ty / Phương tiện</option>
+                            <option value="SHARED_ASSET">📽️ Thiết bị dùng chung khác</option>
+                          </select>
+                        </div>
+                        <div className="md:col-span-3">
+                          <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Sức chứa / Cấu hình / Ghi chú thực tế</label>
+                          <FastInput
+                            type="text"
+                            value={newResourceForm.capacityOrSpec}
+                            onChange={(e) => setNewResourceForm({ ...newResourceForm, capacityOrSpec: e.target.value })}
+                            placeholder="VD: 12 chỗ, có TV & Webcam..."
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950"
+                          />
+                        </div>
+                        <div className="md:col-span-2 flex gap-1.5">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const cleanName = newResourceForm.name.trim();
+                              if (!cleanName) {
+                                showToast("Vui lòng nhập tên phòng họp hoặc tài nguyên", "error");
+                                return;
+                              }
+                              const iconMap: Record<string, string> = {
+                                MEETING_ROOM: "🏢",
+                                DEMO_EQUIPMENT: "🧬",
+                                VEHICLE: "🚐",
+                                SHARED_ASSET: "📽️"
+                              };
+                              const pickedIcon = newResourceForm.icon || iconMap[newResourceForm.category] || "🏢";
+                              if (editingResourceId) {
+                                const oldRes = companyResources.find((r) => r.id === editingResourceId);
+                                const nextList = companyResources.map((r) =>
+                                  r.id === editingResourceId
+                                    ? {
+                                        ...r,
+                                        name: cleanName,
+                                        category: newResourceForm.category,
+                                        capacityOrSpec: newResourceForm.capacityOrSpec.trim() || "Tài nguyên dùng chung Công ty",
+                                        icon: pickedIcon
+                                      }
+                                    : r
+                                );
+                                await persistCompanyResources(nextList);
+                                // Đồng bộ luôn tên phòng/tài nguyên trên các lịch đã đặt của tài nguyên này
+                                if (oldRes && oldRes.name !== cleanName) {
+                                  const updatedSchedules = weeklySchedule.map((s) =>
+                                    s.resourceId === editingResourceId || canonStaffName(s.location || "") === canonStaffName(oldRes.name)
+                                      ? { ...s, resourceId: editingResourceId, resourceName: cleanName, location: cleanName }
+                                      : s
+                                  );
+                                  setWeeklySchedule(updatedSchedules);
+                                  try {
+                                    if (typeof window !== "undefined") {
+                                      localStorage.setItem("unified_weekly_schedule", JSON.stringify(updatedSchedules));
+                                    }
+                                    await fetch("/api/storage?key=unified_weekly_schedule", {
+                                      method: "POST",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify(updatedSchedules)
+                                    });
+                                  } catch {
+                                    // ignore sync error
+                                  }
+                                }
+                                showToast(`✅ Đã cập nhật thông tin tài nguyên "${cleanName}"!`, "success");
+                              } else {
+                                const newItem: CompanyResourceItem = {
+                                  id: `RES-${Date.now()}`,
+                                  name: cleanName,
+                                  category: newResourceForm.category,
+                                  capacityOrSpec: newResourceForm.capacityOrSpec.trim() || "Tài nguyên dùng chung Công ty",
+                                  icon: pickedIcon
+                                };
+                                await persistCompanyResources([...companyResources, newItem]);
+                                showToast(`🏢 Đã thêm tài nguyên "${cleanName}" vào danh mục Công ty!`, "success");
+                              }
+                              setNewResourceForm({ name: "", category: "MEETING_ROOM", capacityOrSpec: "", icon: "🏢" });
+                              setEditingResourceId(null);
+                              setIsAddingNewResource(false);
+                            }}
+                            className="w-full py-1.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold cursor-pointer"
+                          >
+                            {editingResourceId ? "💾 Lưu cập nhật" : "+ Lưu tài nguyên"}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )}
 
+                  {companyResources.length === 0 ? (
+                    <div className="p-4 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-dashed border-emerald-300 dark:border-slate-700 text-center space-y-2 text-xs">
+                      <p className="text-slate-600 dark:text-slate-300 font-semibold">
+                        Hiện chưa có Phòng họp hoặc Tài nguyên nào trong danh mục.
+                      </p>
+                      <div className="flex items-center justify-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingResourceId(null);
+                            setNewResourceForm({ name: "", category: "MEETING_ROOM", capacityOrSpec: "", icon: "🏢" });
+                            setIsAddingNewResource(true);
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold cursor-pointer"
+                        >
+                          + Thêm phòng họp / tài nguyên mới
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => persistCompanyResources(DEFAULT_COMPANY_RESOURCES)}
+                          className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-semibold cursor-pointer"
+                        >
+                          ↺ Khôi phục danh mục mẫu
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
                     {companyResources.map((resItem) => {
                       const weekBookings = weeklySchedule
                         .filter((s) => matchScheduleToResource(s, resItem) && viewedWeek.all7Days.some((wd) => scheduleOnDay(s, wd)))
                         .sort((a, b) => `${a.date || ""}_${a.time || ""}`.localeCompare(`${b.date || ""}_${b.time || ""}`));
                       const isFilteringThis = selectedResourceFilter === resItem.id;
+                      const isEditingThis = editingResourceId === resItem.id && isAddingNewResource;
                       return (
                         <div
                           key={resItem.id}
                           className={`p-3 rounded-xl bg-white dark:bg-slate-900 border transition-all flex flex-col justify-between gap-2 text-xs ${
-                            isFilteringThis
+                            isEditingThis
+                              ? "border-indigo-500 ring-2 ring-indigo-500/25 shadow-sm"
+                              : isFilteringThis
                               ? "border-emerald-500 ring-2 ring-emerald-500/20 shadow-sm"
                               : "border-emerald-200/80 dark:border-slate-800 shadow-2xs"
                           }`}
@@ -13699,18 +13841,39 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             )}
                           </div>
 
-                          <div className="flex items-center justify-between gap-1.5 pt-1.5 border-t border-slate-100 dark:border-slate-800">
-                            <button
-                              type="button"
-                              onClick={() => setSelectedResourceFilter(isFilteringThis ? "all" : resItem.id)}
-                              className={`px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer ${
-                                isFilteringThis
-                                  ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300"
-                                  : "text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
-                              }`}
-                            >
-                              {isFilteringThis ? "✓ Đang lọc" : "🔍 Lọc lịch"}
-                            </button>
+                          <div className="flex items-center justify-between gap-1 pt-1.5 border-t border-slate-100 dark:border-slate-800 flex-wrap">
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedResourceFilter(isFilteringThis ? "all" : resItem.id)}
+                                className={`px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer ${
+                                  isFilteringThis
+                                    ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300"
+                                    : "text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                }`}
+                                title="Lọc lịch tuần theo tài nguyên này"
+                              >
+                                {isFilteringThis ? "✓ Đang lọc" : "🔍 Lọc"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditResource(resItem)}
+                                className="px-2 py-1 rounded-lg text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-slate-800 flex items-center gap-0.5 cursor-pointer"
+                                title="Sửa tên, nhóm hoặc thông số tài nguyên này"
+                              >
+                                <Pencil className="w-3 h-3" />
+                                <span>Sửa</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteResource(resItem)}
+                                className="px-2 py-1 rounded-lg text-[10px] font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-slate-800 flex items-center gap-0.5 cursor-pointer"
+                                title="Xóa tài nguyên này khỏi danh mục"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>Xóa</span>
+                              </button>
+                            </div>
                             <button
                               type="button"
                               onClick={() =>
@@ -13730,6 +13893,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       );
                     })}
                   </div>
+                  )}
                 </div>
               )}
 
@@ -20734,9 +20898,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       );
                       const isBusyInSlot = itemConflicts.length > 0;
                       return (
-                        <button
+                        <div
                           key={`modal-res-${resItem.id}`}
-                          type="button"
                           onClick={() => {
                             const autoTitle =
                               !scheduleForm.title.trim() && isResourceMode
@@ -20751,7 +20914,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               isPublic: true
                             });
                           }}
-                          className={`text-left p-2 rounded-xl border transition-all flex flex-col justify-between gap-1 cursor-pointer ${
+                          className={`group text-left p-2 rounded-xl border transition-all flex flex-col justify-between gap-1 cursor-pointer ${
                             isPicked
                               ? isBusyInSlot
                                 ? "bg-rose-600 text-white border-rose-500 shadow-xs"
@@ -20777,10 +20940,25 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               {isBusyInSlot ? "Đã đặt" : "Trống"}
                             </span>
                           </div>
-                          <div className={`text-[9px] truncate ${isPicked ? "text-emerald-100" : "text-slate-500"}`}>
-                            {resItem.capacityOrSpec}
+                          <div className="flex items-center justify-between gap-1 pt-0.5">
+                            <div className={`text-[9px] truncate ${isPicked ? "text-emerald-100" : "text-slate-500"}`}>
+                              {resItem.capacityOrSpec}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteResource(resItem);
+                              }}
+                              title="Xóa tài nguyên này khỏi danh mục"
+                              className={`opacity-60 group-hover:opacity-100 px-1 rounded text-[9px] font-bold cursor-pointer ${
+                                isPicked ? "hover:bg-white/20 text-white" : "text-rose-500 hover:bg-rose-100 dark:hover:bg-slate-800"
+                              }`}
+                            >
+                              ✕
+                            </button>
                           </div>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
