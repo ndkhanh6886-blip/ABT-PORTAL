@@ -4365,6 +4365,16 @@ export function ProposalsApprovalView({
   };
 
   const proposalsPage = usePaged(filteredProposals, 20);
+  const leaveProposalsPage = usePaged(
+    monthlyLeaveProposals,
+    10,
+    `${leaveMonthFilter}|${leaveDeptFilter}|${leaveTypeFilter}|${leaveStatusFilter}|${searchQuery}|${hideStaffLeaveForDirector}`
+  );
+  const overtimeProposalsPage = usePaged(
+    monthlyOvertimeProposals,
+    10,
+    `${leaveMonthFilter}|${leaveDeptFilter}|${leaveStatusFilter}|${searchQuery}`
+  );
 
   return (
     <div className="space-y-4">
@@ -5325,7 +5335,7 @@ export function ProposalsApprovalView({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200/80 dark:divide-slate-800">
-                    {monthlyLeaveProposals.map((p) => {
+                    {leaveProposalsPage.items.map((p) => {
                       const { fDate, tDate, days, leaveType, handoverStaff, rangeLabel, isOffOn } = getLeaveDatesAndDays(p, leaveMonthArg());
                       const statusMeta = getStatusMeta(p.status);
                       const waitingMe = isProposalWaitingForUser(p, currentStaffName, userDept, isDirector, isManager);
@@ -5424,6 +5434,7 @@ export function ProposalsApprovalView({
                     })}
                   </tbody>
                 </table>
+                <Pager p={leaveProposalsPage} unit="đơn nghỉ phép" sizes={[10, 20, 50, 100]} />
               </div>
             )}
           </div>
@@ -5470,7 +5481,7 @@ export function ProposalsApprovalView({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200/80 dark:divide-slate-800">
-                    {monthlyOvertimeProposals.map((p) => {
+                    {overtimeProposalsPage.items.map((p) => {
                       const { otDate, otHours, convertedDays, timeSlot, otDayType, compensationMode, isCompensatoryLeave } = getOvertimeDetails(p);
                       const statusMeta = getStatusMeta(p.status);
                       const waitingMe = isProposalWaitingForUser(p, currentStaffName, userDept, isDirector, isManager);
@@ -5551,6 +5562,7 @@ export function ProposalsApprovalView({
                     })}
                   </tbody>
                 </table>
+                <Pager p={overtimeProposalsPage} unit="phiếu tăng ca" sizes={[10, 20, 50, 100]} />
               </div>
             )}
           </div>
