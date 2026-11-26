@@ -235,10 +235,12 @@ function PrepareForm({ formula, deptScope, onDone }: { formula: Formula; deptSco
   });
   const [f, setF] = useState({ qty: String(formula.basis_qty), uom: formula.basis_uom, warehouse_id: "", to_location_id: "", notes: "", mode: "now", planned_date: new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10) });
   const wh = opts.data?.find((w) => w.id === f.warehouse_id) ?? (opts.data?.length === 1 ? opts.data[0] : undefined);
+  const defaultLocId = wh?.locations?.[0]?.id ?? "";
+  const effectiveLocId = f.to_location_id || defaultLocId;
   const factor = Number(f.qty) / formula.basis_qty;
   const run = useMutation({
     mutationFn: () => {
-      const body = { formula_id: formula.id, qty: Number(f.qty), uom: f.uom, warehouse_id: wh?.id, to_location_id: formula.requires_qc ? null : f.to_location_id || null, notes: f.notes || null };
+      const body = { formula_id: formula.id, qty: Number(f.qty), uom: f.uom, warehouse_id: wh?.id, to_location_id: effectiveLocId || null, notes: f.notes || null };
       return f.mode === "order"
         ? api<{ code: string; lot_code?: string; qc_needed?: boolean; incubation_until?: string | null }>("/api/factory/prep/orders", { method: "POST", idempotent: true, json: { ...body, planned_date: f.planned_date } })
         : api<{ code: string; lot_code?: string; qc_needed?: boolean; incubation_until?: string | null }>("/api/factory/prep/preparations", { method: "POST", idempotent: true, json: body });
@@ -246,6 +248,16 @@ function PrepareForm({ formula, deptScope, onDone }: { formula: Formula; deptSco
     onSuccess: onDone,
   });
   if (opts.data && !opts.data.length) return <Empty>Bạn chưa có quyền pha chế ở kho nào.</Empty>;
+  const locLabel = formula.requires_qc
+    ? formula.incubation_days
+      ? `Cất vào vị trí (sau ủ ${formula.incubation_days} ngày & QC đạt) *`
+      : "Cất vào vị trí (sau khi QC đạt) *"
+    : formula.incubation_days
+      ? `Cất vào sau ủ ${formula.incubation_days} ngày *`
+      : "Cất vào vị trí *";
+  const locHint = formula.requires_qc
+    ? `Trong thời gian chờ QC${formula.incubation_days ? ` (và ủ ${formula.incubation_days} ngày)` : ""}, lô tạm giữ ở Biệt trữ; khi duyệt QC đạt sẽ tự chuyển về vị trí này.`
+    : undefined;
   return (
     <form className="flex flex-col gap-3 p-3 rounded-xl border border-sky-200 dark:border-sky-900 bg-sky-50/60 dark:bg-sky-950/30" onSubmit={(e) => { e.preventDefault(); run.mutate(); }}>
       <div className="text-xs font-bold">Lệnh pha: <span className="font-mono text-sky-700 dark:text-sky-400">{formula.code}</span> — {formula.name}</div>
@@ -269,16 +281,12 @@ function PrepareForm({ formula, deptScope, onDone }: { formula: Formula; deptSco
             </select>
           </Field>
         )}
-        {formula.requires_qc ? (
-          <p className="text-[11px] text-slate-500">Lô pha vào vị trí biệt trữ{formula.incubation_days ? `, ủ ${formula.incubation_days} ngày` : ""}, chờ QA/QC lấy mẫu và giải phóng.</p>
-        ) : (
-          <Field label={formula.incubation_days ? `Cất vào sau ủ ${formula.incubation_days} ngày *` : "Cất vào vị trí *"}>
-            <select className={inputClass} value={f.to_location_id} onChange={(e) => setF({ ...f, to_location_id: e.target.value })} required>
-              <option value="">Chọn</option>
-              {wh?.locations.map((l) => <option key={l.id} value={l.id}>{l.code} · {l.name}</option>)}
-            </select>
-          </Field>
-        )}
+        <Field label={locLabel} hint={locHint}>
+          <select className={inputClass} value={effectiveLocId} onChange={(e) => setF({ ...f, to_location_id: e.target.value })} required>
+            <option value="">Chọn</option>
+            {wh?.locations.map((l) => <option key={l.id} value={l.id}>{l.code} · {l.name}</option>)}
+          </select>
+        </Field>
         <Field label="Ghi chú"><input className={inputClass} value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} /></Field>
       </div>
       {f.uom === formula.basis_uom && factor > 0 && (
