@@ -35,6 +35,7 @@ export interface QcSignerOverrides {
   manager_name?: string;
   template_key?: string;
   custom_fields?: Partial<CoaCustomFields>;
+  result_label_style?: "VI" | "EN";
 }
 
 export function calcShelfLifeMonths(
@@ -120,10 +121,12 @@ export interface QcReportParamRowModel {
   spec: string;
   actual: string;
   passed: boolean | null;
+  resultText: string;
 }
 
 export interface QcTestReportViewModel {
   config: QcFormsConfig;
+  resultLabelStyle: "VI" | "EN";
   reportCode: string;
   qcTestCode: string;
   formCode: string;
@@ -171,37 +174,75 @@ export function prepareQcTestReportModel(
   const uom = lot?.uom || lot?.base_uom || "";
   const batchSize = lotQty != null && lotQty > 0 ? `${num(lotQty)} ${uom}`.trim() : "—";
 
+  const resultLabelStyle: "VI" | "EN" = signerOverrides?.result_label_style === "EN" ? "EN" : "VI";
+  const formatReportResultLabel = (passed: boolean | null) => {
+    if (passed === false) return resultLabelStyle === "EN" ? "FAIL" : "KHÔNG ĐẠT";
+    if (passed === true) return resultLabelStyle === "EN" ? "PASS" : "ĐẠT";
+    return "—";
+  };
+
   const params: any[] = Array.isArray(t.parameters) ? t.parameters : [];
   const results: any[] = Array.isArray(t.results) ? t.results : [];
   const rows: QcReportParamRowModel[] = params.map((p: any, idx: number) => {
     const r = results.find((x: any) => x.parameter_id === p.id);
-    const specStr = `${spec(p)}${p.value_type === "NUMERIC" && p.unit ? ` ${p.unit}` : ""}`.trim() || "Đạt chuẩn";
+    const specStr = `${spec(p)}${p.value_type === "NUMERIC" && p.unit ? ` ${p.unit}` : ""}`.trim() || "Đạt";
     const eq =
       cfg.qc_report.show_equipment_in_method
         ? p.equipment_name || r?.instrument_name || r?.instrument_code || null
         : null;
+    const cleanMethod = String(p.method || "Kiểm tra theo SOP")
+      .replace(/^phương\s*pháp\s*:\s*/i, "")
+      .trim();
+    const eqStr = eq ? String(eq).trim() : null;
+    const showEq =
+      eqStr &&
+      !cleanMethod.toLowerCase().includes(eqStr.toLowerCase())
+        ? eqStr
+        : null;
     return {
       seq: p.seq ?? idx + 1,
       name: String(p.name ?? ""),
-      method: String(p.method || "Kiểm tra theo SOP"),
-      equipment: eq ? String(eq) : null,
+      method: cleanMethod || "Kiểm tra theo SOP",
+      equipment: showEq,
       spec: specStr,
       actual: r ? value(r, p.unit) : "—",
       passed: r?.passed ?? null,
+      resultText: formatReportResultLabel(r?.passed ?? null),
     };
   });
 
   const overallPassed = t.overall_result === "PASS";
   const analystRaw = signerOverrides?.analyst_name || t.analyst_name || linkedCoa?.analyst_name || cfg.default_analyst_name;
-  const managerRaw =
+  let managerRaw =
     signerOverrides?.manager_name ||
     data?.signature?.signer_name ||
     t.reviewer_name ||
     linkedCoa?.issued_by_name ||
     cfg.default_manager_name;
 
+  // Đảm bảo Người kiểm nghiệm và Người phê duyệt độc lập nhau trên Phiếu KTCL
+  if (
+    analystRaw &&
+    managerRaw &&
+    analystRaw.trim().toLowerCase() === managerRaw.trim().toLowerCase() &&
+    !signerOverrides?.manager_name
+  ) {
+    const altMgr =
+      cfg.default_manager_name && cfg.default_manager_name.trim().toLowerCase() !== analystRaw.trim().toLowerCase()
+        ? cfg.default_manager_name
+        : cfg.staff_signatures.find((s) => s.full_name.trim().toLowerCase() !== analystRaw.trim().toLowerCase())?.full_name;
+    if (altMgr) managerRaw = altMgr;
+  }
+
+  const rawRef = t.subject?.reference ?? null;
+  const oligoRef =
+    t.entity_type === "OLIGO_SEQUENCE" && rawRef && rawRef.normalized_sequence != null
+      ? rawRef
+      : null;
+
   return {
     config: cfg,
+    resultLabelStyle,
     reportCode,
     qcTestCode,
     formCode,
@@ -218,7 +259,7 @@ export function prepareQcTestReportModel(
     presentation: formatPresentationText(lot?.specification, lot?.tests_per_kit, lotQty, uom, "BI"),
     standardCode: String(lot?.tccs_code || (t.spec_code ? `${t.spec_code} v${t.spec_version ?? 1}` : "TCCS")),
     rows,
-    oligoRef: t.subject?.reference ?? null,
+    oligoRef,
     overallPassed,
     conclusionPrefix: cfg.qc_report.conclusion_prefix_bi,
     conclusionBody: overallPassed ? cfg.qc_report.conclusion_pass_bi : cfg.qc_report.conclusion_fail_bi,
@@ -662,17 +703,16 @@ export function buildQcTestReportSheetHtml(m: QcTestReportViewModel): string {
       ? m.rows
           .map((r) => {
             const evalCls = r.passed === false ? "fail-text" : "pass-text";
-            const evalTxt = r.passed === false ? "KHÔNG ĐẠT (FAIL)" : r.passed === true ? "ĐẠT (PASS)" : "—";
             return `<tr>
               <td style="text-align:center;">${esc(r.seq)}</td>
               <td><b>${esc(r.name)}</b></td>
               <td>
-                <div><b>Phương pháp:</b> ${esc(r.method)}</div>
+                <div>${esc(r.method)}</div>
                 ${r.equipment ? `<div style="color:#1d4ed8;margin-top:2px;"><b>Thiết bị:</b> ${esc(r.equipment)}</div>` : ""}
               </td>
-              <td>${esc(r.spec)}</td>
+              <td>${lines(r.spec)}</td>
               <td style="text-align:center;"><b>${esc(r.actual)}</b></td>
-              <td class="${evalCls}">${evalTxt}</td>
+              <td class="${evalCls}">${esc(r.resultText)}</td>
             </tr>`;
           })
           .join("")
@@ -1024,10 +1064,13 @@ function wrapCoaPopupWithLangSwitcher(
 interface Result { name: string; unit: string | null; method?: string | null; value_type: string; lower_limit: number | string | null; upper_limit: number | string | null; target: string | null }
 const spec = (p: Result) =>
   p.value_type === "NUMERIC"
-    ? [p.lower_limit != null ? `≥ ${num(Number(p.lower_limit))}` : "", p.upper_limit != null ? `≤ ${num(Number(p.upper_limit))}` : ""].filter(Boolean).join(", ")
-    : p.value_type === "PASS_FAIL"
-      ? "Đạt"
-      : p.target ?? "";
+    ? [
+        p.target ? p.target.trim() : "",
+        [p.lower_limit != null ? `≥ ${num(Number(p.lower_limit))}` : "", p.upper_limit != null ? `≤ ${num(Number(p.upper_limit))}` : ""].filter(Boolean).join(", "),
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : (p.target && p.target.trim()) || (p.value_type === "PASS_FAIL" ? "Đạt" : "");
 const value = (r: { value_numeric: number | string | null; observed_numeric?: number | string | null; value_text: string | null }, unit: string | null) =>
   r.value_numeric != null
     ? `${num(Number(r.value_numeric))} ${esc(unit ?? "")}${r.observed_numeric != null ? ` (đo ${num(Number(r.observed_numeric))})` : ""}`

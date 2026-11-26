@@ -26,11 +26,15 @@ export function evaluateResult(p: ParameterSpec, v: ResultValue): boolean | null
   }
   const text = (v.value_text ?? "").trim();
   if (!text) throw new Error(`Chỉ tiêu "${p.name}" chưa có kết quả.`);
+  const upper = text.toUpperCase();
   if (p.value_type === "PASS_FAIL") {
-    if (text !== "PASS" && text !== "FAIL") throw new Error(`Chỉ tiêu "${p.name}" chỉ nhận Đạt hoặc Không đạt.`);
-    return text === "PASS";
+    if (upper === "PASS" || upper === "ĐẠT" || upper === "DAT") return true;
+    if (upper === "FAIL" || upper === "KHÔNG ĐẠT" || upper === "KHONG DAT") return false;
+    throw new Error(`Chỉ tiêu "${p.name}" chỉ nhận Đạt hoặc Không đạt.`);
   }
-  return p.target ? text.localeCompare(p.target.trim(), "vi", { sensitivity: "base" }) === 0 : null;
+  if (upper === "PASS" || upper === "ĐẠT" || upper === "DAT") return true;
+  if (upper === "FAIL" || upper === "KHÔNG ĐẠT" || upper === "KHONG DAT") return false;
+  return p.target ? text.localeCompare(p.target.trim(), "vi", { sensitivity: "base" }) === 0 : true;
 }
 
 /**

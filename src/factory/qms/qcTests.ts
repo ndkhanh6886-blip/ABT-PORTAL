@@ -126,6 +126,7 @@ export const qcTestMachine = defineMachine<QcStatus, QcTest>({
           code: "SAME_PERSON",
           message: "Người duyệt kết quả phải khác người kiểm nghiệm và khác kỹ thuật viên trực tiếp thực hiện sản xuất lô này.",
           check: async ({ tx, actor, row }) => {
+            if (row.analyst_id === actor.userId) return false;
             if (row.entity_type === "DEVICE_UNIT") {
               const unit = (
                 await tx.query("SELECT assembled_by FROM device.device_unit WHERE id = $1", [row.entity_id])
@@ -138,7 +139,6 @@ export const qcTestMachine = defineMachine<QcStatus, QcTest>({
               if (comp.rowCount) return false;
               return true;
             }
-            if (row.analyst_id === actor.userId) return false;
             if (row.entity_type === "PRODUCTION_ORDER") {
               const prod = await tx.query(
                 "SELECT 1 FROM kit.production_step WHERE order_id = $1 AND performed_by = $2 LIMIT 1",
@@ -329,7 +329,33 @@ export async function createRetest(tx: Tx, actor: AuthzActor, testId: string, re
   if (orig.status !== "REVIEWED") throw invalid("Chỉ kiểm lại phiếu đã được duyệt.");
   const open = await tx.query("SELECT 1 FROM qms.qc_test WHERE retest_of_id = $1 AND status NOT IN ('REVIEWED', 'CANCELLED')", [testId]);
   if (open.rowCount) throw conflict("Đã có phiếu kiểm lại đang mở cho phiếu này.", "RETEST_OPEN");
-  return createQcTest(tx, actor, { entity_type: orig.entity_type, entity_id: orig.entity_id, spec_id: orig.spec_id, test_kind: orig.test_kind as any, retest_of_id: orig.id, retest_reason: why });
+  const retestRow = await createQcTest(tx, actor, {
+    entity_type: orig.entity_type,
+    entity_id: orig.entity_id,
+    spec_id: orig.spec_id,
+    test_kind: orig.test_kind as any,
+    retest_of_id: orig.id,
+    retest_reason: why,
+  });
+  if (orig.entity_type === "DEVICE_UNIT") {
+    await tx.query("SAVEPOINT sp_retest_device_unit");
+    try {
+      await tx.query(
+        `UPDATE device.device_unit
+            SET status = CASE WHEN status = 'QA_PASSED' THEN 'FQC' ELSE status END,
+                fqc_passed = false,
+                fqc_test_id = $2,
+                fqc_summary = $3,
+                updated_at = now()
+          WHERE id = $1`,
+        [orig.entity_id, retestRow.id, `Đang kiểm lại (Retest ${retestRow.code}): ${why}`]
+      );
+      await tx.query("RELEASE SAVEPOINT sp_retest_device_unit");
+    } catch {
+      await tx.query("ROLLBACK TO SAVEPOINT sp_retest_device_unit").catch(() => {});
+    }
+  }
+  return retestRow;
 }
 
 export async function getQcTest(tx: Tx, id: string) {
@@ -542,7 +568,20 @@ export async function listQcTests(tx: Tx, actor: AuthzActor, status?: string) {
             LIMIT 1
          ) dtr ON du.id IS NOT NULL
         WHERE t.entity_type <> 'OLIGO_SEQUENCE'
-          AND (($1::text IS NULL AND t.status NOT IN ('REVIEWED', 'CANCELLED')) OR t.status = $1)
+          AND (
+            ($1::text IS NULL AND t.status NOT IN ('REVIEWED', 'CANCELLED'))
+            OR (
+              t.status = $1
+              AND (
+                $1 <> 'REVIEWED'
+                OR NOT EXISTS (
+                  SELECT 1 FROM qms.qc_test rt
+                   WHERE (rt.retest_of_id = t.id OR (rt.entity_type = t.entity_type AND rt.entity_id = t.entity_id AND rt.created_at > t.created_at))
+                     AND rt.status <> 'CANCELLED'
+                )
+              )
+            )
+          )
         ORDER BY t.created_at DESC LIMIT 200`,
       [status ?? null]
     )

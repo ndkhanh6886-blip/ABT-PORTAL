@@ -236,10 +236,13 @@ function DeviceReference({ t }: { t: QcDetail }) {
 
 const limits = (p: Parameter) =>
   p.value_type === "NUMERIC"
-    ? [p.lower_limit != null ? `≥ ${Number(p.lower_limit)}` : null, p.upper_limit != null ? `≤ ${Number(p.upper_limit)}` : null].filter(Boolean).join(", ") || "—"
-    : p.value_type === "PASS_FAIL"
-      ? "Đạt"
-      : p.target ?? "—";
+    ? [
+        p.target ? p.target.trim() : null,
+        [p.lower_limit != null ? `≥ ${Number(p.lower_limit)}` : null, p.upper_limit != null ? `≤ ${Number(p.upper_limit)}` : null].filter(Boolean).join(", ") || null,
+      ]
+        .filter(Boolean)
+        .join(" · ") || "—"
+    : (p.target && p.target.trim()) || (p.value_type === "PASS_FAIL" ? "Đạt" : "—");
 
 function QcDetailPanel({
   id,
@@ -407,8 +410,11 @@ function QcDetailPanel({
   });
 
   const retest = useMutation({
-    mutationFn: (reason: string) => api(`/api/factory/qms/tests/${id}/retest`, { method: "POST", idempotent: true, json: { reason } }),
-    onSuccess: refresh,
+    mutationFn: (reason: string) => api<{ id: string; code: string }>(`/api/factory/qms/tests/${id}/retest`, { method: "POST", idempotent: true, json: { reason } }),
+    onSuccess: () => {
+      refresh();
+      onClose();
+    },
   });
 
   const changeSpecInDetailMut = useMutation({
@@ -454,7 +460,8 @@ function QcDetailPanel({
             t.subject?.reference && <OligoReference r={t.subject.reference} />
           )}
 
-          {/* Reference Standard & Control Panel Suitability Check Section */}
+          {/* Reference Standard & Control Panel Suitability Check Section (không áp dụng cho phiếu FQC Thiết bị) */}
+          {t.entity_type !== "DEVICE_UNIT" && (
           <div className="p-3 rounded-xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/40 dark:bg-indigo-950/20 flex flex-col gap-2 text-xs">
             <div className="font-bold text-indigo-900 dark:text-indigo-200">
               🧬 1. Đối chiếu Bộ Mẫu Chuẩn / Chủng Chuẩn Kiểm Nghiệm (System Suitability & Reference Standards)
@@ -521,10 +528,11 @@ function QcDetailPanel({
               </form>
             )}
           </div>
+          )}
 
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="font-bold text-xs text-slate-700 dark:text-slate-200">
-              📋 2. Kết quả Kiểm nghiệm các Chỉ tiêu theo Tiêu chuẩn ({t.spec_code} — {t.spec_name})
+              📋 {t.entity_type === "DEVICE_UNIT" ? "1." : "2."} Kết quả Kiểm nghiệm các Chỉ tiêu theo Tiêu chuẩn ({t.spec_code} — {t.spec_name})
             </div>
             {t.status !== "REVIEWED" && t.status !== "CANCELLED" && specs.length > 0 && (
               <div className="flex items-center gap-1.5 text-xs">
@@ -558,17 +566,27 @@ function QcDetailPanel({
                 <tr key={p.id}>
                   <td className="py-2 pr-3">{p.seq}</td>
                   <td className="py-2 pr-3">{p.name}{p.is_critical && <span className="text-rose-600"> *</span>}</td>
-                  <td className="py-2 pr-3">{p.method ?? "—"}</td>
-                  <td className="py-2 pr-3 whitespace-nowrap">{limits(p)} {p.unit ?? ""}</td>
+                  <td className="py-2 pr-3">{p.method ? p.method.replace(/^phương\s*pháp\s*:\s*/i, "") : "—"}</td>
+                  <td className="py-2 pr-3 max-w-xs whitespace-pre-wrap">{limits(p)} {p.value_type === "NUMERIC" ? p.unit ?? "" : ""}</td>
                   <td className="py-2 pr-3 min-w-36">
                     {editable && fromSubject(p) ? (
                       <span className="text-[11px] text-slate-500">Tự lấy {DERIVED_HINT[p.derived_metric!]} từ hậu tổng hợp khi lưu</span>
                     ) : editable ? (
-                      p.value_type === "PASS_FAIL" ? (
-                        <select className={inputClass} value={values[p.id] ?? ""} onChange={(e) => setValues({ ...values, [p.id]: e.target.value })}>
-                          <option value="">—</option>
-                          <option value="PASS">Đạt</option>
-                          <option value="FAIL">Không đạt</option>
+                      p.value_type === "PASS_FAIL" || p.value_type === "TEXT" ? (
+                        <select
+                          className={inputClass}
+                          value={
+                            (values[p.id] ?? "").toUpperCase() === "ĐẠT"
+                              ? "PASS"
+                              : (values[p.id] ?? "").toUpperCase() === "KHÔNG ĐẠT"
+                                ? "FAIL"
+                                : values[p.id] ?? ""
+                          }
+                          onChange={(e) => setValues({ ...values, [p.id]: e.target.value })}
+                        >
+                          <option value="">— Chọn Đạt / Không đạt —</option>
+                          <option value="PASS">✓ Đạt</option>
+                          <option value="FAIL">✕ Không đạt</option>
                         </select>
                       ) : (
                         <input

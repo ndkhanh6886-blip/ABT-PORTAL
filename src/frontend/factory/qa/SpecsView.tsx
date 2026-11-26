@@ -425,7 +425,14 @@ function SpecEditor({ base, mode, onClose }: { base?: SpecDetail; mode: "new" | 
               <Field label="Đơn vị"><input className={inputClass} value={p.unit} onChange={(e) => setP(i, { unit: e.target.value })} /></Field>
               <Field label="Min"><input className={inputClass} inputMode="decimal" disabled={p.value_type !== "NUMERIC"} value={p.lower_limit} onChange={(e) => setP(i, { lower_limit: e.target.value })} /></Field>
               <Field label="Max"><input className={inputClass} inputMode="decimal" disabled={p.value_type !== "NUMERIC"} value={p.upper_limit} onChange={(e) => setP(i, { upper_limit: e.target.value })} /></Field>
-              <Field label="Mô tả đạt"><input className={inputClass} disabled={p.value_type !== "TEXT"} value={p.target} onChange={(e) => setP(i, { target: e.target.value })} /></Field>
+              <Field label="Yêu cầu kỹ thuật / Mô tả đạt">
+                <input
+                  className={inputClass}
+                  placeholder="VD: Cửa trượt kính cường lực 5mm..."
+                  value={p.target}
+                  onChange={(e) => setP(i, { target: e.target.value })}
+                />
+              </Field>
               <div className="flex items-center gap-2 pb-2">
                 <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={p.is_critical} onChange={(e) => setP(i, { is_critical: e.target.checked })} />Bắt buộc</label>
                 {params.length > 1 && <button type="button" className="text-rose-600 text-xs cursor-pointer" onClick={() => setParams(params.filter((_, j) => j !== i))}>Xóa</button>}
@@ -555,7 +562,15 @@ function SpecDetailPanel({
                 </td>
                 <td className="py-2 pr-3">{p.method || "—"}</td>
                 <td className="py-2 pr-3">
-                  {p.value_type === "NUMERIC" ? [p.lower_limit != null && `≥ ${Number(p.lower_limit)}`, p.upper_limit != null && `≤ ${Number(p.upper_limit)}`].filter(Boolean).join(", ") || "—" : p.value_type === "PASS_FAIL" ? "Đạt" : p.target || "—"} {p.unit}
+                  {p.value_type === "NUMERIC"
+                    ? [
+                        p.target || null,
+                        [p.lower_limit != null && `≥ ${Number(p.lower_limit)}`, p.upper_limit != null && `≤ ${Number(p.upper_limit)}`].filter(Boolean).join(", ") || null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ") || "—"
+                    : p.target || (p.value_type === "PASS_FAIL" ? "Đạt" : "—")}{" "}
+                  {p.unit}
                 </td>
                 <td className="py-2 pr-3">{p.is_critical ? "Có" : "Không"}</td>
               </tr>

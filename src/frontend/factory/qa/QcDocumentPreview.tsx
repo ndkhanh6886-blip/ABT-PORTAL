@@ -68,6 +68,7 @@ export function QcDocumentPreview({
   const resolvedDefaultLang: CoaExportLang = defaultLang ?? cfg.coa.default_lang ?? "BI";
 
   const [lang, setLang] = useState<CoaExportLang>(resolvedDefaultLang);
+  const [reportResultStyle, setReportResultStyle] = useState<"VI" | "EN">("VI");
   const [analystName, setAnalystName] = useState<string>("");
   const [managerName, setManagerName] = useState<string>("");
   const [templateKey, setTemplateKey] = useState<string>("");
@@ -86,6 +87,7 @@ export function QcDocumentPreview({
     ...(analystName ? { analyst_name: analystName } : {}),
     ...(managerName ? { manager_name: managerName } : {}),
     ...(templateKey ? { template_key: templateKey } : {}),
+    result_label_style: reportResultStyle,
   };
 
   const staffList = cfg.staff_signatures;
@@ -118,6 +120,30 @@ export function QcDocumentPreview({
                 onClick={() => setLang(item.id)}
                 className={`px-2.5 py-1 rounded-md text-xs font-semibold cursor-pointer transition-colors ${
                   lang === item.id
+                    ? "bg-teal-700 text-white shadow-xs"
+                    : "text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        )}
+        {kind === "QC_REPORT" && (
+          <div className="inline-flex rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-0.5 gap-0.5 items-center">
+            <span className="px-2 text-[11px] font-semibold text-slate-600 dark:text-slate-300">Định dạng cột Kết luận:</span>
+            {(
+              [
+                { id: "VI", label: "ĐẠT" },
+                { id: "EN", label: "PASS" },
+              ] as const
+            ).map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setReportResultStyle(item.id)}
+                className={`px-2.5 py-1 rounded-md text-xs font-bold cursor-pointer transition-colors ${
+                  reportResultStyle === item.id
                     ? "bg-teal-700 text-white shadow-xs"
                     : "text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
                 }`}
@@ -166,14 +192,27 @@ export function QcDocumentPreview({
             <select
               className={`${inputClass} !py-1 !text-xs w-44`}
               value={managerName}
-              onChange={(e) => setManagerName(e.target.value)}
+              onChange={(e) => {
+                const chosen = e.target.value;
+                const activeAnalyst = analystName || data?.test?.analyst_name || data?.analyst_name || "";
+                if (chosen && activeAnalyst && chosen.trim().toLowerCase() === activeAnalyst.trim().toLowerCase()) {
+                  window.alert("Người phê duyệt phải độc lập (khác) với Người kiểm nghiệm!");
+                  return;
+                }
+                setManagerName(chosen);
+              }}
             >
               <option value="">Mặc định ({cfg.default_manager_name})</option>
-              {staffList.map((s) => (
-                <option key={s.id} value={s.full_name}>
-                  {s.emp_code ? `${s.emp_code} — ` : ""}{s.full_name}
-                </option>
-              ))}
+              {staffList
+                .filter((s) => {
+                  const activeAnalyst = analystName || data?.test?.analyst_name || data?.analyst_name || "";
+                  return !activeAnalyst || s.full_name.trim().toLowerCase() !== activeAnalyst.trim().toLowerCase();
+                })
+                .map((s) => (
+                  <option key={s.id} value={s.full_name}>
+                    {s.emp_code ? `${s.emp_code} — ` : ""}{s.full_name}
+                  </option>
+                ))}
             </select>
           </label>
         </div>
@@ -298,15 +337,15 @@ export function QcDocumentPreview({
                     <td className="border border-slate-300 px-2 py-1.5 text-center">{r.seq}</td>
                     <td className="border border-slate-300 px-2 py-1.5 font-bold">{r.name}</td>
                     <td className="border border-slate-300 px-2 py-1.5">
-                      <div><b>Phương pháp:</b> {r.method}</div>
+                      <div>{r.method}</div>
                       {r.equipment && (
                         <div className="text-blue-700 mt-0.5"><b>Thiết bị:</b> {r.equipment}</div>
                       )}
                     </td>
-                    <td className="border border-slate-300 px-2 py-1.5">{r.spec}</td>
+                    <td className="border border-slate-300 px-2 py-1.5 whitespace-pre-line">{r.spec}</td>
                     <td className="border border-slate-300 px-2 py-1.5 text-center font-bold">{r.actual}</td>
                     <td className={`border border-slate-300 px-2 py-1.5 text-center font-extrabold whitespace-nowrap ${r.passed === false ? "text-red-700" : "text-emerald-700"}`}>
-                      {r.passed === false ? "KHÔNG ĐẠT (FAIL)" : r.passed === true ? "ĐẠT (PASS)" : "—"}
+                      {r.resultText}
                     </td>
                   </tr>
                 ))
