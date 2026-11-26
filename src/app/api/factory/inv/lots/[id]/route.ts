@@ -265,6 +265,59 @@ export const PATCH = factoryRoute(async (tx, { actor, params, body }) => {
     ),
   });
 
+  // If the lot is now RELEASED, automatically transfer any balance still sitting in a quarantine location (BT) onto active shelf (A1)
+  if (nextStatus === "RELEASED") {
+    const qBals = (
+      await tx.query(
+        `SELECT b.location_id, b.qty_on_hand::float AS q, loc.warehouse_id
+           FROM inv.stock_balance b
+           JOIN master.location loc ON loc.id = b.location_id
+          WHERE b.lot_id = $1 AND b.qty_on_hand > 0 AND loc.is_quarantine = true`,
+        [lotBefore.id]
+      )
+    ).rows;
+    for (const qb of qBals) {
+      const shelfLoc = (
+        await tx.query(
+          "SELECT id FROM master.location WHERE warehouse_id = $1 AND status = 'ACTIVE' AND NOT is_quarantine ORDER BY CASE WHEN code = 'A1' THEN 0 ELSE 1 END, code LIMIT 1",
+          [qb.warehouse_id]
+        )
+      ).rows[0];
+      if (shelfLoc && qb.q > 0) {
+        const putDoc = await createStockDocument(
+          tx,
+          actor,
+          {
+            doc_type: "TRANSFER",
+            reason_code: "PUTAWAY",
+            warehouse_id: qb.warehouse_id,
+            source_entity_type: "LOT",
+            source_entity_id: lotBefore.id,
+            notes: `Tự động chuyển lô ${nextCode} từ vị trí biệt trữ lên kệ thường sau khi giải phóng`,
+            lines: [
+              {
+                item_id: lotBefore.item_id,
+                lot_id: lotBefore.id,
+                from_location_id: qb.location_id,
+                to_location_id: shelfLoc.id,
+                qty: qb.q,
+                uom: nextBaseUom,
+              },
+            ],
+          },
+          { trusted: true }
+        );
+        await runTransition(
+          tx,
+          stockDocumentMachine,
+          actor,
+          { id: putDoc.id, action: "post", expectedVersion: putDoc.version },
+          { trusted: true }
+        );
+      }
+    }
+  }
+
   return { ok: true, id: lotBefore.id, code: nextCode, status: nextStatus };
 });
 

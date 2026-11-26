@@ -4,7 +4,7 @@ import { closeFactoryPool, getFactoryPool, withTransaction } from "../../core/db
 import { makeItem, makeSite, stockedLot } from "../../inv/__tests__/fixtures";
 import { executeExcelBatchImport } from "../../import/excelImport";
 import { cancelPrepOrder, createPrepOrder, listPrepOrders } from "../orders";
-import { cancelPreparation, deleteFormula, listFormulas, listPreparations, prepOptions, prepare, saveFormula } from "../service";
+import { cancelPreparation, confirmPreparationQc, deleteFormula, listFormulas, listPreparations, prepOptions, prepare, saveFormula } from "../service";
 import { ensureLegacyOligoDataSeeded } from "../../oligo/legacySync";
 import "../../modules";
 
@@ -307,5 +307,92 @@ describe("reagent preparation", () => {
     expect(rdAfterExcel.some((f: any) => f.code === xlCode && f.dept_scope === "RD")).toBe(true);
     const oligoAfterExcel = await withTransaction((tx) => listFormulas(tx, rootAdmin, "OLIGO"));
     expect(oligoAfterExcel.some((f: any) => f.code === xlCode)).toBe(false);
+  });
+
+  it("can prepare a child formula (STO021) using a parent formula's prepared lot (STO022) after QC pass or when duplicate output item codes exist", async () => {
+    const suffix = rnd();
+    const site = await makeSite();
+    const lead = await createUser("Trưởng phòng pha chế");
+    await grant(lead, ["prep.formula.manage", "prep.execute", "inv.stock.view", "master.item.manage"], site.dept);
+
+    const sc13 = await makeItem(site, { code: `SC13-${suffix}`, name: "Copper (II) sulfate", base_uom: "g" });
+    const lc22 = await makeItem(site, { code: `LC22-${suffix}`, name: "DMSO", base_uom: "mL" });
+    const sto015 = await makeItem(site, { code: `STO015-${suffix}`, name: "TEAA 2.0M", base_uom: "mL" });
+    await stockedLot(site, sc13.id, 10, "2028-01-01", { uom: "g" });
+    await stockedLot(site, lc22.id, 1000, "2028-01-01", { uom: "mL" });
+    await stockedLot(site, sto015.id, 100, "2028-01-01", { uom: "mL" });
+
+    // Simulate STO022 having been imported with output item PREP-STO022 while STO021 references ingredient item STO022
+    const sto022IngItem = await makeItem(site, { code: `STO022-${suffix}`, name: "10 mM Copper (II)-TBTA Stock", base_uom: "mL" });
+    const sto022OutItem = await makeItem(site, { code: `PREP-STO022-${suffix}`, name: "10 mM Copper (II)-TBTA Stock", base_uom: "mL" });
+    const sto021OutItem = await makeItem(site, { code: `STO021-${suffix}`, name: "Buffer Click Chemistry", base_uom: "mL" });
+
+    const fSto022 = await withTransaction(async (tx) => {
+      const f = await saveFormula(tx, lead, null, {
+        code: `STO022-${suffix}`,
+        name: "10 mM Copper (II)-TBTA Stock in 55% DMSO",
+        output_item_id: sto022OutItem.id,
+        basis_qty: 100,
+        basis_uom: "mL",
+        requires_qc: true,
+        lines: [
+          { item_id: sc13.id, qty: 0.25, uom: "g" },
+          { item_id: lc22.id, qty: 55, uom: "mL" },
+        ],
+      });
+      // Force output_item_id to sto022OutItem to mimic legacy Excel import divergence
+      await tx.query("UPDATE prep.formula SET output_item_id = $2 WHERE id = $1", [f.id, sto022OutItem.id]);
+      return f;
+    });
+
+    const fSto021 = await withTransaction(async (tx) => {
+      const f = await saveFormula(tx, lead, null, {
+        code: `STO021-${suffix}`,
+        name: "Buffer Click Chemistry",
+        output_item_id: sto021OutItem.id,
+        basis_qty: 100,
+        basis_uom: "mL",
+        requires_qc: true,
+        lines: [
+          { item_id: sto022IngItem.id, qty: 15, uom: "mL" },
+          { item_id: sto015.id, qty: 7.5, uom: "mL" },
+          { item_id: lc22.id, qty: 77.5, uom: "mL" },
+        ],
+      });
+      await tx.query("UPDATE prep.formula_line SET item_id = $2 WHERE formula_id = $1 AND line_no = 1", [f.id, sto022IngItem.id]);
+      return f;
+    });
+
+    // 1. Prepare 100 mL of STO022 (requires_qc = true -> lands in quarantine)
+    const prep022 = await withTransaction((tx) =>
+      prepare(tx, lead, {
+        formula_id: fSto022.id,
+        qty: 100,
+        uom: "mL",
+        warehouse_id: site.warehouse,
+      })
+    );
+    expect(prep022.qc_needed).toBe(true);
+
+    // 2. Confirm QC PASS on STO022
+    const qcRes = await withTransaction((tx) =>
+      confirmPreparationQc(tx, lead, prep022.id, { result: "PASS", notes: "Đạt kiểm tra QC nội bộ sau pha chế" })
+    );
+    expect(qcRes.lot_status).toBe("RELEASED");
+
+    // Even if a lot was somehow marked RELEASED while still sitting in quarantine location, preparing STO021 auto-heals and succeeds
+    await db().query("UPDATE inv.stock_balance SET location_id = $2 WHERE lot_id = $1", [prep022.lot_id, site.quarantine]);
+
+    // 3. Now prepare 100 mL of STO021 (needs 15 mL of STO022) -> must find the 100 mL lot of STO022 and consume 15 mL
+    const prep021 = await withTransaction((tx) =>
+      prepare(tx, lead, {
+        formula_id: fSto021.id,
+        qty: 100,
+        uom: "mL",
+        warehouse_id: site.warehouse,
+      })
+    );
+    expect(prep021.lot_code).toMatch(/^P\d{4}\d{3}$/);
+    expect(await onHand(prep022.lot_id)).toBeCloseTo(85, 6);
   });
 });

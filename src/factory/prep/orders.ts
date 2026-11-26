@@ -11,7 +11,7 @@ import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import { lotMachine } from "../inv/lots";
 import { releaseDemandReservations, reserve } from "../inv/reservations";
 import { getItem, toBaseQty } from "../master/service";
-import { getFormula, normalizePrepDeptScope, prepare } from "./service";
+import { getFormula, normalizeFormulaOutputItems, normalizePrepDeptScope, prepare } from "./service";
 
 const DEMAND = "PREPARATION" as const;
 const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
@@ -31,6 +31,7 @@ const orderSchema = z.object({
  * reserved at once (FEFO, released and unexpired), so nothing else takes them before the preparation.
  */
 export async function createPrepOrder(tx: Tx, actor: AuthzActor, input: unknown) {
+  await normalizeFormulaOutputItems(tx);
   const d = parseInput(orderSchema, input);
   const wh = (
     await tx.query(

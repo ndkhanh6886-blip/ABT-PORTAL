@@ -263,6 +263,31 @@ export async function normalizeFormulaOutputItems(tx: Tx): Promise<void> {
     await tx.query("ROLLBACK TO SAVEPOINT sp_sync_formula_item_names").catch(() => {});
   }
 
+  // Always synchronize any prep.formula_line whose ingredient code matches another formula's code (or PREP-<code>, <code>-OUT, <code>-TP)
+  // so that preparing a parent formula (e.g. STO022) makes its stock immediately allocatable to child formulas (e.g. STO021).
+  await tx.query("SAVEPOINT sp_sync_formula_line_items");
+  try {
+    await tx.query(
+      `UPDATE prep.formula_line fl
+          SET item_id = f.output_item_id
+         FROM master.item li,
+              prep.formula f
+        WHERE fl.item_id = li.id
+          AND fl.formula_id <> f.id
+          AND fl.item_id <> f.output_item_id
+          AND f.status = 'ACTIVE'
+          AND (
+            upper(li.code) = upper(f.code)
+            OR upper(li.code) = upper('PREP-' || f.code)
+            OR upper(li.code) = upper(f.code || '-OUT')
+            OR upper(li.code) = upper(f.code || '-TP')
+          )`
+    );
+    await tx.query("RELEASE SAVEPOINT sp_sync_formula_line_items");
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_sync_formula_line_items").catch(() => {});
+  }
+
   if (unifiedOutItemsNormalized) return;
   const rows = (
     await tx.query(
@@ -270,7 +295,20 @@ export async function normalizeFormulaOutputItems(tx: Tx): Promise<void> {
               f.output_item_id, i.code AS out_code, i.name AS out_name, i.base_uom AS out_uom
          FROM prep.formula f
          JOIN master.item i ON i.id = f.output_item_id
-        WHERE upper(i.code) = upper(f.code || '-OUT')`
+        WHERE upper(i.code) IN (
+                upper(f.code || '-OUT'),
+                upper('PREP-' || f.code),
+                upper(f.code || '-TP')
+              )
+           OR (
+                upper(i.code) <> upper(f.code)
+                AND EXISTS (
+                  SELECT 1
+                    FROM prep.formula_line fl
+                    JOIN master.item li ON li.id = fl.item_id
+                   WHERE upper(li.code) = upper(f.code)
+                )
+              )`
     )
   ).rows;
 
@@ -332,6 +370,7 @@ export async function normalizeFormulaOutputItems(tx: Tx): Promise<void> {
         );
 
         await tx.query("UPDATE prep.formula SET output_item_id = $2 WHERE output_item_id = $1", [outItemId, targetId]);
+        await tx.query("UPDATE prep.formula_line SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
         await tx.query("UPDATE oligo.reagent_rule SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
         await tx.query("UPDATE oligo.synth_port SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
         await tx.query("UPDATE oligo.batch_port_use SET item_id = $2 WHERE item_id = $1", [outItemId, targetId]);
@@ -507,6 +546,7 @@ const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
  * stays in quarantine for QA/QC; without, it is released on a normal location at once.
  */
 export async function prepare(tx: Tx, actor: AuthzActor, input: unknown) {
+  await normalizeFormulaOutputItems(tx);
   const d = parseInput(prepareSchema, input);
   const wh = (
     await tx.query(
@@ -534,17 +574,87 @@ export async function prepare(tx: Tx, actor: AuthzActor, input: unknown) {
   const basisBase = await toBaseQty(tx, outItem, Number(f.basis_qty), f.basis_uom);
   const factor = outBase / basisBase;
 
+  // Include all active warehouses sharing the same department owner or purpose (preferring the selected warehouse first)
+  const candidateWhIds = (
+    await tx.query(
+      `SELECT id FROM master.warehouse
+        WHERE status = 'ACTIVE'
+          AND (id = $1 OR owner_org_unit_id = $2 OR ($3::text IS NOT NULL AND purpose = $3))
+        ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END, code`,
+      [wh.id, wh.owner_org_unit_id, whDept]
+    )
+  ).rows.map((r) => r.id as string);
+  const searchWhIds = candidateWhIds.length > 0 ? candidateWhIds : [wh.id];
+
   const used: { line_no: number; item_id: string; item_code: string; lot_id: string | null; lot_code: string | null; qty_base: number; uom: string; expiry_date: string | null }[] = [];
-  const issueLines = [];
+  const issueLines: { item_id: string; lot_id: string | null; from_location_id: string; qty: number; uom: string }[] = [];
   for (const l of f.lines) {
-    const item = await getItem(tx, l.item_id);
-    const need = round6((await toBaseQty(tx, item, Number(l.qty), l.uom)) * factor);
-    let cands = await findCandidates(tx, item.id, [wh.id], { lock: true });
+    let item = await getItem(tx, l.item_id);
+    let need = round6((await toBaseQty(tx, item, Number(l.qty), l.uom)) * factor);
+    let cands = await findCandidates(tx, item.id, searchWhIds, { lock: true });
     const chosen = d.lots.find((x) => x.line_no === l.line_no);
     if (chosen) cands = cands.filter((c) => c.lot_id === chosen.lot_id);
-    const plan = allocate(cands, need);
+    let plan = allocate(cands, need);
+
+    // Fallback: if this ingredient corresponds to a formula (e.g. STO022) whose output_item_id or alternate master.item has the stock
+    if (plan.shortfall > 1e-9 && !chosen) {
+      const altItems = (
+        await tx.query(
+          `SELECT DISTINCT i.id
+             FROM master.item i
+            WHERE i.id <> $1
+              AND (
+                upper(i.code) IN (
+                  upper($2),
+                  upper('PREP-' || $2),
+                  upper($2 || '-OUT'),
+                  upper($2 || '-TP')
+                )
+                OR i.id IN (
+                  SELECT pf.output_item_id
+                    FROM prep.formula pf
+                   WHERE upper(pf.code) = upper($2)
+                )
+              )`,
+          [item.id, item.code]
+        )
+      ).rows;
+      for (const alt of altItems) {
+        const altItem = await getItem(tx, alt.id);
+        const altNeed = round6((await toBaseQty(tx, altItem, Number(l.qty), l.uom)) * factor);
+        const altCands = await findCandidates(tx, altItem.id, searchWhIds, { lock: true });
+        const altPlan = allocate(altCands, altNeed);
+        if (altPlan.shortfall < plan.shortfall) {
+          item = altItem;
+          need = altNeed;
+          cands = altCands;
+          plan = altPlan;
+          if (plan.shortfall <= 1e-9) break;
+        }
+      }
+    }
+
     if (plan.shortfall > 1e-9) {
-      throw invalid(`Không đủ ${item.code} ${chosen ? "trong lô đã chọn" : "đã giải phóng, còn hạn"} (cần ${need} ${item.base_uom}, thiếu ${plan.shortfall}).`, { line_no: l.line_no }, "INSUFFICIENT_STOCK");
+      const quarantinedRow = (
+        await tx.query(
+          `SELECT coalesce(sum(b.qty_on_hand - b.qty_reserved), 0)::float AS q_qty, count(DISTINCT b.lot_id)::int AS q_lots
+             FROM inv.stock_balance b
+             JOIN inv.lot lot ON lot.id = b.lot_id
+             JOIN master.location loc ON loc.id = b.location_id
+            WHERE b.item_id = $1
+              AND loc.warehouse_id = ANY($2::uuid[])
+              AND b.qty_on_hand - b.qty_reserved > 0
+              AND (loc.is_quarantine OR lot.status IN ('QUARANTINE', 'PENDING_QC', 'ON_HOLD'))`,
+          [item.id, searchWhIds]
+        )
+      ).rows[0];
+      const qQty = Number(quarantinedRow?.q_qty ?? 0);
+      const qLots = Number(quarantinedRow?.q_lots ?? 0);
+      const qHint =
+        qQty > 0
+          ? ` (Phát hiện đang có ${round6(qQty)} ${item.base_uom} thuộc ${qLots} lô đang ở trạng thái Biệt trữ / Chờ QC — vui lòng bấm "✅ Xác nhận QC" hoặc "✅ Duyệt Đạt QC tất cả" ở bảng Nhật ký pha chế bên dưới để giải phóng lô).`
+          : "";
+      throw invalid(`Không đủ ${item.code} ${chosen ? "trong lô đã chọn" : "đã giải phóng, còn hạn"} (cần ${need} ${item.base_uom}, thiếu ${plan.shortfall}).${qHint}`, { line_no: l.line_no }, "INSUFFICIENT_STOCK");
     }
     for (const p of plan.picks) {
       issueLines.push({ item_id: item.id, lot_id: p.candidate.lot_id, from_location_id: p.candidate.location_id, qty: p.qty, uom: item.base_uom });
@@ -588,7 +698,18 @@ export async function prepare(tx: Tx, actor: AuthzActor, input: unknown) {
     )
   ).rows[0];
   await tx.query("UPDATE inv.lot SET origin_entity_id = $2 WHERE id = $1", [lot.id, prep.id]);
-  const issueId = await post({ doc_type: "ISSUE", reason_code: "PREPARATION", warehouse_id: wh.id, source_entity_type: "PREPARATION", source_entity_id: prep.id, lines: issueLines });
+  const issueLinesByWh = new Map<string, typeof issueLines>();
+  for (const il of issueLines) {
+    const locWh = (await tx.query("SELECT warehouse_id FROM master.location WHERE id = $1", [il.from_location_id])).rows[0]?.warehouse_id ?? wh.id;
+    const list = issueLinesByWh.get(locWh) ?? [];
+    list.push(il);
+    issueLinesByWh.set(locWh, list);
+  }
+  let issueId: string | null = null;
+  for (const [issueWhId, linesForWh] of issueLinesByWh.entries()) {
+    const postedId = await post({ doc_type: "ISSUE", reason_code: "PREPARATION", warehouse_id: issueWhId, source_entity_type: "PREPARATION", source_entity_id: prep.id, lines: linesForWh });
+    if (!issueId || issueWhId === wh.id) issueId = postedId;
+  }
   // no QC: released before it is booked onto a normal location (a quarantined lot may only sit in quarantine)
   if (!hold) {
     const cur = (await tx.query("SELECT version FROM inv.lot WHERE id = $1", [lot.id])).rows[0];

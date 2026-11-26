@@ -88,6 +88,60 @@ export async function findCandidates(
         AND (c.status = 'EXPIRED' OR (c.open_expiry_date IS NOT NULL AND c.open_expiry_date < $2::date))`,
     [itemId, today]
   );
+  // Auto-heal: if a lot is already RELEASED (e.g. QC passed on preparation or lot screen)
+  // but its stock_balance row is still sitting in a quarantine location (loc.is_quarantine = true),
+  // move that balance onto the warehouse's active non-quarantine shelf (A1) so FEFO allocation can use it.
+  const strandedRows = (
+    await tx.query(
+      `SELECT b.id AS q_bal_id,
+              b.item_id,
+              b.lot_id,
+              b.container_id,
+              b.location_id AS q_loc_id,
+              b.qty_on_hand::text AS q_on_hand,
+              b.qty_reserved::text AS q_reserved,
+              loc.warehouse_id,
+              (
+                SELECT s.id
+                  FROM master.location s
+                 WHERE s.warehouse_id = loc.warehouse_id
+                   AND s.status = 'ACTIVE'
+                   AND NOT s.is_quarantine
+                 ORDER BY CASE WHEN s.code = 'A1' THEN 0 ELSE 1 END, s.code
+                 LIMIT 1
+              ) AS target_loc_id
+         FROM inv.stock_balance b
+         JOIN master.location loc ON loc.id = b.location_id AND loc.is_quarantine AND loc.status = 'ACTIVE'
+         JOIN inv.lot l ON l.id = b.lot_id AND l.status = 'RELEASED'
+        WHERE b.item_id = $1
+          AND loc.warehouse_id = ANY($2::uuid[])
+          AND b.qty_on_hand > 0
+          AND (l.expiry_date IS NULL OR l.expiry_date >= $3)
+        FOR UPDATE OF b`,
+      [itemId, warehouseIds, today]
+    )
+  ).rows;
+
+  for (const sr of strandedRows) {
+    if (!sr.target_loc_id) continue;
+    await tx.query(
+      `INSERT INTO inv.stock_balance (item_id, lot_id, container_id, location_id, qty_on_hand, qty_reserved)
+       VALUES ($1, $2, $3, $4, $5::numeric, $6::numeric)
+       ON CONFLICT (item_id, lot_id, container_id, location_id) DO UPDATE
+         SET qty_on_hand = inv.stock_balance.qty_on_hand + EXCLUDED.qty_on_hand,
+             qty_reserved = inv.stock_balance.qty_reserved + EXCLUDED.qty_reserved,
+             updated_at = now()`,
+      [sr.item_id, sr.lot_id, sr.container_id, sr.target_loc_id, sr.q_on_hand, sr.q_reserved]
+    );
+    await tx.query(
+      "UPDATE inv.stock_balance SET qty_on_hand = 0, qty_reserved = 0, updated_at = now() WHERE id = $1",
+      [sr.q_bal_id]
+    );
+    await tx.query(
+      "UPDATE prep.preparation SET to_location_id = $2 WHERE lot_id = $1 AND (to_location_id IS NULL OR to_location_id = $3)",
+      [sr.lot_id, sr.target_loc_id, sr.q_loc_id]
+    );
+  }
   const res = await tx.query(
     `SELECT b.id AS balance_id, b.item_id, b.lot_id, l.code AS lot_code, b.container_id, b.location_id,
             (b.qty_on_hand - b.qty_reserved)::text AS available,
