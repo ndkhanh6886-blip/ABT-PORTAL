@@ -4,14 +4,19 @@
  * recipients (the department that must act), the matrix can switch the event off or add recipient groups.
  */
 
-/** Recipient groups of the technical block: everyone holding the permission in any department. */
-export const TECHNICAL_MATRIX_ROLES: { code: string; label: string; short: string; permission: string }[] = [
-  { code: "factory_rd", label: "Phòng Nghiên cứu R&D (Khối Kỹ thuật)", short: "R&D", permission: "rd.view" },
-  { code: "factory_kit", label: "Phòng Sản xuất Kit (Khối Kỹ thuật)", short: "SX Kit", permission: "kit.view" },
-  { code: "factory_oligo", label: "Phòng Tổng hợp Oligo (Khối Kỹ thuật)", short: "Oligo", permission: "oligo.view" },
-  { code: "factory_device", label: "Phòng Kỹ thuật – Thiết bị (Khối Kỹ thuật)", short: "KT–Thiết bị", permission: "device.view" },
-  { code: "factory_qa", label: "Phòng QA/QC Nhà máy (Khối Kỹ thuật)", short: "QA/QC NM", permission: "qms.qc.view" },
-  { code: "factory_wh", label: "Kho Nhà máy – Vật tư & Thành phẩm SX (Khối Kỹ thuật)", short: "Kho Nhà Máy", permission: "inv.stock.view" },
+/**
+ * Recipient groups of the technical block: holders of the permission inside the group's own department
+ * (`orgUnitCode`, its teams, or company-wide). Without `orgUnitCode`: holders in any department.
+ * Read permissions such as qms.qc.view are also held by other heads (Oligo, Thiết bị, R&D) to see their own
+ * QC results — they are not members of the QA/QC group and must not receive its notices.
+ */
+export const TECHNICAL_MATRIX_ROLES: { code: string; label: string; short: string; permission: string; orgUnitCode?: string }[] = [
+  { code: "factory_rd", label: "Phòng Nghiên cứu R&D (Khối Kỹ thuật)", short: "R&D", permission: "rd.view", orgUnitCode: "P-RD" },
+  { code: "factory_kit", label: "Phòng Sản xuất Kit (Khối Kỹ thuật)", short: "SX Kit", permission: "kit.view", orgUnitCode: "P-KIT" },
+  { code: "factory_oligo", label: "Phòng Tổng hợp Oligo (Khối Kỹ thuật)", short: "Oligo", permission: "oligo.view", orgUnitCode: "P-OLIGO" },
+  { code: "factory_device", label: "Phòng Kỹ thuật – Thiết bị (Khối Kỹ thuật)", short: "KT–Thiết bị", permission: "device.view", orgUnitCode: "P-DEVICE" },
+  { code: "factory_qa", label: "Phòng QA/QC Nhà máy (Khối Kỹ thuật)", short: "QA/QC NM", permission: "qms.qc.view", orgUnitCode: "P-QA" },
+  { code: "factory_wh", label: "Kho Nhà máy – Vật tư & Thành phẩm SX (Khối Kỹ thuật)", short: "Kho Nhà Máy", permission: "inv.stock.view", orgUnitCode: "P-KHO" },
   { code: "factory_purchase", label: "Cung ứng & Mua hàng Nhà máy – NVL/Hóa chất SX (Khối Kỹ thuật)", short: "Cung Ứng KT", permission: "purchase.po.view" },
   { code: "factory_intake", label: "Điều phối Đơn Nội Bộ (Khối Kỹ thuật)", short: "Đơn Nội Bộ", permission: "intake.order.accept" },
 ];

@@ -1055,7 +1055,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                     // Cung Ứng & Mua Hàng Nhà Máy (Khối Kỹ Thuật)
                     if (isFactoryProcurementDept || ((deptLower.includes("cung ứng") || deptLower.includes("mua hàng")) && (deptLower.includes("nhà máy") || deptLower.includes("kỹ thuật") || deptLower.includes("nvl"))) || uRoleLower.includes("factory_purchase")) return true;
                 } else if (rLower === "factory_intake") {
-                    if (deptLower.includes("đơn nội bộ") || deptLower.includes("điều phối") || deptLower.includes("sản xuất kit") || deptLower.includes("oligo") || deptLower.includes("thiết bị")) return true;
+                    if (deptLower.includes("đơn nội bộ") || deptLower.includes("điều phối")) return true;
                 }
             }
             return false;
@@ -1138,6 +1138,16 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
 
                 if (isExplicitlyInMatrixEmployees) return true;
 
+                // Nếu thông báo từ Hệ thống Nhà máy (FN- / Khối Kỹ thuật) đã có targetRoles từ Ma trận mà phòng ban của người xem không khớp bất kỳ role nào,
+                // đồng thời tên người xem không xuất hiện trực tiếp trong nội dung thông báo -> loại bỏ các thông báo cũ từng gán nhầm targetEmployeeNames sang phòng khác.
+                const textBlob = `${n.title || ""} ${n.message || ""} ${n.description || ""} ${n.metadata ? JSON.stringify(n.metadata) : ""}`.toLowerCase();
+                const isMentionedInText = nameTokens.some(tok => textBlob.includes(`@${tok}`) || (tok.length >= 3 && textBlob.includes(tok)));
+                if (isTechnicalSystemNotice && !isViewerAdminOrDirector && !isExplicitlyInMatrixEmployees && !isMentionedInText) {
+                    if (effectiveMatrixRoles.length > 0 && !matchRoleAgainstPerson(effectiveMatrixRoles, effectiveDept, effectivePos, uRole, uName)) {
+                        return false;
+                    }
+                }
+
                 // 1. Direct employee ID match
                 if (Array.isArray(n.targetEmployeeIds) && n.targetEmployeeIds.some(id => {
                     const idLower = String(id || "").toLowerCase();
@@ -1168,8 +1178,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                 )) return true;
 
                 // 4. @mention or name/department in title, message, description, metadata
-                const textBlob = `${n.title || ""} ${n.message || ""} ${n.description || ""} ${n.metadata ? JSON.stringify(n.metadata) : ""}`.toLowerCase();
-                if (nameTokens.some(tok => textBlob.includes(`@${tok}`) || (tok.length >= 3 && textBlob.includes(tok)))) {
+                if (isMentionedInText) {
                     return true;
                 }
                 if (effectiveDept && effectiveDept.length >= 3 && (textBlob.includes(`@${effectiveDept}`) || textBlob.includes(`phòng ${effectiveDept}`) || textBlob.includes(`[${effectiveDept}]`))) {

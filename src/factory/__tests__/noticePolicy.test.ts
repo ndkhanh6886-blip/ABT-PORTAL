@@ -32,4 +32,31 @@ describe("factory notices follow the portal notification matrix", () => {
     await withTransaction((tx) => notifyUsers(tx, [qa.userId], { type: "QMS_DEVIATION", title: "Sai lệch", sourceKey: fallback }));
     expect(await received(qa.userId, fallback)).toBe(1);
   });
+
+  it("a department group only reaches holders inside that department (or company-wide), not other heads with the same read permission", async () => {
+    const qaDept = await createOrgUnit("QA");
+    const qaTeam = await createOrgUnit("QA-TEAM", qaDept);
+    const oligoDept = await createOrgUnit("OLIGO");
+    const qaCode = (await getFactoryPool().query("SELECT code FROM core.org_unit WHERE id = $1", [qaDept])).rows[0].code as string;
+
+    const qaStaff = await createUser("QC trong phòng QA");
+    await grant(qaStaff, ["qms.qc.view"], qaTeam);
+    const oligoHead = await createUser("Trưởng phòng Oligo");
+    await grant(oligoHead, ["qms.qc.view", "oligo.view"], oligoDept);
+    const bod = await createUser("Ban Giám đốc");
+    await grant(bod, ["qms.qc.view"], null);
+
+    setNoticePolicy({ ruleFor: async () => ({ enabled: true, permissions: [], userIds: [], groups: [{ permission: "qms.qc.view", orgUnitCode: qaCode }] }) });
+    const key = `test_dept_${Date.now()}`;
+    await withTransaction((tx) => notifyUsers(tx, [], { type: "KIT_IPC_GATE_REQUEST", title: "IPQC", sourceKey: key }));
+    expect(await received(qaStaff.userId, key)).toBe(1);
+    expect(await received(bod.userId, key)).toBe(1);
+    expect(await received(oligoHead.userId, key)).toBe(0);
+
+    // a group without a department keeps reaching holders anywhere
+    setNoticePolicy({ ruleFor: async () => ({ enabled: true, permissions: [], userIds: [], groups: [{ permission: "qms.qc.view" }] }) });
+    const anyKey = `test_any_${Date.now()}`;
+    await withTransaction((tx) => notifyUsers(tx, [], { type: "KIT_IPC_GATE_REQUEST", title: "IPQC", sourceKey: anyKey }));
+    expect(await received(oligoHead.userId, anyKey)).toBe(1);
+  });
 });

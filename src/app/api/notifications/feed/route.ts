@@ -4,7 +4,7 @@ import { query, withTransaction } from "@/backend/db/db";
 import { getAuthorizedUser, isAdminUser, setAuditActor, unauthorizedResponse } from "@/backend/services/authz";
 import { getFactoryPool, withTransaction as withFactoryTx } from "@/factory/core/db";
 import { markRead as markFactoryNotificationsRead } from "@/factory/core/notifications";
-import { FACTORY_NOTICE_EVENTS, factoryNoticeKey } from "@/factory/noticeMatrix";
+import { FACTORY_NOTICE_EVENTS, factoryNoticeKey, TECHNICAL_MATRIX_ROLES } from "@/factory/noticeMatrix";
 
 export const dynamic = "force-dynamic";
 
@@ -224,9 +224,11 @@ export async function GET(req: NextRequest) {
             return await pool.query(
               `SELECT DISTINCT ON (COALESCE(n.source_key, n.type || ':' || n.title || ':' || COALESCE(n.entity_id, n.id::text)))
                       n.id, n.user_id, n.type, n.title, n.body, n.entity_type, n.entity_id, n.link, n.source_key, n.read_at, n.created_at,
-                      up.display_name AS recipient_name
+                      up.display_name AS recipient_name,
+                      ou.code AS recipient_org_code
                  FROM core.notification n
                  LEFT JOIN core.user_profile up ON up.user_id = n.user_id
+                 LEFT JOIN core.org_unit ou ON ou.id = up.org_unit_id
                 ORDER BY COALESCE(n.source_key, n.type || ':' || n.title || ':' || COALESCE(n.entity_id, n.id::text)),
                          CASE WHEN n.user_id = $1 THEN 0 ELSE 1 END,
                          n.created_at DESC
@@ -236,9 +238,11 @@ export async function GET(req: NextRequest) {
           }
           return await pool.query(
             `SELECT n.id, n.user_id, n.type, n.title, n.body, n.entity_type, n.entity_id, n.link, n.source_key, n.read_at, n.created_at,
-                    up.display_name AS recipient_name
+                    up.display_name AS recipient_name,
+                    ou.code AS recipient_org_code
                FROM core.notification n
                LEFT JOIN core.user_profile up ON up.user_id = n.user_id
+               LEFT JOIN core.org_unit ou ON ou.id = up.org_unit_id
               WHERE n.user_id = $1
               ORDER BY n.created_at DESC
               LIMIT 80`,
@@ -406,8 +410,37 @@ export async function GET(req: NextRequest) {
       const isReadOwn = Number(fn.user_id) === meId && Boolean(fn.read_at);
       const adminAllowedByMatrix = mRule.targetRoles.includes("admin") || mRule.targetRoles.includes("director");
       const recipientName = String(fn.recipient_name || "").trim();
+      const recipientOrgCode = String(fn.recipient_org_code || "").trim();
+
+      // Kiểm tra thông báo nhà máy có thực sự thuộc phòng ban / vai trò được nhận của người nhận không
+      // (Loại bỏ các thông báo cũ trong core.notification từng gửi nhầm sang phòng khác do dùng chung quyền xem như qms.qc.view)
+      const textCombined = `${fn.title || ""} ${fn.body || ""}`.toLowerCase();
+      const isDirectlyNamedInText =
+        Boolean(recipientName) &&
+        (textCombined.includes(recipientName.toLowerCase()) ||
+          mRule.targetEmployeeNames.some((nm) => nm.toLowerCase() === recipientName.toLowerCase()));
+      const allowedDeptOrgCodes = new Set(
+        TECHNICAL_MATRIX_ROLES.filter((r) => mRule.targetRoles.includes(r.code) && r.orgUnitCode).map((r) => r.orgUnitCode!)
+      );
+      const hasUnscopedMatrixRole = mRule.targetRoles.some((rc) => {
+        if (rc === "admin" || rc === "director") return admin;
+        const techRole = TECHNICAL_MATRIX_ROLES.find((r) => r.code === rc);
+        return techRole ? !techRole.orgUnitCode : true;
+      });
+      const isRecipientInAllowedDept =
+        !recipientOrgCode ||
+        allowedDeptOrgCodes.size === 0 ||
+        allowedDeptOrgCodes.has(recipientOrgCode) ||
+        hasUnscopedMatrixRole ||
+        isDirectlyNamedInText;
+
+      if (!admin && !isRecipientInAllowedDept) {
+        continue;
+      }
+
       const includeRecipientAsPersonalTarget =
         Boolean(recipientName) &&
+        isRecipientInAllowedDept &&
         (Number(fn.user_id) !== meId || !admin || adminAllowedByMatrix || mRule.targetEmployeeNames.includes(recipientName));
       const targetEmpNames = Array.from(
         new Set([
