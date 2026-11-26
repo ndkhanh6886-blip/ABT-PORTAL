@@ -411,6 +411,28 @@ export async function getPostProcess(tx: Tx, actor: AuthzActor, seqId: string) {
       [seqId]
     )
   ).rows[0] ?? null;
+  if (record && Array.isArray(record.workflow_steps) && record.workflow_steps.length > 0) {
+    const methodIds = Array.from(
+      new Set(record.workflow_steps.map((st: any) => st?.method_id).filter(Boolean))
+    );
+    if (methodIds.length > 0) {
+      const liveMethods = (
+        await tx.query("SELECT id, category, name, kind, target_hours::float AS target_hours, fields FROM oligo.ps_method WHERE id = ANY($1::uuid[])", [methodIds])
+      ).rows;
+      const methodById = new Map<string, any>(liveMethods.map((m) => [String(m.id), m]));
+      record.workflow_steps = record.workflow_steps.map((st: any) => {
+        const liveM = st?.method_id ? methodById.get(String(st.method_id)) : undefined;
+        if (!liveM || !Array.isArray(liveM.fields)) return st;
+        return {
+          ...st,
+          category: liveM.category || st.category,
+          kind: liveM.kind || st.kind,
+          target_hours: liveM.target_hours ?? st.target_hours,
+          fields: liveM.fields,
+        };
+      });
+    }
+  }
   const qc_tests = (
     await tx.query("SELECT id, code, status, overall_result, created_at, reviewed_at FROM qms.qc_test WHERE entity_type = 'OLIGO_SEQUENCE' AND entity_id = $1 ORDER BY created_at", [seqId])
   ).rows;

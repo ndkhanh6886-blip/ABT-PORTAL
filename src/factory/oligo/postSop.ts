@@ -117,6 +117,34 @@ export async function saveMethod(tx: Tx, actor: AuthzActor, id: string | null, i
     "UPDATE oligo.ps_method SET category = $2, name = $3, kind = $4, target_hours = $5, fields = $6, status = $7, version = version + 1, updated_at = now(), updated_by = $8 WHERE id = $1",
     [id, data.category, data.name, data.kind, data.target_hours ?? null, JSON.stringify(data.fields), data.status, actor.userId]
   );
+  // Đồng bộ ngay các thông số mặc định mới (VD: default_asset_id, equipment_category, default_qty...) vào các bước chưa chạy của các hồ sơ hậu tổng hợp đang mở (OPEN)
+  const openRecs = (
+    await tx.query(
+      `SELECT id, workflow_steps
+         FROM oligo.post_process
+        WHERE status = 'OPEN'
+          AND workflow_steps IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM jsonb_array_elements(workflow_steps) s WHERE s->>'method_id' = $1
+          )`,
+      [id]
+    )
+  ).rows;
+  for (const r of openRecs) {
+    if (!Array.isArray(r.workflow_steps)) continue;
+    const nextSteps = r.workflow_steps.map((st: any) =>
+      st?.method_id === id
+        ? {
+            ...st,
+            category: data.category,
+            kind: data.kind,
+            target_hours: data.target_hours ?? null,
+            fields: data.fields,
+          }
+        : st
+    );
+    await tx.query("UPDATE oligo.post_process SET workflow_steps = $2::jsonb WHERE id = $1", [r.id, JSON.stringify(nextSteps)]);
+  }
   await writeAudit(tx, actor, {
     entityType: "oligo_ps_method",
     entityId: id,

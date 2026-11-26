@@ -121,6 +121,32 @@ export function StepLogForm({ step, sequenceIds, odReady, onDone }: { step: Froz
     )
   );
 
+  // Khi chuyển sang bước mới hoặc thông số bước được đồng bộ từ máy chủ, khởi tạo lại bộ lọc nhóm thiết bị và giá trị mặc định
+  const stepSignature = `${step.step_no}:${step.method_id}:${step.fields.map((f) => `${f.key}=${f.default_asset_id ?? ""}:${f.equipment_category ?? ""}:${f.default_qty ?? ""}`).join(",")}`;
+  useEffect(() => {
+    setGroupFilterByField(
+      Object.fromEntries(
+        step.fields
+          .filter((f) => f.type === "EQUIPMENT")
+          .map((f) => [f.key, f.equipment_category ?? ""])
+      )
+    );
+    setValues((prev) =>
+      Object.fromEntries(
+        step.fields.map((f) => [
+          f.key,
+          prev[f.key]
+            ? prev[f.key]
+            : f.type === "REAGENT" && f.default_qty != null
+              ? String(f.default_qty)
+              : f.type === "EQUIPMENT" && f.default_asset_id
+                ? String(f.default_asset_id)
+                : "",
+        ])
+      )
+    );
+  }, [stepSignature]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Tự động chọn thiết bị mặc định (hoặc thiết bị duy nhất của nhóm) khi danh sách thiết bị tải xong
   useEffect(() => {
     if (!allAssets.length) return;
@@ -153,12 +179,26 @@ export function StepLogForm({ step, sequenceIds, odReady, onDone }: { step: Froz
           if (inGroup.length === 1) {
             next[f.key] = inGroup[0].id;
             changed = true;
+            continue;
+          }
+        }
+        // 4. Khớp tự động theo tên thông số (VD: "Máy ly tâm lạnh Miulab" -> khớp thiết bị có tên chứa "ly tâm lạnh" hoặc "miulab")
+        const lbl = f.label.trim().toLowerCase();
+        if (lbl) {
+          const byNameMatch = allAssets.filter(
+            (a) =>
+              a.status === "IN_SERVICE" &&
+              (a.name.toLowerCase().includes(lbl) || lbl.includes(a.name.toLowerCase()))
+          );
+          if (byNameMatch.length === 1) {
+            next[f.key] = byNameMatch[0].id;
+            changed = true;
           }
         }
       }
       return changed ? next : prev;
     });
-  }, [allAssets, step.fields]);
+  }, [allAssets, stepSignature]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const log = useMutation({
     mutationFn: () =>
