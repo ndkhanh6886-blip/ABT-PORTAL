@@ -764,16 +764,22 @@ export async function exportCustomerQuotationToExcel({
     sheet.getRow(currentRowIdx).height = 22;
     currentRowIdx++;
 
-    const defaultValidity = "Báo giá có hiệu lực trong vòng 30 ngày kể từ ngày ban hành.";
-    const defaultDelivery = "Giao hàng tận nơi trong vòng 3-5 ngày làm việc kể từ khi xác nhận đơn hàng/hợp đồng.";
-    const defaultPayment = "Thanh toán 100% bằng tiền mặt hoặc chuyển khoản trong vòng 15-30 ngày kể từ ngày nhận đủ hàng hóa và hóa đơn GTGT. Thông tin tài khoản: Công ty Cổ Phần Công nghệ ABT – STK: 170 270 499 tại Ngân hàng Á Châu (ACB) – Chi nhánh TP. Hồ Chí Minh.";
-    const defaultNote = isItemsPricePreVat
+    const defaultValidity = companyConfig?.defaultQuoteValidityTerms || "Báo giá có hiệu lực trong vòng 30 ngày kể từ ngày ban hành.";
+    const defaultDelivery = companyConfig?.defaultQuoteDeliveryTerms || "Giao hàng tận nơi trong vòng 3-5 ngày làm việc kể từ khi xác nhận đơn hàng/hợp đồng.";
+    const defaultPayment = companyConfig?.defaultQuotePaymentTerms || "Thanh toán 100% bằng tiền mặt hoặc chuyển khoản trong vòng 15-30 ngày kể từ ngày nhận đủ hàng hóa và hóa đơn GTGT. Thông tin tài khoản: Công ty TNHH Giải Pháp Y Sinh ABT - Chi nhánh Long Hậu – STK: 1368 61 68 88 tại Ngân hàng TMCP Kỹ Thương Việt Nam (Techcombank) - Chi nhánh mở: Chợ Lớn.";
+    const defaultNote = companyConfig?.defaultQuoteNoteTerms || (isItemsPricePreVat
         ? "Đơn giá chưa bao gồm thuế Giá Trị Gia Tăng (VAT). Chi phí vận chuyển, hướng dẫn sử dụng theo thỏa thuận."
-        : "Đơn giá đã bao gồm thuế Giá Trị Gia Tăng (VAT) và chi phí vận chuyển, hướng dẫn sử dụng tại cơ sở.";
+        : "Đơn giá đã bao gồm thuế Giá Trị Gia Tăng (VAT) và chi phí vận chuyển, hướng dẫn sử dụng tại cơ sở.");
 
     const resolvedValidity = quote.validityTerms !== undefined && quote.validityTerms !== null ? String(quote.validityTerms).trim() : defaultValidity;
     const resolvedDelivery = quote.deliveryTerms !== undefined && quote.deliveryTerms !== null ? String(quote.deliveryTerms).trim() : defaultDelivery;
-    const resolvedPayment = quote.paymentTerms !== undefined && quote.paymentTerms !== null ? String(quote.paymentTerms).trim() : defaultPayment;
+    const rawQuotePayment = quote.paymentTerms !== undefined && quote.paymentTerms !== null ? String(quote.paymentTerms).trim() : defaultPayment;
+    const resolvedPayment =
+        /170\s*270\s*499/i.test(rawQuotePayment) ||
+        /công\s*ty\s*(?:cổ\s*phần|cp)\s*công\s*nghệ\s*(?:tbr|abt)/i.test(rawQuotePayment) ||
+        /ngân\s*hàng\s*á\s*châu/i.test(rawQuotePayment)
+            ? defaultPayment
+            : rawQuotePayment;
     const resolvedNote = quote.noteTerms !== undefined && quote.noteTerms !== null ? String(quote.noteTerms).trim() : defaultNote;
 
     const rawTermEntries: string[] = [];

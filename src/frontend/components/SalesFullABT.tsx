@@ -876,7 +876,12 @@ export function SalesFullABT() {
             const qDel = localStorage.getItem("sales_default_quote_delivery_terms");
             if (qDel) setDefaultQuoteDeliveryTerms(qDel);
             const qPay = localStorage.getItem("sales_default_quote_payment_terms");
-            if (qPay) setDefaultQuotePaymentTerms(qPay);
+            if (qPay) {
+                const cleanPay = sanitizeQuotePaymentTerms(qPay);
+                setDefaultQuotePaymentTerms(cleanPay);
+                if (!editingQuoteId) setQuotePaymentTerms(cleanPay);
+                if (cleanPay !== qPay) localStorage.setItem("sales_default_quote_payment_terms", cleanPay);
+            }
             const qNote = localStorage.getItem("sales_default_quote_note_terms");
             if (qNote) setDefaultQuoteNoteTerms(qNote);
 
@@ -901,10 +906,15 @@ export function SalesFullABT() {
                         if (cfg.companyTaxCode !== undefined) { setCompanyTaxCode(cfg.companyTaxCode); localStorage.setItem("sales_company_tax_code", cfg.companyTaxCode); }
                         if (cfg.companyRepresentative !== undefined) { setCompanyRepresentative(cfg.companyRepresentative); localStorage.setItem("sales_company_representative", cfg.companyRepresentative); }
                         if (cfg.companyRepresentativeRole !== undefined) { setCompanyRepresentativeRole(cfg.companyRepresentativeRole); localStorage.setItem("sales_company_representative_role", cfg.companyRepresentativeRole); }
-                        if (cfg.defaultQuoteValidityTerms) { setDefaultQuoteValidityTerms(cfg.defaultQuoteValidityTerms); localStorage.setItem("sales_default_quote_validity_terms", cfg.defaultQuoteValidityTerms); }
-                        if (cfg.defaultQuoteDeliveryTerms) { setDefaultQuoteDeliveryTerms(cfg.defaultQuoteDeliveryTerms); localStorage.setItem("sales_default_quote_delivery_terms", cfg.defaultQuoteDeliveryTerms); }
-                        if (cfg.defaultQuotePaymentTerms) { setDefaultQuotePaymentTerms(cfg.defaultQuotePaymentTerms); localStorage.setItem("sales_default_quote_payment_terms", cfg.defaultQuotePaymentTerms); }
-                        if (cfg.defaultQuoteNoteTerms) { setDefaultQuoteNoteTerms(cfg.defaultQuoteNoteTerms); localStorage.setItem("sales_default_quote_note_terms", cfg.defaultQuoteNoteTerms); }
+                        if (cfg.defaultQuoteValidityTerms) { setDefaultQuoteValidityTerms(cfg.defaultQuoteValidityTerms); if (!editingQuoteId) setQuoteValidityTerms(cfg.defaultQuoteValidityTerms); localStorage.setItem("sales_default_quote_validity_terms", cfg.defaultQuoteValidityTerms); }
+                        if (cfg.defaultQuoteDeliveryTerms) { setDefaultQuoteDeliveryTerms(cfg.defaultQuoteDeliveryTerms); if (!editingQuoteId) setQuoteDeliveryTerms(cfg.defaultQuoteDeliveryTerms); localStorage.setItem("sales_default_quote_delivery_terms", cfg.defaultQuoteDeliveryTerms); }
+                        if (cfg.defaultQuotePaymentTerms) {
+                            const cleanPay = sanitizeQuotePaymentTerms(cfg.defaultQuotePaymentTerms);
+                            setDefaultQuotePaymentTerms(cleanPay);
+                            if (!editingQuoteId) setQuotePaymentTerms(cleanPay);
+                            localStorage.setItem("sales_default_quote_payment_terms", cleanPay);
+                        }
+                        if (cfg.defaultQuoteNoteTerms) { setDefaultQuoteNoteTerms(cfg.defaultQuoteNoteTerms); if (!editingQuoteId) setQuoteNoteTerms(cfg.defaultQuoteNoteTerms); localStorage.setItem("sales_default_quote_note_terms", cfg.defaultQuoteNoteTerms); }
                         if (cfg.defaultQualityTerms) { setDefaultQualityTerms(cfg.defaultQualityTerms); localStorage.setItem("sales_default_quality_terms", cfg.defaultQualityTerms); }
                         if (cfg.defaultDeliveryTerms) { setDefaultDeliveryTerms(cfg.defaultDeliveryTerms); localStorage.setItem("sales_default_delivery_terms", cfg.defaultDeliveryTerms); }
                         if (cfg.defaultPaymentTerms) { setDefaultPaymentTerms(cfg.defaultPaymentTerms); localStorage.setItem("sales_default_payment_terms", cfg.defaultPaymentTerms); }
@@ -3285,11 +3295,23 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         if (typeof window !== "undefined") return localStorage.getItem("sales_default_quote_delivery_terms") || "Giao hàng tận nơi trong vòng 3-5 ngày làm việc.";
         return "Giao hàng tận nơi trong vòng 3-5 ngày làm việc.";
     });
-    const TBR_DEFAULT_PAYMENT_TERMS = "Thanh toán 100% bằng tiền mặt hoặc chuyển khoản trong vòng 15-30 ngày kể từ ngày nhận đủ hàng hóa và hóa đơn GTGT. Thông tin tài khoản: Công ty Cổ Phần Công nghệ ABT – STK: 170 270 499 tại Ngân hàng Á Châu (ACB) – Chi nhánh TP. Hồ Chí Minh.";
+    const TBR_DEFAULT_PAYMENT_TERMS = "Thanh toán 100% bằng tiền mặt hoặc chuyển khoản trong vòng 15-30 ngày kể từ ngày nhận đủ hàng hóa và hóa đơn GTGT. Thông tin tài khoản: Công ty TNHH Giải Pháp Y Sinh ABT - Chi nhánh Long Hậu – STK: 1368 61 68 88 tại Ngân hàng TMCP Kỹ Thương Việt Nam (Techcombank) - Chi nhánh mở: Chợ Lớn.";
+    const sanitizeQuotePaymentTerms = (raw?: string | null): string => {
+        const text = String(raw ?? "").trim();
+        if (
+            !text ||
+            text === "Thanh toán 100% bằng chuyển khoản trong vòng 15 ngày kể từ ngày nhận hàng và hóa đơn." ||
+            /170\s*270\s*499/i.test(text) ||
+            /công\s*ty\s*(?:cổ\s*phần|cp)\s*công\s*nghệ\s*(?:tbr|abt)/i.test(text) ||
+            /ngân\s*hàng\s*á\s*châu/i.test(text)
+        ) {
+            return TBR_DEFAULT_PAYMENT_TERMS;
+        }
+        return text;
+    };
     const [quotePaymentTerms, setQuotePaymentTerms] = useState(() => {
         if (typeof window !== "undefined") {
-            const saved = localStorage.getItem("sales_default_quote_payment_terms");
-            if (saved && saved !== "Thanh toán 100% bằng chuyển khoản trong vòng 15 ngày kể từ ngày nhận hàng và hóa đơn.") return saved;
+            return sanitizeQuotePaymentTerms(localStorage.getItem("sales_default_quote_payment_terms"));
         }
         return TBR_DEFAULT_PAYMENT_TERMS;
     });
@@ -3436,8 +3458,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     });
     const [defaultQuotePaymentTerms, setDefaultQuotePaymentTerms] = useState(() => {
         if (typeof window !== "undefined") {
-            const saved = localStorage.getItem("sales_default_quote_payment_terms");
-            if (saved && saved !== "Thanh toán 100% bằng chuyển khoản trong vòng 15 ngày kể từ ngày nhận hàng và hóa đơn.") return saved;
+            return sanitizeQuotePaymentTerms(localStorage.getItem("sales_default_quote_payment_terms"));
         }
         return TBR_DEFAULT_PAYMENT_TERMS;
     });
@@ -5278,8 +5299,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setQuoteEmployee(d.quoteEmployee ?? ""); setQuoteRepPhone(d.quoteRepPhone ?? ""); setQuoteRepEmail(d.quoteRepEmail ?? "");
         if (d.quotePriceTier) setQuotePriceTier(d.quotePriceTier);
         if (Array.isArray(d.quoteItems)) setQuoteItems(d.quoteItems);
-        setQuoteValidityTerms(d.quoteValidityTerms ?? ""); setQuoteDeliveryTerms(d.quoteDeliveryTerms ?? "");
-        setQuotePaymentTerms(d.quotePaymentTerms ?? ""); setQuoteNoteTerms(d.quoteNoteTerms ?? "");
+        setQuoteValidityTerms(d.quoteValidityTerms || defaultQuoteValidityTerms);
+        setQuoteDeliveryTerms(d.quoteDeliveryTerms || defaultQuoteDeliveryTerms);
+        setQuotePaymentTerms(sanitizeQuotePaymentTerms(d.quotePaymentTerms || defaultQuotePaymentTerms));
+        setQuoteNoteTerms(d.quoteNoteTerms || defaultQuoteNoteTerms);
     });
     const contractDraft = useFormDraft(`contract_${draftOwner}`, isContractModalOpen, !editingContractId, {
         contractType, contractTitle, contractTaxCode, contractRepresentative, contractDeliveryTerms, contractPaymentTerms, contractGeneralTerms,
@@ -10096,7 +10119,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         
         setQuoteValidityTerms(quote.validityTerms !== undefined && quote.validityTerms !== null ? quote.validityTerms : defaultQuoteValidityTerms);
         setQuoteDeliveryTerms(quote.deliveryTerms !== undefined && quote.deliveryTerms !== null ? quote.deliveryTerms : defaultQuoteDeliveryTerms);
-        setQuotePaymentTerms(quote.paymentTerms !== undefined && quote.paymentTerms !== null ? quote.paymentTerms : defaultQuotePaymentTerms);
+        setQuotePaymentTerms(
+            quote.paymentTerms !== undefined && quote.paymentTerms !== null
+                ? sanitizeQuotePaymentTerms(quote.paymentTerms)
+                : sanitizeQuotePaymentTerms(defaultQuotePaymentTerms)
+        );
         setQuoteNoteTerms(quote.noteTerms !== undefined && quote.noteTerms !== null ? quote.noteTerms : defaultQuoteNoteTerms);
         
         setIsQuoteModalOpen(true);
@@ -12224,9 +12251,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         const delTerms = quote.deliveryTerms !== undefined && quote.deliveryTerms !== null
                             ? String(quote.deliveryTerms).trim()
                             : (defaultQuoteDeliveryTerms || "Giao hàng tận nơi trong vòng 3-5 ngày làm việc.");
-                        const payTerms = quote.paymentTerms !== undefined && quote.paymentTerms !== null
+                        const rawPayTerms = quote.paymentTerms !== undefined && quote.paymentTerms !== null
                             ? String(quote.paymentTerms).trim()
                             : (defaultQuotePaymentTerms || TBR_DEFAULT_PAYMENT_TERMS);
+                        const payTerms =
+                            /170\s*270\s*499/i.test(rawPayTerms) ||
+                            /công\s*ty\s*(?:cổ\s*phần|cp)\s*công\s*nghệ\s*(?:tbr|abt)/i.test(rawPayTerms) ||
+                            /ngân\s*hàng\s*á\s*châu/i.test(rawPayTerms)
+                                ? sanitizeQuotePaymentTerms(defaultQuotePaymentTerms)
+                                : rawPayTerms;
                         const noteTermsVal = quote.noteTerms !== undefined && quote.noteTerms !== null
                             ? String(quote.noteTerms).trim()
                             : (defaultQuoteNoteTerms || (isItemsPricePreVat
@@ -12269,7 +12302,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     companyPhone,
                     companyEmail,
                     companyTaxCode,
-                    companyWebsite: "www.tbr.vn"
+                    companyWebsite: "www.abtvn.com",
+                    defaultQuoteValidityTerms,
+                    defaultQuoteDeliveryTerms,
+                    defaultQuotePaymentTerms: sanitizeQuotePaymentTerms(defaultQuotePaymentTerms),
+                    defaultQuoteNoteTerms,
                 },
                 formatSupplierShortName,
                 readVietnameseCurrency,
@@ -19021,6 +19058,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }
 
         dispatchCompanyConfigUpdated(configData);
+
+        if (!editingQuoteId) {
+            setQuoteValidityTerms(defaultQuoteValidityTerms);
+            setQuoteDeliveryTerms(defaultQuoteDeliveryTerms);
+            setQuotePaymentTerms(sanitizeQuotePaymentTerms(defaultQuotePaymentTerms));
+            setQuoteNoteTerms(defaultQuoteNoteTerms);
+        }
 
         setIsCompanyConfigModalOpen(false);
         showToast("Đã lưu cấu hình thông tin doanh nghiệp thành công và đồng bộ vĩnh viễn trên máy chủ!", "success");
