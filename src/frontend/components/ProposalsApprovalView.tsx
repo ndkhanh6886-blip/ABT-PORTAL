@@ -421,9 +421,10 @@ export const DEFAULT_PROPOSAL_TEMPLATES: ProposalTemplate[] = [
     slaTotalHours: 8,
     fields: [
       { key: "otDate", label: "Ngày đăng ký tăng ca", type: "date", required: true },
+      { key: "otDayType", label: "Loại ngày tăng ca (Hệ số quy định)", type: "select", options: ["Ngày thường sau giờ hành chính (Hệ số 150%)", "Ngày nghỉ cuối tuần Thứ 7 / Chủ nhật (Hệ số 200%)", "Ngày Lễ / Tết chính thức (Hệ số 300%)", "Tăng ca ban đêm sau 22:00 (Cộng thêm phụ cấp đêm)"], required: true },
       { key: "timeSlot", label: "Khung giờ làm thêm", type: "text", placeholder: "VD: 17:30 - 21:00 (3.5 giờ)", required: true },
       { key: "otHours", label: "Tổng số giờ OT", type: "number", placeholder: "3.5", required: true },
-      { key: "compensationMode", label: "Hình thức tính công", type: "select", options: ["Tính lương tăng ca theo quy định", "Quy đổi nghỉ bù (Compensatory Leave)"], required: true }
+      { key: "compensationMode", label: "Hình thức tính công", type: "select", options: ["Tính lương tăng ca theo quy định", "Quy đổi nghỉ bù / Cấn trừ giờ đi trễ - về sớm (8 giờ = 1 ngày phép bù)"], required: true }
     ],
     defaultSteps: [
       { stepOrder: 1, stepName: "Trưởng bộ phận xác nhận khối lượng việc", roleType: "DEPT_HEAD", defaultDept: "Theo phòng người tạo", defaultApprover: "Trưởng bộ phận", slaHours: 4 },
@@ -1876,6 +1877,37 @@ export function ProposalsApprovalView({
           const opts = [...f.options];
           opts.splice(1, 0, lateEarlyOpt);
           return { ...f, options: opts };
+        }
+        return f;
+      });
+    }
+    if (tmpl.id === "tmpl_overtime_request" || tmpl.codePrefix === "DKTC") {
+      if (!nextFields.some((f) => f.key === "otDayType")) {
+        changed = true;
+        const dayTypeField: ProposalFieldSchema = {
+          key: "otDayType",
+          label: "Loại ngày tăng ca (Hệ số quy định)",
+          type: "select",
+          options: [
+            "Ngày thường sau giờ hành chính (Hệ số 150%)",
+            "Ngày nghỉ cuối tuần Thứ 7 / Chủ nhật (Hệ số 200%)",
+            "Ngày Lễ / Tết chính thức (Hệ số 300%)",
+            "Tăng ca ban đêm sau 22:00 (Cộng thêm phụ cấp đêm)"
+          ],
+          required: true
+        };
+        const copy = [...nextFields];
+        copy.splice(1, 0, dayTypeField);
+        nextFields = copy;
+      }
+      const newCompOpt = "Quy đổi nghỉ bù / Cấn trừ giờ đi trễ - về sớm (8 giờ = 1 ngày phép bù)";
+      nextFields = nextFields.map((f) => {
+        if (f.key === "compensationMode" && Array.isArray(f.options) && !f.options.includes(newCompOpt)) {
+          changed = true;
+          return {
+            ...f,
+            options: ["Tính lương tăng ca theo quy định", newCompOpt]
+          };
         }
         return f;
       });
@@ -3734,13 +3766,41 @@ export function ProposalsApprovalView({
     [accessibleProposals]
   );
 
-  // ==================== BỘ THEO DÕI NGHỈ PHÉP TOÀN CÔNG TY & TỔNG HỢP CHẤM CÔNG THÁNG ====================
+  // ==================== BỘ THEO DÕI NGHỈ PHÉP & TĂNG CA TOÀN CÔNG TY & TỔNG HỢP CHẤM CÔNG THÁNG ====================
   const isLeaveProposalItem = (p: ProposalItem) =>
     p.templateId === "tmpl_leave_request" ||
     String(p.proposalCode || "").toUpperCase().startsWith("DXNP") ||
     String(p.proposalCode || "").toUpperCase().startsWith("TBNP") ||
     String(p.templateName || "").toLowerCase().includes("nghỉ phép") ||
     String(p.templateName || "").toLowerCase().includes("vắng mặt");
+
+  const isOvertimeProposalItem = (p: ProposalItem) =>
+    p.templateId === "tmpl_overtime_request" ||
+    String(p.proposalCode || "").toUpperCase().startsWith("DKTC") ||
+    String(p.templateName || "").toLowerCase().includes("tăng ca") ||
+    String(p.templateName || "").toLowerCase().includes("làm thêm giờ");
+
+  const getOvertimeDetails = (p: ProposalItem) => {
+    const fv = p.formValues || {};
+    const otDate = String(fv.otDate || p.neededByDate || String(p.createdAt || "").slice(0, 10)).slice(0, 10);
+    const rawHours = Number(String(fv.otHours || "0").replace(",", "."));
+    const otHours = Number.isFinite(rawHours) && rawHours > 0 ? Math.round(rawHours * 100) / 100 : 0;
+    const timeSlot = String(fv.timeSlot || "—");
+    const otDayType = String(fv.otDayType || "Ngày thường sau giờ hành chính (Hệ số 150%)");
+    const compensationMode = String(fv.compensationMode || "Tính lương tăng ca theo quy định");
+    const isCompensatoryLeave =
+      compensationMode.toLowerCase().includes("nghỉ bù") ||
+      compensationMode.toLowerCase().includes("cấn trừ");
+    return {
+      otDate,
+      otHours,
+      convertedDays: Math.round((otHours / 8) * 1000) / 1000,
+      timeSlot,
+      otDayType,
+      compensationMode,
+      isCompensatoryLeave
+    };
+  };
 
   /** `month` ("YYYY-MM"): với đơn "các ngày cụ thể" chỉ tính các ngày trong tháng đó. */
   const getLeaveDatesAndDays = (p: ProposalItem, month?: string) => {
@@ -3861,6 +3921,39 @@ export function ProposalsApprovalView({
     });
   }, [accessibleProposals, todayIsoStr]);
 
+  const monthlyOvertimeProposals = useMemo(() => {
+    return accessibleProposals
+      .filter((p) => {
+        if (!isOvertimeProposalItem(p)) return false;
+        if (p.status === "WITHDRAWN" || p.status === "DRAFT") return false;
+        const { otDate } = getOvertimeDetails(p);
+        if (leaveMonthFilter && leaveMonthFilter !== "all") {
+          if (!otDate.startsWith(leaveMonthFilter)) return false;
+        }
+        if (leaveDeptFilter !== "all" && String(p.requesterDept || "").toLowerCase() !== leaveDeptFilter.toLowerCase()) {
+          return false;
+        }
+        if (leaveStatusFilter !== "all") {
+          if (leaveStatusFilter === "APPROVED_EXEC") {
+            if (p.status !== "APPROVED" && p.status !== "EXECUTED") return false;
+          } else if (p.status !== leaveStatusFilter) {
+            return false;
+          }
+        }
+        if (searchQuery.trim()) {
+          const q = searchQuery.toLowerCase().trim();
+          const hit =
+            String(p.requesterName || "").toLowerCase().includes(q) ||
+            String(p.proposalCode || "").toLowerCase().includes(q) ||
+            String(p.title || "").toLowerCase().includes(q) ||
+            String(p.summaryReason || "").toLowerCase().includes(q);
+          if (!hit) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => getOvertimeDetails(b).otDate.localeCompare(getOvertimeDetails(a).otDate));
+  }, [accessibleProposals, leaveMonthFilter, leaveDeptFilter, leaveStatusFilter, searchQuery]);
+
   const leaveSummaryByStaff = useMemo(() => {
     const round3 = (n: number) => Math.round(n * 1000) / 1000;
     const map = new Map<
@@ -3876,11 +3969,19 @@ export function ProposalsApprovalView({
         lateEarlyCount: number;
         lateEarlyMinutes: number;
         lateEarlyDays: number;
+        otCount: number;
+        otTotalHours: number;
+        otPayHours: number;
+        otCompHours: number;
+        otCompDays: number;
         availableQuota: number;
+        effectiveTotalQuota: number;
         paidLeaveDays: number;
+        compLeaveUsedDays: number;
         overflowUnpaidDays: number;
         unpaidLeaveDays: number;
         remainingQuota: number;
+        remainingCompDays: number;
         socialOrPolicyDays: number;
         wfhDays: number;
         totalAbsentDays: number;
@@ -3888,33 +3989,47 @@ export function ProposalsApprovalView({
       }
     >();
 
+    const getOrCreateStaffRow = (key: string, dept: string) => {
+      const quota = leaveQuotaByStaff[key] !== undefined ? Number(leaveQuotaByStaff[key]) : 12;
+      return (
+        map.get(key) || {
+          staffName: key,
+          dept: dept || "—",
+          totalRequests: 0,
+          approvedRequests: 0,
+          pendingRequests: 0,
+          rawPaidLeaveDays: 0,
+          rawUnpaidLeaveDays: 0,
+          lateEarlyCount: 0,
+          lateEarlyMinutes: 0,
+          lateEarlyDays: 0,
+          otCount: 0,
+          otTotalHours: 0,
+          otPayHours: 0,
+          otCompHours: 0,
+          otCompDays: 0,
+          availableQuota: quota,
+          effectiveTotalQuota: quota,
+          paidLeaveDays: 0,
+          compLeaveUsedDays: 0,
+          overflowUnpaidDays: 0,
+          unpaidLeaveDays: 0,
+          remainingQuota: quota,
+          remainingCompDays: 0,
+          socialOrPolicyDays: 0,
+          wfhDays: 0,
+          totalAbsentDays: 0,
+          periods: []
+        }
+      );
+    };
+
     monthlyLeaveProposals.forEach((p) => {
       if (p.status === "REJECTED") return;
       const key = String(p.requesterName || "Nhân sự").trim();
       const { fDate, tDate, days, leaveType, handoverStaff, rangeLabel } = getLeaveDatesAndDays(p, leaveMonthArg());
       const fv = p.formValues || {};
-      const quota = leaveQuotaByStaff[key] !== undefined ? Number(leaveQuotaByStaff[key]) : 12;
-      const existing = map.get(key) || {
-        staffName: key,
-        dept: p.requesterDept || "—",
-        totalRequests: 0,
-        approvedRequests: 0,
-        pendingRequests: 0,
-        rawPaidLeaveDays: 0,
-        rawUnpaidLeaveDays: 0,
-        lateEarlyCount: 0,
-        lateEarlyMinutes: 0,
-        lateEarlyDays: 0,
-        availableQuota: quota,
-        paidLeaveDays: 0,
-        overflowUnpaidDays: 0,
-        unpaidLeaveDays: 0,
-        remainingQuota: quota,
-        socialOrPolicyDays: 0,
-        wfhDays: 0,
-        totalAbsentDays: 0,
-        periods: []
-      };
+      const existing = getOrCreateStaffRow(key, p.requesterDept || "—");
 
       existing.totalRequests += 1;
       if (p.status === "APPROVED" || p.status === "EXECUTED") {
@@ -3970,46 +4085,86 @@ export function ProposalsApprovalView({
       map.set(key, existing);
     });
 
+    monthlyOvertimeProposals.forEach((p) => {
+      if (p.status === "REJECTED") return;
+      const key = String(p.requesterName || "Nhân sự").trim();
+      const { otDate, otHours, convertedDays, timeSlot, otDayType, isCompensatoryLeave } = getOvertimeDetails(p);
+      const existing = getOrCreateStaffRow(key, p.requesterDept || "—");
+
+      existing.otCount += 1;
+      existing.otTotalHours = round3(existing.otTotalHours + otHours);
+      if (isCompensatoryLeave) {
+        existing.otCompHours = round3(existing.otCompHours + otHours);
+        existing.otCompDays = round3(existing.otCompDays + convertedDays);
+      } else {
+        existing.otPayHours = round3(existing.otPayHours + otHours);
+      }
+
+      existing.periods.push({
+        code: p.proposalCode,
+        fromDate: otDate,
+        toDate: otDate,
+        days: convertedDays,
+        type: `⏰ Tăng ca ${otHours}h (${timeSlot} • ${otDayType}) — ${isCompensatoryLeave ? `Quy đổi +${convertedDays}d nghỉ bù` : "Tính lương OT"}`,
+        handover: isCompensatoryLeave ? "Cộng quỹ nghỉ bù" : "Tính lương OT",
+        status: p.status
+      });
+
+      map.set(key, existing);
+    });
+
     return Array.from(map.values())
       .map((row) => {
         const quota = Math.max(0, Number(leaveQuotaByStaff[row.staffName] ?? 12));
+        const compDaysAvailable = row.otCompDays;
         const totalPaidDemand = round3(row.rawPaidLeaveDays + row.lateEarlyDays);
-        const effectivePaid = round3(Math.min(totalPaidDemand, quota));
-        const overflowUnpaid = round3(Math.max(0, totalPaidDemand - effectivePaid));
+        // Ưu tiên cấn trừ bằng Quỹ nghỉ bù tăng ca (Compensatory Leave) trước, sau đó trừ vào Quỹ phép năm
+        const compLeaveUsed = round3(Math.min(totalPaidDemand, compDaysAvailable));
+        const remainingDemandAfterComp = round3(Math.max(0, totalPaidDemand - compLeaveUsed));
+        const effectivePaid = round3(Math.min(remainingDemandAfterComp, quota));
+        const overflowUnpaid = round3(Math.max(0, remainingDemandAfterComp - effectivePaid));
         const effectiveUnpaid = round3(row.rawUnpaidLeaveDays + overflowUnpaid);
         const remainingQuota = round3(Math.max(0, quota - effectivePaid));
+        const remainingCompDays = round3(Math.max(0, compDaysAvailable - compLeaveUsed));
         return {
           ...row,
           availableQuota: quota,
+          effectiveTotalQuota: round3(quota + compDaysAvailable),
           paidLeaveDays: effectivePaid,
+          compLeaveUsedDays: compLeaveUsed,
           overflowUnpaidDays: overflowUnpaid,
           unpaidLeaveDays: effectiveUnpaid,
-          remainingQuota
+          remainingQuota,
+          remainingCompDays
         };
       })
-      .sort((a, b) => b.totalAbsentDays - a.totalAbsentDays || a.staffName.localeCompare(b.staffName));
-  }, [monthlyLeaveProposals, leaveQuotaByStaff]);
+      .sort((a, b) => b.totalAbsentDays - a.totalAbsentDays || b.otTotalHours - a.otTotalHours || a.staffName.localeCompare(b.staffName));
+  }, [monthlyLeaveProposals, monthlyOvertimeProposals, leaveQuotaByStaff]);
 
   const handleExportMonthlyLeaveCSV = () => {
-    if (monthlyLeaveProposals.length === 0) {
-      showToast("Chưa có dữ liệu đơn xin nghỉ phép trong kỳ lọc để xuất!", "warning");
+    if (monthlyLeaveProposals.length === 0 && monthlyOvertimeProposals.length === 0) {
+      showToast("Chưa có dữ liệu đơn xin nghỉ phép hoặc phiếu tăng ca trong kỳ lọc để xuất!", "warning");
       return;
     }
     const monthLabel = leaveMonthFilter === "all" ? "Tat-ca-cac-thang" : leaveMonthFilter;
     const lines: string[] = [];
-    lines.push(`"BẢNG TỔNG HỢP CHẤM CÔNG NGHỈ PHÉP TOÀN CÔNG TY - KỲ: ${leaveMonthFilter === "all" ? "TẤT CẢ" : leaveMonthFilter}"`);
+    lines.push(`"BẢNG TỔNG HỢP CHẤM CÔNG NGHỈ PHÉP & TĂNG CA (OT) TOÀN CÔNG TY - KỲ: ${leaveMonthFilter === "all" ? "TẤT CẢ" : leaveMonthFilter}"`);
     lines.push("");
-    lines.push(`"I. TỔNG HỢP SỐ NGÀY NGHỈ & CỘNG DỒN ĐI TRỄ / VỀ SỚM THEO NHÂN VIÊN (PHỤC VỤ KẾ TOÁN TÍNH LƯƠNG CUỐI THÁNG)"`);
+    lines.push(`"I. TỔNG HỢP SỐ NGÀY NGHỈ, CỘNG DỒN ĐI TRỄ/VỀ SỚM & TĂNG CA (OT) THEO NHÂN VIÊN (PHỤC VỤ KẾ TOÁN TÍNH LƯƠNG CUỐI THÁNG)"`);
     lines.push(
       [
         "STT",
         "Họ tên nhân viên",
         "Phòng ban",
-        "Số đơn trong tháng",
+        "Số đơn nghỉ trong tháng",
         "Đơn đã duyệt",
         "Đơn chờ duyệt",
         "Đi trễ / Về sớm cộng dồn (Phút / Giờ -> Ngày quy đổi ÷8h)",
-        "Quỹ phép còn đầu kỳ (Ngày)",
+        "Tăng ca / OT Tính lương (Giờ)",
+        "Tăng ca / OT Quy đổi Nghỉ bù (Giờ -> Ngày ÷8h)",
+        "Đã dùng Nghỉ bù OT cấn trừ nghỉ/trễ (Ngày)",
+        "Nghỉ bù OT còn lại (Ngày)",
+        "Quỹ phép năm còn đầu kỳ (Ngày)",
         "Thực trừ Phép năm có lương (Ngày)",
         "Chuyển Không lương do hết/vượt phép (Ngày)",
         "Tổng Nghỉ không lương thực tính (Ngày)",
@@ -4017,7 +4172,7 @@ export function ProposalsApprovalView({
         "Nghỉ ốm / BHXH / Chế độ (Ngày)",
         "Làm việc từ xa WFH (Ngày)",
         "Tổng ngày nghỉ vắng mặt",
-        "Chi tiết các đợt nghỉ & Người nhận bàn giao"
+        "Chi tiết các đợt nghỉ / Tăng ca & Người nhận bàn giao"
       ]
         .map((h) => `"${h}"`)
         .join(",")
@@ -4031,6 +4186,10 @@ export function ProposalsApprovalView({
         row.lateEarlyCount > 0
           ? `${row.lateEarlyCount} lần (${row.lateEarlyMinutes} phút = ${Math.round((row.lateEarlyMinutes / 60) * 100) / 100}h -> ${row.lateEarlyDays} ngày)`
           : "0";
+      const otCompCol =
+        row.otCompHours > 0
+          ? `${row.otCompHours}h (${row.otCompDays} ngày)`
+          : "0";
       lines.push(
         [
           idx + 1,
@@ -4040,6 +4199,10 @@ export function ProposalsApprovalView({
           row.approvedRequests,
           row.pendingRequests,
           lateEarlyCol,
+          row.otPayHours,
+          otCompCol,
+          row.compLeaveUsedDays,
+          row.remainingCompDays,
           row.availableQuota,
           row.paidLeaveDays,
           row.overflowUnpaidDays,
@@ -4116,6 +4279,57 @@ export function ProposalsApprovalView({
           .join(",")
       );
     });
+
+    if (monthlyOvertimeProposals.length > 0) {
+      lines.push("");
+      lines.push(`"III. DANH SÁCH CHI TIẾT CÁC PHIẾU ĐĂNG KÝ LÀM THÊM GIỜ / TĂNG CA (DKTC)"`);
+      lines.push(
+        [
+          "STT",
+          "Mã phiếu",
+          "Họ tên nhân viên",
+          "Phòng ban",
+          "Ngày tăng ca",
+          "Loại ngày / Hệ số",
+          "Khung giờ làm thêm",
+          "Số giờ OT",
+          "Quy đổi ngày công (÷8h)",
+          "Hình thức tính công",
+          "Nội dung công việc tăng ca",
+          "Trạng thái phê duyệt",
+          "Người duyệt cuối"
+        ]
+          .map((h) => `"${h}"`)
+          .join(",")
+      );
+      monthlyOvertimeProposals.forEach((p, idx) => {
+        const { otDate, otHours, convertedDays, timeSlot, otDayType, compensationMode } = getOvertimeDetails(p);
+        const stMeta = getStatusMeta(p.status);
+        const lastApprover =
+          (p.steps || [])
+            .filter((s) => s.status === "APPROVED")
+            .slice(-1)[0]?.decidedBy || "—";
+        lines.push(
+          [
+            idx + 1,
+            p.proposalCode,
+            p.requesterName,
+            p.requesterDept,
+            formatDayVN(otDate),
+            otDayType,
+            timeSlot,
+            otHours,
+            convertedDays,
+            compensationMode,
+            String(p.summaryReason || p.title || "").replace(/"/g, '""'),
+            stMeta.label,
+            lastApprover
+          ]
+            .map((v) => `"${v}"`)
+            .join(",")
+        );
+      });
+    }
 
     const csvContent = "\uFEFF" + lines.join("\r\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
@@ -4616,9 +4830,17 @@ export function ProposalsApprovalView({
                   type="button"
                   onClick={handleExportMonthlyLeaveCSV}
                   className="px-3.5 py-2 rounded-xl text-xs font-extrabold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs cursor-pointer flex items-center gap-1.5"
-                  title="Tải xuống file Excel (CSV) Bảng tổng hợp chấm công nghỉ phép tháng cho Kế toán tính lương"
+                  title="Tải xuống file Excel (CSV) Bảng tổng hợp chấm công nghỉ phép & tăng ca tháng cho Kế toán tính lương"
                 >
-                  <span>📥 Xuất Excel Chấm Công Tháng</span>
+                  <span>📥 Xuất Excel Chấm Công &amp; OT Tháng</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openCreateProposalModal("tmpl_overtime_request")}
+                  className="px-3.5 py-2 rounded-xl text-xs font-extrabold bg-amber-600 hover:bg-amber-700 text-white shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  <Clock className="w-4 h-4" />
+                  <span>⏰ + Đăng Ký Tăng Ca / Làm Thêm Giờ (DKTC)</span>
                 </button>
                 <button
                   type="button"
@@ -4709,8 +4931,8 @@ export function ProposalsApprovalView({
               </select>
             </div>
 
-            {/* 4 Thẻ thống kê nhanh trong tháng */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
+            {/* 5 Thẻ thống kê nhanh trong tháng */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-1">
               <div className="p-3 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50/50 dark:bg-rose-950/20">
                 <div className="text-[11px] font-extrabold text-rose-700 dark:text-rose-300 uppercase">
                   🏖️ Nghỉ hôm nay ({formatDayVN(todayIsoStr)})
@@ -4743,11 +4965,11 @@ export function ProposalsApprovalView({
                   💰 Tổng ngày nghỉ phép có lương
                 </div>
                 <div className="text-xl font-black text-emerald-600 dark:text-emerald-400 mt-1">
-                  {leaveSummaryByStaff.reduce((s, r) => s + r.paidLeaveDays, 0)}{" "}
+                  {Math.round(leaveSummaryByStaff.reduce((s, r) => s + r.paidLeaveDays, 0) * 1000) / 1000}{" "}
                   <span className="text-xs font-bold">ngày công phép năm</span>
                 </div>
                 <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
-                  Cộng thêm {leaveSummaryByStaff.reduce((s, r) => s + r.socialOrPolicyDays, 0)} ngày BHXH / Hiếu hỷ
+                  Cộng thêm {Math.round(leaveSummaryByStaff.reduce((s, r) => s + r.socialOrPolicyDays, 0) * 1000) / 1000} ngày BHXH / Hiếu hỷ
                 </div>
               </div>
 
@@ -4756,11 +4978,24 @@ export function ProposalsApprovalView({
                   📉 Nghỉ không lương &amp; Làm từ xa (WFH)
                 </div>
                 <div className="text-xl font-black text-amber-600 dark:text-amber-400 mt-1">
-                  {leaveSummaryByStaff.reduce((s, r) => s + r.unpaidLeaveDays, 0)}{" "}
+                  {Math.round(leaveSummaryByStaff.reduce((s, r) => s + r.unpaidLeaveDays, 0) * 1000) / 1000}{" "}
                   <span className="text-xs font-bold">ngày không lương</span>
                 </div>
                 <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
-                  🏠 Làm việc từ xa (WFH): {leaveSummaryByStaff.reduce((s, r) => s + r.wfhDays, 0)} ngày
+                  🏠 Làm việc từ xa (WFH): {Math.round(leaveSummaryByStaff.reduce((s, r) => s + r.wfhDays, 0) * 1000) / 1000} ngày
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/50 dark:bg-indigo-950/20">
+                <div className="text-[11px] font-extrabold text-indigo-800 dark:text-indigo-300 uppercase">
+                  ⏰ Tổng giờ Tăng ca / Làm thêm (OT)
+                </div>
+                <div className="text-xl font-black text-indigo-600 dark:text-indigo-400 mt-1">
+                  {Math.round(leaveSummaryByStaff.reduce((s, r) => s + r.otTotalHours, 0) * 100) / 100}{" "}
+                  <span className="text-xs font-bold">giờ ({monthlyOvertimeProposals.length} phiếu)</span>
+                </div>
+                <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
+                  💵 Tính lương: {Math.round(leaveSummaryByStaff.reduce((s, r) => s + r.otPayHours, 0) * 100) / 100}h • 🔄 Nghỉ bù: {Math.round(leaveSummaryByStaff.reduce((s, r) => s + r.otCompDays, 0) * 1000) / 1000} ngày
                 </div>
               </div>
             </div>
@@ -4818,6 +5053,7 @@ export function ProposalsApprovalView({
                       <th className="py-2.5 px-3 text-left">Phòng ban</th>
                       <th className="py-2.5 px-3 text-center">Số đơn</th>
                       <th className="py-2.5 px-3 text-center text-amber-700 dark:text-amber-300">Đi trễ / Về sớm cộng dồn</th>
+                      <th className="py-2.5 px-3 text-center text-blue-700 dark:text-blue-300" title="Tổng giờ làm thêm (OT): tách rõ Giờ tính lương tăng ca và Giờ quy đổi nghỉ bù (8h = 1 ngày) tự động cấn trừ cho giờ đi trễ/về sớm hoặc ngày nghỉ">Tăng ca / OT (Lương &amp; Nghỉ bù)</th>
                       <th className="py-2.5 px-3 text-center text-indigo-700 dark:text-indigo-300" title="Nhập số ngày phép năm còn lại của nhân viên (nhập 0 nếu đã hết phép)">Quỹ phép còn (Đầu kỳ)</th>
                       <th className="py-2.5 px-3 text-center text-emerald-700 dark:text-emerald-300">Thực trừ Phép năm (Có lương)</th>
                       <th className="py-2.5 px-3 text-center text-rose-700 dark:text-rose-300">Nghỉ không lương (Gồm vượt phép)</th>
@@ -4825,7 +5061,7 @@ export function ProposalsApprovalView({
                       <th className="py-2.5 px-3 text-center text-purple-700 dark:text-purple-300">Ốm / BHXH / Chế độ</th>
                       <th className="py-2.5 px-3 text-center text-sky-700 dark:text-sky-300">WFH (Từ xa)</th>
                       <th className="py-2.5 px-3 text-center font-black">Tổng ngày nghỉ</th>
-                      <th className="py-2.5 px-3 text-left">Chi tiết các đợt nghỉ &amp; Người nhận bàn giao</th>
+                      <th className="py-2.5 px-3 text-left">Chi tiết các đợt nghỉ / Tăng ca &amp; Người nhận bàn giao</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200/80 dark:divide-slate-800">
@@ -4839,6 +5075,11 @@ export function ProposalsApprovalView({
                           <span className="text-[10px] text-slate-400">
                             ({row.approvedRequests} duyệt{row.pendingRequests > 0 ? `, ${row.pendingRequests} chờ` : ""})
                           </span>
+                          {row.otCount > 0 && (
+                            <div className="text-[10px] font-bold text-blue-600 dark:text-blue-400">
+                              +{row.otCount} phiếu OT
+                            </div>
+                          )}
                         </td>
                         <td className="py-2.5 px-3 text-center">
                           {row.lateEarlyCount > 0 ? (
@@ -4849,6 +5090,25 @@ export function ProposalsApprovalView({
                               <div className="text-[10px] font-bold text-amber-600 dark:text-amber-400">
                                 {row.lateEarlyCount} lần ➔ {row.lateEarlyDays} ngày
                               </div>
+                            </div>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-center">
+                          {row.otCount > 0 ? (
+                            <div className="space-y-0.5">
+                              {row.otPayHours > 0 && (
+                                <div className="font-extrabold text-blue-700 dark:text-blue-300">
+                                  💵 Tính lương: {row.otPayHours}h
+                                </div>
+                              )}
+                              {row.otCompHours > 0 && (
+                                <div className="text-[10px] font-bold text-teal-700 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/70 px-1.5 py-0.5 rounded">
+                                  🔄 Nghỉ bù: +{row.otCompHours}h ({row.otCompDays}d)
+                                  {row.compLeaveUsedDays > 0 ? ` • Đã cấn trừ ${row.compLeaveUsedDays}d` : ""}
+                                </div>
+                              )}
                             </div>
                           ) : (
                             <span className="text-slate-400">—</span>
@@ -4898,9 +5158,16 @@ export function ProposalsApprovalView({
                           )}
                         </td>
                         <td className="py-2.5 px-3 text-center font-extrabold text-teal-700 dark:text-teal-300">
-                          <span className={`px-2 py-0.5 rounded-lg text-[11px] font-black ${row.remainingQuota === 0 ? "bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300" : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"}`}>
-                            {row.remainingQuota} ngày
-                          </span>
+                          <div className="space-y-0.5">
+                            <span className={`inline-block px-2 py-0.5 rounded-lg text-[11px] font-black ${row.remainingQuota === 0 ? "bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300" : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"}`}>
+                              {row.remainingQuota} ngày phép
+                            </span>
+                            {row.remainingCompDays > 0 && (
+                              <div className="text-[10px] font-bold text-teal-600 dark:text-teal-400">
+                                +{row.remainingCompDays}d nghỉ bù OT
+                              </div>
+                            )}
+                          </div>
                         </td>
                         <td className="py-2.5 px-3 text-center font-extrabold text-purple-600 dark:text-purple-400">
                           {row.socialOrPolicyDays > 0 ? `${row.socialOrPolicyDays} ngày` : "—"}
@@ -5074,6 +5341,133 @@ export function ProposalsApprovalView({
                                 onClick={() => handlePrintProposal(p)}
                                 className="p-1 rounded-lg text-slate-500 hover:text-indigo-600 cursor-pointer"
                                 title="In đơn xin nghỉ phép"
+                              >
+                                <Printer className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* BẢNG 3: DANH SÁCH CHI TIẾT PHIẾU ĐĂNG KÝ LÀM THÊM GIỜ / TĂNG CA (DKTC) */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white uppercase">
+                  ⏰ III. DANH SÁCH CHI TIẾT PHIẾU ĐĂNG KÝ LÀM THÊM GIỜ / TĂNG CA (DKTC) ({monthlyOvertimeProposals.length} PHIẾU)
+                </h4>
+                <p className="text-[11px] text-slate-500">
+                  Hỗ trợ 2 chế độ: <strong>Tính lương tăng ca theo hệ số (150% / 200% / 300%)</strong> hoặc <strong>Quy đổi nghỉ bù (8 giờ = 1 ngày công)</strong> để tự động cấn trừ vào thời gian đi trễ/về sớm hoặc ngày nghỉ trong tháng.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => openCreateProposalModal("tmpl_overtime_request")}
+                className="px-3 py-1.5 rounded-xl text-xs font-extrabold bg-amber-600 hover:bg-amber-700 text-white cursor-pointer flex items-center gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ Lập Phiếu Tăng Ca (DKTC)</span>
+              </button>
+            </div>
+
+            {monthlyOvertimeProposals.length === 0 ? (
+              <div className="p-6 text-center text-xs text-slate-500 bg-slate-50 dark:bg-slate-950/50 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
+                Chưa có phiếu đăng ký làm thêm giờ / tăng ca (DKTC) nào trong kỳ <strong>{leaveMonthFilter}</strong>.
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-b border-slate-200 dark:border-slate-700">
+                      <th className="py-2.5 px-3 text-left">Mã phiếu</th>
+                      <th className="py-2.5 px-3 text-left">Nhân sự tăng ca</th>
+                      <th className="py-2.5 px-3 text-left">Ngày &amp; Khung giờ OT</th>
+                      <th className="py-2.5 px-3 text-left">Loại ngày / Hệ số</th>
+                      <th className="py-2.5 px-3 text-center">Số giờ OT</th>
+                      <th className="py-2.5 px-3 text-left">Hình thức tính công</th>
+                      <th className="py-2.5 px-3 text-left">Nội dung công việc</th>
+                      <th className="py-2.5 px-3 text-left">Trạng thái duyệt</th>
+                      <th className="py-2.5 px-3 text-right">Thao tác</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200/80 dark:divide-slate-800">
+                    {monthlyOvertimeProposals.map((p) => {
+                      const { otDate, otHours, convertedDays, timeSlot, otDayType, compensationMode, isCompensatoryLeave } = getOvertimeDetails(p);
+                      const statusMeta = getStatusMeta(p.status);
+                      const waitingMe = isProposalWaitingForUser(p, currentStaffName, userDept, isDirector, isManager);
+                      return (
+                        <tr key={p.id} className="hover:bg-amber-50/40 dark:hover:bg-slate-800/60 transition-colors">
+                          <td className="py-2.5 px-3">
+                            <span
+                              onClick={() => setSelectedProposal(p)}
+                              className="px-2 py-0.5 rounded font-mono font-black text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950 cursor-pointer hover:underline"
+                            >
+                              {p.proposalCode}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <div className="font-extrabold text-slate-900 dark:text-white">{p.requesterName}</div>
+                            <div className="text-[10px] text-slate-500">{p.requesterDept}</div>
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <div className="font-bold text-slate-900 dark:text-white">{formatDayVN(otDate)}</div>
+                            <div className="text-[11px] text-amber-700 dark:text-amber-300 font-semibold">⏰ {timeSlot}</div>
+                          </td>
+                          <td className="py-2.5 px-3 font-semibold text-slate-700 dark:text-slate-200">{otDayType}</td>
+                          <td className="py-2.5 px-3 text-center">
+                            <span className="px-2 py-0.5 rounded-lg font-black bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-200">
+                              {otHours} giờ ({convertedDays}d)
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <span
+                              className={`inline-block px-2 py-0.5 rounded-lg text-[11px] font-bold border ${
+                                isCompensatoryLeave
+                                  ? "bg-teal-50 text-teal-800 border-teal-300 dark:bg-teal-950/70 dark:text-teal-200 dark:border-teal-800"
+                                  : "bg-indigo-50 text-indigo-800 border-indigo-300 dark:bg-indigo-950/70 dark:text-indigo-200 dark:border-indigo-800"
+                              }`}
+                            >
+                              {isCompensatoryLeave ? `🔄 Nghỉ bù (+${convertedDays} ngày)` : "💵 Tính lương OT"}
+                            </span>
+                            <div className="text-[10px] text-slate-400 mt-0.5">{compensationMode}</div>
+                          </td>
+                          <td className="py-2.5 px-3 max-w-xs">
+                            <div className="line-clamp-2 text-slate-600 dark:text-slate-300">{p.summaryReason || p.title}</div>
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <span className={`inline-block px-2 py-0.5 rounded-lg text-[10px] font-extrabold border ${statusMeta.badgeCls}`}>
+                              {statusMeta.label}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-right">
+                            <div className="inline-flex items-center gap-1.5">
+                              {waitingMe && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDecision(p, "APPROVE", "Đồng ý xác nhận & phê duyệt giờ tăng ca")}
+                                  className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[11px] cursor-pointer"
+                                >
+                                  ✓ Duyệt
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => setSelectedProposal(p)}
+                                className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 font-bold text-[11px] cursor-pointer"
+                              >
+                                Chi tiết
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handlePrintProposal(p)}
+                                className="p-1 rounded-lg text-slate-500 hover:text-indigo-600 cursor-pointer"
+                                title="In phiếu đăng ký tăng ca"
                               >
                                 <Printer className="w-3.5 h-3.5" />
                               </button>
