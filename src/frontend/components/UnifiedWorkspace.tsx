@@ -2898,6 +2898,9 @@ export const UnifiedWorkspace: React.FC = () => {
   const [workspaceUsersList, setWorkspaceUsersList] = useState<any[]>([]);
   const [taskSourceFilter, setTaskSourceFilter] = useState<"all" | "portal" | "RD" | "KIT_OLIGO" | "DEVICE" | "QA_WH_PUR" | "APP_LEGAL">("all");
   const [myTaskScopeFilter, setMyTaskScopeFilter] = useState<"ALL" | "ASSIGNED_TO_ME" | "CREATED_BY_ME" | "FOLLOWING" | "MY_DEPT" | "OVERDUE">("ALL");
+  const [isPulseBarExpanded, setIsPulseBarExpanded] = useState<boolean>(false);
+  const [isActivityNotifExpanded, setIsActivityNotifExpanded] = useState<boolean>(false);
+  const [showStaffQuickChips, setShowStaffQuickChips] = useState<boolean>(false);
   const [scheduleScopeMode, setScheduleScopeMode] = useState<"person" | "dept">("person");
   const [scheduleWorkSearch, setScheduleWorkSearch] = useState<string>("");
   const [showTechWeeklyPlans, setShowTechWeeklyPlans] = useState<boolean>(true);
@@ -11255,48 +11258,94 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           </div>
         )}
 
-        {/* Quick Activity Notifications Strip (THÔNG BÁO HOẠT ĐỘNG) */}
+        {/* Quick Activity Notifications Strip (THÔNG BÁO HOẠT ĐỘNG - GỌN GÀNG 1 DÒNG) */}
         {filteredNotifications && filteredNotifications.length > 0 && (
-          <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center gap-2 text-xs">
-            <div className="flex items-center gap-1.5 shrink-0 font-bold text-orange-600 dark:text-orange-400">
-              <Bell className="w-3.5 h-3.5 animate-pulse" />
-              <span>THÔNG BÁO HOẠT ĐỘNG CỦA TÔI:</span>
-            </div>
-            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar flex-1">
-              {filteredNotifications.slice(0, 3).map((notif: any) => (
-                <div
-                  key={notif.id}
-                  onClick={() => {
-                    markAsRead(notif.id);
-                    openWorkspaceItemFromNotification({
-                      id: notif.taskId || notif.workflowId || notif.targetId || notif.link?.itemId,
-                      code: notif.workflowCode || notif.orderCode || notif.link?.itemId,
-                      title: notif.title,
-                      message: notif.message,
-                      subTab: notif.link?.subTab,
-                      notification: notif
-                    });
-                  }}
-                  className="group flex items-center gap-2 px-2.5 py-1 rounded-xl bg-orange-50/80 dark:bg-slate-800/80 hover:bg-orange-100/80 dark:hover:bg-slate-800 border border-orange-200/80 dark:border-slate-700 cursor-pointer shrink-0 max-w-md sm:max-w-xl hover:max-w-none transition-all"
-                  title={`${notif.title}: ${notif.message}`}
-                >
-                  <span className="font-bold text-slate-800 dark:text-slate-200 truncate group-hover:whitespace-normal text-[11px]">
-                    {notif.title}:
-                  </span>
-                  <span className="text-slate-600 dark:text-slate-400 truncate group-hover:whitespace-normal text-[11px] max-w-[260px] group-hover:max-w-none">
-                    {notif.message}
-                  </span>
-                  <span className="text-orange-600 dark:text-orange-400 font-bold text-[10px] shrink-0 hover:underline">
-                    Đi tới xem ↗
-                  </span>
+          <div className="mt-2.5 pt-2.5 border-t border-slate-100 dark:border-slate-800 flex flex-col gap-1.5 text-xs">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 shrink-0 font-bold text-orange-600 dark:text-orange-400">
+                  <Bell className="w-3.5 h-3.5 animate-pulse" />
+                  <span className="text-[11px]">THÔNG BÁO ({filteredNotifications.length}):</span>
                 </div>
-              ))}
+                {(() => {
+                  const latestNotif = filteredNotifications[0];
+                  return (
+                    <div
+                      key={latestNotif.id}
+                      onClick={() => {
+                        markAsRead(latestNotif.id);
+                        openWorkspaceItemFromNotification({
+                          id: latestNotif.taskId || latestNotif.workflowId || latestNotif.targetId || latestNotif.link?.itemId,
+                          code: latestNotif.workflowCode || latestNotif.orderCode || latestNotif.link?.itemId,
+                          title: latestNotif.title,
+                          message: latestNotif.message,
+                          subTab: latestNotif.link?.subTab,
+                          notification: latestNotif
+                        });
+                      }}
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-orange-50/80 dark:bg-slate-800/80 hover:bg-orange-100/80 dark:hover:bg-slate-800 border border-orange-200/80 dark:border-slate-700 cursor-pointer min-w-0 max-w-2xl transition-all"
+                      title={`${latestNotif.title}: ${latestNotif.message}`}
+                    >
+                      <span className="font-bold text-slate-800 dark:text-slate-200 truncate text-[11px] shrink-0">
+                        {latestNotif.title}:
+                      </span>
+                      <span className="text-slate-600 dark:text-slate-400 truncate text-[11px]">
+                        {latestNotif.message}
+                      </span>
+                      <span className="text-orange-600 dark:text-orange-400 font-bold text-[10px] shrink-0 hover:underline">
+                        Xem ↗
+                      </span>
+                    </div>
+                  );
+                })()}
+              </div>
+              {filteredNotifications.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setIsActivityNotifExpanded((v) => !v)}
+                  className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-orange-50 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-[11px] font-bold cursor-pointer shrink-0 transition-colors"
+                >
+                  {isActivityNotifExpanded ? "▲ Thu gọn" : `▼ +${filteredNotifications.length - 1} thông báo khác`}
+                </button>
+              )}
             </div>
+            {isActivityNotifExpanded && filteredNotifications.length > 1 && (
+              <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                {filteredNotifications.slice(1, 5).map((notif: any) => (
+                  <div
+                    key={notif.id}
+                    onClick={() => {
+                      markAsRead(notif.id);
+                      openWorkspaceItemFromNotification({
+                        id: notif.taskId || notif.workflowId || notif.targetId || notif.link?.itemId,
+                        code: notif.workflowCode || notif.orderCode || notif.link?.itemId,
+                        title: notif.title,
+                        message: notif.message,
+                        subTab: notif.link?.subTab,
+                        notification: notif
+                      });
+                    }}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-orange-50/60 dark:bg-slate-800/60 hover:bg-orange-100/80 border border-orange-200/70 dark:border-slate-700 cursor-pointer max-w-md transition-all"
+                    title={`${notif.title}: ${notif.message}`}
+                  >
+                    <span className="font-bold text-slate-800 dark:text-slate-200 truncate text-[11px] shrink-0">
+                      {notif.title}:
+                    </span>
+                    <span className="text-slate-600 dark:text-slate-400 truncate text-[11px]">
+                      {notif.message}
+                    </span>
+                    <span className="text-orange-600 dark:text-orange-400 font-bold text-[10px] shrink-0">
+                      ↗
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      {/* ==================== EXECUTIVE MULTI-BLOCK PULSE BAR (TOÀN CÔNG TY) ==================== */}
+      {/* ==================== EXECUTIVE MULTI-BLOCK PULSE BAR (TOÀN CÔNG TY - THU GỌN MẶC ĐỊNH) ==================== */}
       {rolePerspective === "director" && (() => {
         const commDepts = new Set(["Kinh Doanh", "Sales Admin", "Kho & Vận Hành", "Cung Ứng", "PM", "Marketing", "Kế Toán", "Hành Chính Nhân Sự"]);
         const commOpen = mergedWorkspaceTasks.filter((t: any) => t.status !== "DONE" && !t.isHubItem && commDepts.has(normalizeWorkspaceDept(t.department))).length;
@@ -11314,6 +11363,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           {
             id: "comm",
             title: "Kinh Doanh & Văn Phòng",
+            shortTitle: "KD & VP",
             sub: "Sales, Kho KD, Cung ứng, KT",
             count: commOpen,
             unit: "việc mở",
@@ -11324,6 +11374,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           {
             id: "app_legal",
             title: "Application & Pháp Chế",
+            shortTitle: "App & Pháp Chế",
             sub: "Demo viện, CSKT, Thầu & HĐ",
             count: appLegalOpen,
             unit: "việc mở",
@@ -11334,6 +11385,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           {
             id: "rd",
             title: "Nghiên Cứu R&D",
+            shortTitle: "R&D",
             sub: `${rdProjActive} dự án · ELN & WBS`,
             count: rdOpen,
             unit: "việc / ELN",
@@ -11344,6 +11396,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           {
             id: "kit_oligo",
             title: "SX Kit & Tổng Hợp Oligo",
+            shortTitle: "SX Kit & Oligo",
             sub: "Việc giao & Phối hợp kỹ thuật",
             count: kitOligoOpen,
             unit: "việc mở",
@@ -11354,6 +11407,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           {
             id: "device",
             title: "Kỹ Thuật – Thiết Bị (KTCN)",
+            shortTitle: "KTCN – Thiết Bị",
             sub: `${deviceProjActive} DA · Máy, Bảo hành, ECO`,
             count: deviceOpen,
             unit: "lệnh / phiếu",
@@ -11364,6 +11418,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           {
             id: "qa_wh_pur",
             title: "QA/QC • Kho • Cung Ứng KT",
+            shortTitle: "QA/QC · Kho · CƯ",
             sub: "IQC/FQC, CAPA, PR/PO, Đơn NB",
             count: qaWhPurOpen,
             unit: "phiếu mở",
@@ -11374,43 +11429,77 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
         ];
 
         return (
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between px-1">
-              <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                🏢 Toàn cảnh Vận hành Các Khối (Bấm vào từng khối để lọc nhanh)
-              </span>
-              {(selectedDept !== "all" || taskSourceFilter !== "all") && (
+          <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl px-3.5 py-2 shadow-2xs space-y-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <button
                   type="button"
-                  onClick={() => { setSelectedDept("all"); setTaskSourceFilter("all"); }}
-                  className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                  onClick={() => setIsPulseBarExpanded((v) => !v)}
+                  className="text-[11px] font-extrabold uppercase tracking-wider text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center gap-1 cursor-pointer mr-1"
+                  title="Bấm để mở rộng hoặc thu gọn 6 thẻ toàn cảnh các khối"
                 >
-                  ↺ Xem lại Toàn Công Ty
+                  <span>🏢 Toàn cảnh 6 khối:</span>
                 </button>
-              )}
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5">
-              {pulseCards.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={c.onClick}
-                  className={`text-left p-3 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${c.cls} ${
-                    c.active ? "ring-2 ring-indigo-500 shadow-sm" : "opacity-95 hover:opacity-100"
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="text-[11px] font-extrabold truncate">{c.title}</span>
-                    <span className="px-1.5 py-0.5 rounded-md bg-white/80 dark:bg-slate-900/80 font-mono text-[11px] font-black shrink-0">
+                {pulseCards.map((c) => (
+                  <button
+                    key={`pill-${c.id}`}
+                    type="button"
+                    onClick={c.onClick}
+                    title={`${c.title} (${c.sub}): ${c.count} ${c.unit}`}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl border text-[11px] font-bold transition-all cursor-pointer ${c.cls} ${
+                      c.active ? "ring-2 ring-indigo-500 shadow-2xs font-extrabold" : "opacity-90 hover:opacity-100"
+                    }`}
+                  >
+                    <span>{c.shortTitle}</span>
+                    <span className="px-1.5 py-0.2 rounded-md bg-white/85 dark:bg-slate-900/85 font-mono text-[10px] font-black">
                       {c.count}
                     </span>
-                  </div>
-                  <div className="text-[10px] opacity-80 truncate mt-1">
-                    {c.sub} • {c.unit}
-                  </div>
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {(selectedDept !== "all" || taskSourceFilter !== "all") && (
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedDept("all"); setTaskSourceFilter("all"); }}
+                    className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                  >
+                    ↺ Toàn Công Ty
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setIsPulseBarExpanded((v) => !v)}
+                  className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-[11px] font-bold cursor-pointer transition-colors"
+                >
+                  {isPulseBarExpanded ? "▲ Thu gọn thẻ" : "▼ Xổ 6 thẻ khối"}
                 </button>
-              ))}
+              </div>
             </div>
+            {isPulseBarExpanded && (
+              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5 pt-1 border-t border-slate-100 dark:border-slate-800">
+                {pulseCards.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={c.onClick}
+                    className={`text-left p-2.5 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${c.cls} ${
+                      c.active ? "ring-2 ring-indigo-500 shadow-sm" : "opacity-95 hover:opacity-100"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-[11px] font-extrabold truncate">{c.title}</span>
+                      <span className="px-1.5 py-0.5 rounded-md bg-white/80 dark:bg-slate-900/80 font-mono text-[11px] font-black shrink-0">
+                        {c.count}
+                      </span>
+                    </div>
+                    <div className="text-[10px] opacity-80 truncate mt-1">
+                      {c.sub} • {c.unit}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         );
       })()}
@@ -11975,32 +12064,35 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       );
                     })}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const defaultDept = rolePerspective === "manager" ? managerDept : defaultConcreteDeptForScope(selectedDept, userDept);
-                      setTaskForm({
-                        id: null,
-                        title: "",
-                        department: defaultDept,
-                        task_category: DEPARTMENT_CATEGORIES[defaultDept]?.[0] || "Chung",
-                        assignee_name: currentStaffName,
-                        customer_name: "",
-                        priority: "MEDIUM",
-                        status: "TODO",
-                        deadline: todayVN(),
-                        description: "",
-                        result: "",
-                        attachments: [],
-                        followers: []
-                      });
-                      setIsTaskModalOpen(true);
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-extrabold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    + Tạo / Giao việc mới
-                  </button>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {(rolePerspective === "manager" || rolePerspective === "director") && departmentStaffList.length > 0 && (
+                      <>
+                        {selectedAssignee !== "all" && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedAssignee("all")}
+                            className="px-2.5 py-1 rounded-xl text-[11px] font-bold bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-700 cursor-pointer"
+                            title="Bỏ lọc nhân sự đang chọn"
+                          >
+                            👤 {selectedAssignee === "__UNASSIGNED__" ? "Chờ phân công" : selectedAssignee} ✕
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setShowStaffQuickChips((v) => !v)}
+                          className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                            showStaffQuickChips
+                              ? "bg-indigo-600 text-white border-indigo-600 shadow-2xs"
+                              : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:border-indigo-300"
+                          }`}
+                          title="Ẩn/Hiện thanh chọn nhanh từng nhân sự"
+                        >
+                          <Users className="w-3.5 h-3.5" />
+                          <span>{showStaffQuickChips ? "▲ Ẩn thanh nhân sự" : `▼ Thanh nhân sự (${departmentStaffList.length})`}</span>
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
 
                 {overdueCount > 0 && (
@@ -12085,8 +12177,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             );
           })()}
 
-          {/* Quick Staff Member Filter Chips */}
-          {(rolePerspective === "manager" || rolePerspective === "director") && departmentStaffList.length > 0 && (
+          {/* Quick Staff Member Filter Chips (chỉ hiển thị khi bấm mở Thanh nhân sự) */}
+          {(rolePerspective === "manager" || rolePerspective === "director") && departmentStaffList.length > 0 && showStaffQuickChips && (
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 pt-0.5 no-scrollbar text-xs">
               <span className="text-[11px] font-bold text-slate-400 shrink-0 mr-1 flex items-center gap-1">
                 <Users className="w-3.5 h-3.5 text-indigo-400" />
@@ -13679,8 +13771,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             {/* BẢNG ĐỘC LẬP 1: LỊCH SỬ DỤNG PHÒNG HỌP & TÀI NGUYÊN CÔNG TY            */}
             {/* ===================================================================== */}
             {plannerSectionMode !== "WORK_ONLY" && (
-              <div className="bg-white dark:bg-slate-900 border-2 border-emerald-200/90 dark:border-emerald-900/70 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3.5">
-                <div className="flex items-center justify-between gap-2 flex-wrap pb-2.5 border-b border-emerald-100 dark:border-slate-800">
+              <div className={`bg-white dark:bg-slate-900 border-2 border-emerald-200/90 dark:border-emerald-900/70 rounded-2xl ${isResourceBoardCollapsed ? "px-4 py-2.5" : "p-4 sm:p-5 space-y-3.5"} shadow-xs`}>
+                <div className={`flex items-center justify-between gap-2 flex-wrap ${isResourceBoardCollapsed ? "" : "pb-2.5 border-b border-emerald-100 dark:border-slate-800"}`}>
                   <div
                     className="cursor-pointer select-none"
                     onClick={() => setIsResourceBoardCollapsed((v) => !v)}
@@ -13688,7 +13780,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   >
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-xs font-extrabold flex items-center gap-1">
-                        <span>🏢 BẢNG 1: LỊCH SỬ DỤNG PHÒNG HỌP &amp; TÀI NGUYÊN CÔNG TY (ĐỘC LẬP)</span>
+                        <span>🏢 BẢNG 1: LỊCH SỬ DỤNG PHÒNG HỌP &amp; TÀI NGUYÊN CÔNG TY</span>
                       </span>
                       <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300">
                         Tuần {viewedWeek.weekNo} ({viewedWeek.days[0].label} – {viewedWeek.days[5].label})
@@ -13697,9 +13789,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         {companyResources.length} tài nguyên • {resourceBookingSchedules.filter((s) => viewedWeek.all7Days.some((wd) => scheduleOnDay(s, wd))).length} lượt đặt tuần này
                       </span>
                     </div>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Quản lý riêng lịch mượn / đăng ký Phòng họp, Máy Demo, Xe công ty &amp; chống đặt trùng khung giờ (Tách biệt hoàn toàn với Lịch công tác &amp; Lịch họp)
-                    </p>
+                    {!isResourceBoardCollapsed && (
+                      <p className="text-xs text-slate-500 mt-1">
+                        Quản lý riêng lịch mượn / đăng ký Phòng họp, Máy Demo, Xe công ty &amp; chống đặt trùng khung giờ (Tách biệt hoàn toàn với Lịch công tác &amp; Lịch họp)
+                      </p>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
                     {selectedResourceFilter !== "all" && (
@@ -13725,20 +13819,20 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       }}
                       className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 hover:bg-emerald-50 border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 text-xs font-bold cursor-pointer"
                     >
-                      {isAddingNewResource && !editingResourceId ? "Đóng biểu mẫu" : "+ Thêm phòng họp / tài nguyên mới"}
+                      {isAddingNewResource && !editingResourceId ? "Đóng biểu mẫu" : "+ Thêm tài nguyên"}
                     </button>
                     <button
                       type="button"
                       onClick={() => openScheduleForm(undefined, undefined, "RESOURCE")}
                       className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-2xs cursor-pointer"
                     >
-                      + Đăng ký sử dụng tài nguyên
+                      + Đăng ký tài nguyên
                     </button>
                     <button
                       type="button"
                       onClick={() => setIsResourceBoardCollapsed((v) => !v)}
                       className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-emerald-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 text-xs font-extrabold flex items-center gap-1 cursor-pointer"
-                      title={isResourceBoardCollapsed ? "Xổ ra toàn bộ Bảng 1" : "Thu gọn Bảng 1 thành thanh tóm tắt"}
+                      title={isResourceBoardCollapsed ? "Xổ ra toàn bộ Bảng 1" : "Thu gọn Bảng 1 thành thanh 1 dòng"}
                     >
                       {isResourceBoardCollapsed ? (
                         <>
@@ -13896,45 +13990,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     </div>
                   )}
 
-                  {isResourceBoardCollapsed ? (
-                    <div className="flex items-center justify-between gap-2 flex-wrap bg-emerald-50/50 dark:bg-slate-800/50 px-3 py-2 rounded-xl border border-emerald-200/70 dark:border-slate-700">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {companyResources.map((resItem) => {
-                          const count = weeklySchedule.filter(
-                            (s) => matchScheduleToResource(s, resItem) && viewedWeek.all7Days.some((wd) => scheduleOnDay(s, wd))
-                          ).length;
-                          return (
-                            <button
-                              key={`collapsed-pill-${resItem.id}`}
-                              type="button"
-                              onClick={() => {
-                                setSelectedResourceFilter(resItem.id);
-                                setIsResourceBoardCollapsed(false);
-                              }}
-                              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer flex items-center gap-1 ${
-                                count > 0
-                                  ? "bg-amber-50 dark:bg-amber-950/70 border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-200"
-                                  : "bg-white dark:bg-slate-900 border-emerald-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-emerald-400"
-                              }`}
-                              title="Bấm để mở Bảng 1 và lọc theo tài nguyên này"
-                            >
-                              <span>{resItem.icon} {resItem.name}</span>
-                              <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-extrabold ${count > 0 ? "bg-amber-500 text-white" : "bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300"}`}>
-                                {count > 0 ? `${count} lượt` : "Trống"}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setIsResourceBoardCollapsed(false)}
-                        className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold cursor-pointer shrink-0"
-                      >
-                        ▼ Xổ ra xem chi tiết
-                      </button>
-                    </div>
-                  ) : (
+                  {!isResourceBoardCollapsed && (
                   <>
                   {companyResources.length === 0 ? (
                     <div className="p-4 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-dashed border-emerald-300 dark:border-slate-700 text-center space-y-2 text-xs">
@@ -14537,58 +14593,83 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 );
               })()}
 
-              {/* Quick Staff Member Filter for Weekly Schedule */}
+              {/* Quick Staff Member Filter for Weekly Schedule (chỉ hiện khi bấm mở hoặc đang lọc 1 nhân sự) */}
               {(rolePerspective === "manager" || rolePerspective === "director") && departmentStaffList.length > 0 && (
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-2.5 mb-3.5 pt-0.5 no-scrollbar text-xs border-b border-slate-100 dark:border-slate-800">
-                  <span className="text-[11px] font-bold text-slate-400 shrink-0 mr-1 flex items-center gap-1">
-                    <Users className="w-3.5 h-3.5 text-indigo-500" />
-                    <span>Lọc lịch theo nhân sự:</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedAssignee("all")}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
-                      selectedAssignee === "all"
-                        ? "bg-indigo-600 text-white shadow-xs"
-                        : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
-                    }`}
-                  >
-                    Tất cả ({departmentStaffList.length})
-                  </button>
-                  {departmentStaffList.map((p: any) => {
-                    const name = p.full_name || p;
-                    const staffUid = resolveUserIdForStaffName(name);
-                    const baseSchedCount = weeklySchedule.filter(s => {
-                      const matchesDept = effectiveSelectedDept === "all" || isSameWorkspaceDept(s.category, effectiveSelectedDept) || (rolePerspective === "manager" && isSameWorkspaceDept(s.category, managerDept));
-                      const actor = (s.actor || "").toLowerCase().trim();
-                      const target = name.toLowerCase().trim();
-                      return matchesDept && (actor.includes(target) || target.includes(actor));
-                    }).length;
-                    const techSchedCount = showTechWeeklyPlans
-                      ? filteredHubWeeklyPlans.filter((h) => (staffUid && h.actorUserId === staffUid) || sameStaffName(h.actor, name)).length
-                      : 0;
-                    const schedCount = baseSchedCount + techSchedCount;
-                    const isSelected = selectedAssignee === name;
-                    return (
+                <div className="mb-3">
+                  <div className="flex items-center justify-between gap-2 pb-1.5">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <button
-                        key={p.id || p.employee_code || name}
                         type="button"
-                        onClick={() => setSelectedAssignee(isSelected ? "all" : name)}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all shrink-0 cursor-pointer border ${
-                          isSelected
-                            ? "bg-indigo-50 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 border-indigo-400 dark:border-indigo-600 font-bold shadow-xs ring-2 ring-indigo-500/20"
-                            : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                        onClick={() => setShowStaffQuickChips((v) => !v)}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                          showStaffQuickChips
+                            ? "bg-indigo-600 text-white border-indigo-600 shadow-2xs"
+                            : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-indigo-300"
                         }`}
                       >
-                        <span>{name}</span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold font-mono ${
-                          schedCount > 0 ? "bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400" : "bg-slate-100 dark:bg-slate-800 text-slate-400"
-                        }`}>
-                          {schedCount}
-                        </span>
+                        <Users className="w-3.5 h-3.5" />
+                        <span>{showStaffQuickChips ? "▲ Ẩn thanh lọc nhân sự" : `▼ Lọc nhanh theo nhân sự (${departmentStaffList.length})`}</span>
                       </button>
-                    );
-                  })}
+                      {selectedAssignee !== "all" && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedAssignee("all")}
+                          className="px-2.5 py-1 rounded-xl text-xs font-bold bg-indigo-50 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-700 cursor-pointer"
+                        >
+                          Đang lọc: {selectedAssignee} ✕
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {showStaffQuickChips && (
+                    <div className="flex items-center gap-1.5 overflow-x-auto pb-2 pt-1 no-scrollbar text-xs border-b border-slate-100 dark:border-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedAssignee("all")}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+                          selectedAssignee === "all"
+                            ? "bg-indigo-600 text-white shadow-xs"
+                            : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                        }`}
+                      >
+                        Tất cả ({departmentStaffList.length})
+                      </button>
+                      {departmentStaffList.map((p: any) => {
+                        const name = p.full_name || p;
+                        const staffUid = resolveUserIdForStaffName(name);
+                        const baseSchedCount = weeklySchedule.filter(s => {
+                          const matchesDept = effectiveSelectedDept === "all" || isSameWorkspaceDept(s.category, effectiveSelectedDept) || (rolePerspective === "manager" && isSameWorkspaceDept(s.category, managerDept));
+                          const actor = (s.actor || "").toLowerCase().trim();
+                          const target = name.toLowerCase().trim();
+                          return matchesDept && (actor.includes(target) || target.includes(actor));
+                        }).length;
+                        const techSchedCount = showTechWeeklyPlans
+                          ? filteredHubWeeklyPlans.filter((h) => (staffUid && h.actorUserId === staffUid) || sameStaffName(h.actor, name)).length
+                          : 0;
+                        const schedCount = baseSchedCount + techSchedCount;
+                        const isSelected = selectedAssignee === name;
+                        return (
+                          <button
+                            key={p.id || p.employee_code || name}
+                            type="button"
+                            onClick={() => setSelectedAssignee(isSelected ? "all" : name)}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all shrink-0 cursor-pointer border ${
+                              isSelected
+                                ? "bg-indigo-50 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 border-indigo-400 dark:border-indigo-600 font-bold shadow-xs ring-2 ring-indigo-500/20"
+                                : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                            }`}
+                          >
+                            <span>{name}</span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold font-mono ${
+                              schedCount > 0 ? "bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400" : "bg-slate-100 dark:bg-slate-800 text-slate-400"
+                            }`}>
+                              {schedCount}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -14734,7 +14815,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                     </span>
                                   )}
                                 </div>
-                                <div className="font-semibold leading-tight">{ev.title}</div>
+                                <div className="font-semibold leading-tight line-clamp-2" title={ev.title}>{ev.title}</div>
                                 {isHubPlan && ev.sourceLabel && (
                                   <div className="text-[9px] opacity-75 mt-0.5 font-semibold">
                                     🔗 Nguồn: {ev.sourceLabel}
@@ -15697,223 +15778,85 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
       {/* TAB 4: NHẬT KÝ DAILY - KẾT NỐI KẾ HOẠCH TUẦN & CHỈ ĐẠO 2 CHIỀU */}
       {renderedSubTab === "daily" && (
-        <div className="space-y-5">
-          {/* Top Control Bar: Weekday Navigator & Personnel Filter */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs space-y-3.5">
-            <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
-              {/* Weekday & Week Switcher */}
-              <div className="space-y-2 w-full lg:w-auto">
-                <div className="flex flex-wrap items-center gap-2">
-                  <CalendarDays className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
-                  <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                    Chọn tuần &amp; ngày báo cáo:
-                  </span>
-                  <div className="inline-flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setWeekOffset(w => w - 1)}
-                      className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center gap-0.5 cursor-pointer transition-colors"
-                      title="Xem tuần trước"
-                    >
-                      <ChevronRight className="w-3.5 h-3.5 rotate-180" />
-                      <span className="hidden sm:inline text-[11px]">Tuần trước</span>
-                    </button>
-                    <select
-                      value={weekOffset}
-                      onChange={(e) => setWeekOffset(Number(e.target.value))}
-                      className="px-2.5 py-1 rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50/70 dark:bg-indigo-950/50 text-indigo-800 dark:text-indigo-200 text-xs font-bold font-mono cursor-pointer outline-none"
-                      title="Chọn tuần cần xem hoặc lập báo cáo"
-                    >
-                      {weekSelectorOptions.map(opt => (
-                        <option key={opt.offset} value={opt.offset} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => setWeekOffset(w => w + 1)}
-                      className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center gap-0.5 cursor-pointer transition-colors"
-                      title="Xem tuần sau"
-                    >
-                      <span className="hidden sm:inline text-[11px]">Tuần sau</span>
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                  <div className="inline-flex items-center gap-1 bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-0.5" title="Chọn nhanh một ngày bất kỳ trên lịch">
-                    <span className="text-[10px] font-semibold text-slate-500 whitespace-nowrap">Chọn ngày:</span>
-                    <DateInputVN
-                      value={selectedDailyDayObj.date}
-                      onChange={(e) => {
-                        if (e.target.value) jumpDailyToDate(e.target.value);
-                      }}
-                      className="w-24 text-[11px] font-mono font-bold text-slate-800 dark:text-slate-100 bg-transparent outline-none"
-                    />
-                  </div>
-                  {(weekOffset !== 0 || selectedDailyDayObj.date !== currentTodayIso) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const latest = todayVN();
-                        setCurrentTodayIso(latest);
-                        setWeekOffset(0);
-                        setSelectedDailyDay(getInitialDailyDay(latest));
-                      }}
-                      className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-2xs cursor-pointer transition-colors"
-                      title="Quay về đúng ngày hôm nay & tuần hiện tại"
-                    >
-                      Hôm nay ({formatDayVN(currentTodayIso, true)})
-                    </button>
-                  )}
+        <div className="space-y-4">
+          {/* Top Control Bar: Compact 2-Row Weekday Navigator & Personnel Filter (Không lặp lại bộ lọc Phòng ban đã có ở thanh trên) */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3.5 shadow-xs space-y-2.5">
+            {/* Row 1: Week Switcher + Date Picker + Staff Filter */}
+            <div className="flex flex-wrap items-center justify-between gap-2.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <CalendarDays className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                <div className="inline-flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setWeekOffset(w => w - 1)}
+                    className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center gap-0.5 cursor-pointer transition-colors"
+                    title="Xem tuần trước"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5 rotate-180" />
+                    <span className="hidden sm:inline text-[11px]">Tuần trước</span>
+                  </button>
+                  <select
+                    value={weekOffset}
+                    onChange={(e) => setWeekOffset(Number(e.target.value))}
+                    className="px-2.5 py-1 rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50/70 dark:bg-indigo-950/50 text-indigo-800 dark:text-indigo-200 text-xs font-bold font-mono cursor-pointer outline-none"
+                    title="Chọn tuần cần xem hoặc lập báo cáo"
+                  >
+                    {weekSelectorOptions.map(opt => (
+                      <option key={opt.offset} value={opt.offset} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setWeekOffset(w => w + 1)}
+                    className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center gap-0.5 cursor-pointer transition-colors"
+                    title="Xem tuần sau"
+                  >
+                    <span className="hidden sm:inline text-[11px]">Tuần sau</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
                 </div>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7"].map((day) => {
-                    const isSelected = selectedDailyDay === day;
-                    const dayObj = viewedWeek.days.find(d => d.name === day) || { name: day, date: currentTodayIso, label: "" };
-                    const isTodayDay = dayObj.date === currentTodayIso;
-                    const staff = activeDailyStaff;
-                    const activeDept = selectedDept !== "all" ? selectedDept : (rolePerspective === "manager" ? managerDept : "");
-                    // Count planned items for this exact date in the current viewed week + active tasks
-                    const schedCount = weeklySchedule.filter(s => {
-                      if (!scheduleOnDay(s, dayObj)) return false;
-                      if (staff) {
-                        if (!s.actor) return false;
-                        const actors = String(s.actor || "").split(",").map((a: string) => a.trim()).filter(Boolean);
-                        if (actors.some((a: string) => sameStaffName(a, staff))) return true;
-                        return s.actor.toLowerCase().includes(staff.toLowerCase()) || staff.toLowerCase().includes(s.actor.toLowerCase());
-                      }
-                      if (activeDept) {
-                        const matchCat = isSameWorkspaceDept(s.category, activeDept);
-                        const actors = String(s.actor || "").split(",").map((a: string) => a.trim()).filter(Boolean);
-                        const matchStaff = actors.some((a: string) => departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, a)));
-                        return matchCat || matchStaff;
-                      }
-                      return true;
-                    }).length;
-                    const taskCountForDay = tasks.filter((t: any) => {
-                      const cleanA = cleanWorkspaceAssignee(t.assignee_name);
-                      if (staff) {
-                        if (!cleanA || !taskHasAssignee(t.assignee_name, staff)) return false;
-                      } else if (activeDept && !taskInvolvesDept(t, activeDept)) {
-                        return false;
-                      }
-                      const dl = t.deadline ? String(t.deadline).slice(0, 10) : "";
-                      if (t.status === "IN_PROGRESS") return true;
-                      if (t.status === "TODO" && (!dl || dl <= dayObj.date)) return true;
-                      if (t.status === "DONE" && dl === dayObj.date) return true;
-                      return false;
-                    }).length;
-                    const dayItemCount = schedCount + taskCountForDay;
-
-                    return (
-                      <button
-                        key={day}
-                        type="button"
-                        onClick={() => setSelectedDailyDay(day)}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
-                          isSelected
-                            ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30 scale-102"
-                            : isTodayDay
-                            ? "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 hover:bg-emerald-100"
-                            : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
-                        }`}
-                      >
-                        <span>{day}{dayObj.label ? ` (${dayObj.label})` : ""}{isTodayDay ? " • Hôm nay" : ""}</span>
-                        {dayItemCount > 0 && (
-                          <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                            isSelected
-                              ? "bg-white/20 text-white"
-                              : "bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300"
-                          }`}>
-                            {dayItemCount} việc
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
+                <div className="inline-flex items-center gap-1 bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-0.5" title="Chọn nhanh một ngày bất kỳ trên lịch">
+                  <span className="text-[10px] font-semibold text-slate-500 whitespace-nowrap">Ngày:</span>
+                  <DateInputVN
+                    value={selectedDailyDayObj.date}
+                    onChange={(e) => {
+                      if (e.target.value) jumpDailyToDate(e.target.value);
+                    }}
+                    className="w-24 text-[11px] font-mono font-bold text-slate-800 dark:text-slate-100 bg-transparent outline-none"
+                  />
                 </div>
+                {(weekOffset !== 0 || selectedDailyDayObj.date !== currentTodayIso) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const latest = todayVN();
+                      setCurrentTodayIso(latest);
+                      setWeekOffset(0);
+                      setSelectedDailyDay(getInitialDailyDay(latest));
+                    }}
+                    className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-2xs cursor-pointer transition-colors"
+                    title="Quay về đúng ngày hôm nay & tuần hiện tại"
+                  >
+                    Hôm nay ({formatDayVN(currentTodayIso, true)})
+                  </button>
+                )}
               </div>
 
-              {/* Staff / Department Context (Hỗ trợ chọn Phòng ban / Khối ngay tại chỗ + xem Tất cả hoặc lọc 1 nhân sự cụ thể) */}
-              <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto shrink-0">
+              {/* Staff Context (Đồng bộ với Phòng ban ở thanh bộ lọc chính phía trên) */}
+              <div className="flex flex-wrap items-center gap-1.5 shrink-0">
                 {rolePerspective === "director" || rolePerspective === "manager" ? (
-                  <div className="flex flex-wrap items-center gap-2 min-w-[290px]">
-                    {rolePerspective === "director" ? (
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs text-slate-500 font-semibold shrink-0">
-                          Phòng ban:
-                        </span>
-                        <div className="relative">
-                          <select
-                            value={selectedDept}
-                            onChange={(e) => {
-                              setSelectedDept(e.target.value);
-                              setSelectedDailyStaff("all");
-                              setDailyLogStaffScope("dept");
-                            }}
-                            className="appearance-none pl-7 pr-7 py-1.5 rounded-xl text-xs font-extrabold bg-amber-50 dark:bg-amber-950/50 text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-700 hover:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500/20 cursor-pointer transition-all max-w-[230px] truncate"
-                            title="Chọn Phòng ban / Khối / Ban chức năng để xem công việc & nhật ký của cả phòng ban đó"
-                          >
-                            <option value="all">🏢 Toàn công ty (Tất cả phòng)</option>
-                            <optgroup label="⚡ Xem Theo Khối">
-                              <option value="BLOCK_COMMERCIAL">💼 Toàn Khối Kinh Doanh &amp; VP</option>
-                              <option value="BLOCK_TECHNICAL">🏭 Toàn Khối Kỹ Thuật – Nhà Máy</option>
-                              <option value="BLOCK_EXECUTIVE">🏛️ Khối Ban Lãnh Đạo (BOD)</option>
-                            </optgroup>
-                            <optgroup label="🏢 Phòng Ban — Khối Kinh Doanh &amp; VP">
-                              <option value="Kinh Doanh">💼 Kinh Doanh (Sales)</option>
-                              <option value="Sales Admin">📋 Sales Admin</option>
-                              <option value="Application">🔬 Application (Lab KD)</option>
-                              <option value="IT">💻 Phòng IT (CNTT &amp; Phần mềm)</option>
-                              <option value="Kho & Vận Hành">📦 Kho Kinh Doanh &amp; Vận Hành</option>
-                              <option value="Cung Ứng">🛒 Cung Ứng Kinh Doanh</option>
-                              <option value="PM">🎯 Quản Lý Sản Phẩm (PM)</option>
-                              <option value="Marketing">📢 Marketing &amp; Tiếp Thị</option>
-                              <option value="Kế Toán">💰 Kế Toán - Tài Chính</option>
-                              <option value="Pháp Chế">⚖️ Pháp Chế &amp; Tuân Thủ</option>
-                              <option value="Hành Chính Nhân Sự">👥 Hành Chính – Nhân Sự</option>
-                            </optgroup>
-                            <optgroup label="🏭 Phòng Ban — Khối Kỹ Thuật – Nhà Máy">
-                              <option value="Đơn Nội Bộ">📑 Điều Phối Đơn Nội Bộ</option>
-                              <option value="Nghiên Cứu R&D">🧬 Nghiên Cứu R&amp;D</option>
-                              <option value="Sản Xuất Kit">🧪 Sản Xuất Kit</option>
-                              <option value="Tổng Hợp Oligo">🧬 Tổng Hợp Oligo</option>
-                              <option value="Kỹ Thuật – Thiết Bị">⚙️ Kỹ Thuật – Thiết Bị</option>
-                              <option value="QA/QC">🛡️ Đảm Bảo &amp; Kiểm Soát CL (QA/QC)</option>
-                              <option value="Kho Nhà Máy">🏭 Kho Nhà Máy (Kỹ Thuật)</option>
-                              <option value="Cung Ứng Kỹ Thuật">🧪 Cung Ứng Kỹ Thuật (NVL)</option>
-                            </optgroup>
-                            <optgroup label="🏛️ Ban Lãnh Đạo">
-                              <option value="Ban Giám Đốc">🏛️ Ban Giám Đốc (BOD)</option>
-                            </optgroup>
-                            {functionalGroups.length > 0 && (
-                              <optgroup label="🏛️ Ban / Nhóm Chức Năng">
-                                {functionalGroups.map((fg) => (
-                                  <option key={fg.id} value={fg.id}>
-                                    {fg.icon || "🏛️"} {fg.name || fg.id}
-                                  </option>
-                                ))}
-                              </optgroup>
-                            )}
-                          </select>
-                          <Building2 className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none text-amber-700 dark:text-amber-300" />
-                          <ChevronDown className="w-3.5 h-3.5 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-amber-700 dark:text-amber-300" />
-                        </div>
-                      </div>
-                    ) : (
-                      <span className="text-xs text-slate-500 font-semibold shrink-0">
-                        Nhân sự ({formatWorkspaceScopeLabel(effectiveSelectedDept)}):
-                      </span>
-                    )}
+                  <>
                     <button
                       type="button"
                       onClick={() => {
                         setSelectedDailyStaff("all");
                         setDailyLogStaffScope("dept");
                       }}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all shrink-0 cursor-pointer border ${
+                      className={`px-2.5 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all shrink-0 cursor-pointer border ${
                         !activeDailyStaff
-                          ? "bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-600/25"
+                          ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
                           : "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100"
                       }`}
                       title="Xem tổng hợp toàn bộ công việc và nhật ký của tất cả nhân sự thuộc phạm vi đang chọn"
@@ -15922,10 +15865,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       <span>
                         {effectiveSelectedDept !== "all"
                           ? `Tất cả ${formatWorkspaceScopeLabel(effectiveSelectedDept)} (${departmentStaffList.length})`
-                          : `Tất cả Toàn công ty (${departmentStaffList.length})`}
+                          : `Toàn công ty (${departmentStaffList.length})`}
                       </span>
                     </button>
-                    <div className="min-w-[230px]">
+                    <div className="min-w-[220px]">
                       <SearchablePersonnelSelect
                         value={activeDailyStaff}
                         onChange={(val) => {
@@ -15939,14 +15882,25 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         }}
                         personnelList={departmentStaffList}
                         filterDepartment={effectiveSelectedDept}
-                        placeholder={
-                          effectiveSelectedDept !== "all"
-                            ? `Đang xem cả phòng ${formatWorkspaceScopeLabel(effectiveSelectedDept)} • Bấm lọc 1 người...`
-                            : `Đang xem Toàn công ty (${departmentStaffList.length} người) • Bấm lọc 1 người...`
-                        }
+                        placeholder="Lọc 1 nhân sự cụ thể..."
                       />
                     </div>
-                  </div>
+                    {departmentStaffList.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowStaffQuickChips((v) => !v)}
+                        className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1 ${
+                          showStaffQuickChips
+                            ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900"
+                            : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-indigo-300"
+                        }`}
+                        title="Ẩn/Hiện danh sách nút chọn nhanh nhân sự"
+                      >
+                        <Users className="w-3.5 h-3.5" />
+                        <span>{showStaffQuickChips ? "▲ Ẩn" : `▼ DS (${departmentStaffList.length})`}</span>
+                      </button>
+                    )}
+                  </>
                 ) : (
                   <div className="px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-xs font-bold flex items-center gap-2">
                     <UserCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
@@ -15956,8 +15910,75 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               </div>
             </div>
 
-            {/* Quick Department-Scoped Staff Chips in Daily Log */}
-            {(rolePerspective === "director" || rolePerspective === "manager") && departmentStaffList.length > 0 && (
+            {/* Row 2: 6 Weekday Buttons on a single clean strip */}
+            <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-100 dark:border-slate-800">
+              {["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7"].map((day) => {
+                const isSelected = selectedDailyDay === day;
+                const dayObj = viewedWeek.days.find(d => d.name === day) || { name: day, date: currentTodayIso, label: "" };
+                const isTodayDay = dayObj.date === currentTodayIso;
+                const staff = activeDailyStaff;
+                const activeDept = selectedDept !== "all" ? selectedDept : (rolePerspective === "manager" ? managerDept : "");
+                const schedCount = weeklySchedule.filter(s => {
+                  if (!scheduleOnDay(s, dayObj)) return false;
+                  if (staff) {
+                    if (!s.actor) return false;
+                    const actors = String(s.actor || "").split(",").map((a: string) => a.trim()).filter(Boolean);
+                    if (actors.some((a: string) => sameStaffName(a, staff))) return true;
+                    return s.actor.toLowerCase().includes(staff.toLowerCase()) || staff.toLowerCase().includes(s.actor.toLowerCase());
+                  }
+                  if (activeDept) {
+                    const matchCat = isSameWorkspaceDept(s.category, activeDept);
+                    const actors = String(s.actor || "").split(",").map((a: string) => a.trim()).filter(Boolean);
+                    const matchStaff = actors.some((a: string) => departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, a)));
+                    return matchCat || matchStaff;
+                  }
+                  return true;
+                }).length;
+                const taskCountForDay = tasks.filter((t: any) => {
+                  const cleanA = cleanWorkspaceAssignee(t.assignee_name);
+                  if (staff) {
+                    if (!cleanA || !taskHasAssignee(t.assignee_name, staff)) return false;
+                  } else if (activeDept && !taskInvolvesDept(t, activeDept)) {
+                    return false;
+                  }
+                  const dl = t.deadline ? String(t.deadline).slice(0, 10) : "";
+                  if (t.status === "IN_PROGRESS") return true;
+                  if (t.status === "TODO" && (!dl || dl <= dayObj.date)) return true;
+                  if (t.status === "DONE" && dl === dayObj.date) return true;
+                  return false;
+                }).length;
+                const dayItemCount = schedCount + taskCountForDay;
+
+                return (
+                  <button
+                    key={day}
+                    type="button"
+                    onClick={() => setSelectedDailyDay(day)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                      isSelected
+                        ? "bg-indigo-600 text-white shadow-sm shadow-indigo-600/25"
+                        : isTodayDay
+                        ? "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 hover:bg-emerald-100"
+                        : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
+                    }`}
+                  >
+                    <span>{day}{dayObj.label ? ` (${dayObj.label})` : ""}{isTodayDay ? " • Hôm nay" : ""}</span>
+                    {dayItemCount > 0 && (
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                        isSelected
+                          ? "bg-white/20 text-white"
+                          : "bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300"
+                      }`}>
+                        {dayItemCount} việc
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Quick Department-Scoped Staff Chips in Daily Log (chỉ hiện khi bấm nút DS nhân sự) */}
+            {(rolePerspective === "director" || rolePerspective === "manager") && departmentStaffList.length > 0 && showStaffQuickChips && (
               <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center gap-1.5 overflow-x-auto no-scrollbar text-xs">
                 <span className="text-[11px] font-bold text-slate-500 shrink-0 mr-1 flex items-center gap-1">
                   <Users className="w-3.5 h-3.5 text-indigo-500" />
