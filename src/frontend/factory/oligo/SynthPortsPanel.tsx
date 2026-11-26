@@ -351,7 +351,19 @@ export function SynthPortsPanel({ synthId, canConfigure, canOperate, onClose }: 
                 <ItemPicker
                   value={p.item_id}
                   current={p.item_label}
-                  onChange={(id) => setDraft(draft.map((x, j) => (j === i ? { ...x, item_id: id } : x)))}
+                  onChange={(id, picked) =>
+                    setDraft(
+                      draft.map((x, j) =>
+                        j === i
+                          ? {
+                              ...x,
+                              item_id: id,
+                              item_label: picked ? `${picked.code} · ${picked.name} (${picked.base_uom})` : id ? x.item_label : undefined,
+                            }
+                          : x
+                      )
+                    )
+                  }
                 />
               </div>
               <div className="lg:col-span-2">

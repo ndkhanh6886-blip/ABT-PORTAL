@@ -207,11 +207,12 @@ export function ItemPicker({
 }: {
   value: string;
   current?: string;
-  onChange: (id: string) => void;
+  onChange: (id: string, picked?: ItemOpt) => void;
   deptScope?: "OLIGO" | "RD" | "KIT" | "DEVICE" | "QA" | "ALL";
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
+  const [pickedCache, setPickedCache] = useState<ItemOpt | null>(null);
   const [scopeMode, setScopeMode] = useState<"DEPT" | "ALL">(deptScope === "ALL" ? "ALL" : "DEPT");
   const debouncedQ = useDebouncedValue(q, 220);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -224,7 +225,7 @@ export function ItemPicker({
     queryKey: ["factory", "items-pick", effectiveScope, open ? debouncedQ : ""],
     queryFn: () =>
       api<{ rows: ItemOpt[] }>(
-        `/api/factory/master/items?page_size=80&dept_scope=${effectiveScope}&q=${encodeURIComponent(open ? debouncedQ : "")}`
+        `/api/factory/master/items?page_size=200&dept_scope=${effectiveScope}&q=${encodeURIComponent(open ? debouncedQ : "")}`
       ),
   });
 
@@ -244,7 +245,9 @@ export function ItemPicker({
   }, [open]);
 
   const rows = items.data?.rows ?? [];
-  const selectedRow = rows.find((i) => i.id === value);
+  const selectedRow =
+    rows.find((i) => i.id === value) ??
+    (pickedCache && pickedCache.id === value ? pickedCache : undefined);
   const displayLabel = selectedRow
     ? `${selectedRow.code} · ${selectedRow.name} (${selectedRow.base_uom})`
     : value && current
@@ -329,8 +332,10 @@ export function ItemPicker({
           <div className="max-h-56 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/70 text-xs">
             <button
               type="button"
-              onClick={() => {
-                onChange("");
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setPickedCache(null);
+                onChange("", undefined);
                 setOpen(false);
               }}
               className={`w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer ${
@@ -339,13 +344,16 @@ export function ItemPicker({
             >
               — Chưa gắn mã hàng —
             </button>
-            {value && current && !rows.some((i) => i.id === value) && !q.trim() && (
+            {value && (selectedRow || current) && !rows.some((i) => i.id === value) && !q.trim() && (
               <button
                 type="button"
-                onClick={() => setOpen(false)}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  setOpen(false);
+                }}
                 className="w-full text-left px-2.5 py-1.5 rounded-lg font-bold text-sky-700 dark:text-sky-300 bg-sky-50/70 dark:bg-sky-950/40 cursor-pointer"
               >
-                ✓ {current}
+                ✓ {displayLabel || current}
               </button>
             )}
             {rows.map((i) => {
@@ -355,8 +363,10 @@ export function ItemPicker({
                 <button
                   key={i.id}
                   type="button"
-                  onClick={() => {
-                    onChange(i.id);
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    setPickedCache(i);
+                    onChange(i.id, i);
                     setOpen(false);
                   }}
                   className={`w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-sky-50 dark:hover:bg-sky-950/50 transition cursor-pointer flex items-center justify-between gap-2 ${
