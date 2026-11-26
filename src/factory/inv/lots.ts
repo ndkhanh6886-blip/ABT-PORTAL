@@ -99,6 +99,19 @@ export const lotMachine = defineMachine<LotStatus, Lot>({
       guards: [{ code: "NOT_EXPIRED", message: "Lô chưa hết hạn.", check: ({ row, payload }) => row.expiry_date != null && row.expiry_date < String(payload.today ?? vnToday()) }],
       effects: ({ tx, actor, row }) => releaseLotReservations(tx, actor, row.id),
     },
+    {
+      action: "unexpire",
+      from: "EXPIRED",
+      to: "RELEASED",
+      permission: "inv.lot.release",
+      guards: [
+        {
+          code: "STILL_EXPIRED",
+          message: "Hạn dùng của lô vẫn nhỏ hơn ngày hiện tại — vui lòng cập nhật Hạn dùng mới trước khi khôi phục.",
+          check: ({ row }) => row.expiry_date == null || row.expiry_date >= vnToday(),
+        },
+      ],
+    },
   ],
 });
 

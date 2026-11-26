@@ -73,6 +73,7 @@ export const LOT_ACTION_LABEL: Record<string, string> = {
   release: "Giải phóng lô",
   hold: "Tạm giữ",
   unhold: "Gỡ tạm giữ",
+  unexpire: "Khôi phục lô (Đã gia hạn HSD)",
   reject: "Loại lô",
 };
 const QC_STATUS: Record<string, string> = {
@@ -158,10 +159,12 @@ export function LotPanel({
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["factory", "lot", lotId] });
     qc.invalidateQueries({ queryKey: ["factory", "stock"] });
+    qc.invalidateQueries({ queryKey: ["factory", "dept-quick-stock"] });
     qc.invalidateQueries({ queryKey: ["factory", "items"] });
     qc.invalidateQueries({ queryKey: ["factory", "documents"] });
     qc.invalidateQueries({ queryKey: ["factory", "qc-tests"] });
     qc.invalidateQueries({ queryKey: ["factory", "prep-log"] });
+    qc.invalidateQueries({ queryKey: ["factory", "prep"] });
     qc.invalidateQueries({ queryKey: ["factory", "warehouse-hub-ops"] });
   };
 

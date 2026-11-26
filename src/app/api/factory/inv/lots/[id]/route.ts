@@ -149,6 +149,16 @@ export const PATCH = factoryRoute(async (tx, { actor, params, body }) => {
     }
   }
 
+  const today = todayVN();
+  let nextStatus = lotBefore.status;
+  if (nextExpDate && nextExpDate >= today && lotBefore.status === "EXPIRED") {
+    nextStatus = "RELEASED";
+  } else if (nextExpDate === null && lotBefore.status === "EXPIRED") {
+    nextStatus = "RELEASED";
+  } else if (nextExpDate && nextExpDate < today && lotBefore.status === "RELEASED") {
+    nextStatus = "EXPIRED";
+  }
+
   await tx.query(
     `UPDATE inv.lot
         SET code = $2,
@@ -156,10 +166,11 @@ export const PATCH = factoryRoute(async (tx, { actor, params, body }) => {
             mfg_date = $4,
             expiry_date = $5,
             received_date = $6,
+            status = $7,
             version = version + 1,
             updated_at = now()
       WHERE id = $1`,
-    [lotBefore.id, nextCode, nextMfrLot, nextMfgDate, nextExpDate, nextRecDate]
+    [lotBefore.id, nextCode, nextMfrLot, nextMfgDate, nextExpDate, nextRecDate, nextStatus]
   );
 
   // Update master.item basic info if provided
@@ -207,6 +218,7 @@ export const PATCH = factoryRoute(async (tx, { actor, params, body }) => {
         mfg_date: lotBefore.mfg_date,
         expiry_date: lotBefore.expiry_date,
         received_date: lotBefore.received_date,
+        status: lotBefore.status,
         item_name: lotBefore.item_name,
         item_type: lotBefore.item_type,
         base_uom: lotBefore.base_uom,
@@ -217,15 +229,16 @@ export const PATCH = factoryRoute(async (tx, { actor, params, body }) => {
         mfg_date: nextMfgDate,
         expiry_date: nextExpDate,
         received_date: nextRecDate,
+        status: nextStatus,
         item_name: nextItemName,
         item_type: nextItemType,
         base_uom: nextBaseUom,
       },
-      ["code", "mfr_lot_no", "mfg_date", "expiry_date", "received_date", "item_name", "item_type", "base_uom"]
+      ["code", "mfr_lot_no", "mfg_date", "expiry_date", "received_date", "status", "item_name", "item_type", "base_uom"]
     ),
   });
 
-  return { ok: true, id: lotBefore.id, code: nextCode };
+  return { ok: true, id: lotBefore.id, code: nextCode, status: nextStatus };
 });
 
 const lotStockOpSchema = z.discriminatedUnion("op", [

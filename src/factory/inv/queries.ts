@@ -146,6 +146,15 @@ export async function syncItemTypesFromBomAndFormula(tx: Tx, force = false): Pro
            )
          )
     `);
+    // Tự động khôi phục các lô đang ở trạng thái EXPIRED nhưng đã được gia hạn/cập nhật hạn dùng (expiry_date >= CURRENT_DATE) sang RELEASED
+    await tx.query(`
+      UPDATE inv.lot
+         SET status = 'RELEASED',
+             version = version + 1,
+             updated_at = now()
+       WHERE status = 'EXPIRED'
+         AND (expiry_date IS NULL OR expiry_date >= (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date)
+    `);
     await tx.query("RELEASE SAVEPOINT sp_sync_bom_item_types");
     lastBomTypeSyncAt = now;
   } catch {
