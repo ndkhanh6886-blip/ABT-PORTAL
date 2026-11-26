@@ -75,16 +75,29 @@ export const NotificationDropdown: React.FC = () => {
         return () => window.removeEventListener("keydown", handleKeyDown);
     }, []);
 
+    const activeReaderTokens = useMemo(() => {
+        if (selectedEmployeeFilter === "MINE" || selectedEmployeeFilter === "all") {
+            return Array.from(
+                new Set(
+                    [
+                        user?.email || "",
+                        user?.username || "",
+                        user?.name || "",
+                        (user as any)?.full_name || "",
+                        "current_viewer",
+                        "mine_viewer",
+                    ].filter(Boolean)
+                )
+            );
+        }
+        return [selectedEmployeeFilter, "current_viewer"];
+    }, [selectedEmployeeFilter, user]);
+
     // Filter by Category
     const displayList = useMemo(() => {
         let list = filteredNotifications;
         if (selectedCategory === "unread") {
-            const readerId = selectedEmployeeFilter === "all"
-                ? "current_viewer"
-                : selectedEmployeeFilter === "MINE"
-                ? (user?.email || user?.username || user?.name || "mine_viewer")
-                : selectedEmployeeFilter;
-            list = list.filter(n => !(n.readBy || []).includes(readerId) && !(n.readBy || []).includes("current_viewer"));
+            list = list.filter(n => !(n.readBy || []).some(r => activeReaderTokens.includes(r)));
         } else if (selectedCategory === "task") {
             list = list.filter(n => n.category === "task" || n.category === "workflow");
         } else if (selectedCategory === "plan_daily") {
@@ -465,12 +478,7 @@ export const NotificationDropdown: React.FC = () => {
                             </div>
                         ) : (
                             displayList.map((item) => {
-                                const readerId = selectedEmployeeFilter === "all"
-                                    ? "current_viewer"
-                                    : selectedEmployeeFilter === "MINE"
-                                    ? (user?.email || user?.username || user?.name || "mine_viewer")
-                                    : selectedEmployeeFilter;
-                                const isItemUnread = !(item.readBy || []).includes(readerId) && !(item.readBy || []).includes("current_viewer");
+                                const isItemUnread = !(item.readBy || []).some(r => activeReaderTokens.includes(r));
                                 const fullTooltip = [
                                     item.title,
                                     item.message,

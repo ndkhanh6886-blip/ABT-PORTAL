@@ -176,7 +176,7 @@ export async function GET(req: NextRequest) {
     setAuditActor(me);
     const admin = isAdminUser(me);
     const meId = Number(me.id);
-    const meReaderKeys = [(me as any).email, me.username, me.full_name, "current_viewer", "mine_viewer"]
+    const meReaderKeys = [(me as any).email, me.username, me.full_name]
       .map((s) => String(s || "").trim())
       .filter(Boolean);
 
@@ -801,10 +801,16 @@ export async function POST(req: NextRequest) {
       const rawReaderKeys: string[] = Array.isArray(body.readerKeys)
         ? body.readerKeys.map((x: unknown) => String(x || "").trim()).filter(Boolean)
         : [];
-      const fallbackKeys = [(me as any).email, me.username, me.full_name, "current_viewer", "mine_viewer"]
+      const fallbackKeys = [(me as any).email, me.username, me.full_name]
         .map((s) => String(s || "").trim())
         .filter(Boolean);
-      const readerKeys = Array.from(new Set([...rawReaderKeys, ...fallbackKeys]));
+      const readerKeys = Array.from(
+        new Set(
+          [...rawReaderKeys, ...fallbackKeys].filter(
+            (k) => k && k !== "current_viewer" && k !== "mine_viewer"
+          )
+        )
+      );
 
       await withTransaction(async (c) => {
         const curRes = await c.query(
@@ -816,14 +822,17 @@ export async function POST(req: NextRequest) {
             : {};
 
         for (const id of ids) {
-          const prev = Array.isArray(cur[id]) ? cur[id] : [];
+          const prev = Array.isArray(cur[id])
+            ? cur[id].filter((k) => k && k !== "current_viewer" && k !== "mine_viewer")
+            : [];
+          delete cur[id]; // Move to newest position in key order so LRU eviction never drops recently read items
           cur[id] = Array.from(new Set([...prev, ...readerKeys]));
         }
 
-        // Keep at most 600 newest receipt entries
+        // Keep at most 2000 newest receipt entries
         const keys = Object.keys(cur);
-        if (keys.length > 600) {
-          for (const drop of keys.slice(0, keys.length - 600)) {
+        if (keys.length > 2000) {
+          for (const drop of keys.slice(0, keys.length - 2000)) {
             delete cur[drop];
           }
         }
@@ -835,6 +844,32 @@ export async function POST(req: NextRequest) {
              SET data = EXCLUDED.data, version = COALESCE(app_storage.version, 1) + 1, updated_at = now()`,
           [JSON.stringify(cur)]
         );
+
+        // Đồng thời cập nhật mảng readBy trên chính thông báo trong tbr_activity_notifications
+        // để không bao giờ bị mất trạng thái đã đọc kể cả khi danh sách thông báo rất dài
+        const actIdsSet = new Set(ids);
+        const actRes = await c.query(
+          "SELECT data FROM app_storage WHERE key = 'tbr_activity_notifications' FOR UPDATE"
+        );
+        const actList: any[] = Array.isArray(actRes.rows[0]?.data) ? actRes.rows[0].data : [];
+        let actChanged = false;
+        const nextActList = actList.map((n: any) => {
+          if (!n || !actIdsSet.has(String(n.id || ""))) return n;
+          const existingRead: string[] = Array.isArray(n.readBy)
+            ? n.readBy.filter((k: string) => k && k !== "current_viewer" && k !== "mine_viewer")
+            : [];
+          const mergedRead = Array.from(new Set([...existingRead, ...readerKeys]));
+          if (mergedRead.length !== existingRead.length) actChanged = true;
+          return { ...n, readBy: mergedRead };
+        });
+        if (actChanged) {
+          await c.query(
+            `UPDATE app_storage
+                SET data = $1::jsonb, version = COALESCE(version, 1) + 1, updated_at = now()
+              WHERE key = 'tbr_activity_notifications'`,
+            [JSON.stringify(nextActList)]
+          );
+        }
       });
 
       const factoryUuids = ids

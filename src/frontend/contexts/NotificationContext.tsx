@@ -596,6 +596,42 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             .catch(() => {});
     }, [user]);
 
+    // Local monotonic cache of notification IDs read by the current user in this browser
+    // so a background poll or large notification history never reverts a read item back to unread.
+    const locallyReadIdsRef = useRef<Set<string>>(new Set());
+    const getLocalReadStorageKey = useCallback(() => {
+        const uKey = String(user?.username || user?.email || user?.name || "").trim().toLowerCase();
+        return uKey ? `tbr_read_notif_ids_${uKey}` : "tbr_read_notif_ids_default";
+    }, [user?.username, user?.email, user?.name]);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        try {
+            const raw = localStorage.getItem(getLocalReadStorageKey());
+            const arr = raw ? JSON.parse(raw) : [];
+            if (Array.isArray(arr)) {
+                locallyReadIdsRef.current = new Set(arr.map((x) => String(x || "")).filter(Boolean));
+            }
+        } catch {}
+    }, [getLocalReadStorageKey]);
+
+    const recordLocalReadIds = useCallback((ids: string[], readerKeys: string[]) => {
+        if (!ids.length) return;
+        ids.forEach((id) => locallyReadIdsRef.current.add(id));
+        if (typeof window !== "undefined") {
+            try {
+                const arr = Array.from(locallyReadIdsRef.current).slice(-2500);
+                localStorage.setItem(getLocalReadStorageKey(), JSON.stringify(arr));
+            } catch {}
+        }
+        // Also merge into allNotificationsRef immediately so an in-flight poll preserves them
+        allNotificationsRef.current = allNotificationsRef.current.map((n) => {
+            if (!ids.includes(n.id)) return n;
+            const merged = Array.from(new Set([...(n.readBy || []), ...readerKeys]));
+            return { ...n, readBy: merged };
+        });
+    }, [getLocalReadStorageKey]);
+
     // Refresh unified live activity notifications from server feed (tasks + workflows + proposals + daily + factory notices + R&D)
     const refreshNotifications = useCallback(async () => {
         if (!user || typeof window === "undefined") return;
@@ -604,11 +640,35 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             if (!res.ok) return;
             const data = await res.json();
             if (data && Array.isArray(data.notifications)) {
+                const myKeys = [
+                    user?.email || "",
+                    user?.username || "",
+                    user?.name || "",
+                    (user as any)?.full_name || "",
+                    "current_viewer"
+                ].filter(Boolean);
+                const localReadSet = locallyReadIdsRef.current;
+                const currentById = new Map<string, Notification>();
+                for (const curItem of allNotificationsRef.current) {
+                    if (curItem?.id) currentById.set(curItem.id, curItem);
+                }
+                const mergedNotifications: Notification[] = data.notifications.map((srvItem: Notification) => {
+                    const prevItem = currentById.get(srvItem.id);
+                    const hasLocalRead = localReadSet.has(srvItem.id);
+                    const mergedReadBy = Array.from(
+                        new Set([
+                            ...(Array.isArray(srvItem.readBy) ? srvItem.readBy : []),
+                            ...(Array.isArray(prevItem?.readBy) ? prevItem!.readBy : []),
+                            ...(hasLocalRead ? myKeys : []),
+                        ].filter(Boolean))
+                    );
+                    return { ...srvItem, readBy: mergedReadBy };
+                });
                 // Polled every 25 s: keep the same array when nothing changed, otherwise every component using
                 // useNotification (Kinh doanh, Cung ứng, Application, Cấu hình… even hidden tabs) re-renders each time.
-                const nextJson = JSON.stringify(data.notifications);
+                const nextJson = JSON.stringify(mergedNotifications);
                 if (JSON.stringify(allNotificationsRef.current) === nextJson) return;
-                setAllNotifications(data.notifications);
+                setAllNotifications(mergedNotifications);
                 try {
                     localStorage.setItem("tbr_activity_notifications", nextJson);
                 } catch {}
@@ -1263,25 +1323,47 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
 
     const getEffectiveReaderId = useCallback((customReader?: string) => {
         if (customReader) return customReader;
-        if (selectedEmployeeFilter === "all") return "current_viewer";
+        if (selectedEmployeeFilter === "all") return user?.username || user?.email || user?.name || "current_viewer";
         if (selectedEmployeeFilter === "MINE") return user?.email || user?.username || user?.name || "mine_viewer";
         return selectedEmployeeFilter;
     }, [selectedEmployeeFilter, user]);
 
+    const getActiveReaderTokens = useCallback((customReader?: string): string[] => {
+        const primary = getEffectiveReaderId(customReader);
+        if (selectedEmployeeFilter === "MINE" || selectedEmployeeFilter === "all") {
+            return Array.from(
+                new Set(
+                    [
+                        primary,
+                        user?.email || "",
+                        user?.username || "",
+                        user?.name || "",
+                        (user as any)?.full_name || "",
+                        "current_viewer",
+                        "mine_viewer",
+                    ].filter(Boolean)
+                )
+            );
+        }
+        return Array.from(new Set([primary, "current_viewer"].filter(Boolean)));
+    }, [getEffectiveReaderId, selectedEmployeeFilter, user]);
+
     // Calculate unread count for the active filter
     const unreadCount = useMemo(() => {
-        const readerId = getEffectiveReaderId();
+        const tokens = getActiveReaderTokens();
         return filteredNotifications.filter(n => {
+            if (locallyReadIdsRef.current.has(n.id)) return false;
             if (!n.readBy || n.readBy.length === 0) return true;
-            return !n.readBy.includes(readerId) && !n.readBy.includes("current_viewer");
+            return !tokens.some((tk) => n.readBy.includes(tk));
         }).length;
-    }, [filteredNotifications, getEffectiveReaderId]);
+    }, [filteredNotifications, getActiveReaderTokens]);
 
     const markAsRead = useCallback((id: string, readerId?: string) => {
         const effectiveReader = getEffectiveReaderId(readerId);
         const readerKeys = Array.from(
-            new Set([effectiveReader, "current_viewer", user?.email || "", user?.username || "", user?.name || ""].filter(Boolean))
+            new Set([effectiveReader, user?.email || "", user?.username || "", user?.name || "", (user as any)?.full_name || ""].filter(Boolean))
         );
+        recordLocalReadIds([id], readerKeys);
         setAllNotifications(prev => {
             const updated = prev.map(n => {
                 if (n.id === id) {
@@ -1303,15 +1385,16 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                 body: JSON.stringify({ action: "mark_read", ids: [id], readerKeys })
             }).catch(() => {});
         }
-    }, [getEffectiveReaderId, user]);
+    }, [getEffectiveReaderId, user, recordLocalReadIds]);
 
     const markAllAsRead = useCallback((readerId?: string) => {
         const effectiveReader = getEffectiveReaderId(readerId);
         const readerKeys = Array.from(
-            new Set([effectiveReader, "current_viewer", user?.email || "", user?.username || "", user?.name || ""].filter(Boolean))
+            new Set([effectiveReader, user?.email || "", user?.username || "", user?.name || "", (user as any)?.full_name || ""].filter(Boolean))
         );
         const targetIdsList = filteredNotifications.map(n => n.id);
         if (targetIdsList.length === 0) return;
+        recordLocalReadIds(targetIdsList, readerKeys);
         const targetIds = new Set(targetIdsList);
         setAllNotifications(prev => {
             const updated = prev.map(n => {
@@ -1334,12 +1417,13 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                 body: JSON.stringify({ action: "mark_read", ids: targetIdsList, readerKeys })
             }).catch(() => {});
         }
-    }, [filteredNotifications, getEffectiveReaderId, user]);
+    }, [filteredNotifications, getEffectiveReaderId, user, recordLocalReadIds]);
 
     const deleteNotification = useCallback((id: string) => {
         const readerKeys = Array.from(
-            new Set(["current_viewer", user?.email || "", user?.username || "", user?.name || ""].filter(Boolean))
+            new Set([user?.email || "", user?.username || "", user?.name || "", (user as any)?.full_name || ""].filter(Boolean))
         );
+        recordLocalReadIds([id], readerKeys);
         setAllNotifications(prev => {
             const updated = prev.filter(n => n.id !== id);
             try {
@@ -1362,7 +1446,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                 body: JSON.stringify({ action: "mark_read", ids: [id], readerKeys })
             }).catch(() => {});
         }
-    }, [user]);
+    }, [user, recordLocalReadIds]);
 
     const clearAllNotifications = useCallback(() => {
         const readerKeys = Array.from(
@@ -1371,12 +1455,13 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                 user?.email || "",
                 user?.username || "",
                 user?.name || "",
-                "current_viewer",
-                selectedEmployeeFilter === "all" ? "current_viewer" : selectedEmployeeFilter
+                (user as any)?.full_name || "",
+                selectedEmployeeFilter === "all" ? (user?.username || "current_viewer") : selectedEmployeeFilter
             ].filter(Boolean))
         );
         const targetIdsList = filteredNotifications.map(n => n.id);
         if (targetIdsList.length === 0) return;
+        recordLocalReadIds(targetIdsList, readerKeys);
         const targetIds = new Set(targetIdsList);
         setAllNotifications(prev => {
             const updated = prev.map(n => {
