@@ -34,7 +34,7 @@ interface Candidates {
  * Plans a batch: pick a synthesizer, tick pending sequences (positions follow the tick order) and a CPG column lot.
  * The server re-checks everything (scale, positions, calibration, stock) and reserves reagents on save.
  */
-export function BatchPlanForm({ onCreated }: { onCreated: (id: string) => void }) {
+export function BatchPlanForm({ onCreated, onClose }: { onCreated: (id: string) => void; onClose?: () => void }) {
   const qc = useQueryClient();
   const units = useOligoUnits("oligo.batch.manage");
   const [unitId, setUnitId] = useState("");
@@ -272,68 +272,93 @@ export function BatchPlanForm({ onCreated }: { onCreated: (id: string) => void }
 
   if (units.data && !units.data.length) return <Empty>Bạn chưa có quyền lập mẻ tổng hợp ở phòng Oligo nào.</Empty>;
   return (
-    <div className="flex flex-col gap-3 mb-4 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-sky-200 dark:border-sky-900/60">
-      <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200 dark:border-slate-800">
-        <div>
-          <div className="text-xs font-bold text-sky-700 dark:text-sky-400">🧪 LẬP MẺ TỔNG HỢP OLIGO TRÊN MÁY DẠNG CỘT</div>
-          <div className="text-[11px] text-slate-500">
-            <b>Bước 1:</b> Chọn Máy tổng hợp & Lô cột CPG → <b>Bước 2:</b> Lọc theo Đơn hàng & tích chọn các trình tự chờ tổng hợp bên dưới để xếp vào <b>Cột 1, Cột 2…</b> → <b>Bước 3:</b> Bấm nút <b>+ Lập mẻ tổng hợp</b>.
-          </div>
+    <div className="flex flex-col gap-2.5 mb-3 p-3 rounded-xl bg-slate-50/90 dark:bg-slate-950/60 border border-sky-200 dark:border-sky-900/60">
+      <div className="flex flex-wrap items-center justify-between gap-2 pb-1.5 border-b border-slate-200 dark:border-slate-800">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-extrabold text-sky-700 dark:text-sky-400">🧪 LẬP MẺ TỔNG HỢP OLIGO</span>
+          <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-sky-100 dark:bg-sky-950 text-sky-800 dark:text-sky-300">
+            {allSequences.length > 0
+              ? `${allSequences.length} trình tự chờ tổng hợp • Đã xếp ${picked.length}${synth ? `/${synth.column_positions}` : ""} cột`
+              : "0 trình tự chờ tổng hợp"}
+          </span>
         </div>
-        {visible.length > 0 && synth && (
-          <div className="flex flex-wrap gap-1.5">
-            <Button
-              variant="ghost"
-              onClick={selectAllFitting}
-              title="Tự động xếp các trình tự phù hợp đang hiển thị trong bộ lọc vào các vị trí cột trống của máy"
+        <div className="flex flex-wrap items-center gap-1.5">
+          {visible.length > 0 && synth && (
+            <>
+              <Button
+                variant="ghost"
+                onClick={selectAllFitting}
+                title="Tự động xếp các trình tự phù hợp đang hiển thị trong bộ lọc vào các vị trí cột trống của máy"
+              >
+                ⚡ Chọn nhanh {orderFilter !== "ALL" ? `đơn ${orderFilter}` : "theo bộ lọc"} ({Math.min(visible.filter((s) => fits(s.scale_code)).length, synth.column_positions)} cột)
+              </Button>
+              {picked.length > 0 && <Button variant="ghost" onClick={() => setPicked([])}>Bỏ chọn ({picked.length})</Button>}
+            </>
+          )}
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-2 py-1 rounded-lg text-xs font-semibold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-800 cursor-pointer"
+              title="Thu gọn khung lập mẻ"
             >
-              Chọn nhanh {orderFilter !== "ALL" ? `đơn ${orderFilter}` : "theo bộ lọc"} ({Math.min(visible.filter((s) => fits(s.scale_code)).length, synth.column_positions)} cột)
-            </Button>
-            {picked.length > 0 && <Button variant="ghost" onClick={() => setPicked([])}>Bỏ chọn ({picked.length})</Button>}
+              ✕ Thu gọn
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-12 items-start">
+        {(units.data?.length ?? 0) > 1 && (
+          <div className="lg:col-span-2">
+            <Field label="Phòng Oligo">
+              <select className={inputClass} value={unit} onChange={(e) => { setUnitId(e.target.value); setSynthId(""); setLotId(""); setPicked([]); }}>
+                {units.data?.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+            </Field>
           </div>
         )}
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 items-end">
-        {(units.data?.length ?? 0) > 1 && (
-          <Field label="Phòng Oligo">
-            <select className={inputClass} value={unit} onChange={(e) => { setUnitId(e.target.value); setSynthId(""); setLotId(""); setPicked([]); }}>
-              {units.data?.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-            </select>
+        <div className={(units.data?.length ?? 0) > 1 ? "lg:col-span-4" : "lg:col-span-5"}>
+          <Field label="1. Máy tổng hợp (dạng cột) *">
+            <div className="flex items-center gap-1.5">
+              <select className={`${inputClass} flex-1 min-w-0`} value={synthId} onChange={(e) => { setSynthId(e.target.value); setPicked([]); }}>
+                <option value="">— Chọn máy tổng hợp —</option>
+                {cand.data?.synthesizers.map((s) => (
+                  <option key={s.id} value={s.id} disabled={s.status !== "IN_SERVICE"}>
+                    {s.code} · {s.name} ({s.column_positions} cột{s.next_calibration_due ? `, HC ${fmtDate(s.next_calibration_due)}` : ""})
+                  </option>
+                ))}
+              </select>
+              {synthId && (
+                <Button
+                  type="button"
+                  variant={showPortsConfig ? "primary" : "ghost"}
+                  onClick={() => setShowPortsConfig((v) => !v)}
+                  title="Xem và cài đặt khớp các cổng hóa chất trên máy với mã hóa chất & lô chai trong kho"
+                >
+                  {showPortsConfig ? "Đóng cổng HC" : "🧪 Cổng HC"}
+                </Button>
+              )}
+            </div>
           </Field>
-        )}
-        <Field label="1. Máy tổng hợp (dạng cột) *">
-          <div className="flex items-center gap-1.5">
-            <select className={`${inputClass} flex-1 min-w-0`} value={synthId} onChange={(e) => { setSynthId(e.target.value); setPicked([]); }}>
-              <option value="">— Chọn máy tổng hợp —</option>
-              {cand.data?.synthesizers.map((s) => (
-                <option key={s.id} value={s.id} disabled={s.status !== "IN_SERVICE"}>
-                  {s.code} · {s.name} ({s.column_positions} cột{s.next_calibration_due ? `, HC ${fmtDate(s.next_calibration_due)}` : ""})
+        </div>
+        <div className={(units.data?.length ?? 0) > 1 ? "lg:col-span-4" : "lg:col-span-4"}>
+          <Field label="2. Lô cột CPG mặc định *">
+            <select className={inputClass} value={lotId} onChange={(e) => setLotId(e.target.value)} title="Mỗi vị trí giữ chỗ 1 cột (có thể đổi riêng từng cột ở bảng dưới)">
+              <option value="">— Chọn lô cột CPG —</option>
+              {cand.data?.column_lots.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.item_code}{l.item_name ? ` — ${l.item_name}` : ""} · Lô {l.code} (còn {fmtQty(l.available)}{l.expiry_date ? `, HD ${fmtDate(l.expiry_date)}` : ""})
                 </option>
               ))}
             </select>
-            {synthId && (
-              <Button
-                type="button"
-                variant={showPortsConfig ? "primary" : "ghost"}
-                onClick={() => setShowPortsConfig((v) => !v)}
-                title="Xem và cài đặt khớp các cổng hóa chất trên máy với mã hóa chất & lô chai trong kho"
-              >
-                {showPortsConfig ? "Đóng cổng HC" : "🧪 Cổng HC"}
-              </Button>
-            )}
-          </div>
-        </Field>
-        <Field label="2. Lô cột CPG mặc định *" hint="Mỗi vị trí giữ chỗ 1 cột (có thể đổi riêng từng cột ở bảng dưới)">
-          <select className={inputClass} value={lotId} onChange={(e) => setLotId(e.target.value)}>
-            <option value="">— Chọn lô cột CPG —</option>
-            {cand.data?.column_lots.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.item_code}{l.item_name ? ` — ${l.item_name}` : ""} · Lô {l.code} (còn {fmtQty(l.available)}{l.expiry_date ? `, HD ${fmtDate(l.expiry_date)}` : ""})
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Chương trình chạy máy"><input className={inputClass} value={program} onChange={(e) => setProgram(e.target.value)} placeholder="VD: STD-200NM-COL" /></Field>
+          </Field>
+        </div>
+        <div className={(units.data?.length ?? 0) > 1 ? "lg:col-span-2" : "lg:col-span-3"}>
+          <Field label="3. Chương trình chạy máy">
+            <input className={inputClass} value={program} onChange={(e) => setProgram(e.target.value)} placeholder="VD: STD-200NM-COL" />
+          </Field>
+        </div>
       </div>
 
       {showPortsConfig && synthId && (
@@ -346,22 +371,22 @@ export function BatchPlanForm({ onCreated }: { onCreated: (id: string) => void }
         />
       )}
 
-      {/* Bộ lọc trình tự theo Đơn hàng, Vai trò, Thang & Tìm kiếm */}
+      {/* Bộ lọc trình tự gọn gàng trong 1 hàng */}
       {allSequences.length > 0 && (
-        <div className="flex flex-col gap-2.5 p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/60">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-col gap-2 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/60">
+          {orderGroups.length > 1 && (
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 mr-1">📦 Lọc nhanh theo Đơn hàng:</span>
+              <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300">📦 Đơn hàng:</span>
               <button
                 type="button"
                 onClick={() => setOrderFilter("ALL")}
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                className={`px-2 py-0.5 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
                   orderFilter === "ALL"
                     ? "bg-sky-700 text-white border-sky-700"
                     : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-sky-400"
                 }`}
               >
-                Tất cả đơn ({allSequences.length})
+                Tất cả ({allSequences.length})
               </button>
               {orderGroups.map((og) => (
                 <button
@@ -369,94 +394,101 @@ export function BatchPlanForm({ onCreated }: { onCreated: (id: string) => void }
                   type="button"
                   onClick={() => setOrderFilter(og.key)}
                   title={og.customer_label ? `${og.order_code} — ${og.customer_label}` : og.order_code}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold border transition cursor-pointer ${
+                  className={`px-2 py-0.5 rounded-lg text-[11px] font-mono font-bold border transition cursor-pointer ${
                     orderFilter === og.key
                       ? "bg-sky-700 text-white border-sky-700"
                       : "bg-white dark:bg-slate-900 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800 hover:bg-sky-50 dark:hover:bg-sky-950/50"
                   }`}
                 >
-                  🧬 {og.order_code}
-                  {og.kd_po_code ? <span className="font-sans font-normal opacity-80"> · {og.kd_po_code}</span> : null}{" "}
-                  <span className="font-sans">({og.count})</span>
+                  {og.order_code} ({og.count})
                 </button>
               ))}
             </div>
-            {(orderFilter !== "ALL" || roleFilter !== "ALL" || scaleFilter !== "ALL" || searchQuery.trim() !== "") && (
-              <button
-                type="button"
-                onClick={() => {
-                  setOrderFilter("ALL");
-                  setRoleFilter("ALL");
-                  setScaleFilter("ALL");
-                  setSearchQuery("");
-                }}
-                className="text-xs font-semibold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
-              >
-                ✕ Xóa bộ lọc (Đang hiện {visible.length}/{allSequences.length} trình tự)
-              </button>
-            )}
-          </div>
+          )}
 
-          <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4 items-end">
-            <Field label="Lọc theo Đơn Oligo / PO">
-              <select
-                className={inputClass}
-                value={orderFilter}
-                onChange={(e) => setOrderFilter(e.target.value)}
-                aria-label="Lọc theo Đơn Oligo"
-              >
-                <option value="ALL">— Tất cả đơn hàng ({allSequences.length} trình tự) —</option>
-                {orderGroups.map((og) => (
-                  <option key={og.key} value={og.key}>
-                    {og.order_code}
-                    {og.kd_po_code ? ` · ${og.kd_po_code}` : ""}
-                    {og.customer_label ? ` — ${og.customer_label}` : ""} ({og.count} trình tự)
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Phân nhóm trình tự (Primer/Probe vs Amplicon)">
-              <select
-                className={inputClass}
-                value={roleFilter}
-                onChange={(e) => setRoleFilter(e.target.value)}
-                aria-label="Phân nhóm trình tự"
-              >
-                <option value="ALL">Mọi vai trò (Primer, Probe & Amplicon)</option>
-                <option value="PRIMER_PROBE">🧪 Primer & Probe</option>
-                <option value="AMPLICON">🧬 Amplicon / Chứng dương</option>
-              </select>
-            </Field>
-            <Field label="Thang tổng hợp (Scale)">
-              <select
-                className={inputClass}
-                value={scaleFilter}
-                onChange={(e) => setScaleFilter(e.target.value)}
-                aria-label="Thang tổng hợp"
-              >
-                <option value="ALL">Mọi thang tổng hợp</option>
-                {availableScales.map((sc) => (
-                  <option key={sc} value={sc}>{sc}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Tìm nhanh mã ống / tên trình tự / tác nhân đích">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 items-center">
+            <select
+              className={inputClass}
+              value={orderFilter}
+              onChange={(e) => setOrderFilter(e.target.value)}
+              aria-label="Lọc theo Đơn Oligo"
+            >
+              <option value="ALL">📦 Tất cả đơn hàng ({allSequences.length} trình tự)</option>
+              {orderGroups.map((og) => (
+                <option key={og.key} value={og.key}>
+                  {og.order_code}
+                  {og.kd_po_code ? ` · ${og.kd_po_code}` : ""}
+                  {og.customer_label ? ` — ${og.customer_label}` : ""} ({og.count})
+                </option>
+              ))}
+            </select>
+            <select
+              className={inputClass}
+              value={roleFilter}
+              onChange={(e) => setRoleFilter(e.target.value)}
+              aria-label="Phân nhóm trình tự"
+            >
+              <option value="ALL">🧪 Mọi vai trò (Primer, Probe & Amplicon)</option>
+              <option value="PRIMER_PROBE">Primer & Probe</option>
+              <option value="AMPLICON">Amplicon / Chứng dương</option>
+            </select>
+            <select
+              className={inputClass}
+              value={scaleFilter}
+              onChange={(e) => setScaleFilter(e.target.value)}
+              aria-label="Thang tổng hợp"
+            >
+              <option value="ALL">⚖️ Mọi thang tổng hợp</option>
+              {availableScales.map((sc) => (
+                <option key={sc} value={sc}>{sc}</option>
+              ))}
+            </select>
+            <div className="flex items-center gap-1.5">
               <input
-                className={inputClass}
+                className={`${inputClass} flex-1`}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="VD: HBV, DENV, O2610, Primer-F..."
+                placeholder="🔍 Tìm mã ống, tên trình tự..."
               />
-            </Field>
+              {(orderFilter !== "ALL" || roleFilter !== "ALL" || scaleFilter !== "ALL" || searchQuery.trim() !== "") && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOrderFilter("ALL");
+                    setRoleFilter("ALL");
+                    setScaleFilter("ALL");
+                    setSearchQuery("");
+                  }}
+                  className="px-2 py-1.5 rounded-lg text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:text-rose-300 shrink-0 cursor-pointer"
+                  title="Xóa bộ lọc"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
 
-      {cand.data && cand.data.synthesizers.length === 0 && <Empty>Phòng chưa khai báo máy tổng hợp (vào tab Thiết bị & định mức để thêm máy).</Empty>}
-      {cand.data && cand.data.column_lots.length === 0 && <Empty>Kho chưa có lô cột CPG (CONSUMABLE) ở trạng thái RELEASED.</Empty>}
-      {cand.data && allSequences.length === 0 && <Empty>Hiện không có trình tự nào ở trạng thái Chờ tổng hợp (PENDING). Vào tab &quot;Đơn Oligo &amp; Giao hàng&quot; để tạo đơn hoặc thêm trình tự mới.</Empty>}
+      {cand.data && cand.data.synthesizers.length === 0 && (
+        <div className="px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300">
+          Phòng chưa khai báo máy tổng hợp (vào tab Thiết bị &amp; định mức để thêm máy).
+        </div>
+      )}
+      {cand.data && cand.data.column_lots.length === 0 && (
+        <div className="px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300">
+          Kho chưa có lô cột CPG (CONSUMABLE) ở trạng thái RELEASED.
+        </div>
+      )}
+      {cand.data && allSequences.length === 0 && (
+        <div className="px-3 py-2 rounded-lg bg-white dark:bg-slate-900 border border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-500 flex items-center justify-between gap-2">
+          <span>Chưa có trình tự ở trạng thái <b>Chờ tổng hợp (PENDING)</b>. Vào tab <b>&quot;Đơn Oligo &amp; Giao hàng&quot;</b> để tạo đơn hoặc thêm trình tự mới.</span>
+        </div>
+      )}
       {cand.data && allSequences.length > 0 && visible.length === 0 && (
-        <Empty>Không có trình tự nào khớp bộ lọc đang chọn. Hãy bấm &quot;✕ Xóa bộ lọc&quot; để xem toàn bộ {allSequences.length} trình tự.</Empty>
+        <div className="px-3 py-2 rounded-lg bg-white dark:bg-slate-900 border border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-500">
+          Không có trình tự nào khớp bộ lọc đang chọn ({allSequences.length} trình tự đang ẩn).
+        </div>
       )}
       {visible.length > 0 && (
         <Table head={["Vị trí cột #", "Lô cột CPG (Mã — Tên cột)", "Mã & Tên trình tự", "Vai trò / Tác nhân đích", "Đơn hàng / PO", "Hạn giao", "Thang", "Tinh sạch", "Số base", "Chuỗi (5'→3')"]}>
@@ -556,16 +588,20 @@ export function BatchPlanForm({ onCreated }: { onCreated: (id: string) => void }
           })}
         </Table>
       )}
-      <div className="flex flex-wrap items-center gap-3 pt-1">
-        <Button disabled={!synthId || !lotId || !picked.length || plan.isPending} onClick={() => plan.mutate()}>
-          + Lập mẻ tổng hợp ({picked.length}{synth ? `/${synth.column_positions}` : ""} vị trí cột)
-        </Button>
-        <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
-          <input type="checkbox" checked={allowAdjacentContam} onChange={(e) => setAllowAdjacentContam(e.target.checked)} />
-          Cho phép xếp cột Chứng dương/Template cạnh cột Primer/Probe (ghi nhận cảnh báo nhiễm chéo cột)
-        </label>
-        <span className="text-[11px] text-slate-500">Lưu mẻ sẽ giữ chỗ cột CPG & hóa chất theo định mức và kiểm tra nhiễm chéo giữa các vị trí cột liền kề.</span>
-      </div>
+      {allSequences.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-200/80 dark:border-slate-800">
+          <div className="flex flex-wrap items-center gap-3">
+            <Button disabled={!synthId || !lotId || !picked.length || plan.isPending} onClick={() => plan.mutate()}>
+              + Lập mẻ tổng hợp ({picked.length}{synth ? `/${synth.column_positions}` : ""} vị trí cột)
+            </Button>
+            <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300 cursor-pointer">
+              <input type="checkbox" checked={allowAdjacentContam} onChange={(e) => setAllowAdjacentContam(e.target.checked)} />
+              <span>Cho phép xếp cột Chứng dương/Template cạnh Primer/Probe</span>
+            </label>
+          </div>
+          <span className="text-[11px] text-slate-400">Giữ chỗ cột CPG &amp; hóa chất theo định mức khi lưu mẻ.</span>
+        </div>
+      )}
       <ErrorNote error={plan.error ?? cand.error ?? units.error} />
     </div>
   );

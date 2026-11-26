@@ -77,6 +77,7 @@ export function BatchesView({ canManage, canApplyRules }: { canManage: boolean; 
       >
         {canManage && showPlan && (
           <BatchPlanForm
+            onClose={() => setShowPlan(false)}
             onCreated={(id) => {
               setShowPlan(false);
               setSelected(id);
