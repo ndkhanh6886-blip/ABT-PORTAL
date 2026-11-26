@@ -870,12 +870,13 @@ export function getSupervisingBodForDept(
 
 /**
  * Xác định chính xác từng thành viên trong Ban Giám Đốc cho một bước duyệt:
- * - Nguyễn Văn Tùng: Giám đốc (GĐ)
- * - Đỗ Ngọc Diễm Trúc: Phó Giám đốc Kinh doanh (PGĐ Kinh doanh)
- * - Nguyễn Duy Khánh: Phó Giám đốc Kỹ thuật (PGĐ Kỹ thuật)
+ * - Nguyễn Văn Tùng: Giám đốc (GĐ) — phụ trách Phòng Kỹ thuật Công nghệ (KTCN / Kỹ Thuật – Thiết Bị)
+ * - Nguyễn Duy Khánh: Phó Giám đốc Kỹ thuật (PGĐ Kỹ thuật) — phụ trách các phòng thuộc Khối Kỹ thuật (R&D, Sản xuất, Tổng hợp Oligo, QC/QA, Cung ứng Kho Nhà Máy)
+ * - Đỗ Ngọc Diễm Trúc: Phó Giám đốc Kinh doanh (PGĐ Kinh doanh) — phụ trách các phòng thuộc Khối Kinh doanh & Văn phòng
  *
- * Nếu bước duyệt đã ghi đích danh tên hoặc chức danh cụ thể (VD: "PGĐ Kinh doanh", "PGĐ Kỹ thuật", "Giám đốc")
- * thì ánh xạ tới đúng thành viên BGĐ đó; nếu chỉ ghi chung "Ban Giám Đốc" thì phân theo khối phụ trách của phòng người trình.
+ * Lưu ý: Nếu phòng người đề xuất thuộc Khối Kỹ thuật (hoặc KTCN) thì các bước duyệt cấp Ban Giám Đốc / PGĐ phụ trách khối
+ * tự động phân về đúng PGĐ Kỹ thuật (Nguyễn Duy Khánh) hoặc Giám đốc (Nguyễn Văn Tùng), tránh trường hợp biểu mẫu cũ lưu cứng
+ * tên "Đỗ Ngọc Diễm Trúc" / "PGĐ Kinh doanh" khiến đề xuất Khối Kỹ thuật bị gán nhầm sang PGĐ Kinh doanh.
  */
 export function resolveBodMemberForStep(
   step: Partial<ProposalStepInstance> | null | undefined,
@@ -885,6 +886,7 @@ export function resolveBodMemberForStep(
   const rawApprover = cleanStaffDisplayName(step?.approverName || "");
   const approverLower = rawApprover.toLowerCase().normalize("NFC").trim();
   const stepNameLower = String(step?.stepName || "").toLowerCase().normalize("NFC").trim();
+  const supervisingBod = getSupervisingBodForDept(requesterDept, personnelList);
 
   const findBodByMatcher = (matcher: (pos: string, name: string) => boolean, fallbackName: string) => {
     const matched = (personnelList || []).find((p: any) => {
@@ -894,6 +896,20 @@ export function resolveBodMemberForStep(
     });
     return cleanStaffDisplayName(matched?.full_name || matched?.name) || fallbackName;
   };
+
+  // Nếu người trình thuộc Khối Kỹ thuật (supervisingBod là PGĐ Kỹ thuật Nguyễn Duy Khánh hoặc Giám đốc Nguyễn Văn Tùng)
+  // mà bước duyệt đang bị lưu cứng "Đỗ Ngọc Diễm Trúc" / "PGĐ Kinh doanh" từ biểu mẫu chung -> tự động điều hướng về đúng Lãnh đạo BGĐ phụ trách Khối Kỹ thuật.
+  if (supervisingBod.roleTitle !== "PGĐ Kinh doanh") {
+    const isExplicitlyOtherTechBod =
+      isSamePerson(rawApprover, "Nguyễn Duy Khánh") ||
+      isSamePerson(rawApprover, "Nguyễn Văn Tùng") ||
+      approverLower.includes("kỹ thuật") ||
+      approverLower === "giám đốc" ||
+      approverLower === "tổng giám đốc";
+    if (!isExplicitlyOtherTechBod) {
+      return supervisingBod;
+    }
+  }
 
   // 1. Khớp theo tên đích danh hoặc chức danh PGĐ Kinh doanh (Đỗ Ngọc Diễm Trúc)
   if (
@@ -1349,8 +1365,9 @@ export function normalizeProposalStepsForRequester(
 
     if (st.roleType === "DIRECTOR" || st.dept === "Ban Giám Đốc") {
       const bod = resolveBodMemberForStep(st, resolvedReqDept, personnelList);
-      const nextStepName = /^ban\s+giám\s+đốc\b/i.test(String(st.stepName || "").trim())
-        ? String(st.stepName || "").trim().replace(/^ban\s+giám\s+đốc\b/i, bod.roleTitle)
+      const rawSName = String(st.stepName || "").trim();
+      const nextStepName = /^(?:ban\s+giám\s+đốc|pgđ\s+kinh\s+doanh|pgđ\s+kỹ\s+thuật|phó\s+giám\s+đốc\s+(?:kinh\s+doanh|kỹ\s+thuật))\b/i.test(rawSName)
+        ? rawSName.replace(/^(?:ban\s+giám\s+đốc|pgđ\s+kinh\s+doanh|pgđ\s+kỹ\s+thuật|phó\s+giám\s+đốc\s+(?:kinh\s+doanh|kỹ\s+thuật))\b/i, bod.roleTitle)
         : st.stepName;
       if (
         st.approverName !== bod.approverName ||
@@ -1884,6 +1901,32 @@ export function ProposalsApprovalView({
       });
     }
     if (tmpl.id === "tmpl_overtime_request" || tmpl.codePrefix === "DKTC") {
+      // Đảm bảo mẫu Phiếu Tăng Ca (DKTC) luôn có đủ 2 bước chuẩn: Bước 1 Trưởng bộ phận -> Bước 2 Ban Giám Đốc phụ trách khối (PGĐ Kỹ thuật cho Khối Kỹ thuật, PGĐ Kinh doanh cho Khối KD)
+      if (
+        nextSteps.length < 2 &&
+        nextSteps.every((s) => s.roleType === "DIRECTOR" || s.defaultDept === "Ban Giám Đốc")
+      ) {
+        changed = true;
+        nextSteps.splice(0, nextSteps.length,
+          { stepOrder: 1, stepName: "Trưởng bộ phận xác nhận khối lượng việc", roleType: "DEPT_HEAD", defaultDept: "Theo phòng người tạo", defaultApprover: "Trưởng bộ phận", slaHours: 4 },
+          { stepOrder: 2, stepName: "Ban Giám Đốc / HCNS phê duyệt", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Ban Giám Đốc", slaHours: 4 }
+        );
+      } else {
+        for (let i = 0; i < nextSteps.length; i++) {
+          const s = nextSteps[i];
+          if (
+            (s.roleType === "DIRECTOR" || s.defaultDept === "Ban Giám Đốc") &&
+            (isSamePerson(s.defaultApprover, "Đỗ Ngọc Diễm Trúc") || /pgđ\s+kinh\s+doanh/i.test(s.stepName))
+          ) {
+            changed = true;
+            nextSteps[i] = {
+              ...s,
+              stepName: s.stepName.replace(/^PGĐ\s+Kinh\s+doanh/i, "Ban Giám Đốc"),
+              defaultApprover: "Ban Giám Đốc"
+            };
+          }
+        }
+      }
       if (!nextFields.some((f) => f.key === "otDayType")) {
         changed = true;
         const dayTypeField: ProposalFieldSchema = {
@@ -2095,6 +2138,20 @@ export function ProposalsApprovalView({
     [templates, selectedTemplateId]
   );
 
+  // Xác định phòng ban thực tế của người đang lập đề xuất (hoặc nhân sự được lập hộ)
+  const resolveRequesterConcreteDept = (staffName: string = currentStaffName, overrideDept?: string): string => {
+    if (overrideDept && overrideDept !== "all" && !overrideDept.startsWith("BLOCK_")) {
+      return overrideDept;
+    }
+    const matchedStaff = (personnelList || []).find((p: any) =>
+      isSamePerson(p?.full_name || p?.name, staffName)
+    );
+    if (matchedStaff?.department && matchedStaff.department !== "all") {
+      return matchedStaff.department;
+    }
+    return defaultConcreteDeptForScope(selectedDept, userDept);
+  };
+
   // Build steps from template + current requester dept + total amount
   const buildStepsFromTemplate = (
     tmpl: ProposalTemplate,
@@ -2102,7 +2159,7 @@ export function ProposalsApprovalView({
     amount: number,
     reqName: string = currentStaffName
   ): ProposalStepInstance[] => {
-    const resolvedDept = reqDept && reqDept !== "all" ? reqDept : userDept || "Kinh Doanh";
+    const resolvedDept = resolveRequesterConcreteDept(reqName, reqDept);
     const filteredSteps = (tmpl.defaultSteps || []).filter((st) => {
       if (st.conditionMinAmount && amount > 0 && amount < st.conditionMinAmount) {
         return false;
@@ -2180,8 +2237,10 @@ export function ProposalsApprovalView({
     if (!isFormModalOpen || editingProposalId) return;
     const tmpl = templates.find((t) => t.id === selectedTemplateId) || templates[0];
     if (!tmpl) return;
-    const reqDept = defaultConcreteDeptForScope(selectedDept, userDept);
-    const freshSteps = buildStepsFromTemplate(tmpl, reqDept, formState.totalAmount);
+    const proxyName = String(formState.formValues?.onBehalfOfName || currentStaffName).trim();
+    const proxyDept = String(formState.formValues?.onBehalfOfDept || "").trim();
+    const reqDept = resolveRequesterConcreteDept(proxyName, proxyDept);
+    const freshSteps = buildStepsFromTemplate(tmpl, reqDept, formState.totalAmount, proxyName);
     const freshFollowers = Array.isArray(tmpl.defaultFollowers)
       ? Array.from(new Set(tmpl.defaultFollowers.map((n) => cleanStaffDisplayName(n)).filter(Boolean)))
       : [];
@@ -2224,8 +2283,8 @@ export function ProposalsApprovalView({
       templates[0];
     setEditingProposalId(null);
     setSelectedTemplateId(tmpl.id);
-    const reqDept = defaultConcreteDeptForScope(selectedDept, userDept);
-    const initialSteps = buildStepsFromTemplate(tmpl, reqDept, 0);
+    const reqDept = resolveRequesterConcreteDept(currentStaffName);
+    const initialSteps = buildStepsFromTemplate(tmpl, reqDept, 0, currentStaffName);
     const defaultDateValues: Record<string, string> = {};
     (tmpl.fields || []).forEach((f) => {
       if (f.type === "date") defaultDateValues[f.key] = todayVN();
@@ -2301,8 +2360,10 @@ export function ProposalsApprovalView({
     if (!tmpl) return;
     setSelectedTemplateId(tmpl.id);
     if (!editingProposalId) {
-      const reqDept = defaultConcreteDeptForScope(selectedDept, userDept);
-      const nextSteps = buildStepsFromTemplate(tmpl, reqDept, formState.totalAmount);
+      const proxyName = String(formState.formValues?.onBehalfOfName || currentStaffName).trim();
+      const proxyDept = String(formState.formValues?.onBehalfOfDept || "").trim();
+      const reqDept = resolveRequesterConcreteDept(proxyName, proxyDept);
+      const nextSteps = buildStepsFromTemplate(tmpl, reqDept, formState.totalAmount, proxyName);
       const defaultDateValues: Record<string, string> = {};
       (tmpl.fields || []).forEach((f) => {
         if (f.type === "date") defaultDateValues[f.key] = todayVN();
@@ -2767,15 +2828,16 @@ export function ProposalsApprovalView({
     const nowStr = nowVNDateTime();
     const existing = editingProposalId ? proposals.find((p) => p.id === editingProposalId) : null;
     const isLeaveTmpl = activeTemplate.id === "tmpl_leave_request" || activeTemplate.codePrefix === "DXNP";
-    const proxyName = isLeaveTmpl ? String(formState.formValues?.onBehalfOfName || "").trim() : "";
-    const proxyDept = isLeaveTmpl ? String(formState.formValues?.onBehalfOfDept || "").trim() : "";
+    const isOvertimeTmpl = activeTemplate.id === "tmpl_overtime_request" || activeTemplate.codePrefix === "DKTC";
+    const proxyName = (isLeaveTmpl || isOvertimeTmpl) ? String(formState.formValues?.onBehalfOfName || "").trim() : "";
+    const proxyDept = (isLeaveTmpl || isOvertimeTmpl) ? String(formState.formValues?.onBehalfOfDept || "").trim() : "";
     const reqName = existing?.requesterName || proxyName || currentStaffName;
     const reqDept =
       existing?.requesterDept ||
       proxyDept ||
-      (isDirector && (!proxyName || isSamePerson(proxyName, currentStaffName))
+      (isDirector && isLeaveTmpl && (!proxyName || isSamePerson(proxyName, currentStaffName))
         ? "Ban Giám Đốc"
-        : defaultConcreteDeptForScope(selectedDept, userDept));
+        : resolveRequesterConcreteDept(reqName));
 
     // Kiểm tra nếu người vắng mặt thuộc Ban Giám Đốc -> KHÔNG phải "Đơn xin nghỉ phép" chờ duyệt, mà tự động có hiệu lực ngay (APPROVED)
     const isExecutiveLeave =
@@ -6112,78 +6174,128 @@ export function ProposalsApprovalView({
               <div className="text-xs font-extrabold text-slate-800 dark:text-slate-200 uppercase">
                 2. Thông tin nghiệp vụ chi tiết ({activeTemplate.name}):
               </div>
-              {activeTemplate.id === "tmpl_leave_request" && (() => {
+              {(activeTemplate.id === "tmpl_leave_request" || activeTemplate.id === "tmpl_overtime_request") && (() => {
+                const isOvertimeTmpl = activeTemplate.id === "tmpl_overtime_request";
                 const canRecordForOthers =
                   isDirector ||
                   isManager ||
                   isSameWorkspaceDept(userDept, "Hành Chính Nhân Sự");
                 const currentProxyName = String(formState.formValues?.onBehalfOfName || currentStaffName).trim();
-                const currentProxyDept = String(
-                  formState.formValues?.onBehalfOfDept ||
-                    (isDirector && isSamePerson(currentProxyName, currentStaffName) ? "Ban Giám Đốc" : userDept)
-                ).trim();
+                const currentProxyDept = resolveRequesterConcreteDept(
+                  currentProxyName,
+                  String(formState.formValues?.onBehalfOfDept || "").trim()
+                );
                 const isExecPerson =
-                  isSameWorkspaceDept(currentProxyDept, "Ban Giám Đốc") ||
-                  (isDirector && isSamePerson(currentProxyName, currentStaffName)) ||
-                  /giám đốc|pgđ|bgđ|chủ tịch/i.test(
-                    String(
-                      (personnelList || []).find((p: any) => isSamePerson(p.full_name || p.name, currentProxyName))?.position || ""
-                    )
-                  );
+                  !isOvertimeTmpl &&
+                  (isSameWorkspaceDept(currentProxyDept, "Ban Giám Đốc") ||
+                    (isDirector && isSamePerson(currentProxyName, currentStaffName)) ||
+                    /giám đốc|pgđ|bgđ|chủ tịch/i.test(
+                      String(
+                        (personnelList || []).find((p: any) => isSamePerson(p.full_name || p.name, currentProxyName))?.position || ""
+                      )
+                    ));
                 return (
                   <div className="p-3 rounded-xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-700 space-y-2 text-xs">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div>
                         <div className="font-extrabold text-amber-950 dark:text-amber-200">
-                          {isExecPerson
+                          {isOvertimeTmpl
+                            ? `⏰ Nhân sự & Phòng ban đăng ký Tăng ca: ${currentProxyName} (${currentProxyDept})`
+                            : isExecPerson
                             ? "🏛️ Chế độ Ban Giám Đốc: Lịch Vắng Mặt & Ủy Quyền Điều Hành (Không cần xin nghỉ phép)"
                             : "👤 Người đăng ký nghỉ phép (HCNS hoặc Quản lý có thể ghi nhận hộ)"}
                         </div>
                         <p className="text-[11px] text-amber-800 dark:text-amber-300 mt-0.5">
-                          {isExecPerson
+                          {isOvertimeTmpl
+                            ? "Hệ thống tự động phân luồng phê duyệt theo Phòng ban: Khối Kỹ thuật (R&D, SX Kit, Oligo, QA/QC, Kho Nhà Máy) do Trưởng bộ phận & PGĐ Kỹ thuật Nguyễn Duy Khánh duyệt; Phòng Kỹ thuật – Thiết Bị (KTCN) do Giám đốc Nguyễn Văn Tùng duyệt; Khối Kinh doanh & Văn phòng do Trưởng bộ phận & PGĐ Kinh doanh Đỗ Ngọc Diễm Trúc duyệt."
+                            : isExecPerson
                             ? "Ban Giám Đốc KHÔNG phải lập đơn xin nghỉ phép chờ duyệt và mặc định KHÔNG phát thông báo nghỉ phép ra toàn công ty (chế độ Riêng tư PRIVATE). Phiếu có hiệu lực ngay (APPROVED) để ghi nhận người nhận ủy quyền/bàn giao. Nếu BGĐ hoàn toàn không lập phiếu này, thành viên BGĐ khác vẫn có thể duyệt thay trực tiếp trên mọi tờ trình."
                             : "Nếu lãnh đạo / nhân sự báo vắng mặt qua điện thoại hoặc tin nhắn mà không trực tiếp vào phần mềm, Hành chính – Nhân sự (HCNS) có thể chọn tên bên dưới để ghi nhận hộ lịch nghỉ & người nhận bàn giao."}
                         </p>
                       </div>
 
-                      {canRecordForOthers && (
-                        <div className="shrink-0 min-w-[230px]">
+                      <div className="shrink-0 flex flex-wrap items-end gap-2">
+                        <div>
                           <label className="block text-[10px] font-extrabold text-amber-900 dark:text-amber-200 mb-0.5">
-                            ✍️ Ghi nhận cho nhân sự / lãnh đạo:
+                            🏢 Phòng ban áp dụng luồng duyệt:
                           </label>
                           <select
-                            value={currentProxyName}
+                            value={currentProxyDept}
                             onChange={(e) => {
-                              const pickedName = e.target.value;
-                              const foundStaff = (personnelList || []).find((p: any) =>
-                                isSamePerson(p.full_name || p.name, pickedName)
-                              );
-                              const pickedDept =
-                                foundStaff?.department ||
-                                (isSamePerson(pickedName, currentStaffName) && isDirector ? "Ban Giám Đốc" : userDept);
-                              const pickedIsExec =
-                                isSameWorkspaceDept(pickedDept, "Ban Giám Đốc") ||
-                                /giám đốc|pgđ|bgđ|chủ tịch/i.test(String(foundStaff?.position || ""));
+                              const nextDept = e.target.value;
+                              const nextSteps = buildStepsFromTemplate(activeTemplate, nextDept, formState.totalAmount, currentProxyName);
                               setFormState((prev) => ({
                                 ...prev,
-                                title: pickedIsExec
-                                  ? `Lịch vắng mặt & Ủy quyền điều hành — ${pickedName} (${formatDayVN(todayVN())})`
-                                  : `Xin nghỉ phép — ${pickedName} (${formatDayVN(todayVN())})`,
-                                visibility: pickedIsExec ? "PRIVATE" : prev.visibility,
-                                sendChatNotify: pickedIsExec ? false : prev.sendChatNotify,
-                                sendBellNotify: pickedIsExec ? false : prev.sendBellNotify,
+                                steps: nextSteps,
+                                executorName: nextSteps[nextSteps.length - 1]?.approverName || prev.executorName,
                                 formValues: {
                                   ...prev.formValues,
-                                  onBehalfOfName: pickedName,
-                                  onBehalfOfDept: pickedDept,
-                                  leaveType: pickedIsExec
-                                    ? "Lịch công tác / Vắng mặt & Ủy quyền điều hành (BGĐ)"
-                                    : prev.formValues.leaveType || "Nghỉ phép năm (Có hưởng lương)"
+                                  onBehalfOfName: currentProxyName,
+                                  onBehalfOfDept: nextDept
                                 }
                               }));
                             }}
-                            className="w-full px-2.5 py-1.5 rounded-lg border border-amber-400 dark:border-amber-700 bg-white dark:bg-slate-900 font-bold text-xs text-slate-900 dark:text-white cursor-pointer"
+                            className="px-2.5 py-1.5 rounded-lg border border-amber-400 dark:border-amber-700 bg-white dark:bg-slate-900 font-bold text-xs text-slate-900 dark:text-white cursor-pointer"
                           >
+                            {departments
+                              .filter((d) => d.id !== "all")
+                              .map((d) => (
+                                <option key={d.id} value={d.id}>
+                                  {d.name}
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+
+                        {canRecordForOthers && (
+                          <div className="min-w-[210px]">
+                            <label className="block text-[10px] font-extrabold text-amber-900 dark:text-amber-200 mb-0.5">
+                              ✍️ Nhân sự đăng ký:
+                            </label>
+                            <select
+                              value={currentProxyName}
+                              onChange={(e) => {
+                                const pickedName = e.target.value;
+                                const foundStaff = (personnelList || []).find((p: any) =>
+                                  isSamePerson(p.full_name || p.name, pickedName)
+                                );
+                                const pickedDept = resolveRequesterConcreteDept(
+                                  pickedName,
+                                  foundStaff?.department || ""
+                                );
+                                const pickedIsExec =
+                                  !isOvertimeTmpl &&
+                                  (isSameWorkspaceDept(pickedDept, "Ban Giám Đốc") ||
+                                    /giám đốc|pgđ|bgđ|chủ tịch/i.test(String(foundStaff?.position || "")));
+                                const nextSteps = buildStepsFromTemplate(activeTemplate, pickedDept, formState.totalAmount, pickedName);
+                                setFormState((prev) => ({
+                                  ...prev,
+                                  title: isOvertimeTmpl
+                                    ? `Đăng ký tăng ca — ${pickedName} (${formatDayVN(todayVN())})`
+                                    : pickedIsExec
+                                    ? `Lịch vắng mặt & Ủy quyền điều hành — ${pickedName} (${formatDayVN(todayVN())})`
+                                    : `Xin nghỉ phép — ${pickedName} (${formatDayVN(todayVN())})`,
+                                  visibility: pickedIsExec ? "PRIVATE" : prev.visibility,
+                                  sendChatNotify: pickedIsExec ? false : prev.sendChatNotify,
+                                  sendBellNotify: pickedIsExec ? false : prev.sendBellNotify,
+                                  steps: pickedIsExec ? [] : nextSteps,
+                                  executorName: nextSteps[nextSteps.length - 1]?.approverName || prev.executorName,
+                                  formValues: {
+                                    ...prev.formValues,
+                                    onBehalfOfName: pickedName,
+                                    onBehalfOfDept: pickedDept,
+                                    ...(isOvertimeTmpl
+                                      ? {}
+                                      : {
+                                          leaveType: pickedIsExec
+                                            ? "Lịch công tác / Vắng mặt & Ủy quyền điều hành (BGĐ)"
+                                            : prev.formValues.leaveType || "Nghỉ phép năm (Có hưởng lương)"
+                                        })
+                                  }
+                                }));
+                              }}
+                              className="w-full px-2.5 py-1.5 rounded-lg border border-amber-400 dark:border-amber-700 bg-white dark:bg-slate-900 font-bold text-xs text-slate-900 dark:text-white cursor-pointer"
+                            >
                             <option value={currentStaffName}>
                               {currentStaffName} ({isDirector ? "Ban Giám Đốc" : userDept}) — Bản thân
                             </option>
@@ -6202,8 +6314,9 @@ export function ProposalsApprovalView({
                                 );
                               })}
                           </select>
-                        </div>
-                      )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
