@@ -324,6 +324,7 @@ export function PreparationView({
   // Quick search & filter states for Formulas
   const [formulaQ, setFormulaQ] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
+  const [showCategoryChips, setShowCategoryChips] = useState(false);
   const [qcFilter, setQcFilter] = useState<"" | "QC_REQUIRED" | "INCUBATION" | "DIRECT">("");
   const [statusFilter, setStatusFilter] = useState<"" | "ACTIVE" | "INACTIVE">("");
 
@@ -486,35 +487,64 @@ export function PreparationView({
 
         {/* Thanh Tìm kiếm nhanh & Bộ lọc Công thức pha chế */}
         {allFormulas.length > 0 && (
-          <div className="flex flex-col gap-2.5 mb-3 p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mr-1">Nhóm công thức:</span>
-              <button
-                type="button"
-                onClick={() => setCategoryFilter("")}
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
-                  categoryFilter === ""
-                    ? "bg-sky-700 text-white border-sky-700"
-                    : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
-                }`}
-              >
-                Tất cả ({allFormulas.length})
-              </button>
-              {categoryStats.map(([cat, cnt]) => (
+          <div className="flex flex-col gap-2 mb-3 p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">Nhóm công thức:</span>
                 <button
-                  key={cat}
                   type="button"
-                  onClick={() => setCategoryFilter(categoryFilter === cat ? "" : cat)}
+                  onClick={() => setCategoryFilter("")}
                   className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
-                    categoryFilter === cat
+                    categoryFilter === ""
                       ? "bg-sky-700 text-white border-sky-700"
                       : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
                   }`}
                 >
-                  {cat} ({cnt})
+                  Tất cả ({allFormulas.length})
                 </button>
-              ))}
+                {categoryFilter && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-sky-700 text-white border border-sky-700">
+                    <span>
+                      {categoryFilter} ({categoryStats.find(([c]) => c === categoryFilter)?.[1] ?? 0})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setCategoryFilter("")}
+                      className="ml-1 hover:text-rose-200 cursor-pointer"
+                      title="Bỏ lọc nhóm này"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowCategoryChips((v) => !v)}
+                  className="px-2.5 py-1 rounded-lg text-xs font-bold border border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-900/70 transition-colors cursor-pointer"
+                >
+                  {showCategoryChips ? `▲ Thu gọn nhóm (${categoryStats.length})` : `▼ Xổ ra chọn nhóm (${categoryStats.length} nhóm)`}
+                </button>
+              </div>
             </div>
+
+            {showCategoryChips && (
+              <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-slate-200/70 dark:border-slate-800">
+                {categoryStats.map(([cat, cnt]) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setCategoryFilter(categoryFilter === cat ? "" : cat)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                      categoryFilter === cat
+                        ? "bg-sky-700 text-white border-sky-700"
+                        : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    {cat} ({cnt})
+                  </button>
+                ))}
+              </div>
+            )}
 
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-12 items-center">
               <div className="sm:col-span-2 lg:col-span-6 relative">
