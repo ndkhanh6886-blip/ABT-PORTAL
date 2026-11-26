@@ -3230,6 +3230,7 @@ export const UnifiedWorkspace: React.FC = () => {
   ];
   const [companyResources, setCompanyResources] = useState<CompanyResourceItem[]>(DEFAULT_COMPANY_RESOURCES);
   const [showResourceBoard, setShowResourceBoard] = useState<boolean>(true);
+  const [plannerSectionMode, setPlannerSectionMode] = useState<"BOTH_SEPARATE" | "WORK_ONLY" | "RESOURCE_ONLY">("BOTH_SEPARATE");
   const [selectedResourceFilter, setSelectedResourceFilter] = useState<string>("all");
   const [isAddingNewResource, setIsAddingNewResource] = useState<boolean>(false);
   const [editingResourceId, setEditingResourceId] = useState<string | null>(null);
@@ -3491,17 +3492,20 @@ export const UnifiedWorkspace: React.FC = () => {
     return null;
   }, []);
 
-  // Nhận diện một lịch có sử dụng tài nguyên công ty (theo resourceId hoặc tên phòng họp / tài nguyên trong location)
+  // Nhận diện một lịch đăng ký sử dụng tài nguyên công ty (độc lập hoàn toàn với Lịch công tác & Lịch họp: chỉ tính các lịch có eventType === "RESOURCE")
   const matchScheduleToResource = useCallback((sched: any, resItem: CompanyResourceItem): boolean => {
     if (!sched || !resItem) return false;
-    if (sched.resourceId && sched.resourceId === resItem.id) return true;
-    const loc = canonStaffName(sched.resourceName || sched.location || "");
-    if (!loc) return false;
+    if (sched.eventType !== "RESOURCE") return false;
+    if (sched.resourceId) {
+      return sched.resourceId === resItem.id;
+    }
     const rName = canonStaffName(resItem.name);
-    const shortName = canonStaffName(resItem.name.replace(/\s*\(.*?\)/g, "").trim());
-    if (loc === rName || (shortName.length >= 8 && (loc.includes(shortName) || shortName.includes(loc)))) {
+    if (!rName) return false;
+    if (sched.resourceName && canonStaffName(sched.resourceName) === rName) {
       return true;
     }
+    const loc = canonStaffName(sched.location || "");
+    if (loc && loc === rName) return true;
     return false;
   }, []);
 
@@ -5215,35 +5219,28 @@ export const UnifiedWorkspace: React.FC = () => {
     });
   }, [hubWeeklyPlans, rolePerspective, user, filterDept, departmentStaffList, selectedAssignee, currentStaffName, resolveUserIdForStaffName]);
 
-  // RBAC Filtered Weekly Schedules:
-  // - Staff: ONLY sees their own schedule items (or schedules where they are among actors/coActors)
-  // - Manager: Sees all schedule items belonging to their department (can filter by specific staff)
+  // RBAC Filtered Weekly Schedules (Độc lập cho Lịch Công Tác & Lịch Họp — tách biệt hoàn toàn khỏi Lịch Sử Dụng Tài Nguyên):
+  // - Staff: ONLY sees their own work/meeting schedule items (or schedules where they are among actors/coActors)
+  // - Manager: Sees all work/meeting schedule items belonging to their department (can filter by specific staff)
   // - Director: Sees whole company or selected department (can filter by specific staff)
   const filteredSchedules = useMemo(() => {
     return weeklySchedule.filter((s) => {
-      if (selectedResourceFilter !== "all") {
-        const targetRes = companyResources.find((r) => r.id === selectedResourceFilter);
-        if (targetRes && !matchScheduleToResource(s, targetRes)) return false;
-      }
-      const isSharedResourceBooking =
-        Boolean(s.resourceId) ||
-        s.eventType === "RESOURCE" ||
-        companyResources.some((r) => matchScheduleToResource(s, r));
+      // Các lượt đăng ký mượn/sử dụng tài nguyên thuần túy (eventType === "RESOURCE") hiển thị ở bảng Lịch Sử Dụng Tài Nguyên độc lập
+      if (s.eventType === "RESOURCE") return false;
       const actorsList = [
         ...String(s.actor || "").split(/[,;\n]+/).map((a: string) => a.trim()).filter(Boolean),
         ...(Array.isArray(s.coActors) ? s.coActors.map((a: any) => String(a || "").trim()).filter(Boolean) : [])
       ];
       if (rolePerspective === "staff") {
-        // Lịch công khai hoặc lịch đặt tài nguyên / phòng họp công ty: mọi nhân sự đều xem được để biết phòng họp/tài nguyên đã có người đặt
-        if (s.isPublic || isSharedResourceBooking) return true;
+        if (s.isPublic) return true;
         return actorsList.some((a) => sameStaffName(a, currentStaffName));
       }
-      if (filterDept !== "all" && selectedResourceFilter === "all") {
+      if (filterDept !== "all") {
         const matchScheduleDept = isSameWorkspaceDept(s.category, filterDept);
         const matchDeptStaff = actorsList.some((a) =>
           departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, a))
         );
-        if (!matchScheduleDept && !matchDeptStaff && !isSharedResourceBooking) return false;
+        if (!matchScheduleDept && !matchDeptStaff) return false;
       }
       if (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__") {
         if (actorsList.some((a) => sameStaffName(a, selectedAssignee))) return true;
@@ -5253,7 +5250,19 @@ export const UnifiedWorkspace: React.FC = () => {
       }
       return true;
     });
-  }, [weeklySchedule, rolePerspective, filterDept, departmentStaffList, selectedAssignee, currentStaffName, selectedResourceFilter, companyResources, matchScheduleToResource]);
+  }, [weeklySchedule, rolePerspective, filterDept, departmentStaffList, selectedAssignee, currentStaffName]);
+
+  // Danh sách Lịch Sử Dụng Tài Nguyên Công Ty độc lập (chỉ gồm các đăng ký sử dụng tài nguyên eventType === "RESOURCE")
+  const resourceBookingSchedules = useMemo(() => {
+    return weeklySchedule.filter((s) => {
+      if (s.eventType !== "RESOURCE") return false;
+      if (selectedResourceFilter !== "all") {
+        const targetRes = companyResources.find((r) => r.id === selectedResourceFilter);
+        if (targetRes && !matchScheduleToResource(s, targetRes)) return false;
+      }
+      return true;
+    });
+  }, [weeklySchedule, companyResources, selectedResourceFilter, matchScheduleToResource]);
 
   // RBAC Filtered Projects (Chỉ hiển thị các Dự án & Nhóm việc liên phòng ban được tạo trực tiếp tại tab Dự Án này;
   // các đề tài R&D, nghiên cứu thiết bị, phần mềm hiển thị riêng tại phân hệ phòng ban chuyên môn):
@@ -13505,106 +13514,135 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       </div>
                     );
                   })()}
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs">
-              <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                    <span>Lịch Công Tác &amp; Điều Phối {weekOffset === 0 ? "Tuần Này" : weekOffset === 1 ? "Tuần Sau" : weekOffset === -1 ? "Tuần Trước" : ""}</span>
-                    <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                      Tuần {viewedWeek.weekNo} / {viewedWeek.year} · {viewedWeek.days[0].label} – {viewedWeek.days[5].label}
-                    </span>
-                    <span className="inline-flex items-center gap-1">
-                      <button type="button" onClick={() => setWeekOffset(w => w - 1)} className="p-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer" title="Tuần trước">
-                        <ChevronRight className="w-3.5 h-3.5 rotate-180" />
-                      </button>
-                      {weekOffset !== 0 && (
-                        <button type="button" onClick={() => setWeekOffset(0)} className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 cursor-pointer">Tuần này</button>
-                      )}
-                      <button type="button" onClick={() => setWeekOffset(w => w + 1)} className="p-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer" title="Tuần sau">
-                        <ChevronRight className="w-3.5 h-3.5" />
-                      </button>
-                    </span>
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Lịch họp nội bộ / liên phòng ban, kế hoạch tuần tự động từ R&amp;D – SX Kit – Oligo – KTCN – QA/QC, lịch Application &amp; giao nhận kho
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap">
+
+            {/* THANH ĐIỀU HƯỚNG TUẦN & CHẾ ĐỘ XEM ĐỘC LẬP: LỊCH CÔNG TÁC / LỊCH HỌP vs LỊCH SỬ DỤNG TÀI NGUYÊN */}
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl px-4 py-3 shadow-xs flex items-center justify-between flex-wrap gap-3">
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <span className="text-xs font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  🗓️ Điều phối theo tuần:
+                </span>
+                <span className="text-xs font-mono font-bold px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                  Tuần {viewedWeek.weekNo} / {viewedWeek.year} · {viewedWeek.days[0].label} – {viewedWeek.days[5].label}
+                </span>
+                <span className="inline-flex items-center gap-1">
                   <button
                     type="button"
-                    onClick={() => setShowResourceBoard((v) => !v)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
-                      showResourceBoard
-                        ? "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-200 border-emerald-300 dark:border-emerald-700 shadow-2xs"
-                        : "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700"
-                    }`}
-                    title="Bật/tắt Bảng quản lý & đăng ký lịch sử dụng Phòng họp, Máy Demo, Xe công ty"
+                    onClick={() => setWeekOffset((w) => w - 1)}
+                    className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                    title="Tuần trước"
                   >
-                    <span>{showResourceBoard ? "✓" : "○"}</span>
-                    <span>🏢 Lịch Phòng Họp &amp; Tài Nguyên Công Ty ({companyResources.length})</span>
+                    <ChevronRight className="w-3.5 h-3.5 rotate-180" />
                   </button>
+                  {weekOffset !== 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setWeekOffset(0)}
+                      className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-indigo-600 text-white cursor-pointer"
+                    >
+                      Về tuần này
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={() => setShowTechWeeklyPlans((v) => !v)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
-                      showTechWeeklyPlans
-                        ? "bg-teal-50 dark:bg-teal-950/60 text-teal-800 dark:text-teal-200 border-teal-300 dark:border-teal-700 shadow-2xs"
-                        : "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700"
-                    }`}
-                    title="Bật/tắt lớp kế hoạch tự động từ các phòng ban Khối Kỹ thuật"
+                    onClick={() => setWeekOffset((w) => w + 1)}
+                    className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                    title="Tuần sau"
                   >
-                    <span>{showTechWeeklyPlans ? "✓" : "○"}</span>
-                    <span>🏭 Lịch tự động Khối Kỹ thuật ({filteredHubWeeklyPlans.length})</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
                   </button>
-                </div>
+                </span>
               </div>
 
-              {/* BẢNG ĐĂNG KÝ & THEO DÕI LỊCH SỬ DỤNG PHÒNG HỌP / TÀI NGUYÊN CÔNG TY TRONG TUẦN */}
-              {showResourceBoard && (
-                <div className="mb-4 p-3.5 rounded-2xl bg-gradient-to-r from-emerald-50/90 via-teal-50/70 to-sky-50/80 dark:from-emerald-950/30 dark:via-slate-900 dark:to-sky-950/30 border border-emerald-200/80 dark:border-emerald-900/60 space-y-3">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setPlannerSectionMode("BOTH_SEPARATE")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                    plannerSectionMode === "BOTH_SEPARATE"
+                      ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs"
+                      : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                  }`}
+                >
+                  📑 Hiển thị cả 2 bảng độc lập
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPlannerSectionMode("WORK_ONLY")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                    plannerSectionMode === "WORK_ONLY"
+                      ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
+                      : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                  }`}
+                >
+                  📅 Chỉ xem Lịch Công Tác &amp; Lịch Họp
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPlannerSectionMode("RESOURCE_ONLY")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                    plannerSectionMode === "RESOURCE_ONLY"
+                      ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                      : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                  }`}
+                >
+                  🏢 Chỉ xem Lịch Sử Dụng Tài Nguyên ({companyResources.length})
+                </button>
+              </div>
+            </div>
+
+            {/* ===================================================================== */}
+            {/* BẢNG ĐỘC LẬP 1: LỊCH SỬ DỤNG PHÒNG HỌP & TÀI NGUYÊN CÔNG TY            */}
+            {/* ===================================================================== */}
+            {plannerSectionMode !== "WORK_ONLY" && (
+              <div className="bg-white dark:bg-slate-900 border-2 border-emerald-200/90 dark:border-emerald-900/70 rounded-2xl p-5 shadow-xs space-y-4">
+                <div className="flex items-center justify-between gap-2 flex-wrap pb-3 border-b border-emerald-100 dark:border-slate-800">
+                  <div>
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="px-2.5 py-0.5 rounded-lg bg-emerald-600 text-white text-[11px] font-extrabold">
-                        🏢 LỊCH SỬ DỤNG PHÒNG HỌP &amp; TÀI NGUYÊN CÔNG TY
+                      <span className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-xs font-extrabold">
+                        🏢 BẢNG 1: LỊCH SỬ DỤNG PHÒNG HỌP &amp; TÀI NGUYÊN CÔNG TY (ĐỘC LẬP)
                       </span>
-                      <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-                        Kiểm tra phòng họp trống, máy Demo, xe công ty &amp; chống đặt trùng khung giờ (Công khai toàn công ty)
+                      <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300">
+                        Tuần {viewedWeek.weekNo} ({viewedWeek.days[0].label} – {viewedWeek.days[5].label})
                       </span>
                     </div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {selectedResourceFilter !== "all" && (
-                        <button
-                          type="button"
-                          onClick={() => setSelectedResourceFilter("all")}
-                          className="px-2.5 py-1 rounded-lg bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 text-[11px] font-bold cursor-pointer"
-                        >
-                          ✕ Bỏ lọc tài nguyên đang chọn
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (isAddingNewResource && !editingResourceId) {
-                            setIsAddingNewResource(false);
-                          } else {
-                            setEditingResourceId(null);
-                            setNewResourceForm({ name: "", category: "MEETING_ROOM", capacityOrSpec: "", icon: "🏢" });
-                            setIsAddingNewResource(true);
-                          }
-                        }}
-                        className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 hover:bg-emerald-50 border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 text-[11px] font-bold cursor-pointer"
-                      >
-                        {isAddingNewResource && !editingResourceId ? "Đóng biểu mẫu" : "+ Thêm phòng họp / tài nguyên mới"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => openScheduleForm(undefined, undefined, "RESOURCE")}
-                        className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold shadow-2xs cursor-pointer"
-                      >
-                        + Đăng ký sử dụng tài nguyên
-                      </button>
-                    </div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Quản lý riêng lịch mượn / đăng ký Phòng họp, Máy Demo, Xe công ty &amp; chống đặt trùng khung giờ (Tách biệt hoàn toàn với Lịch công tác &amp; Lịch họp)
+                    </p>
                   </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {selectedResourceFilter !== "all" && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedResourceFilter("all")}
+                        className="px-2.5 py-1.5 rounded-xl bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 text-xs font-bold cursor-pointer"
+                      >
+                        ✕ Bỏ lọc tài nguyên đang chọn
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isAddingNewResource && !editingResourceId) {
+                          setIsAddingNewResource(false);
+                        } else {
+                          setEditingResourceId(null);
+                          setNewResourceForm({ name: "", category: "MEETING_ROOM", capacityOrSpec: "", icon: "🏢" });
+                          setIsAddingNewResource(true);
+                        }
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 hover:bg-emerald-50 border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 text-xs font-bold cursor-pointer"
+                    >
+                      {isAddingNewResource && !editingResourceId ? "Đóng biểu mẫu" : "+ Thêm phòng họp / tài nguyên mới"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openScheduleForm(undefined, undefined, "RESOURCE")}
+                      className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-2xs cursor-pointer"
+                    >
+                      + Đăng ký sử dụng tài nguyên
+                    </button>
+                  </div>
+                </div>
 
                   {isAddingNewResource && (
                     <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-700 shadow-xs space-y-2 text-xs">
@@ -13880,7 +13918,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                 openScheduleForm(
                                   undefined,
                                   undefined,
-                                  resItem.category === "MEETING_ROOM" ? "MEETING" : "RESOURCE",
+                                  "RESOURCE",
                                   resItem.id
                                 )
                               }
@@ -13894,8 +13932,166 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     })}
                   </div>
                   )}
+
+                  {/* LƯỚI LỊCH SỬ DỤNG TÀI NGUYÊN THEO NGÀY TRONG TUẦN (THỨ 2 – THỨ 7) ĐỘC LẬP */}
+                  <div className="pt-3 border-t border-emerald-100 dark:border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <span className="text-xs font-extrabold text-emerald-800 dark:text-emerald-300 uppercase tracking-wider">
+                        🗓️ Chi tiết Lịch Sử Dụng Tài Nguyên Theo Ngày (Thứ 2 – Thứ 7)
+                        {selectedResourceFilter !== "all" && (
+                          <span className="ml-2 px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-200">
+                            Đang lọc: {companyResources.find((r) => r.id === selectedResourceFilter)?.name}
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-[11px] text-slate-500">
+                        Tổng số lượt đăng ký tài nguyên trong tuần: <b>{resourceBookingSchedules.filter((s) => viewedWeek.all7Days.some((wd) => scheduleOnDay(s, wd))).length}</b>
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5">
+                      {viewedWeek.days.map((wd) => {
+                        const dayBookings = resourceBookingSchedules
+                          .filter((s) => scheduleOnDay(s, wd))
+                          .sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+                        const isToday = wd.date === todayVN();
+                        return (
+                          <div
+                            key={`res-day-${wd.date}`}
+                            className="bg-emerald-50/40 dark:bg-slate-800/40 border border-emerald-200/80 dark:border-slate-800 rounded-xl p-2.5 min-h-[140px] flex flex-col justify-between"
+                          >
+                            <div>
+                              <div className="text-xs font-bold text-slate-700 dark:text-slate-300 pb-1.5 border-b border-emerald-200/60 dark:border-slate-700 mb-2 flex items-center justify-between">
+                                <span className={isToday ? "text-emerald-600 dark:text-emerald-400" : ""}>
+                                  {wd.name}{isToday ? " · Hôm nay" : ""}
+                                </span>
+                                <span className="text-[10px] text-slate-400 font-mono">{wd.label}</span>
+                              </div>
+                              <div className="space-y-1.5">
+                                {dayBookings.map((bk: any) => {
+                                  const matchedRes = companyResources.find((r) => matchScheduleToResource(bk, r));
+                                  return (
+                                    <div
+                                      key={`res-grid-${bk.id}-${wd.date}`}
+                                      onClick={(e) => {
+                                        if ((e.target as HTMLElement).closest("button")) return;
+                                        setViewingScheduleEvent(bk);
+                                      }}
+                                      className="group relative rounded-lg p-2 text-[11px] bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-800 text-slate-900 dark:text-slate-100 shadow-2xs cursor-pointer hover:ring-2 hover:ring-emerald-400"
+                                    >
+                                      <div className="flex items-center justify-between gap-1 mb-0.5">
+                                        <span className="px-1.5 py-0.2 rounded bg-emerald-600 text-white text-[9px] font-extrabold truncate">
+                                          {matchedRes ? `${matchedRes.icon} ${matchedRes.name}` : `🏢 ${bk.resourceName || bk.location || "Tài nguyên"}`}
+                                        </span>
+                                        <span className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                                          <button
+                                            type="button"
+                                            onClick={() => openScheduleForm(undefined, bk, "RESOURCE")}
+                                            title="Sửa đăng ký tài nguyên"
+                                            className="hover:text-indigo-600 p-0.5 cursor-pointer"
+                                          >
+                                            <Pencil className="w-3 h-3" />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              if (confirm("Hủy đăng ký sử dụng tài nguyên này?")) handleDeleteSchedule(bk.id);
+                                            }}
+                                            title="Xóa đăng ký tài nguyên"
+                                            className="hover:text-rose-600 p-0.5 cursor-pointer"
+                                          >
+                                            <X className="w-3 h-3" />
+                                          </button>
+                                        </span>
+                                      </div>
+                                      <div className="font-mono font-bold text-[10px] text-emerald-700 dark:text-emerald-300">
+                                        ⏰ {bk.time}
+                                      </div>
+                                      <div className="font-semibold leading-tight mt-0.5">{bk.title}</div>
+                                      <div className="text-[10px] text-slate-500 mt-0.5 truncate">
+                                        👤 {bk.actor} ({bk.category})
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                                {dayBookings.length === 0 && (
+                                  <div className="text-center py-4 text-[10px] text-slate-400 italic">
+                                    Trống lịch tài nguyên
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openScheduleForm(
+                                  wd.date,
+                                  undefined,
+                                  "RESOURCE",
+                                  selectedResourceFilter !== "all" ? selectedResourceFilter : undefined
+                                )
+                              }
+                              className="mt-2 pt-1.5 border-t border-emerald-200/50 dark:border-slate-700/50 py-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100/60 dark:hover:bg-slate-800 rounded transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>+ Đăng ký tài nguyên</span>
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+              </div>
+            )}
+
+            {/* ===================================================================== */}
+            {/* BẢNG ĐỘC LẬP 2: LỊCH CÔNG TÁC & LỊCH HỌP TUẦN NÀY                      */}
+            {/* ===================================================================== */}
+            {plannerSectionMode !== "RESOURCE_ONLY" && (
+            <div className="bg-white dark:bg-slate-900 border-2 border-indigo-200/90 dark:border-indigo-900/70 rounded-2xl p-5 shadow-xs">
+              <div className="flex items-center justify-between mb-4 pb-3 border-b border-indigo-100 dark:border-slate-800 flex-wrap gap-2">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-xs font-extrabold">
+                      📅 BẢNG 2: LỊCH CÔNG TÁC &amp; LỊCH HỌP {weekOffset === 0 ? "TUẦN NÀY" : weekOffset === 1 ? "TUẦN SAU" : weekOffset === -1 ? "TUẦN TRƯỚC" : ""} (ĐỘC LẬP)
+                    </span>
+                    <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300">
+                      Tuần {viewedWeek.weekNo} ({viewedWeek.days[0].label} – {viewedWeek.days[5].label})
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Lịch công tác nhân sự, lịch họp nội bộ / liên phòng ban &amp; kế hoạch tuần tự động từ R&amp;D – SX Kit – Oligo – KTCN – QA/QC
+                  </p>
                 </div>
-              )}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setShowTechWeeklyPlans((v) => !v)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                      showTechWeeklyPlans
+                        ? "bg-teal-50 dark:bg-teal-950/60 text-teal-800 dark:text-teal-200 border-teal-300 dark:border-teal-700 shadow-2xs"
+                        : "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700"
+                    }`}
+                    title="Bật/tắt lớp kế hoạch tự động từ các phòng ban Khối Kỹ thuật"
+                  >
+                    <span>{showTechWeeklyPlans ? "✓" : "○"}</span>
+                    <span>🏭 Lịch tự động Khối Kỹ thuật ({filteredHubWeeklyPlans.length})</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openScheduleForm(undefined, undefined, "MEETING")}
+                    className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-2xs cursor-pointer"
+                  >
+                    🎥 + Đặt lịch họp
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openScheduleForm(undefined, undefined, "WORK")}
+                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-2xs cursor-pointer"
+                  >
+                    + Thêm lịch công tác
+                  </button>
+                </div>
+              </div>
 
               {/* BANNER QUẢN LÝ LỊCH HỌP & NHẮC HỌP TRONG TUẦN ĐANG XEM */}
               {(() => {
@@ -14287,7 +14483,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         </div>
                       </div>
 
-                      <div className="pt-2 border-t border-slate-200/50 dark:border-slate-700/50 mt-2 grid grid-cols-3 gap-1">
+                      <div className="pt-2 border-t border-slate-200/50 dark:border-slate-700/50 mt-2 grid grid-cols-2 gap-1">
                         <button
                           type="button"
                           onClick={() => openScheduleForm(wd.date, undefined, "WORK")}
@@ -14304,20 +14500,13 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           <Users className="w-3 h-3" />
                           <span>🎥 + Họp</span>
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => openScheduleForm(wd.date, undefined, "RESOURCE")}
-                          className="py-1 text-[10px] font-bold text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50/70 dark:hover:bg-slate-800 rounded transition-colors flex items-center justify-center gap-0.5 cursor-pointer"
-                          title="Đăng ký phòng họp, máy Demo, xe công ty"
-                        >
-                          <span>🏢 + Phòng/TN</span>
-                        </button>
                       </div>
                     </div>
                   );
                 })}
               </div>
             </div>
+            )}
         </div>
       )}
 
