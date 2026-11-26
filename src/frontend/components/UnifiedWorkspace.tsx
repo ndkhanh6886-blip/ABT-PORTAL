@@ -3153,7 +3153,95 @@ export const UnifiedWorkspace: React.FC = () => {
     };
   }, [previewDoc, previewImage]);
 
-  // Modals for Planner Tab
+  // Modals for Planner Tab & Company Resource Booking (Phòng họp, Thiết bị Demo, Xe công ty...)
+  type CompanyResourceItem = {
+    id: string;
+    name: string;
+    category: "MEETING_ROOM" | "DEMO_EQUIPMENT" | "VEHICLE" | "SHARED_ASSET";
+    capacityOrSpec: string;
+    locationNote?: string;
+    icon: string;
+  };
+  const DEFAULT_COMPANY_RESOURCES: CompanyResourceItem[] = [
+    {
+      id: "ROOM-MAIN",
+      name: "Phòng họp chính Công ty (Tầng 2)",
+      category: "MEETING_ROOM",
+      capacityOrSpec: "20 chỗ • TV 75 inch & Họp trực tuyến",
+      locationNote: "Tầng 2 Văn phòng chính",
+      icon: "🏢"
+    },
+    {
+      id: "ROOM-VIP",
+      name: "Phòng họp VIP Ban Giám Đốc",
+      category: "MEETING_ROOM",
+      capacityOrSpec: "10 chỗ • Hệ thống hội nghị",
+      locationNote: "Khu Ban Giám Đốc",
+      icon: "🏛️"
+    },
+    {
+      id: "ROOM-FACTORY",
+      name: "Phòng họp Nhà Máy",
+      category: "MEETING_ROOM",
+      capacityOrSpec: "15 chỗ • Màn hình trình chiếu",
+      locationNote: "Khu vực Nhà máy Sản xuất",
+      icon: "🏭"
+    },
+    {
+      id: "ROOM-TRAINING",
+      name: "Phòng Đào tạo & Hội thảo Application",
+      category: "MEETING_ROOM",
+      capacityOrSpec: "25 chỗ • Máy chiếu & Khu thực hành",
+      locationNote: "Khu Đào tạo & Application",
+      icon: "🔬"
+    },
+    {
+      id: "EQUIP-DEMO-PCR",
+      name: "Bộ máy Demo Real-time PCR lưu động",
+      category: "DEMO_EQUIPMENT",
+      capacityOrSpec: "Thiết bị Demo khách hàng / Bệnh viện",
+      locationNote: "Kho Thiết bị Application",
+      icon: "🧬"
+    },
+    {
+      id: "EQUIP-DEMO-EXT",
+      name: "Bộ máy Tách chiết tự động Demo",
+      category: "DEMO_EQUIPMENT",
+      capacityOrSpec: "Thiết bị Demo khách hàng / Bệnh viện",
+      locationNote: "Kho Thiết bị Application",
+      icon: "🧪"
+    },
+    {
+      id: "VEH-CAR-01",
+      name: "Xe Ô tô Công ty (7 chỗ)",
+      category: "VEHICLE",
+      capacityOrSpec: "Đi công tác / Đưa đón đoàn / Giao hàng",
+      locationNote: "Bãi xe Công ty",
+      icon: "🚐"
+    },
+    {
+      id: "ASSET-PROJECTOR",
+      name: "Máy chiếu & Loa hội nghị lưu động",
+      category: "SHARED_ASSET",
+      capacityOrSpec: "Thiết bị dùng chung các phòng",
+      locationNote: "Phòng Hành chính / IT",
+      icon: "📽️"
+    }
+  ];
+  const [companyResources, setCompanyResources] = useState<CompanyResourceItem[]>(DEFAULT_COMPANY_RESOURCES);
+  const [showResourceBoard, setShowResourceBoard] = useState<boolean>(true);
+  const [selectedResourceFilter, setSelectedResourceFilter] = useState<string>("all");
+  const [isAddingNewResource, setIsAddingNewResource] = useState<boolean>(false);
+  const [newResourceForm, setNewResourceForm] = useState<{
+    name: string;
+    category: "MEETING_ROOM" | "DEMO_EQUIPMENT" | "VEHICLE" | "SHARED_ASSET";
+    capacityOrSpec: string;
+  }>({
+    name: "",
+    category: "MEETING_ROOM",
+    capacityOrSpec: ""
+  });
+
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
   const [scheduleForm, setScheduleForm] = useState<{
     day: string;
@@ -3169,9 +3257,11 @@ export const UnifiedWorkspace: React.FC = () => {
     actor: string;
     coActors?: string[];
     location: string;
+    resourceId?: string;
+    resourceName?: string;
     linkedTaskCodes?: string[];
     autoCreateTask?: boolean;
-    eventType?: "WORK" | "MEETING";
+    eventType?: "WORK" | "MEETING" | "RESOURCE";
     meetingAgenda?: string;
     meetingLink?: string;
     sendChatNotify?: boolean;
@@ -3197,6 +3287,8 @@ export const UnifiedWorkspace: React.FC = () => {
     actor: "",
     coActors: [],
     location: "",
+    resourceId: "",
+    resourceName: "",
     linkedTaskCodes: [],
     autoCreateTask: false,
     eventType: "WORK",
@@ -3329,7 +3421,105 @@ export const UnifiedWorkspace: React.FC = () => {
     window.dispatchEvent(new CustomEvent("tbr-navigate", { detail: { tab } }));
   }, []);
 
-  const openScheduleForm = (date?: string, item?: any, defaultEventType: "WORK" | "MEETING" = "WORK") => {
+  const persistCompanyResources = useCallback(async (nextList: CompanyResourceItem[]) => {
+    setCompanyResources(nextList);
+    try {
+      if (typeof window !== "undefined") {
+        localStorage.setItem("unified_company_resources", JSON.stringify(nextList));
+      }
+      await fetch("/api/storage?key=unified_company_resources", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(nextList)
+      });
+    } catch (err) {
+      console.warn("Could not save company resources:", err);
+    }
+  }, []);
+
+  // Phân tích chuỗi khung giờ (VD: "08:30 - 10:00", "8h30-11h") thành số phút [startMin, endMin] để kiểm tra trùng lịch phòng họp / tài nguyên
+  const parseScheduleTimeRangeMinutes = useCallback((timeStr?: string): [number, number] | null => {
+    const raw = String(timeStr || "").trim();
+    if (!raw) return null;
+    const m = raw.match(/(\d{1,2})\s*[:hH]\s*(\d{0,2})\s*[-–→tođến]+\s*(\d{1,2})\s*[:hH]\s*(\d{0,2})/i);
+    if (m) {
+      const sh = Math.min(23, Math.max(0, Number(m[1]) || 0));
+      const sm = Math.min(59, Math.max(0, Number(m[2] || "0") || 0));
+      const eh = Math.min(23, Math.max(0, Number(m[3]) || 0));
+      const em = Math.min(59, Math.max(0, Number(m[4] || "0") || 0));
+      const start = sh * 60 + sm;
+      const end = eh * 60 + em;
+      if (end > start) return [start, end];
+    }
+    const lower = raw.toLowerCase();
+    if (lower.includes("cả ngày") || lower.includes("toàn thời gian")) return [8 * 60, 17 * 60 + 30];
+    if (lower.includes("sáng")) return [8 * 60, 12 * 60];
+    if (lower.includes("chiều")) return [13 * 60 + 30, 17 * 60 + 30];
+    return null;
+  }, []);
+
+  // Nhận diện một lịch có sử dụng tài nguyên công ty (theo resourceId hoặc tên phòng họp / tài nguyên trong location)
+  const matchScheduleToResource = useCallback((sched: any, resItem: CompanyResourceItem): boolean => {
+    if (!sched || !resItem) return false;
+    if (sched.resourceId && sched.resourceId === resItem.id) return true;
+    const loc = canonStaffName(sched.resourceName || sched.location || "");
+    if (!loc) return false;
+    const rName = canonStaffName(resItem.name);
+    const shortName = canonStaffName(resItem.name.replace(/\s*\(.*?\)/g, "").trim());
+    if (loc === rName || (shortName.length >= 8 && (loc.includes(shortName) || shortName.includes(loc)))) {
+      return true;
+    }
+    return false;
+  }, []);
+
+  // Tìm tất cả lịch đặt trùng tài nguyên & khung giờ trên danh sách ngày targetDates
+  const findResourceTimeConflicts = useCallback(
+    (
+      resourceIdOrName: string,
+      targetDates: string[],
+      timeStr: string,
+      excludeScheduleId?: number | null
+    ): Array<{ schedule: any; date: string; resource: CompanyResourceItem }> => {
+      if (!resourceIdOrName) return [];
+      const resObj =
+        companyResources.find((r) => r.id === resourceIdOrName) ||
+        companyResources.find((r) => canonStaffName(r.name) === canonStaffName(resourceIdOrName));
+      if (!resObj) return [];
+
+      const reqRange = parseScheduleTimeRangeMinutes(timeStr);
+      const conflicts: Array<{ schedule: any; date: string; resource: CompanyResourceItem }> = [];
+
+      for (const isoDate of targetDates) {
+        for (const s of weeklySchedule) {
+          if (!s || (excludeScheduleId && s.id === excludeScheduleId)) continue;
+          if (!matchScheduleToResource(s, resObj)) continue;
+          const sStart = s.date ? String(s.date).slice(0, 10) : "";
+          const sEnd = s.endDate ? String(s.endDate).slice(0, 10) : sStart;
+          const onDate = sStart ? isoDate >= sStart && isoDate <= sEnd : false;
+          if (!onDate) continue;
+
+          const existRange = parseScheduleTimeRangeMinutes(s.time);
+          const isOverlap =
+            reqRange && existRange
+              ? reqRange[0] < existRange[1] && existRange[0] < reqRange[1]
+              : String(s.time || "").trim().toLowerCase() === String(timeStr || "").trim().toLowerCase();
+
+          if (isOverlap) {
+            conflicts.push({ schedule: s, date: isoDate, resource: resObj });
+          }
+        }
+      }
+      return conflicts;
+    },
+    [companyResources, weeklySchedule, parseScheduleTimeRangeMinutes, matchScheduleToResource]
+  );
+
+  const openScheduleForm = (
+    date?: string,
+    item?: any,
+    defaultEventType: "WORK" | "MEETING" | "RESOURCE" = "WORK",
+    preselectedResourceId?: string
+  ) => {
     const defaultActor = selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__"
       ? selectedAssignee
       : (currentStaffName || departmentStaffList[0]?.full_name || "");
@@ -3357,6 +3547,9 @@ export const UnifiedWorkspace: React.FC = () => {
       const existingCoActors = Array.isArray(item.coActors) && item.coActors.length > 0
         ? item.coActors
         : parsedActors.slice(1);
+      const matchedRes =
+        companyResources.find((r) => r.id === item.resourceId) ||
+        companyResources.find((r) => matchScheduleToResource(item, r));
       setEditingScheduleId(item.id);
       setScheduleForm({
         day: item.day,
@@ -3371,10 +3564,18 @@ export const UnifiedWorkspace: React.FC = () => {
         title: item.title || "",
         actor: hostActor,
         coActors: existingCoActors,
-        location: item.location || "",
+        location: item.location || matchedRes?.name || "",
+        resourceId: item.resourceId || matchedRes?.id || "",
+        resourceName: item.resourceName || matchedRes?.name || "",
         linkedTaskCodes: Array.isArray(item.linkedTaskCodes) ? item.linkedTaskCodes : [],
         autoCreateTask: false,
-        eventType: item.eventType || (String(item.title || "").toLowerCase().includes("họp") ? "MEETING" : "WORK"),
+        eventType:
+          item.eventType ||
+          (matchedRes && matchedRes.category !== "MEETING_ROOM"
+            ? "RESOURCE"
+            : String(item.title || "").toLowerCase().includes("họp")
+            ? "MEETING"
+            : "WORK"),
         meetingAgenda: item.meetingAgenda || "",
         meetingLink: item.meetingLink || "",
         sendChatNotify: item.sendChatNotify !== undefined ? item.sendChatNotify : true,
@@ -3384,26 +3585,32 @@ export const UnifiedWorkspace: React.FC = () => {
         customNotifyMessage: item.customNotifyMessage || "",
         chatChannelId: item.chatChannelId,
         lastRemindedAt: item.lastRemindedAt,
-        isPublic: Boolean(item.isPublic),
+        isPublic: Boolean(item.isPublic || item.resourceId || matchedRes),
         attachments: item.attachments || []
       });
     } else {
       setEditingScheduleId(null);
       const isMeeting = defaultEventType === "MEETING";
+      const isResourceBooking = defaultEventType === "RESOURCE";
+      const defaultRes =
+        (preselectedResourceId && companyResources.find((r) => r.id === preselectedResourceId)) ||
+        (isMeeting || isResourceBooking ? companyResources[0] : undefined);
       setScheduleForm({
         day: viewedWeek.all7Days.find(d => d.date === pick)?.name || "Thứ 2",
         date: pick,
         endDate: pick,
         selectedDates: [pick],
         dateMode: "SINGLE",
-        startTime: isMeeting ? "08:30" : "08:30",
-        endTime: isMeeting ? "10:00" : "11:30",
-        time: isMeeting ? "08:30 - 10:00" : "08:30 - 11:30",
-        category: defaultCategory,
+        startTime: isMeeting || isResourceBooking ? "08:30" : "08:30",
+        endTime: isMeeting || isResourceBooking ? "10:00" : "11:30",
+        time: isMeeting || isResourceBooking ? "08:30 - 10:00" : "08:30 - 11:30",
+        category: isMeeting ? "Họp & Giao Ban" : defaultCategory,
         title: "",
         actor: defaultActor,
         coActors: [],
-        location: isMeeting ? "Phòng họp Công ty" : "",
+        location: defaultRes ? defaultRes.name : isMeeting ? "Phòng họp chính Công ty (Tầng 2)" : "",
+        resourceId: defaultRes ? defaultRes.id : "",
+        resourceName: defaultRes ? defaultRes.name : "",
         linkedTaskCodes: [],
         autoCreateTask: false,
         eventType: defaultEventType,
@@ -3414,7 +3621,7 @@ export const UnifiedWorkspace: React.FC = () => {
         sendBellNotify: true,
         reminderMinutes: 30,
         customNotifyMessage: "",
-        isPublic: false,
+        isPublic: isMeeting || isResourceBooking || Boolean(defaultRes),
         attachments: []
       });
     }
@@ -3872,6 +4079,7 @@ export const UnifiedWorkspace: React.FC = () => {
       if (!opts?.silent && workflows.length === 0 && tasks.length === 0) setLoading(true);
       const wsStorageKeys = [
         "unified_weekly_schedule",
+        "unified_company_resources",
         "unified_thematic_projects",
         "unified_sales_targets",
         "unified_announcements",
@@ -4090,6 +4298,24 @@ export const UnifiedWorkspace: React.FC = () => {
           }
         } catch (err) {
           console.warn("Could not load functional groups:", err);
+        }
+
+        // Load persistent company shared resources (Phòng họp, Máy Demo, Xe công ty...)
+        try {
+          if (Array.isArray(batchStorageData.unified_company_resources) && batchStorageData.unified_company_resources.length > 0) {
+            setCompanyResources(batchStorageData.unified_company_resources);
+            if (typeof window !== "undefined") {
+              localStorage.setItem("unified_company_resources", JSON.stringify(batchStorageData.unified_company_resources));
+            }
+          } else {
+            const localRes = typeof window !== "undefined" ? localStorage.getItem("unified_company_resources") : null;
+            if (localRes) {
+              const parsedRes = JSON.parse(localRes);
+              if (Array.isArray(parsedRes) && parsedRes.length > 0) setCompanyResources(parsedRes);
+            }
+          }
+        } catch (err) {
+          console.warn("Could not load company resources:", err);
         }
 
         // Bỏ chặn hiển thị giao diện ngay lập tức trước khi tải bổ sung danh mục NCC từ /api/procurement
@@ -4962,21 +5188,29 @@ export const UnifiedWorkspace: React.FC = () => {
   // - Director: Sees whole company or selected department (can filter by specific staff)
   const filteredSchedules = useMemo(() => {
     return weeklySchedule.filter((s) => {
+      if (selectedResourceFilter !== "all") {
+        const targetRes = companyResources.find((r) => r.id === selectedResourceFilter);
+        if (targetRes && !matchScheduleToResource(s, targetRes)) return false;
+      }
+      const isSharedResourceBooking =
+        Boolean(s.resourceId) ||
+        s.eventType === "RESOURCE" ||
+        companyResources.some((r) => matchScheduleToResource(s, r));
       const actorsList = [
         ...String(s.actor || "").split(/[,;\n]+/).map((a: string) => a.trim()).filter(Boolean),
         ...(Array.isArray(s.coActors) ? s.coActors.map((a: any) => String(a || "").trim()).filter(Boolean) : [])
       ];
       if (rolePerspective === "staff") {
-        // Lịch công khai: mọi người đều xem được; không công khai: người phụ trách chính hoặc thành viên đoàn cùng đi đều xem được
-        if (s.isPublic) return true;
+        // Lịch công khai hoặc lịch đặt tài nguyên / phòng họp công ty: mọi nhân sự đều xem được để biết phòng họp/tài nguyên đã có người đặt
+        if (s.isPublic || isSharedResourceBooking) return true;
         return actorsList.some((a) => sameStaffName(a, currentStaffName));
       }
-      if (filterDept !== "all") {
+      if (filterDept !== "all" && selectedResourceFilter === "all") {
         const matchScheduleDept = isSameWorkspaceDept(s.category, filterDept);
         const matchDeptStaff = actorsList.some((a) =>
           departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, a))
         );
-        if (!matchScheduleDept && !matchDeptStaff) return false;
+        if (!matchScheduleDept && !matchDeptStaff && !isSharedResourceBooking) return false;
       }
       if (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__") {
         if (actorsList.some((a) => sameStaffName(a, selectedAssignee))) return true;
@@ -4986,7 +5220,7 @@ export const UnifiedWorkspace: React.FC = () => {
       }
       return true;
     });
-  }, [weeklySchedule, rolePerspective, filterDept, departmentStaffList, selectedAssignee, currentStaffName]);
+  }, [weeklySchedule, rolePerspective, filterDept, departmentStaffList, selectedAssignee, currentStaffName, selectedResourceFilter, companyResources, matchScheduleToResource]);
 
   // RBAC Filtered Projects (Chỉ hiển thị các Dự án & Nhóm việc liên phòng ban được tạo trực tiếp tại tab Dự Án này;
   // các đề tài R&D, nghiên cứu thiết bị, phần mềm hiển thị riêng tại phân hệ phòng ban chuyên môn):
@@ -8595,6 +8829,26 @@ export const UnifiedWorkspace: React.FC = () => {
     }
 
     const isMeeting = scheduleForm.eventType === "MEETING";
+    const isResourceBooking = scheduleForm.eventType === "RESOURCE";
+    const activeResourceKey = scheduleForm.resourceId || scheduleForm.location || "";
+    const resourceConflicts = findResourceTimeConflicts(
+      activeResourceKey,
+      targetIsoDates,
+      scheduleForm.time || "08:30 - 11:30",
+      editingScheduleId
+    );
+    if (resourceConflicts.length > 0) {
+      const firstConflict = resourceConflicts[0];
+      const cDateLabel = `${firstConflict.date.slice(8, 10)}/${firstConflict.date.slice(5, 7)}/${firstConflict.date.slice(0, 4)}`;
+      showToast(
+        `🚨 Trùng lịch sử dụng "${firstConflict.resource.name}" vào ngày ${cDateLabel} (${firstConflict.schedule.time}) — Đã được ${firstConflict.schedule.actor} đăng ký cho "${firstConflict.schedule.title}". Vui lòng chọn khung giờ hoặc phòng họp/tài nguyên khác!`,
+        "error"
+      );
+      return;
+    }
+    const matchedCompanyResource =
+      companyResources.find((r) => r.id === scheduleForm.resourceId) ||
+      companyResources.find((r) => canonStaffName(r.name) === canonStaffName(scheduleForm.location || ""));
     const cleanActor = scheduleForm.actor || currentStaffName || "Nhân sự";
     const coActorsList = Array.isArray(scheduleForm.coActors)
       ? scheduleForm.coActors.filter((c) => Boolean(c) && !sameStaffName(c, cleanActor))
@@ -8613,13 +8867,13 @@ export const UnifiedWorkspace: React.FC = () => {
           body: JSON.stringify({
             title: scheduleForm.title.trim(),
             department: scheduleForm.category || "Kinh Doanh",
-            task_category: isMeeting ? "Lịch họp & Điều phối" : "Kế hoạch công tác tuần",
+            task_category: isMeeting ? "Lịch họp & Điều phối" : isResourceBooking ? "Sử dụng Tài nguyên Công ty" : "Kế hoạch công tác tuần",
             assignee_name: combinedActorDisplay,
             customer_name: scheduleForm.location || "",
             priority: isMeeting ? "HIGH" : "MEDIUM",
             status: "TODO",
             deadline: targetIsoDates[targetIsoDates.length - 1] || startIso,
-            description: `${isMeeting ? "Tạo từ Lịch họp" : "Tự động tạo từ Lịch công tác tuần"} (${scheduleForm.time}) tại ${scheduleForm.location || "Công ty"}${scheduleForm.meetingAgenda ? `\nNội dung họp: ${scheduleForm.meetingAgenda}` : ""}`
+            description: `${isMeeting ? "Tạo từ Lịch họp" : isResourceBooking ? "Đăng ký sử dụng Tài nguyên công ty" : "Tự động tạo từ Lịch công tác tuần"} (${scheduleForm.time}) tại ${scheduleForm.location || "Công ty"}${scheduleForm.meetingAgenda ? `\nNội dung: ${scheduleForm.meetingAgenda}` : ""}`
           })
         });
         const taskData = await taskRes.json();
@@ -8644,7 +8898,9 @@ export const UnifiedWorkspace: React.FC = () => {
       title: scheduleForm.title.trim(),
       actor: combinedActorDisplay,
       coActors: coActorsList,
-      location: scheduleForm.location,
+      location: matchedCompanyResource ? matchedCompanyResource.name : scheduleForm.location,
+      resourceId: matchedCompanyResource ? matchedCompanyResource.id : (scheduleForm.resourceId || ""),
+      resourceName: matchedCompanyResource ? matchedCompanyResource.name : (scheduleForm.resourceName || ""),
       linkedTaskCodes: linkedCodes,
       eventType: scheduleForm.eventType || "WORK",
       meetingAgenda: scheduleForm.meetingAgenda || "",
@@ -8656,7 +8912,7 @@ export const UnifiedWorkspace: React.FC = () => {
       customNotifyMessage: scheduleForm.customNotifyMessage || "",
       chatChannelId: scheduleForm.chatChannelId,
       lastRemindedAt: scheduleForm.lastRemindedAt,
-      isPublic: Boolean(scheduleForm.isPublic),
+      isPublic: Boolean(scheduleForm.isPublic || matchedCompanyResource || isResourceBooking || isMeeting),
       attachments: scheduleForm.attachments || []
     }));
 
@@ -11376,9 +11632,17 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             </div>
           )}
 
-          {/* TAB 3: LỊCH CÔNG TÁC TUẦN -> Hiển thị trực tiếp nút tạo lịch họp & thêm lịch tuần */}
+          {/* TAB 3: LỊCH CÔNG TÁC TUẦN -> Hiển thị trực tiếp nút tạo lịch họp, đăng ký tài nguyên/phòng họp & thêm lịch tuần */}
           {renderedSubTab === "planner" && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => openScheduleForm(undefined, undefined, "RESOURCE")}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition-all shadow-xs cursor-pointer"
+              >
+                <Building2 className="w-3.5 h-3.5" />
+                <span>🏢 + Đăng Ký Phòng Họp &amp; Tài Nguyên</span>
+              </button>
               <button
                 type="button"
                 onClick={() => openScheduleForm(undefined, undefined, "MEETING")}
@@ -13235,6 +13499,19 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 <div className="flex items-center gap-2 flex-wrap">
                   <button
                     type="button"
+                    onClick={() => setShowResourceBoard((v) => !v)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                      showResourceBoard
+                        ? "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-200 border-emerald-300 dark:border-emerald-700 shadow-2xs"
+                        : "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700"
+                    }`}
+                    title="Bật/tắt Bảng quản lý & đăng ký lịch sử dụng Phòng họp, Máy Demo, Xe công ty"
+                  >
+                    <span>{showResourceBoard ? "✓" : "○"}</span>
+                    <span>🏢 Lịch Phòng Họp &amp; Tài Nguyên Công Ty ({companyResources.length})</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setShowTechWeeklyPlans((v) => !v)}
                     className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
                       showTechWeeklyPlans
@@ -13248,6 +13525,213 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   </button>
                 </div>
               </div>
+
+              {/* BẢNG ĐĂNG KÝ & THEO DÕI LỊCH SỬ DỤNG PHÒNG HỌP / TÀI NGUYÊN CÔNG TY TRONG TUẦN */}
+              {showResourceBoard && (
+                <div className="mb-4 p-3.5 rounded-2xl bg-gradient-to-r from-emerald-50/90 via-teal-50/70 to-sky-50/80 dark:from-emerald-950/30 dark:via-slate-900 dark:to-sky-950/30 border border-emerald-200/80 dark:border-emerald-900/60 space-y-3">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="px-2.5 py-0.5 rounded-lg bg-emerald-600 text-white text-[11px] font-extrabold">
+                        🏢 LỊCH SỬ DỤNG PHÒNG HỌP &amp; TÀI NGUYÊN CÔNG TY
+                      </span>
+                      <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                        Kiểm tra phòng họp trống, máy Demo, xe công ty &amp; chống đặt trùng khung giờ (Công khai toàn công ty)
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {selectedResourceFilter !== "all" && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedResourceFilter("all")}
+                          className="px-2.5 py-1 rounded-lg bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 text-[11px] font-bold cursor-pointer"
+                        >
+                          ✕ Bỏ lọc tài nguyên đang chọn
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setIsAddingNewResource((v) => !v)}
+                        className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 hover:bg-emerald-50 border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 text-[11px] font-bold cursor-pointer"
+                      >
+                        {isAddingNewResource ? "Đóng thêm tài nguyên" : "+ Thêm phòng họp / tài nguyên mới"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openScheduleForm(undefined, undefined, "RESOURCE")}
+                        className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold shadow-2xs cursor-pointer"
+                      >
+                        + Đăng ký sử dụng tài nguyên
+                      </button>
+                    </div>
+                  </div>
+
+                  {isAddingNewResource && (
+                    <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-slate-700 grid grid-cols-1 md:grid-cols-12 gap-2 items-end text-xs">
+                      <div className="md:col-span-4">
+                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Tên Phòng họp / Thiết bị / Xe công ty *</label>
+                        <FastInput
+                          type="text"
+                          value={newResourceForm.name}
+                          onChange={(e) => setNewResourceForm({ ...newResourceForm, name: e.target.value })}
+                          placeholder="VD: Phòng họp Tầng 3, Máy PCR Demo số 2, Xe bán tải..."
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 font-semibold"
+                        />
+                      </div>
+                      <div className="md:col-span-3">
+                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Nhóm tài nguyên</label>
+                        <select
+                          value={newResourceForm.category}
+                          onChange={(e) => setNewResourceForm({ ...newResourceForm, category: e.target.value as any })}
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 font-semibold"
+                        >
+                          <option value="MEETING_ROOM">🏢 Phòng họp / Phòng hội thảo</option>
+                          <option value="DEMO_EQUIPMENT">🧬 Máy Demo / Thiết bị kỹ thuật lưu động</option>
+                          <option value="VEHICLE">🚐 Xe công ty / Phương tiện</option>
+                          <option value="SHARED_ASSET">📽️ Thiết bị dùng chung khác</option>
+                        </select>
+                      </div>
+                      <div className="md:col-span-3">
+                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Sức chứa / Cấu hình / Ghi chú</label>
+                        <FastInput
+                          type="text"
+                          value={newResourceForm.capacityOrSpec}
+                          onChange={(e) => setNewResourceForm({ ...newResourceForm, capacityOrSpec: e.target.value })}
+                          placeholder="VD: 12 chỗ, có TV & Webcam..."
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950"
+                        />
+                      </div>
+                      <div className="md:col-span-2 flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const cleanName = newResourceForm.name.trim();
+                            if (!cleanName) {
+                              showToast("Vui lòng nhập tên phòng họp hoặc tài nguyên", "error");
+                              return;
+                            }
+                            const iconMap: Record<string, string> = {
+                              MEETING_ROOM: "🏢",
+                              DEMO_EQUIPMENT: "🧬",
+                              VEHICLE: "🚐",
+                              SHARED_ASSET: "📽️"
+                            };
+                            const newItem: CompanyResourceItem = {
+                              id: `RES-${Date.now()}`,
+                              name: cleanName,
+                              category: newResourceForm.category,
+                              capacityOrSpec: newResourceForm.capacityOrSpec.trim() || "Tài nguyên dùng chung Công ty",
+                              icon: iconMap[newResourceForm.category] || "🏢"
+                            };
+                            await persistCompanyResources([...companyResources, newItem]);
+                            setNewResourceForm({ name: "", category: "MEETING_ROOM", capacityOrSpec: "" });
+                            setIsAddingNewResource(false);
+                            showToast(`🏢 Đã thêm tài nguyên "${cleanName}" vào danh mục Công ty!`, "success");
+                          }}
+                          className="w-full py-1.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold cursor-pointer"
+                        >
+                          + Lưu tài nguyên
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                    {companyResources.map((resItem) => {
+                      const weekBookings = weeklySchedule
+                        .filter((s) => matchScheduleToResource(s, resItem) && viewedWeek.all7Days.some((wd) => scheduleOnDay(s, wd)))
+                        .sort((a, b) => `${a.date || ""}_${a.time || ""}`.localeCompare(`${b.date || ""}_${b.time || ""}`));
+                      const isFilteringThis = selectedResourceFilter === resItem.id;
+                      return (
+                        <div
+                          key={resItem.id}
+                          className={`p-3 rounded-xl bg-white dark:bg-slate-900 border transition-all flex flex-col justify-between gap-2 text-xs ${
+                            isFilteringThis
+                              ? "border-emerald-500 ring-2 ring-emerald-500/20 shadow-sm"
+                              : "border-emerald-200/80 dark:border-slate-800 shadow-2xs"
+                          }`}
+                        >
+                          <div className="space-y-1.5">
+                            <div className="flex items-start justify-between gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedResourceFilter(isFilteringThis ? "all" : resItem.id)}
+                                className="text-left font-extrabold text-slate-900 dark:text-white hover:text-emerald-600 dark:hover:text-emerald-400 leading-snug cursor-pointer"
+                                title="Bấm để lọc lịch tuần theo tài nguyên này"
+                              >
+                                <span>{resItem.icon} {resItem.name}</span>
+                              </button>
+                              <span
+                                className={`px-1.5 py-0.5 rounded-full text-[10px] font-extrabold shrink-0 ${
+                                  weekBookings.length > 0
+                                    ? "bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300"
+                                    : "bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300"
+                                }`}
+                              >
+                                {weekBookings.length > 0 ? `${weekBookings.length} lượt đặt` : "Đang trống"}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                              {resItem.capacityOrSpec}
+                            </div>
+
+                            {weekBookings.length > 0 ? (
+                              <div className="space-y-1 pt-1 border-t border-slate-100 dark:border-slate-800 max-h-28 overflow-y-auto">
+                                {weekBookings.map((bk: any) => (
+                                  <div
+                                    key={`res-bk-${resItem.id}-${bk.id}`}
+                                    onClick={() => setViewingScheduleEvent(bk)}
+                                    className="px-2 py-1 rounded-lg bg-slate-50 dark:bg-slate-800/80 hover:bg-emerald-50 dark:hover:bg-slate-800 border border-slate-200/70 dark:border-slate-700 cursor-pointer text-[10px]"
+                                    title="Bấm để xem chi tiết lịch đặt này"
+                                  >
+                                    <div className="font-bold text-emerald-800 dark:text-emerald-300 flex items-center justify-between gap-1">
+                                      <span>📅 {bk.day} {bk.date ? `(${String(bk.date).slice(8, 10)}/${String(bk.date).slice(5, 7)})` : ""}</span>
+                                      <span className="font-mono">⏰ {bk.time}</span>
+                                    </div>
+                                    <div className="truncate font-semibold text-slate-800 dark:text-slate-200">{bk.title}</div>
+                                    <div className="truncate text-slate-500">👤 {bk.actor} ({bk.category})</div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="py-2 text-[10px] text-emerald-600 dark:text-emerald-400 italic">
+                                ✓ Chưa có lịch đặt trong tuần này — Sẵn sàng đăng ký
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex items-center justify-between gap-1.5 pt-1.5 border-t border-slate-100 dark:border-slate-800">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedResourceFilter(isFilteringThis ? "all" : resItem.id)}
+                              className={`px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer ${
+                                isFilteringThis
+                                  ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300"
+                                  : "text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                              }`}
+                            >
+                              {isFilteringThis ? "✓ Đang lọc" : "🔍 Lọc lịch"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openScheduleForm(
+                                  undefined,
+                                  undefined,
+                                  resItem.category === "MEETING_ROOM" ? "MEETING" : "RESOURCE",
+                                  resItem.id
+                                )
+                              }
+                              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold shadow-2xs cursor-pointer"
+                            >
+                              + Đặt lịch ngay
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* BANNER QUẢN LÝ LỊCH HỌP & NHẮC HỌP TRONG TUẦN ĐANG XEM */}
               {(() => {
@@ -13466,7 +13950,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           {dayEvents.map((ev: any) => {
                             const isHubPlan = Boolean(ev.isHubWeeklyPlan);
                             const isBusinessTrip = Boolean(ev.sourceProposalCode) || String(ev.id || "").startsWith("prop-trip-");
-                            const isMeeting = !isHubPlan && !isBusinessTrip && (ev.eventType === "MEETING" || String(ev.title || "").toLowerCase().includes("họp"));
+                            const isResourceEvt = !isHubPlan && !isBusinessTrip && ev.eventType === "RESOURCE";
+                            const isMeeting = !isHubPlan && !isBusinessTrip && !isResourceEvt && (ev.eventType === "MEETING" || String(ev.title || "").toLowerCase().includes("họp"));
                             const isApp = ev.category === "Application";
                             const isSales = ev.category === "Kinh Doanh";
                             const isWh = ev.category === "Kho & Vận Hành" || isSameWorkspaceDept(ev.category, "Kho Nhà Máy");
@@ -13520,6 +14005,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                     {isMeeting && (
                                       <span className="px-1.5 py-0.2 rounded bg-rose-600 text-white text-[9px] font-extrabold uppercase">
                                         🎥 HỌP
+                                      </span>
+                                    )}
+                                    {isResourceEvt && (
+                                      <span className="px-1.5 py-0.2 rounded bg-emerald-600 text-white text-[9px] font-extrabold uppercase">
+                                        🏢 TÀI NGUYÊN
                                       </span>
                                     )}
                                     {isBusinessTrip && (
@@ -13633,7 +14123,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         </div>
                       </div>
 
-                      <div className="pt-2 border-t border-slate-200/50 dark:border-slate-700/50 mt-2 grid grid-cols-2 gap-1">
+                      <div className="pt-2 border-t border-slate-200/50 dark:border-slate-700/50 mt-2 grid grid-cols-3 gap-1">
                         <button
                           type="button"
                           onClick={() => openScheduleForm(wd.date, undefined, "WORK")}
@@ -13649,6 +14139,14 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         >
                           <Users className="w-3 h-3" />
                           <span>🎥 + Họp</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openScheduleForm(wd.date, undefined, "RESOURCE")}
+                          className="py-1 text-[10px] font-bold text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50/70 dark:hover:bg-slate-800 rounded transition-colors flex items-center justify-center gap-0.5 cursor-pointer"
+                          title="Đăng ký phòng họp, máy Demo, xe công ty"
+                        >
+                          <span>🏢 + Phòng/TN</span>
                         </button>
                       </div>
                     </div>
@@ -19781,12 +20279,16 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
         </Modal>
       )}
 
-      {/* ==================== MODAL 4: THÊM LỊCH CÔNG TÁC TUẦN & TẠO LỊCH HỌP ==================== */}
+      {/* ==================== MODAL 4: THÊM LỊCH CÔNG TÁC TUẦN, TẠO LỊCH HỌP & ĐĂNG KÝ TÀI NGUYÊN CÔNG TY ==================== */}
       <Modal
         isOpen={isScheduleModalOpen}
         onClose={() => setIsScheduleModalOpen(false)}
         title={
-          scheduleForm.eventType === "MEETING"
+          scheduleForm.eventType === "RESOURCE"
+            ? editingScheduleId
+              ? "🏢 CẬP NHẬT LỊCH ĐĂNG KÝ SỬ DỤNG TÀI NGUYÊN CÔNG TY"
+              : "🏢 ĐĂNG KÝ LỊCH SỬ DỤNG TÀI NGUYÊN CÔNG TY (PHÒNG HỌP, MÁY DEMO, XE CÔNG TY)"
+            : scheduleForm.eventType === "MEETING"
             ? editingScheduleId
               ? "🎥 CẬP NHẬT LỊCH HỌP & THÀNH VIÊN THAM DỰ"
               : "🎥 TẠO LỊCH HỌP, CHỌN THÀNH VIÊN & GỬI THÔNG BÁO HỌP"
@@ -19798,6 +20300,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       >
         {(() => {
           const isMeetingMode = scheduleForm.eventType === "MEETING";
+          const isResourceMode = scheduleForm.eventType === "RESOURCE";
           const activeActorName = rolePerspective === "staff" ? currentStaffName : (scheduleForm.actor || currentStaffName);
           const selectedModalDept =
             !isMeetingMode &&
@@ -20034,6 +20537,51 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             return actors.some((a: string) => sameStaffName(a, activeActorName));
           });
 
+          // 3. Kiểm tra tài nguyên / phòng họp đang chọn có bị trùng lịch hay không
+          const selectedCompanyResource =
+            companyResources.find((r) => r.id === scheduleForm.resourceId) ||
+            companyResources.find((r) => canonStaffName(r.name) === canonStaffName(scheduleForm.location || ""));
+          const modalTargetDates: string[] = (() => {
+            const sIso = scheduleForm.date || todayVN();
+            const eIso =
+              scheduleForm.dateMode === "RANGE" && scheduleForm.endDate && scheduleForm.endDate >= sIso
+                ? scheduleForm.endDate
+                : sIso;
+            if (scheduleForm.dateMode === "MULTI_DAYS" && Array.isArray(scheduleForm.selectedDates) && scheduleForm.selectedDates.length > 0) {
+              return Array.from(new Set(scheduleForm.selectedDates)).sort();
+            }
+            if (scheduleForm.dateMode === "RANGE" && eIso > sIso) {
+              const arr: string[] = [];
+              const cur = new Date(sIso + "T00:00:00");
+              const last = new Date(eIso + "T00:00:00");
+              let g = 0;
+              while (cur <= last && g < 31) {
+                arr.push(`${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`);
+                cur.setDate(cur.getDate() + 1);
+                g++;
+              }
+              return arr.length > 0 ? arr : [sIso];
+            }
+            return [sIso];
+          })();
+          const existingResourceBookingsOnDate = selectedCompanyResource
+            ? weeklySchedule.filter((s: any) => {
+                if (editingScheduleId && s.id === editingScheduleId) return false;
+                if (!matchScheduleToResource(s, selectedCompanyResource)) return false;
+                const sStart = s.date ? String(s.date).slice(0, 10) : "";
+                const sEnd = s.endDate ? String(s.endDate).slice(0, 10) : sStart;
+                return modalTargetDates.some((d) => sStart && d >= sStart && d <= sEnd);
+              })
+            : [];
+          const liveResourceConflicts = selectedCompanyResource
+            ? findResourceTimeConflicts(
+                selectedCompanyResource.id,
+                modalTargetDates,
+                scheduleForm.time || "08:30 - 11:30",
+                editingScheduleId
+              )
+            : [];
+
           const timeSlotOptions = [
             "07:00", "07:30", "08:00", "08:30", "09:00", "09:30", "10:00", "10:30",
             "11:00", "11:30", "12:00", "13:00", "13:30", "14:00", "14:30", "15:00",
@@ -20072,8 +20620,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
           return (
             <form onSubmit={handleSaveSchedule} className="space-y-3.5 p-1 text-xs">
-              {/* THANH CHUYỂN CHẾ ĐỘ: LỊCH CÔNG TÁC TUẦN vs TẠO LỊCH HỌP & MỜI THÀNH VIÊN */}
-              <div className="grid grid-cols-2 gap-2 p-1.5 rounded-2xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+              {/* THANH CHUYỂN CHẾ ĐỘ: LỊCH CÔNG TÁC TUẦN vs TẠO LỊCH HỌP vs ĐĂNG KÝ PHÒNG HỌP & TÀI NGUYÊN CÔNG TY */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 p-1.5 rounded-2xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() =>
@@ -20086,35 +20634,195 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           : scheduleForm.category
                     })
                   }
-                  className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                    !isMeetingMode
+                  className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                    !isMeetingMode && !isResourceMode
                       ? "bg-indigo-600 text-white shadow-sm"
                       : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
                   }`}
                 >
-                  <span>🛠️ Lịch Công Tác / Điều Phối Tuần</span>
+                  <span>🛠️ 1. Lịch Công Tác Tuần</span>
                 </button>
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
+                    const defaultRoom = companyResources.find((r) => r.category === "MEETING_ROOM") || companyResources[0];
                     setScheduleForm({
                       ...scheduleForm,
                       eventType: "MEETING",
                       category: "Họp & Giao Ban",
-                      location: scheduleForm.location || "Phòng họp chính Công ty",
+                      resourceId: scheduleForm.resourceId || defaultRoom?.id || "",
+                      resourceName: scheduleForm.resourceName || defaultRoom?.name || "",
+                      location: scheduleForm.location || defaultRoom?.name || "Phòng họp chính Công ty (Tầng 2)",
+                      isPublic: true,
                       sendChatNotify: true,
                       sendBellNotify: true
-                    })
-                  }
-                  className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                    });
+                  }}
+                  className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                     isMeetingMode
                       ? "bg-rose-600 text-white shadow-sm"
                       : "text-slate-600 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400"
                   }`}
                 >
-                  <span>🎥 Tạo Lịch Họp &amp; Chọn Thành Viên Tham Dự</span>
+                  <span>🎥 2. Tạo Lịch Họp &amp; Mời Họp</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const defaultRes =
+                      companyResources.find((r) => r.id === scheduleForm.resourceId) || companyResources[0];
+                    setScheduleForm({
+                      ...scheduleForm,
+                      eventType: "RESOURCE",
+                      resourceId: defaultRes?.id || "",
+                      resourceName: defaultRes?.name || "",
+                      location: defaultRes?.name || scheduleForm.location || "Phòng họp chính Công ty (Tầng 2)",
+                      isPublic: true
+                    });
+                  }}
+                  className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                    isResourceMode
+                      ? "bg-emerald-600 text-white shadow-sm"
+                      : "text-slate-600 dark:text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400"
+                  }`}
+                >
+                  <span>🏢 3. Đăng Ký Phòng Họp &amp; Tài Nguyên</span>
                 </button>
               </div>
+
+              {/* BẢNG CHỌN PHÒNG HỌP / TÀI NGUYÊN CÔNG TY & KIỂM TRA TRỐNG / TRÙNG LỊCH THEO KHUNG GIỜ */}
+              {(isResourceMode || isMeetingMode || Boolean(scheduleForm.resourceId)) && (
+                <div className="p-3 rounded-2xl bg-emerald-50/70 dark:bg-emerald-950/25 border border-emerald-200 dark:border-emerald-900/70 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <span className="font-extrabold text-emerald-900 dark:text-emerald-200 text-xs">
+                        🏢 Chọn Phòng Họp / Tài Nguyên Công Ty cần đăng ký sử dụng:
+                      </span>
+                      {selectedCompanyResource && (
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                            liveResourceConflicts.length > 0
+                              ? "bg-rose-600 text-white"
+                              : "bg-emerald-600 text-white"
+                          }`}
+                        >
+                          {liveResourceConflicts.length > 0
+                            ? `🚨 Trùng khung giờ (${liveResourceConflicts.length})`
+                            : "✅ Khung giờ này đang trống"}
+                        </span>
+                      )}
+                    </div>
+                    {scheduleForm.resourceId && !isResourceMode && (
+                      <button
+                        type="button"
+                        onClick={() => setScheduleForm({ ...scheduleForm, resourceId: "", resourceName: "" })}
+                        className="text-[10px] font-bold text-slate-500 hover:text-rose-600 cursor-pointer"
+                      >
+                        Bỏ chọn tài nguyên công ty (Gõ địa điểm ngoài)
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-1.5">
+                    {companyResources.map((resItem) => {
+                      const isPicked = selectedCompanyResource?.id === resItem.id;
+                      const itemConflicts = findResourceTimeConflicts(
+                        resItem.id,
+                        modalTargetDates,
+                        scheduleForm.time || "08:30 - 11:30",
+                        editingScheduleId
+                      );
+                      const isBusyInSlot = itemConflicts.length > 0;
+                      return (
+                        <button
+                          key={`modal-res-${resItem.id}`}
+                          type="button"
+                          onClick={() => {
+                            const autoTitle =
+                              !scheduleForm.title.trim() && isResourceMode
+                                ? `Đăng ký sử dụng ${resItem.name}`
+                                : scheduleForm.title;
+                            setScheduleForm({
+                              ...scheduleForm,
+                              resourceId: resItem.id,
+                              resourceName: resItem.name,
+                              location: resItem.name,
+                              title: autoTitle,
+                              isPublic: true
+                            });
+                          }}
+                          className={`text-left p-2 rounded-xl border transition-all flex flex-col justify-between gap-1 cursor-pointer ${
+                            isPicked
+                              ? isBusyInSlot
+                                ? "bg-rose-600 text-white border-rose-500 shadow-xs"
+                                : "bg-emerald-600 text-white border-emerald-500 shadow-xs"
+                              : isBusyInSlot
+                              ? "bg-rose-50/80 dark:bg-rose-950/40 text-rose-900 dark:text-rose-200 border-rose-200 dark:border-rose-800"
+                              : "bg-white dark:bg-slate-900 hover:bg-emerald-50 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 border-emerald-200/80 dark:border-slate-800"
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-1">
+                            <span className="font-bold text-[11px] leading-tight">
+                              {resItem.icon} {resItem.name}
+                            </span>
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold shrink-0 ${
+                                isPicked
+                                  ? "bg-white/20 text-white"
+                                  : isBusyInSlot
+                                  ? "bg-rose-100 dark:bg-rose-900 text-rose-700 dark:text-rose-200"
+                                  : "bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300"
+                              }`}
+                            >
+                              {isBusyInSlot ? "Đã đặt" : "Trống"}
+                            </span>
+                          </div>
+                          <div className={`text-[9px] truncate ${isPicked ? "text-emerald-100" : "text-slate-500"}`}>
+                            {resItem.capacityOrSpec}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Hiển thị danh sách lịch đã đặt của tài nguyên này trong ngày đang chọn */}
+                  {selectedCompanyResource && (
+                    <div className="pt-1">
+                      {liveResourceConflicts.length > 0 ? (
+                        <div className="p-2.5 rounded-xl bg-rose-100/90 dark:bg-rose-950/70 border border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200 text-[11px] space-y-1">
+                          <div className="font-extrabold">
+                            🚨 TRÙNG LỊCH SỬ DỤNG &ldquo;{selectedCompanyResource.name}&rdquo;:
+                          </div>
+                          {liveResourceConflicts.map((c, idx) => (
+                            <div key={`conf-${idx}`} className="text-[11px]">
+                              • Ngày <strong>{c.date.slice(8, 10)}/{c.date.slice(5, 7)}</strong> khung giờ{" "}
+                              <strong className="font-mono">{c.schedule.time}</strong> đã được{" "}
+                              <strong>{c.schedule.actor}</strong> ({c.schedule.category}) đăng ký:{" "}
+                              <em>&ldquo;{c.schedule.title}&rdquo;</em>
+                            </div>
+                          ))}
+                          <div className="text-[10px] font-semibold text-rose-700 dark:text-rose-300">
+                            👉 Vui lòng đổi sang khung giờ khác ở Mục 3 hoặc chọn Phòng họp / Tài nguyên khác đang trống.
+                          </div>
+                        </div>
+                      ) : existingResourceBookingsOnDate.length > 0 ? (
+                        <div className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-[11px]">
+                          <span className="font-bold">
+                            📋 Các khung giờ đã có người đặt tại &ldquo;{selectedCompanyResource.name}&rdquo; trong ngày đang chọn:{" "}
+                          </span>
+                          {existingResourceBookingsOnDate
+                            .map((s: any) => `[${s.time}: ${s.title} — ${s.actor}]`)
+                            .join(" • ")}
+                        </div>
+                      ) : (
+                        <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                          ✅ &ldquo;{selectedCompanyResource.name}&rdquo; hiện hoàn toàn trống trong ngày &amp; khung giờ bạn chọn.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* CHỌN NHANH MẪU CUỘC HỌP (KHI Ở CHẾ ĐỘ LỊCH HỌP) */}
               {isMeetingMode && (
@@ -20910,7 +21618,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
                   <div className="md:col-span-7">
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                      {isMeetingMode ? "4. Chủ đề / Tiêu đề cuộc họp *" : "4. Tiêu đề & Nội dung công tác *"}
+                      {isMeetingMode
+                        ? "4. Chủ đề / Tiêu đề cuộc họp *"
+                        : isResourceMode
+                        ? "4. Mục đích sử dụng Phòng họp / Tài nguyên công ty *"
+                        : "4. Tiêu đề & Nội dung công tác *"}
                     </label>
                     <FastInput
                       type="text"
@@ -20920,6 +21632,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       placeholder={
                         isMeetingMode
                           ? "VD: Họp giao ban đầu tuần, Họp phương án thầu BV Chợ Rẫy..."
+                          : isResourceMode
+                          ? "VD: Tiếp đoàn khách hàng, Đào tạo nội bộ, Mượn máy PCR Demo tại BV, Đặt xe công tác..."
                           : "VD: Chạy mẻ Oligo / Kiểm tra ELN R&D / Demo máy Real-time PCR / Xuất kho FEFO..."
                       }
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
@@ -20927,15 +21641,24 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   </div>
                   <div className="md:col-span-5">
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                      {isMeetingMode ? "Phòng họp / Địa điểm họp" : "Địa điểm / Phòng Lab / Xưởng / Khách hàng"}
+                      {isMeetingMode || isResourceMode ? "Phòng họp / Tài nguyên công ty / Địa điểm" : "Địa điểm / Phòng Lab / Xưởng / Khách hàng"}
                     </label>
                     <FastInput
                       type="text"
                       value={scheduleForm.location}
-                      onChange={(e) => setScheduleForm({ ...scheduleForm, location: e.target.value })}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        const matchedRes = companyResources.find((r) => canonStaffName(r.name) === canonStaffName(val));
+                        setScheduleForm({
+                          ...scheduleForm,
+                          location: val,
+                          resourceId: matchedRes ? matchedRes.id : "",
+                          resourceName: matchedRes ? matchedRes.name : ""
+                        });
+                      }}
                       placeholder={
-                        isMeetingMode
-                          ? "VD: Phòng họp chính Tầng 2, Online..."
+                        isMeetingMode || isResourceMode
+                          ? "Chọn ở bảng Tài nguyên phía trên hoặc gõ địa điểm..."
                           : "VD: Phòng Lab R&D, Xưởng Kit, Trạm Oligo, BV Chợ Rẫy..."
                       }
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
@@ -21183,13 +21906,22 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 </button>
                 <button
                   type="submit"
-                  className={`px-5 py-2 rounded-xl font-bold text-white shadow-md cursor-pointer ${
-                    isMeetingMode
+                  disabled={liveResourceConflicts.length > 0}
+                  className={`px-5 py-2 rounded-xl font-bold text-white shadow-md cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                    isResourceMode
+                      ? "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/30"
+                      : isMeetingMode
                       ? "bg-rose-600 hover:bg-rose-700 shadow-rose-600/30"
                       : "bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/30"
                   }`}
                 >
-                  {isMeetingMode
+                  {liveResourceConflicts.length > 0
+                    ? "🚨 Đang Trùng Lịch Tài Nguyên — Vui Lòng Đổi Giờ / Phòng"
+                    : isResourceMode
+                    ? editingScheduleId
+                      ? "💾 Cập Nhật Đăng Ký Tài Nguyên"
+                      : "🏢 Xác Nhận Đăng Ký Phòng Họp / Tài Nguyên"
+                    : isMeetingMode
                     ? editingScheduleId
                       ? "💾 Cập Nhật Lịch Họp & Gửi Thông Báo"
                       : "🎥 Tạo Lịch Họp & Gửi Tin Nhắn Mời Họp"
