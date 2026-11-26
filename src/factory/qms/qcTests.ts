@@ -333,10 +333,23 @@ export async function createRetest(tx: Tx, actor: AuthzActor, testId: string, re
 }
 
 export async function getQcTest(tx: Tx, id: string) {
+  await tx.query("SAVEPOINT sp_qc_test_qa_cols");
+  try {
+    await tx.query(`
+      ALTER TABLE qms.qc_test ADD COLUMN IF NOT EXISTS qa_assignee_id integer, ADD COLUMN IF NOT EXISTS qa_assignee_name text;
+      ALTER TABLE inv.lot ADD COLUMN IF NOT EXISTS qa_assignee_id integer, ADD COLUMN IF NOT EXISTS qa_assignee_name text;
+      ALTER TABLE device.device_unit ADD COLUMN IF NOT EXISTS qa_assignee_name text;
+    `);
+    await tx.query("RELEASE SAVEPOINT sp_qc_test_qa_cols");
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_qc_test_qa_cols").catch(() => {});
+  }
   const test = (
     await tx.query(
       `SELECT t.*, s.code AS spec_code, s.spec_version, s.name AS spec_name,
               a.display_name AS analyst_name, r.display_name AS reviewer_name,
+              COALESCE(t.qa_assignee_id, du.fqc_assignee_id, l.qa_assignee_id, t.analyst_id) AS qa_assignee_id,
+              COALESCE(t.qa_assignee_name, qa_up.display_name, a.display_name, du.qa_assignee_name, l.qa_assignee_name) AS qa_assignee_name,
               COALESCE(l.code, pol.code, du.serial_no) AS lot_code,
               COALESCE(i.code, poi.code, dm.code) AS item_code,
               COALESCE(i.name, poi.name, dm.name) AS item_name,
@@ -367,6 +380,7 @@ export async function getQcTest(tx: Tx, id: string) {
          LEFT JOIN inv.lot pol ON pol.id = po.lot_id
          LEFT JOIN master.item poi ON poi.id = po.product_item_id
          LEFT JOIN device.device_unit du ON t.entity_type = 'DEVICE_UNIT' AND du.id = t.entity_id
+         LEFT JOIN core.user_profile qa_up ON qa_up.user_id = COALESCE(t.qa_assignee_id, du.fqc_assignee_id, l.qa_assignee_id)
          LEFT JOIN device.device_order dord ON dord.id = du.order_id
          LEFT JOIN device.device_model dm ON dm.id = du.model_id
          LEFT JOIN device.model_revision drev ON drev.id = du.model_revision_id
@@ -404,10 +418,32 @@ export async function getQcTest(tx: Tx, id: string) {
 export async function listQcTests(tx: Tx, actor: AuthzActor, status?: string) {
   await authorize(tx, actor, "qms.qc.view");
 
-  // Tự động đồng bộ tiêu chuẩn QC (spec_id) cho các phiếu FQC Thiết bị đang mở (chưa duyệt và chưa nhập kết quả)
-  // nếu Model thiết bị đó đã được gán rõ ràng vào một bộ tiêu chuẩn hiệu lực (VD: PCR-W08 gán vào TC0005 thay vì TC0004 của Tủ ATSH).
   await tx.query("SAVEPOINT sp_reconcile_dev_qc_spec");
   try {
+    await tx.query(`
+      ALTER TABLE qms.qc_test ADD COLUMN IF NOT EXISTS qa_assignee_id integer, ADD COLUMN IF NOT EXISTS qa_assignee_name text;
+      ALTER TABLE inv.lot ADD COLUMN IF NOT EXISTS qa_assignee_id integer, ADD COLUMN IF NOT EXISTS qa_assignee_name text;
+      ALTER TABLE device.device_unit ADD COLUMN IF NOT EXISTS qa_assignee_name text;
+    `);
+    // Tự động khôi phục các phiếu FQC của Thiết bị (DEVICE_UNIT) bị bấm Hủy nhầm trong khi máy vẫn đang ở trạng thái chờ FQC (status = 'FQC') và chưa có phiếu QC nào khác
+    await tx.query(
+      `UPDATE qms.qc_test t
+          SET status = 'PLANNED',
+              updated_at = now()
+         FROM device.device_unit du
+        WHERE t.entity_type = 'DEVICE_UNIT'
+          AND t.entity_id = du.id
+          AND t.status = 'CANCELLED'
+          AND du.status = 'FQC'
+          AND du.fqc_passed IS NOT TRUE
+          AND t.updated_at < now() - interval '45 seconds'
+          AND NOT EXISTS (
+            SELECT 1 FROM qms.qc_test t2
+             WHERE t2.entity_type = 'DEVICE_UNIT'
+               AND t2.entity_id = du.id
+               AND t2.status <> 'CANCELLED'
+          )`
+    );
     await tx.query(
       `WITH model_assigned_spec AS (
          SELECT DISTINCT ON (m.id)
@@ -460,6 +496,9 @@ export async function listQcTests(tx: Tx, actor: AuthzActor, status?: string) {
   return (
     await tx.query(
       `SELECT t.id, t.code, t.entity_type, t.entity_id, t.spec_id, t.test_kind, t.status, t.overall_result, t.version, t.created_at, t.analyst_id,
+              a.display_name AS analyst_name,
+              COALESCE(t.qa_assignee_id, du.fqc_assignee_id, l.qa_assignee_id, t.analyst_id) AS qa_assignee_id,
+              COALESCE(t.qa_assignee_name, qa_up.display_name, a.display_name, du.qa_assignee_name, l.qa_assignee_name) AS qa_assignee_name,
               s.code AS spec_code, s.name AS spec_name,
               COALESCE(l.code, pol.code, du.serial_no) AS lot_code,
               COALESCE(i.code, poi.code, dm.code) AS item_code,
@@ -480,6 +519,7 @@ export async function listQcTests(tx: Tx, actor: AuthzActor, status?: string) {
                    OR (COALESCE(l.id, pol.id) IS NOT NULL AND c.lot_id = COALESCE(l.id, pol.id))
                 ORDER BY c.issued_at DESC LIMIT 1) AS coa_code
          FROM qms.qc_test t JOIN qms.qc_spec s ON s.id = t.spec_id
+         LEFT JOIN core.user_profile a ON a.user_id = t.analyst_id
          LEFT JOIN oligo.oligo_sequence sq ON t.entity_type = 'OLIGO_SEQUENCE' AND sq.id = t.entity_id
          LEFT JOIN inv.lot l ON t.entity_type = 'LOT' AND l.id = t.entity_id
          LEFT JOIN master.item i ON i.id = l.item_id
@@ -487,6 +527,7 @@ export async function listQcTests(tx: Tx, actor: AuthzActor, status?: string) {
          LEFT JOIN inv.lot pol ON pol.id = po.lot_id
          LEFT JOIN master.item poi ON poi.id = po.product_item_id
          LEFT JOIN device.device_unit du ON t.entity_type = 'DEVICE_UNIT' AND du.id = t.entity_id
+         LEFT JOIN core.user_profile qa_up ON qa_up.user_id = COALESCE(t.qa_assignee_id, du.fqc_assignee_id, l.qa_assignee_id)
          LEFT JOIN device.device_order dord ON dord.id = du.order_id
          LEFT JOIN device.device_model dm ON dm.id = du.model_id
          LEFT JOIN device.model_revision drev ON drev.id = du.model_revision_id

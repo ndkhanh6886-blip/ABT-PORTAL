@@ -50,6 +50,10 @@ interface QcRow {
   trial_recorded_by_name?: string | null;
   trial_notes?: string | null;
   coa_code?: string | null;
+  analyst_id?: number | null;
+  analyst_name?: string | null;
+  qa_assignee_id?: number | null;
+  qa_assignee_name?: string | null;
   created_at: string;
 }
 interface Parameter {
@@ -888,6 +892,8 @@ export function QcTestsView() {
   const [proactiveLotId, setProactiveLotId] = useState("");
   const [proactiveKind, setProactiveKind] = useState<"IQC" | "IPQC" | "FQC" | "RELEASE" | "STABILITY">("IQC");
   const [proactiveSpecId, setProactiveSpecId] = useState("");
+  const [proactiveQaStaffId, setProactiveQaStaffId] = useState("");
+  const [queueAssigneeDraft, setQueueAssigneeDraft] = useState<Record<string, string>>({});
 
   // Dual Template Config (BM-QC-TR-01 & BM-QC-COA-01) + Staff Signatures + COA Editor States
   const [showCoaTemplateConfig, setShowCoaTemplateConfig] = useState(false);
@@ -1011,14 +1017,25 @@ export function QcTestsView() {
   };
 
   const receiveLotMut = useMutation({
-    mutationFn: (payload: { lot_id: string; test_kind?: string; spec_id?: string | null; _source?: "queue" | "list" }) =>
+    mutationFn: (payload: {
+      lot_id?: string;
+      unit_id?: string | null;
+      test_kind?: string;
+      spec_id?: string | null;
+      qa_assignee_id?: number | null;
+      qa_assignee_name?: string | null;
+      _source?: "queue" | "list";
+    }) =>
       api<{ test_id: string; test_code: string }>("/api/factory/qms/ops", {
         method: "POST",
         json: {
           op: "receive_lot_qc",
-          lot_id: payload.lot_id,
+          lot_id: payload.lot_id || undefined,
+          unit_id: payload.unit_id || undefined,
           test_kind: payload.test_kind,
           spec_id: payload.spec_id,
+          qa_assignee_id: payload.qa_assignee_id ?? null,
+          qa_assignee_name: payload.qa_assignee_name ?? null,
         },
       }),
     onSuccess: (res, vars) => {
@@ -1028,8 +1045,50 @@ export function QcTestsView() {
       if (res?.test_id) {
         setSelected(res.test_id);
         setSelectedSource(vars._source ?? "queue");
-        setSelectedAnchorId(vars.lot_id);
+        setSelectedAnchorId(vars.unit_id || vars.lot_id || res.test_id);
       }
+    },
+  });
+
+  const assignQcStaffMut = useMutation({
+    mutationFn: (payload: {
+      test_id?: string | null;
+      lot_id?: string | null;
+      unit_id?: string | null;
+      qa_assignee_id?: number | null;
+      qa_assignee_name?: string | null;
+    }) =>
+      api<{ ok: boolean; qa_assignee_id: number | null; qa_assignee_name: string | null }>("/api/factory/qms/ops", {
+        method: "POST",
+        json: {
+          op: "assign_qc_staff",
+          ...payload,
+        },
+      }),
+    onSuccess: (_res, vars) => {
+      qc.invalidateQueries({ queryKey: ["factory", "qa-ops"] });
+      qc.invalidateQueries({ queryKey: ["factory", "qc-tests"] });
+      if (vars.test_id) {
+        qc.invalidateQueries({ queryKey: ["factory", "qc-test", vars.test_id] });
+      }
+    },
+  });
+
+  const reopenTestMut = useMutation({
+    mutationFn: (test_id: string) =>
+      api<{ id: string }>("/api/factory/qms/ops", {
+        method: "POST",
+        json: {
+          op: "reopen_qc_test",
+          test_id,
+        },
+      }),
+    onSuccess: (_res, test_id) => {
+      qc.invalidateQueries({ queryKey: ["factory", "qc-tests"] });
+      qc.invalidateQueries({ queryKey: ["factory", "qc-test", test_id] });
+      qc.invalidateQueries({ queryKey: ["factory", "qa-ops"] });
+      setStatus("");
+      openTestInline(test_id, "list", test_id);
     },
   });
 
@@ -1059,6 +1118,8 @@ export function QcTestsView() {
 
   const queue: any[] = qaOps.data?.reception_queue ?? [];
   const allLots: any[] = qaOps.data?.all_lots ?? queue;
+  const qaStaffList: Array<{ user_id: number; employee_code: string; full_name: string; display_name: string; position: string; label: string }> =
+    qaOps.data?.qa_staff ?? [];
   const filteredQueue = queueFilter === "ALL" ? queue : queue.filter((q) => q.qc_category === queueFilter);
   const openingQueueCount = queue.filter((q) => q.origin === "OPENING").length;
   const canReleaseOpening = Boolean(me.data?.is_root || me.data?.permissions?.includes("inv.lot.release"));
@@ -1174,13 +1235,16 @@ export function QcTestsView() {
 
         {showProactiveForm && (
           <form
-            className="grid gap-2 sm:grid-cols-5 items-end p-3 mb-3 rounded-xl border border-sky-200 dark:border-sky-900 bg-sky-50/40 dark:bg-sky-950/20"
+            className="grid gap-2 sm:grid-cols-6 items-end p-3 mb-3 rounded-xl border border-sky-200 dark:border-sky-900 bg-sky-50/40 dark:bg-sky-950/20"
             onSubmit={(e) => {
               e.preventDefault();
+              const chosenQa = qaStaffList.find((s) => String(s.user_id) === proactiveQaStaffId);
               receiveLotMut.mutate({
                 lot_id: proactiveLotId,
                 test_kind: proactiveKind,
                 spec_id: proactiveSpecId || null,
+                qa_assignee_id: chosenQa ? chosenQa.user_id : null,
+                qa_assignee_name: chosenQa ? chosenQa.label : null,
                 _source: "queue",
               });
             }}
@@ -1216,6 +1280,16 @@ export function QcTestsView() {
                 ))}
               </select>
             </Field>
+            <Field label="🛡️ QA phụ trách">
+              <select className={inputClass} value={proactiveQaStaffId} onChange={(e) => setProactiveQaStaffId(e.target.value)}>
+                <option value="">-- Chọn nhân sự QA/QC phụ trách --</option>
+                {qaStaffList.map((s) => (
+                  <option key={s.user_id} value={String(s.user_id)}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
             <Button type="submit" disabled={receiveLotMut.isPending}>🧪 Tiếp nhận & Mở Phiếu QC</Button>
           </form>
         )}
@@ -1227,18 +1301,26 @@ export function QcTestsView() {
         {filteredQueue.length === 0 ? (
           <Empty>Hiện không có lô hàng nào đang chờ lấy mẫu hoặc chờ QC trong hàng đợi này.</Empty>
         ) : (
-          <Table head={["Phân loại QC", "Số Lô (Lot)", "Mã & Tên Vật tư / BTP / Thành phẩm", "Số lượng · Kho", "Hạn dùng", "Trạng thái Lô", "Phiếu QC hiện tại", "Thao tác tại QC"]}>
+          <Table head={["Phân loại QC", "Số Lô / Serial", "Mã & Tên Vật tư / BTP / Thành phẩm", "Số lượng · Kho", "Hạn dùng", "Trạng thái", "🛡️ QA phụ trách", "Phiếu QC hiện tại", "Thao tác tại QC"]}>
             {filteredQueue.map((q) => {
               const rowExpanded = isQueueRowSelected(q);
+              const isDeviceRow = q.queue_entity_type === "DEVICE_UNIT";
+              const currentQaIdStr =
+                queueAssigneeDraft[q.lot_id] ??
+                (q.qa_assignee_id ? String(q.qa_assignee_id) : "");
               return (
-                <Fragment key={q.lot_id}>
+                <Fragment key={`${q.queue_entity_type || "LOT"}_${q.lot_id}`}>
                   <tr className={rowExpanded ? "bg-sky-50/70 dark:bg-sky-950/30" : ""}>
                     <td className="py-2 pr-3">
                       <StatusBadge status={QC_CATEGORY_LABEL[q.qc_category]?.badge ?? "QUARANTINE"} label={q.qc_category} />
                     </td>
                     <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">
-                      {q.lot_code}
-                      {q.mfr_lot_no && <div className="text-[11px] text-slate-400">NSX: {q.mfr_lot_no}</div>}
+                      {isDeviceRow ? `🖥️ S/N: ${q.lot_code}` : q.lot_code}
+                      {q.mfr_lot_no && (
+                        <div className="text-[11px] text-slate-400">
+                          {isDeviceRow ? `Lệnh: ${q.mfr_lot_no}` : `NSX: ${q.mfr_lot_no}`}
+                        </div>
+                      )}
                     </td>
                     <td className="py-2 pr-3">
                       <div className="font-semibold">{q.item_code} — {q.item_name}</div>
@@ -1251,6 +1333,34 @@ export function QcTestsView() {
                     <td className="py-2 pr-3 font-mono whitespace-nowrap">{fmtDate(q.expiry_date)}</td>
                     <td className="py-2 pr-3">
                       <StatusBadge status={q.lot_status} label={q.lot_status === "QUARANTINE" ? "Biệt trữ chờ lấy mẫu" : "Đang kiểm QC"} />
+                    </td>
+                    <td className="py-2 pr-3 min-w-[200px]">
+                      <select
+                        className={`${inputClass} !py-1 !px-2 !text-xs font-semibold ${
+                          !currentQaIdStr && !q.qa_assignee_name ? "border-amber-400 dark:border-amber-700" : ""
+                        }`}
+                        value={currentQaIdStr}
+                        disabled={assignQcStaffMut.isPending}
+                        onChange={(e) => {
+                          const nextUidStr = e.target.value;
+                          setQueueAssigneeDraft((prev) => ({ ...prev, [q.lot_id]: nextUidStr }));
+                          const staffObj = qaStaffList.find((s) => String(s.user_id) === nextUidStr);
+                          assignQcStaffMut.mutate({
+                            test_id: q.latest_test_id || null,
+                            lot_id: isDeviceRow ? null : q.lot_id,
+                            unit_id: isDeviceRow ? q.unit_id || q.lot_id : null,
+                            qa_assignee_id: staffObj ? staffObj.user_id : null,
+                            qa_assignee_name: staffObj ? staffObj.label : null,
+                          });
+                        }}
+                      >
+                        <option value="">{q.qa_assignee_name ? `🛡️ ${q.qa_assignee_name}` : "-- Chọn QA phụ trách --"}</option>
+                        {qaStaffList.map((s) => (
+                          <option key={s.user_id} value={String(s.user_id)}>
+                            🛡️ {s.label}
+                          </option>
+                        ))}
+                      </select>
                     </td>
                     <td className="py-2 pr-3">
                       {q.latest_test_code ? (
@@ -1275,9 +1385,17 @@ export function QcTestsView() {
                         </Button>
                       ) : (
                         <Button
-                          onClick={() =>
-                            receiveLotMut.mutate({ lot_id: q.lot_id, test_kind: q.qc_category, _source: "queue" })
-                          }
+                          onClick={() => {
+                            const chosenStaff = qaStaffList.find((s) => String(s.user_id) === currentQaIdStr);
+                            receiveLotMut.mutate({
+                              lot_id: isDeviceRow ? undefined : q.lot_id,
+                              unit_id: isDeviceRow ? q.unit_id || q.lot_id : null,
+                              test_kind: q.qc_category,
+                              qa_assignee_id: chosenStaff ? chosenStaff.user_id : q.qa_assignee_id ?? null,
+                              qa_assignee_name: chosenStaff ? chosenStaff.label : q.qa_assignee_name ?? null,
+                              _source: "queue",
+                            });
+                          }}
                           disabled={receiveLotMut.isPending}
                         >
                           🧪 Tiếp nhận & Lập phiếu {q.qc_category}
@@ -1287,7 +1405,7 @@ export function QcTestsView() {
                   </tr>
                   {rowExpanded && selected && (
                     <tr className="bg-sky-50/40 dark:bg-sky-950/20">
-                      <td colSpan={8} className="p-3 border-b-2 border-sky-400 dark:border-sky-700">
+                      <td colSpan={9} className="p-3 border-b-2 border-sky-400 dark:border-sky-700">
                         {renderInlineDetailPanel(selected)}
                       </td>
                     </tr>
@@ -1309,13 +1427,13 @@ export function QcTestsView() {
           </select>
         }
       >
-        <ErrorNote error={list.error ?? changeSpecMut.error} />
+        <ErrorNote error={list.error ?? changeSpecMut.error ?? assignQcStaffMut.error ?? reopenTestMut.error} />
         {selected && selectedSource === "list" && !isRenderedInlineInList && (
           <div className="mb-3">{renderInlineDetailPanel(selected)}</div>
         )}
         {list.data?.length === 0 && <Empty>Không có phiếu QC nào.</Empty>}
         {list.data && list.data.length > 0 && (
-          <Table head={["Mã phiếu", "Đối tượng (Lô NVL / BTP / Thành phẩm)", "Loại QC", "Tiêu chuẩn áp dụng", "Trạng thái", "Kết luận", "COA (Do QC cấp)", "Thao tác"]}>
+          <Table head={["Mã phiếu", "Đối tượng (Lô NVL / BTP / Thành phẩm)", "Loại QC", "Tiêu chuẩn áp dụng", "🛡️ QA phụ trách", "Trạng thái", "Kết luận", "COA (Do QC cấp)", "Thao tác"]}>
             {list.data.map((r) => {
               const rowExpanded = selected === r.id && selectedSource === "list";
               return (
@@ -1389,6 +1507,37 @@ export function QcTestsView() {
                         <span title={r.spec_name}>{r.spec_code}</span>
                       )}
                     </td>
+                    <td className="py-2 pr-3 min-w-[190px]" onClick={(e) => e.stopPropagation()}>
+                      {r.status !== "REVIEWED" && qaStaffList.length > 0 ? (
+                        <select
+                          className={`${inputClass} !py-1 !px-2 !text-xs font-semibold ${
+                            !r.qa_assignee_id && !r.qa_assignee_name ? "border-amber-400 dark:border-amber-700" : ""
+                          }`}
+                          value={r.qa_assignee_id ? String(r.qa_assignee_id) : ""}
+                          disabled={assignQcStaffMut.isPending}
+                          onChange={(e) => {
+                            const nextUidStr = e.target.value;
+                            const staffObj = qaStaffList.find((s) => String(s.user_id) === nextUidStr);
+                            assignQcStaffMut.mutate({
+                              test_id: r.id,
+                              qa_assignee_id: staffObj ? staffObj.user_id : null,
+                              qa_assignee_name: staffObj ? staffObj.label : null,
+                            });
+                          }}
+                        >
+                          <option value="">{r.qa_assignee_name ? `🛡️ ${r.qa_assignee_name}` : "-- Chọn QA phụ trách --"}</option>
+                          {qaStaffList.map((s) => (
+                            <option key={s.user_id} value={String(s.user_id)}>
+                              🛡️ {s.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : r.qa_assignee_name ? (
+                        <span className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">🛡️ {r.qa_assignee_name}</span>
+                      ) : (
+                        <span className="text-slate-400 text-xs">—</span>
+                      )}
+                    </td>
                     <td className="py-2 pr-3 whitespace-nowrap">{QC_STATUS_LABEL[r.status]}</td>
                     <td className="py-2 pr-3">
                       {r.overall_result ? (
@@ -1410,17 +1559,28 @@ export function QcTestsView() {
                       )}
                     </td>
                     <td className="py-2 pr-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                      <Button
-                        variant={rowExpanded ? "secondary" : "ghost"}
-                        onClick={() => openTestInline(r.id, "list", r.id)}
-                      >
-                        {rowExpanded ? "Đóng phiếu ▲" : "📝 Cập nhật KQ QC ▼"}
-                      </Button>
+                      <div className="flex items-center gap-1.5">
+                        {r.status === "CANCELLED" && (
+                          <Button
+                            variant="secondary"
+                            disabled={reopenTestMut.isPending}
+                            onClick={() => reopenTestMut.mutate(r.id)}
+                          >
+                            🔄 Mở lại phiếu
+                          </Button>
+                        )}
+                        <Button
+                          variant={rowExpanded ? "secondary" : "ghost"}
+                          onClick={() => openTestInline(r.id, "list", r.id)}
+                        >
+                          {rowExpanded ? "Đóng phiếu ▲" : "📝 Cập nhật KQ QC ▼"}
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                   {rowExpanded && (
                     <tr className="bg-sky-50/40 dark:bg-sky-950/20">
-                      <td colSpan={8} className="p-3 border-b-2 border-sky-400 dark:border-sky-700">
+                      <td colSpan={9} className="p-3 border-b-2 border-sky-400 dark:border-sky-700">
                         {renderInlineDetailPanel(r.id)}
                       </td>
                     </tr>

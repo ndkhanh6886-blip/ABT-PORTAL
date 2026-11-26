@@ -9,6 +9,8 @@ import { insertRecord, parseInput } from "../core/records";
 import { isPlaceholderUom } from "../master/service";
 import { insertSignature, recordHash, type SignatureCredential } from "../core/signature";
 import { listPortalActivePersonnel } from "../core/hrDirectory";
+import { notifyUsers } from "../core/notifications";
+import { listDepartmentStaffForKitAndQa } from "../kit/ordersEbr";
 import { raiseDeviation } from "./incidents";
 import { createQcTest, getQcTest, registerQcSubject, runTransition } from "./qcTests";
 import { syncDeviceModelsWithSpecItems } from "./specs";
@@ -92,6 +94,22 @@ let qaOpsSchemaEnsured = false;
 export async function ensureQaOpsSchema(tx: Tx): Promise<void> {
   if (qaOpsSchemaEnsured) return;
   await tx.query("INSERT INTO qms.coa_template_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING");
+  await tx.query("SAVEPOINT sp_ensure_qa_assignee_cols");
+  try {
+    await tx.query(`
+      ALTER TABLE qms.qc_test
+        ADD COLUMN IF NOT EXISTS qa_assignee_id integer,
+        ADD COLUMN IF NOT EXISTS qa_assignee_name text;
+      ALTER TABLE inv.lot
+        ADD COLUMN IF NOT EXISTS qa_assignee_id integer,
+        ADD COLUMN IF NOT EXISTS qa_assignee_name text;
+      ALTER TABLE device.device_unit
+        ADD COLUMN IF NOT EXISTS qa_assignee_name text;
+    `);
+    await tx.query("RELEASE SAVEPOINT sp_ensure_qa_assignee_cols");
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_ensure_qa_assignee_cols").catch(() => {});
+  }
   qaOpsSchemaEnsured = true;
 }
 
@@ -192,7 +210,29 @@ export async function getQaOpsDashboard(tx: Tx, actor: AuthzActor) {
                   FROM kit.coa_certificate c
                  WHERE c.lot_id = l.id
                  ORDER BY c.issued_at DESC LIMIT 1
-              ) AS issued_coa_code
+              ) AS issued_coa_code,
+              l.qa_assignee_id,
+              COALESCE(
+                NULLIF(trim(l.qa_assignee_name), ''),
+                (
+                  SELECT NULLIF(trim(po.qa_assignee_name), '')
+                    FROM kit.production_order po
+                   WHERE po.lot_id = l.id
+                   ORDER BY po.created_at DESC LIMIT 1
+                ),
+                (
+                  SELECT COALESCE(NULLIF(trim(t.qa_assignee_name), ''), up.display_name)
+                    FROM qms.qc_test t
+                    LEFT JOIN core.user_profile up ON up.user_id = COALESCE(t.qa_assignee_id, t.analyst_id)
+                   WHERE (t.entity_type = 'LOT' AND t.entity_id = l.id)
+                      OR EXISTS (
+                        SELECT 1 FROM kit.production_order po
+                         WHERE po.lot_id = l.id
+                           AND (po.qc_test_id = t.id OR (t.entity_type = 'PRODUCTION_ORDER' AND t.entity_id = po.id))
+                      )
+                   ORDER BY t.created_at DESC LIMIT 1
+                )
+              ) AS qa_assignee_name
          FROM inv.lot l
          JOIN master.item i ON i.id = l.item_id
         WHERE l.status IN ('QUARANTINE', 'PENDING_QC')
@@ -212,8 +252,90 @@ export async function getQaOpsDashboard(tx: Tx, actor: AuthzActor) {
     } else if (["FINISHED_KIT", "DEVICE"].includes(r.item_type) || ["PRODUCTION", "SYNTHESIS"].includes(r.origin)) {
       qc_category = "FQC";
     }
-    return { ...r, qc_category };
+    return { ...r, queue_entity_type: "LOT" as const, qc_category };
   });
+
+  // 1b. Also include Device Serials currently waiting in FQC (device.device_unit.status = 'FQC') in the 1-Stop Reception Queue
+  let queueDevices: any[] = [];
+  await tx.query("SAVEPOINT sp_queue_devices");
+  try {
+    await tx.query(
+      `UPDATE qms.qc_test t
+          SET status = 'PLANNED',
+              updated_at = now()
+         FROM device.device_unit du
+        WHERE t.entity_type = 'DEVICE_UNIT'
+          AND t.entity_id = du.id
+          AND t.status = 'CANCELLED'
+          AND du.status = 'FQC'
+          AND du.fqc_passed IS NOT TRUE
+          AND t.updated_at < now() - interval '45 seconds'
+          AND NOT EXISTS (
+            SELECT 1 FROM qms.qc_test t2
+             WHERE t2.entity_type = 'DEVICE_UNIT'
+               AND t2.entity_id = du.id
+               AND t2.status <> 'CANCELLED'
+          )`
+    );
+    queueDevices = (
+      await tx.query(
+        `SELECT du.id AS lot_id,
+                du.id AS unit_id,
+                du.serial_no AS lot_code,
+                'PENDING_QC'::text AS lot_status,
+                'DEVICE_ORDER'::text AS origin,
+                dord.code AS mfr_lot_no,
+                du.created_at::date::text AS received_date,
+                NULL::text AS expiry_date,
+                du.version AS lot_version,
+                dm.item_id,
+                dm.code AS item_code,
+                (dm.name || CASE WHEN drev.revision IS NOT NULL THEN ' (Rev ' || drev.revision || ')' ELSE '' END) AS item_name,
+                'DEVICE'::text AS item_type,
+                'máy'::text AS base_uom,
+                1::float AS qty_on_hand,
+                w.code AS warehouse_locations,
+                qt.spec_code AS effective_spec_code,
+                qt.id AS latest_test_id,
+                qt.code AS latest_test_code,
+                qt.status AS latest_test_status,
+                qt.overall_result AS latest_test_result,
+                NULL::text AS issued_coa_code,
+                COALESCE(qt.qa_assignee_id, du.fqc_assignee_id, qt.analyst_id) AS qa_assignee_id,
+                COALESCE(
+                  NULLIF(trim(qt.qa_assignee_name), ''),
+                  NULLIF(trim(du.qa_assignee_name), ''),
+                  qa_up.display_name
+                ) AS qa_assignee_name
+           FROM device.device_unit du
+           JOIN device.device_order dord ON dord.id = du.order_id
+           JOIN device.device_model dm ON dm.id = du.model_id
+           LEFT JOIN device.model_revision drev ON drev.id = du.model_revision_id
+           LEFT JOIN master.warehouse w ON w.id = dord.warehouse_id
+           LEFT JOIN LATERAL (
+             SELECT t.id, t.code, t.status, t.overall_result, t.analyst_id, t.qa_assignee_id, t.qa_assignee_name, s.code AS spec_code
+               FROM qms.qc_test t
+               LEFT JOIN qms.qc_spec s ON s.id = t.spec_id
+              WHERE (t.id = du.fqc_test_id OR (t.entity_type = 'DEVICE_UNIT' AND t.entity_id = du.id))
+                AND t.status <> 'CANCELLED'
+              ORDER BY (t.id = du.fqc_test_id) DESC, t.created_at DESC
+              LIMIT 1
+           ) qt ON true
+           LEFT JOIN core.user_profile qa_up ON qa_up.user_id = COALESCE(qt.qa_assignee_id, du.fqc_assignee_id, qt.analyst_id)
+          WHERE du.status = 'FQC'
+            AND du.fqc_passed IS NOT TRUE
+          ORDER BY du.updated_at DESC, du.serial_no ASC
+          LIMIT 60`
+      )
+    ).rows.map((r) => ({
+      ...r,
+      queue_entity_type: "DEVICE_UNIT" as const,
+      qc_category: "FQC" as const,
+    }));
+    await tx.query("RELEASE SAVEPOINT sp_queue_devices");
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_queue_devices").catch(() => {});
+  }
 
   // 2. Reference Standards
   const standards = (
@@ -334,9 +456,10 @@ export async function getQaOpsDashboard(tx: Tx, actor: AuthzActor) {
 
   // 8. Global COA & QC Report Template Configuration
   const { coaTemplate, qcFormsConfig, qaPersonnel } = await loadQcFormsConfig(tx);
+  const { qa_staff } = await listDepartmentStaffForKitAndQa(tx).catch(() => ({ qa_staff: [] }));
 
   return {
-    reception_queue: queueLots,
+    reception_queue: [...queueLots, ...queueDevices],
     all_lots: allLots,
     standards,
     standard_usages: standardUsages,
@@ -346,6 +469,7 @@ export async function getQaOpsDashboard(tx: Tx, actor: AuthzActor) {
     coa_template: coaTemplate,
     qc_forms_config: qcFormsConfig,
     qa_personnel: qaPersonnel,
+    qa_staff,
   };
 }
 
@@ -429,9 +553,12 @@ async function ensureEffectiveSpecForItem(
 }
 
 const receiveLotQcSchema = z.object({
-  lot_id: z.string().uuid(),
+  lot_id: z.string().uuid().optional(),
+  unit_id: z.string().uuid().optional().nullable(),
   test_kind: z.enum(["IQC", "IPQC", "FQC", "RELEASE", "STABILITY"]).optional(),
   spec_id: z.string().uuid().optional().nullable(),
+  qa_assignee_id: z.coerce.number().int().optional().nullable(),
+  qa_assignee_name: z.string().trim().max(200).optional().nullable(),
 });
 
 /**
@@ -463,6 +590,76 @@ export async function receiveAndCreateQcTest(tx: Tx, actor: AuthzActor, input: u
   await authorize(tx, actor, "qms.qc.analyze");
   const d = parseInput(receiveLotQcSchema, input);
 
+  // Branch A: Receiving / opening an FQC test for a Device Unit (Serial)
+  if (d.unit_id) {
+    const unit = (
+      await tx.query(
+        `SELECT du.*, dm.code AS model_code, dm.name AS model_name, dm.item_id, dm.fqc_spec_id
+           FROM device.device_unit du
+           JOIN device.device_model dm ON dm.id = du.model_id
+          WHERE du.id = $1 FOR UPDATE`,
+        [d.unit_id]
+      )
+    ).rows[0];
+    if (!unit) throw notFound("thiết bị (serial)");
+    const assigneeId = d.qa_assignee_id ?? unit.fqc_assignee_id ?? null;
+    const assigneeName = d.qa_assignee_name?.trim() || unit.qa_assignee_name || null;
+    if (assigneeId || assigneeName) {
+      await tx.query(
+        "UPDATE device.device_unit SET fqc_assignee_id = COALESCE($2, fqc_assignee_id), qa_assignee_name = COALESCE($3, qa_assignee_name) WHERE id = $1",
+        [unit.id, assigneeId, assigneeName]
+      );
+    }
+    const existingUnitTest = (
+      await tx.query(
+        `SELECT id, code, status FROM qms.qc_test
+          WHERE (id = $1 OR (entity_type = 'DEVICE_UNIT' AND entity_id = $2))
+          ORDER BY (status <> 'CANCELLED') DESC, created_at DESC LIMIT 1`,
+        [unit.fqc_test_id, unit.id]
+      )
+    ).rows[0];
+    if (existingUnitTest) {
+      if (existingUnitTest.status === "CANCELLED") {
+        await tx.query("UPDATE qms.qc_test SET status = 'PLANNED', updated_at = now() WHERE id = $1", [existingUnitTest.id]);
+      }
+      if (assigneeId || assigneeName) {
+        await tx.query(
+          "UPDATE qms.qc_test SET qa_assignee_id = COALESCE($2, qa_assignee_id), qa_assignee_name = COALESCE($3, qa_assignee_name), analyst_id = COALESCE($2, analyst_id) WHERE id = $1",
+          [existingUnitTest.id, assigneeId, assigneeName]
+        );
+      }
+      return { test_id: existingUnitTest.id, test_code: existingUnitTest.code, lot_code: unit.serial_no };
+    }
+    let specId = d.spec_id || unit.fqc_spec_id;
+    if (!specId && unit.item_id) {
+      specId = (await ensureEffectiveSpecForItem(tx, actor, unit.item_id, "FQC")).id;
+    }
+    if (!specId) {
+      const anyEff = (await tx.query("SELECT id FROM qms.qc_spec WHERE status = 'EFFECTIVE' ORDER BY updated_at DESC LIMIT 1")).rows[0];
+      specId = anyEff?.id;
+    }
+    if (!specId) throw invalid("Chưa có tiêu chuẩn QC hiệu lực để tạo phiếu FQC.");
+    const newTest = await createQcTest(tx, actor, {
+      entity_type: "DEVICE_UNIT",
+      entity_id: unit.id,
+      spec_id: specId,
+      test_kind: "FQC",
+    });
+    await tx.query(
+      "UPDATE device.device_unit SET fqc_test_id = $2 WHERE id = $1",
+      [unit.id, newTest.id]
+    );
+    if (assigneeId || assigneeName) {
+      await tx.query(
+        "UPDATE qms.qc_test SET qa_assignee_id = $2, qa_assignee_name = $3, analyst_id = COALESCE($2, analyst_id) WHERE id = $1",
+        [newTest.id, assigneeId, assigneeName]
+      );
+    }
+    return { test_id: newTest.id, test_code: newTest.code, lot_code: unit.serial_no };
+  }
+
+  if (!d.lot_id) throw invalid("Vui lòng chọn lô hàng hoặc thiết bị cần tiếp nhận QC.");
+
   const lot = (
     await tx.query(
       `SELECT l.*, i.code AS item_code, i.name AS item_name, i.item_type
@@ -475,6 +672,21 @@ export async function receiveAndCreateQcTest(tx: Tx, actor: AuthzActor, input: u
   if (!lot) throw notFound("lô hàng");
 
   await assertLotNotDraftKitOrder(tx, lot, "tiếp nhận và lập phiếu QC");
+
+  const assigneeId = d.qa_assignee_id ?? lot.qa_assignee_id ?? null;
+  const assigneeName = d.qa_assignee_name?.trim() || lot.qa_assignee_name || null;
+  if (assigneeId || assigneeName) {
+    await tx.query(
+      "UPDATE inv.lot SET qa_assignee_id = COALESCE($2, qa_assignee_id), qa_assignee_name = COALESCE($3, qa_assignee_name) WHERE id = $1",
+      [lot.id, assigneeId, assigneeName]
+    );
+    if (assigneeName) {
+      await tx.query(
+        "UPDATE kit.production_order SET qa_assignee_name = COALESCE($2, qa_assignee_name) WHERE lot_id = $1",
+        [lot.id, assigneeName]
+      );
+    }
+  }
 
   // Check if an open test already exists for this lot (either LOT or linked PRODUCTION_ORDER)
   const existingOpen = (
@@ -531,16 +743,188 @@ export async function receiveAndCreateQcTest(tx: Tx, actor: AuthzActor, input: u
     test_kind: autoKind,
   });
 
+  if (assigneeId || assigneeName) {
+    await tx.query(
+      "UPDATE qms.qc_test SET qa_assignee_id = $2, qa_assignee_name = $3, analyst_id = COALESCE($2, analyst_id) WHERE id = $1",
+      [test.id, assigneeId, assigneeName]
+    );
+    if (assigneeId && assigneeId !== actor.userId) {
+      await notifyUsers(tx, [assigneeId], {
+        type: "QC_TEST_ASSIGNED",
+        title: `🛡️ [Phân công QC] Bạn được giao phụ trách phiếu ${test.code} (${autoKind} — Lô ${lot.code})`,
+        body: `Lô ${lot.code} (${lot.item_code} — ${lot.item_name}) đã được tiếp nhận tại Trung tâm QC Một Cửa và phân công bạn phụ trách.`,
+        entityType: "qc_test",
+        entityId: test.id,
+        link: "/?tab=factory-qa",
+        sourceKey: `qc_test_assigned_${test.id}_${assigneeId}`,
+      });
+    }
+  }
+
   // Also link to kit.production_order if one exists for this lot and has no qc_test_id
   await tx.query(
     `UPDATE kit.production_order
         SET qc_test_id = COALESCE(qc_test_id, $2),
+            qa_assignee_name = COALESCE($3, qa_assignee_name),
             updated_at = now()
       WHERE lot_id = $1`,
-    [lot.id, test.id]
+    [lot.id, test.id, assigneeName]
   );
 
   return { test_id: test.id, test_code: test.code, lot_code: lot.code, spec_code: spec.code };
+}
+
+const assignQcStaffSchema = z.object({
+  test_id: z.string().uuid().optional().nullable(),
+  lot_id: z.string().uuid().optional().nullable(),
+  unit_id: z.string().uuid().optional().nullable(),
+  qa_assignee_id: z.coerce.number().int().optional().nullable(),
+  qa_assignee_name: z.string().trim().max(200).optional().nullable(),
+});
+
+export async function assignQcStaff(tx: Tx, actor: AuthzActor, input: unknown) {
+  await ensureQaOpsSchema(tx);
+  await authorize(tx, actor, "qms.qc.view");
+  const d = parseInput(assignQcStaffSchema, input);
+
+  const { qa_staff } = await listDepartmentStaffForKitAndQa(tx).catch(() => ({ qa_staff: [] }));
+  let assigneeId = d.qa_assignee_id ?? null;
+  let assigneeName = d.qa_assignee_name?.trim() || null;
+
+  if (assigneeId && !assigneeName) {
+    const matched = qa_staff.find((s) => Number(s.user_id) === Number(assigneeId));
+    if (matched) assigneeName = matched.label;
+    else {
+      const up = (await tx.query("SELECT display_name FROM core.user_profile WHERE user_id = $1", [assigneeId])).rows[0];
+      if (up?.display_name) assigneeName = String(up.display_name);
+    }
+  } else if (assigneeName && !assigneeId) {
+    const matched = qa_staff.find((s) => s.label === assigneeName || s.display_name === assigneeName || s.full_name === assigneeName);
+    if (matched) assigneeId = matched.user_id;
+  }
+
+  let targetLabel = "";
+  let targetEntityId = d.test_id || d.lot_id || d.unit_id || "";
+
+  if (d.test_id) {
+    const test = (
+      await tx.query(
+        `SELECT t.*, COALESCE(l.code, du.serial_no) AS subj_code, COALESCE(i.code, dm.code) AS item_code
+           FROM qms.qc_test t
+           LEFT JOIN inv.lot l ON t.entity_type = 'LOT' AND l.id = t.entity_id
+           LEFT JOIN master.item i ON i.id = l.item_id
+           LEFT JOIN device.device_unit du ON t.entity_type = 'DEVICE_UNIT' AND du.id = t.entity_id
+           LEFT JOIN device.device_model dm ON dm.id = du.model_id
+          WHERE t.id = $1`,
+        [d.test_id]
+      )
+    ).rows[0];
+    if (!test) throw notFound("phiếu QC");
+    targetLabel = `Phiếu ${test.code} (${test.test_kind}${test.subj_code ? ` · ${test.subj_code}` : ""}${test.item_code ? ` · ${test.item_code}` : ""})`;
+    await tx.query(
+      `UPDATE qms.qc_test
+          SET qa_assignee_id = $2,
+              qa_assignee_name = $3,
+              analyst_id = CASE WHEN status IN ('PLANNED', 'IN_PROGRESS') AND $2::int IS NOT NULL THEN $2::int ELSE analyst_id END,
+              updated_at = now(),
+              updated_by = $4
+        WHERE id = $1`,
+      [test.id, assigneeId, assigneeName, actor.userId]
+    );
+    if (test.entity_type === "LOT") {
+      await tx.query("UPDATE inv.lot SET qa_assignee_id = $2, qa_assignee_name = $3 WHERE id = $1", [test.entity_id, assigneeId, assigneeName]);
+      await tx.query("UPDATE kit.production_order SET qa_assignee_name = $2 WHERE lot_id = $1", [test.entity_id, assigneeName]);
+    } else if (test.entity_type === "DEVICE_UNIT") {
+      await tx.query("UPDATE device.device_unit SET fqc_assignee_id = $2, qa_assignee_name = $3 WHERE id = $1", [test.entity_id, assigneeId, assigneeName]);
+    } else if (test.entity_type === "PRODUCTION_ORDER") {
+      await tx.query("UPDATE kit.production_order SET qa_assignee_name = $2 WHERE id = $1", [test.entity_id, assigneeName]);
+    }
+  }
+
+  if (d.lot_id) {
+    const lot = (
+      await tx.query("SELECT l.id, l.code, i.code AS item_code, i.name AS item_name FROM inv.lot l JOIN master.item i ON i.id = l.item_id WHERE l.id = $1", [d.lot_id])
+    ).rows[0];
+    if (lot) {
+      if (!targetLabel) targetLabel = `Lô ${lot.code} (${lot.item_code} — ${lot.item_name})`;
+      await tx.query("UPDATE inv.lot SET qa_assignee_id = $2, qa_assignee_name = $3 WHERE id = $1", [lot.id, assigneeId, assigneeName]);
+      await tx.query("UPDATE kit.production_order SET qa_assignee_name = $2 WHERE lot_id = $1", [lot.id, assigneeName]);
+      await tx.query(
+        `UPDATE qms.qc_test
+            SET qa_assignee_id = $2,
+                qa_assignee_name = $3,
+                analyst_id = CASE WHEN status IN ('PLANNED', 'IN_PROGRESS') AND $2::int IS NOT NULL THEN $2::int ELSE analyst_id END,
+                updated_at = now()
+          WHERE entity_type = 'LOT' AND entity_id = $1 AND status NOT IN ('REVIEWED', 'CANCELLED')`,
+        [lot.id, assigneeId, assigneeName]
+      );
+    }
+  }
+
+  if (d.unit_id) {
+    const unit = (
+      await tx.query(
+        "SELECT du.id, du.serial_no, du.fqc_test_id, dm.code AS model_code FROM device.device_unit du JOIN device.device_model dm ON dm.id = du.model_id WHERE du.id = $1",
+        [d.unit_id]
+      )
+    ).rows[0];
+    if (unit) {
+      if (!targetLabel) targetLabel = `Thiết bị Serial ${unit.serial_no} (${unit.model_code})`;
+      await tx.query("UPDATE device.device_unit SET fqc_assignee_id = $2, qa_assignee_name = $3 WHERE id = $1", [unit.id, assigneeId, assigneeName]);
+      await tx.query(
+        `UPDATE qms.qc_test
+            SET qa_assignee_id = $2,
+                qa_assignee_name = $3,
+                analyst_id = CASE WHEN status IN ('PLANNED', 'IN_PROGRESS') AND $2::int IS NOT NULL THEN $2::int ELSE analyst_id END,
+                updated_at = now()
+          WHERE (id = $4 OR (entity_type = 'DEVICE_UNIT' AND entity_id = $1))
+            AND status NOT IN ('REVIEWED', 'CANCELLED')`,
+        [unit.id, assigneeId, assigneeName, unit.fqc_test_id]
+      );
+    }
+  }
+
+  if (assigneeId && targetLabel) {
+    await notifyUsers(tx, [assigneeId], {
+      type: "QC_STAFF_ASSIGNED",
+      title: `🛡️ [Phân công QA/QC] Bạn được phân công phụ trách QC: ${targetLabel}`,
+      body: `Phòng QA/QC đã phân công ${assigneeName || "bạn"} phụ trách kiểm nghiệm chất lượng cho ${targetLabel}.`,
+      entityType: d.test_id ? "qc_test" : d.unit_id ? "device_unit" : "lot",
+      entityId: targetEntityId,
+      link: "/?tab=factory-qa",
+      sourceKey: `qc_staff_assigned_${targetEntityId}_${assigneeId}_${Date.now()}`,
+    });
+  }
+
+  return { ok: true, qa_assignee_id: assigneeId, qa_assignee_name: assigneeName };
+}
+
+export async function reopenCancelledQcTest(tx: Tx, actor: AuthzActor, input: unknown) {
+  await ensureQaOpsSchema(tx);
+  await authorize(tx, actor, "qms.qc.analyze");
+  const d = parseInput(z.object({ test_id: z.string().uuid() }), input);
+  const test = (await tx.query("SELECT * FROM qms.qc_test WHERE id = $1 FOR UPDATE", [d.test_id])).rows[0];
+  if (!test) throw notFound("phiếu QC");
+  await tx.query(
+    `UPDATE qms.qc_test
+        SET status = 'PLANNED',
+            overall_result = NULL,
+            version = version + 1,
+            updated_at = now(),
+            updated_by = $2
+      WHERE id = $1`,
+    [test.id, actor.userId]
+  );
+  if (test.entity_type === "DEVICE_UNIT") {
+    await tx.query("UPDATE device.device_unit SET fqc_test_id = $2 WHERE id = $1", [test.entity_id, test.id]);
+  }
+  await writeAudit(tx, actor, {
+    entityType: "qc_test",
+    entityId: test.id,
+    action: "reopen",
+    changes: { status: [test.status, "PLANNED"] },
+  });
+  return getQcTest(tx, test.id);
 }
 
 const coaCustomFieldsSchema = z

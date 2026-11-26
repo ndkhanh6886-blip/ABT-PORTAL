@@ -5,6 +5,7 @@ import { parseInput } from "@/factory/core/records";
 import { authenticateSigner } from "@/factory/core/signature";
 import { verifyPortalPassword } from "@/factory/portalBridge";
 import {
+  assignQcStaff,
   assignSpecToItem,
   changeQcTestSpec,
   getQaOpsDashboard,
@@ -13,6 +14,7 @@ import {
   recordStandardUsage,
   releaseLotFromQcTest,
   releaseOpeningLotsSkipQc,
+  reopenCancelledQcTest,
   saveCoaTemplateConfig,
   saveQcMethod,
   saveReferenceStandard,
@@ -69,6 +71,10 @@ export const POST = factoryRoute(
         return assignSpecToItem(tx, actor, body);
       case "change_test_spec":
         return changeQcTestSpec(tx, actor, body);
+      case "assign_qc_staff":
+        return assignQcStaff(tx, actor, body);
+      case "reopen_qc_test":
+        return reopenCancelledQcTest(tx, actor, body);
       case "release_opening_lots":
         return releaseOpeningLotsSkipQc(tx, actor, body);
       default:
