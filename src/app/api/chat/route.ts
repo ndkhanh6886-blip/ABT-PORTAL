@@ -426,7 +426,13 @@ async function getChatIdentity(req: NextRequest): Promise<ChatIdentity | null> {
     posNorm.includes("giam doc") ||
     posNorm.includes("quan tri vien he thong");
 
-  if (isAdmin) {
+  const isSystemAdminAccount =
+    String(me.username || "").trim().toLowerCase() === "admin" ||
+    stripVn(name) === "quan tri vien he thong" ||
+    stripVn(name) === "quan tri vien" ||
+    posNorm.includes("quan tri vien he thong");
+
+  if (isSystemAdminAccount) {
     aliases.add("admin");
     aliases.add("quản trị viên hệ thống");
   }
