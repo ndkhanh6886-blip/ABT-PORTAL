@@ -3231,6 +3231,11 @@ export const UnifiedWorkspace: React.FC = () => {
   const [companyResources, setCompanyResources] = useState<CompanyResourceItem[]>(DEFAULT_COMPANY_RESOURCES);
   const [showResourceBoard, setShowResourceBoard] = useState<boolean>(true);
   const [plannerSectionMode, setPlannerSectionMode] = useState<"BOTH_SEPARATE" | "WORK_ONLY" | "RESOURCE_ONLY">("BOTH_SEPARATE");
+  const [isResourceBoardCollapsed, setIsResourceBoardCollapsed] = useState<boolean>(false);
+  const [isResourceCardsCollapsed, setIsResourceCardsCollapsed] = useState<boolean>(false);
+  const [isResourceGridCollapsed, setIsResourceGridCollapsed] = useState<boolean>(true);
+  const [isWorkBoardCollapsed, setIsWorkBoardCollapsed] = useState<boolean>(false);
+  const [isMeetingBannerCollapsed, setIsMeetingBannerCollapsed] = useState<boolean>(true);
   const [selectedResourceFilter, setSelectedResourceFilter] = useState<string>("all");
   const [isAddingNewResource, setIsAddingNewResource] = useState<boolean>(false);
   const [editingResourceId, setEditingResourceId] = useState<string | null>(null);
@@ -3492,10 +3497,26 @@ export const UnifiedWorkspace: React.FC = () => {
     return null;
   }, []);
 
-  // Nhận diện một lịch đăng ký sử dụng tài nguyên công ty (độc lập hoàn toàn với Lịch công tác & Lịch họp: chỉ tính các lịch có eventType === "RESOURCE")
+  // Nhận diện một lịch thật sự là Lịch Họp (loại trừ các việc chuẩn bị trước cuộc họp như "Chuẩn bị nội dung trước cuộc họp...")
+  const isScheduleRealMeeting = useCallback((sched: any): boolean => {
+    if (!sched) return false;
+    if (sched.eventType === "RESOURCE") return false;
+    if (sched.eventType === "MEETING") return true;
+    if (sched.eventType === "WORK") return false;
+    const titleStr = String(sched.title || "").trim();
+    if (!titleStr) return false;
+    if (/^(?:chuẩn\s*bị|soạn|tổng\s*hợp|lập|viết|gửi|hoàn\s*thiện|báo\s*cáo\s*trước)\b/i.test(titleStr)) {
+      return false;
+    }
+    return /\bhọp\b/i.test(titleStr);
+  }, []);
+
+  // Nhận diện một lịch đăng ký sử dụng tài nguyên công ty (độc lập hoàn toàn với Lịch công tác & Lịch họp: chỉ tính các lịch có eventType === "RESOURCE" và không phải lịch họp nội bộ)
   const matchScheduleToResource = useCallback((sched: any, resItem: CompanyResourceItem): boolean => {
     if (!sched || !resItem) return false;
     if (sched.eventType !== "RESOURCE") return false;
+    const titleStr = String(sched.title || "").trim();
+    if (/^họp\b|^họp:/i.test(titleStr)) return false;
     if (sched.resourceId) {
       return sched.resourceId === resItem.id;
     }
@@ -5225,8 +5246,10 @@ export const UnifiedWorkspace: React.FC = () => {
   // - Director: Sees whole company or selected department (can filter by specific staff)
   const filteredSchedules = useMemo(() => {
     return weeklySchedule.filter((s) => {
-      // Các lượt đăng ký mượn/sử dụng tài nguyên thuần túy (eventType === "RESOURCE") hiển thị ở bảng Lịch Sử Dụng Tài Nguyên độc lập
-      if (s.eventType === "RESOURCE") return false;
+      // Các lượt đăng ký mượn/sử dụng tài nguyên thuần túy (eventType === "RESOURCE" và không phải lịch họp nội bộ) hiển thị ở bảng Lịch Sử Dụng Tài Nguyên độc lập
+      const titleStr = String(s.title || "").trim();
+      const isPureResourceBooking = s.eventType === "RESOURCE" && !/^họp\b|^họp:/i.test(titleStr);
+      if (isPureResourceBooking) return false;
       const actorsList = [
         ...String(s.actor || "").split(/[,;\n]+/).map((a: string) => a.trim()).filter(Boolean),
         ...(Array.isArray(s.coActors) ? s.coActors.map((a: any) => String(a || "").trim()).filter(Boolean) : [])
@@ -5252,10 +5275,11 @@ export const UnifiedWorkspace: React.FC = () => {
     });
   }, [weeklySchedule, rolePerspective, filterDept, departmentStaffList, selectedAssignee, currentStaffName]);
 
-  // Danh sách Lịch Sử Dụng Tài Nguyên Công Ty độc lập (chỉ gồm các đăng ký sử dụng tài nguyên eventType === "RESOURCE")
+  // Danh sách Lịch Sử Dụng Tài Nguyên Công Ty độc lập (chỉ gồm các đăng ký sử dụng tài nguyên eventType === "RESOURCE" và không phải lịch họp nội bộ)
   const resourceBookingSchedules = useMemo(() => {
     return weeklySchedule.filter((s) => {
-      if (s.eventType !== "RESOURCE") return false;
+      const titleStr = String(s.title || "").trim();
+      if (s.eventType !== "RESOURCE" || /^họp\b|^họp:/i.test(titleStr)) return false;
       if (selectedResourceFilter !== "all") {
         const targetRes = companyResources.find((r) => r.id === selectedResourceFilter);
         if (targetRes && !matchScheduleToResource(s, targetRes)) return false;
@@ -13594,15 +13618,22 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             {/* BẢNG ĐỘC LẬP 1: LỊCH SỬ DỤNG PHÒNG HỌP & TÀI NGUYÊN CÔNG TY            */}
             {/* ===================================================================== */}
             {plannerSectionMode !== "WORK_ONLY" && (
-              <div className="bg-white dark:bg-slate-900 border-2 border-emerald-200/90 dark:border-emerald-900/70 rounded-2xl p-5 shadow-xs space-y-4">
-                <div className="flex items-center justify-between gap-2 flex-wrap pb-3 border-b border-emerald-100 dark:border-slate-800">
-                  <div>
+              <div className="bg-white dark:bg-slate-900 border-2 border-emerald-200/90 dark:border-emerald-900/70 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3.5">
+                <div className="flex items-center justify-between gap-2 flex-wrap pb-2.5 border-b border-emerald-100 dark:border-slate-800">
+                  <div
+                    className="cursor-pointer select-none"
+                    onClick={() => setIsResourceBoardCollapsed((v) => !v)}
+                    title="Bấm để Thu gọn hoặc Xổ ra Bảng 1"
+                  >
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-xs font-extrabold">
-                        🏢 BẢNG 1: LỊCH SỬ DỤNG PHÒNG HỌP &amp; TÀI NGUYÊN CÔNG TY (ĐỘC LẬP)
+                      <span className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-xs font-extrabold flex items-center gap-1">
+                        <span>🏢 BẢNG 1: LỊCH SỬ DỤNG PHÒNG HỌP &amp; TÀI NGUYÊN CÔNG TY (ĐỘC LẬP)</span>
                       </span>
                       <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300">
                         Tuần {viewedWeek.weekNo} ({viewedWeek.days[0].label} – {viewedWeek.days[5].label})
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                        {companyResources.length} tài nguyên • {resourceBookingSchedules.filter((s) => viewedWeek.all7Days.some((wd) => scheduleOnDay(s, wd))).length} lượt đặt tuần này
                       </span>
                     </div>
                     <p className="text-xs text-slate-500 mt-1">
@@ -13625,6 +13656,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         if (isAddingNewResource && !editingResourceId) {
                           setIsAddingNewResource(false);
                         } else {
+                          setIsResourceBoardCollapsed(false);
                           setEditingResourceId(null);
                           setNewResourceForm({ name: "", category: "MEETING_ROOM", capacityOrSpec: "", icon: "🏢" });
                           setIsAddingNewResource(true);
@@ -13640,6 +13672,24 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-2xs cursor-pointer"
                     >
                       + Đăng ký sử dụng tài nguyên
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsResourceBoardCollapsed((v) => !v)}
+                      className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-emerald-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 text-xs font-extrabold flex items-center gap-1 cursor-pointer"
+                      title={isResourceBoardCollapsed ? "Xổ ra toàn bộ Bảng 1" : "Thu gọn Bảng 1 thành thanh tóm tắt"}
+                    >
+                      {isResourceBoardCollapsed ? (
+                        <>
+                          <ChevronDown className="w-3.5 h-3.5" />
+                          <span>▼ Xổ ra Bảng 1</span>
+                        </>
+                      ) : (
+                        <>
+                          <ChevronUp className="w-3.5 h-3.5" />
+                          <span>▲ Thu gọn Bảng 1</span>
+                        </>
+                      )}
                     </button>
                   </div>
                 </div>
@@ -13785,6 +13835,46 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     </div>
                   )}
 
+                  {isResourceBoardCollapsed ? (
+                    <div className="flex items-center justify-between gap-2 flex-wrap bg-emerald-50/50 dark:bg-slate-800/50 px-3 py-2 rounded-xl border border-emerald-200/70 dark:border-slate-700">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {companyResources.map((resItem) => {
+                          const count = weeklySchedule.filter(
+                            (s) => matchScheduleToResource(s, resItem) && viewedWeek.all7Days.some((wd) => scheduleOnDay(s, wd))
+                          ).length;
+                          return (
+                            <button
+                              key={`collapsed-pill-${resItem.id}`}
+                              type="button"
+                              onClick={() => {
+                                setSelectedResourceFilter(resItem.id);
+                                setIsResourceBoardCollapsed(false);
+                              }}
+                              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer flex items-center gap-1 ${
+                                count > 0
+                                  ? "bg-amber-50 dark:bg-amber-950/70 border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-200"
+                                  : "bg-white dark:bg-slate-900 border-emerald-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-emerald-400"
+                              }`}
+                              title="Bấm để mở Bảng 1 và lọc theo tài nguyên này"
+                            >
+                              <span>{resItem.icon} {resItem.name}</span>
+                              <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-extrabold ${count > 0 ? "bg-amber-500 text-white" : "bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300"}`}>
+                                {count > 0 ? `${count} lượt` : "Trống"}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsResourceBoardCollapsed(false)}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold cursor-pointer shrink-0"
+                      >
+                        ▼ Xổ ra xem chi tiết
+                      </button>
+                    </div>
+                  ) : (
+                  <>
                   {companyResources.length === 0 ? (
                     <div className="p-4 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-dashed border-emerald-300 dark:border-slate-700 text-center space-y-2 text-xs">
                       <p className="text-slate-600 dark:text-slate-300 font-semibold">
@@ -13812,6 +13902,72 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       </div>
                     </div>
                   ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => setIsResourceCardsCollapsed((v) => !v)}
+                        className="text-xs font-extrabold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5 hover:underline cursor-pointer"
+                      >
+                        <span>🏢 Danh mục Thẻ Tài Nguyên Công Ty ({companyResources.length})</span>
+                        <span className="px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-200 text-[10px] font-bold">
+                          {isResourceCardsCollapsed ? "▼ Xổ thẻ chi tiết" : "▲ Thu gọn thẻ"}
+                        </span>
+                      </button>
+                    </div>
+
+                    {isResourceCardsCollapsed ? (
+                      <div className="flex items-center gap-1.5 flex-wrap bg-emerald-50/40 dark:bg-slate-800/40 p-2.5 rounded-xl border border-emerald-200/70 dark:border-slate-800">
+                        {companyResources.map((resItem) => {
+                          const count = weeklySchedule.filter(
+                            (s) => matchScheduleToResource(s, resItem) && viewedWeek.all7Days.some((wd) => scheduleOnDay(s, wd))
+                          ).length;
+                          const isFilteringThis = selectedResourceFilter === resItem.id;
+                          return (
+                            <div
+                              key={`compact-res-${resItem.id}`}
+                              className={`px-2.5 py-1 rounded-xl text-xs font-bold border transition-all flex items-center gap-1.5 ${
+                                isFilteringThis
+                                  ? "bg-emerald-600 text-white border-emerald-600 shadow-2xs"
+                                  : count > 0
+                                  ? "bg-amber-50 dark:bg-amber-950/70 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200"
+                                  : "bg-white dark:bg-slate-900 border-emerald-200 dark:border-slate-700 text-slate-700 dark:text-slate-300"
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => setSelectedResourceFilter(isFilteringThis ? "all" : resItem.id)}
+                                className="cursor-pointer flex items-center gap-1"
+                                title="Bấm để lọc lịch tài nguyên"
+                              >
+                                <span>{resItem.icon} {resItem.name}</span>
+                                <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-extrabold ${
+                                  isFilteringThis
+                                    ? "bg-white/20 text-white"
+                                    : count > 0
+                                    ? "bg-amber-500 text-white"
+                                    : "bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300"
+                                }`}>
+                                  {count > 0 ? `${count} lượt đặt` : "Đang trống"}
+                                </span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openScheduleForm(undefined, undefined, "RESOURCE", resItem.id)}
+                                className={`ml-1 px-1.5 py-0.2 rounded text-[10px] font-extrabold cursor-pointer ${
+                                  isFilteringThis
+                                    ? "bg-white text-emerald-700"
+                                    : "bg-emerald-600 hover:bg-emerald-700 text-white"
+                                }`}
+                                title={`Đặt lịch nhanh cho ${resItem.name}`}
+                              >
+                                + Đặt
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
                     {companyResources.map((resItem) => {
                       const weekBookings = weeklySchedule
@@ -13931,23 +14087,33 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       );
                     })}
                   </div>
+                    )}
+                  </div>
                   )}
 
                   {/* LƯỚI LỊCH SỬ DỤNG TÀI NGUYÊN THEO NGÀY TRONG TUẦN (THỨ 2 – THỨ 7) ĐỘC LẬP */}
-                  <div className="pt-3 border-t border-emerald-100 dark:border-slate-800 space-y-2">
+                  <div className="pt-2.5 border-t border-emerald-100 dark:border-slate-800 space-y-2">
                     <div className="flex items-center justify-between flex-wrap gap-2">
-                      <span className="text-xs font-extrabold text-emerald-800 dark:text-emerald-300 uppercase tracking-wider">
-                        🗓️ Chi tiết Lịch Sử Dụng Tài Nguyên Theo Ngày (Thứ 2 – Thứ 7)
+                      <button
+                        type="button"
+                        onClick={() => setIsResourceGridCollapsed((v) => !v)}
+                        className="text-xs font-extrabold text-emerald-800 dark:text-emerald-300 uppercase tracking-wider flex items-center gap-1.5 hover:underline cursor-pointer"
+                      >
+                        <span>🗓️ Chi tiết Lịch Sử Dụng Tài Nguyên Theo Ngày (Thứ 2 – Thứ 7)</span>
                         {selectedResourceFilter !== "all" && (
-                          <span className="ml-2 px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-200">
+                          <span className="px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-200 normal-case">
                             Đang lọc: {companyResources.find((r) => r.id === selectedResourceFilter)?.name}
                           </span>
                         )}
-                      </span>
+                        <span className="px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-200 text-[10px] font-bold normal-case">
+                          {isResourceGridCollapsed ? "▼ Xổ bảng 6 ngày" : "▲ Thu gọn bảng 6 ngày"}
+                        </span>
+                      </button>
                       <span className="text-[11px] text-slate-500">
                         Tổng số lượt đăng ký tài nguyên trong tuần: <b>{resourceBookingSchedules.filter((s) => viewedWeek.all7Days.some((wd) => scheduleOnDay(s, wd))).length}</b>
                       </span>
                     </div>
+                    {!isResourceGridCollapsed && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5">
                       {viewedWeek.days.map((wd) => {
                         const dayBookings = resourceBookingSchedules
@@ -14039,7 +14205,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         );
                       })}
                     </div>
+                    )}
                   </div>
+                  </>
+                  )}
               </div>
             )}
 
@@ -14047,9 +14216,13 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             {/* BẢNG ĐỘC LẬP 2: LỊCH CÔNG TÁC & LỊCH HỌP TUẦN NÀY                      */}
             {/* ===================================================================== */}
             {plannerSectionMode !== "RESOURCE_ONLY" && (
-            <div className="bg-white dark:bg-slate-900 border-2 border-indigo-200/90 dark:border-indigo-900/70 rounded-2xl p-5 shadow-xs">
-              <div className="flex items-center justify-between mb-4 pb-3 border-b border-indigo-100 dark:border-slate-800 flex-wrap gap-2">
-                <div>
+            <div className="bg-white dark:bg-slate-900 border-2 border-indigo-200/90 dark:border-indigo-900/70 rounded-2xl p-4 sm:p-5 shadow-xs">
+              <div className="flex items-center justify-between mb-3.5 pb-2.5 border-b border-indigo-100 dark:border-slate-800 flex-wrap gap-2">
+                <div
+                  className="cursor-pointer select-none"
+                  onClick={() => setIsWorkBoardCollapsed((v) => !v)}
+                  title="Bấm để Thu gọn hoặc Xổ ra Bảng 2"
+                >
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-xs font-extrabold">
                       📅 BẢNG 2: LỊCH CÔNG TÁC &amp; LỊCH HỌP {weekOffset === 0 ? "TUẦN NÀY" : weekOffset === 1 ? "TUẦN SAU" : weekOffset === -1 ? "TUẦN TRƯỚC" : ""} (ĐỘC LẬP)
@@ -14090,21 +14263,56 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   >
                     + Thêm lịch công tác
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsWorkBoardCollapsed((v) => !v)}
+                    className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-indigo-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 text-xs font-extrabold flex items-center gap-1 cursor-pointer"
+                    title={isWorkBoardCollapsed ? "Xổ ra Bảng 2" : "Thu gọn Bảng 2"}
+                  >
+                    {isWorkBoardCollapsed ? (
+                      <>
+                        <ChevronDown className="w-3.5 h-3.5" />
+                        <span>▼ Xổ ra Bảng 2</span>
+                      </>
+                    ) : (
+                      <>
+                        <ChevronUp className="w-3.5 h-3.5" />
+                        <span>▲ Thu gọn Bảng 2</span>
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
 
-              {/* BANNER QUẢN LÝ LỊCH HỌP & NHẮC HỌP TRONG TUẦN ĐANG XEM */}
+              {isWorkBoardCollapsed ? (
+                <div className="flex items-center justify-between gap-2 flex-wrap bg-indigo-50/50 dark:bg-slate-800/50 px-3 py-2 rounded-xl border border-indigo-200/70 dark:border-slate-700 text-xs">
+                  <span className="text-slate-600 dark:text-slate-300 font-semibold">
+                    Đang thu gọn Bảng 2 • Có <b>{filteredSchedules.filter((s) => viewedWeek.all7Days.some((wd) => scheduleOnDay(s, wd))).length}</b> lịch công tác &amp; lịch họp trong tuần này.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsWorkBoardCollapsed(false)}
+                    className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold cursor-pointer"
+                  >
+                    ▼ Xổ ra xem Lịch tuần
+                  </button>
+                </div>
+              ) : (
+              <>
+              {/* BANNER QUẢN LÝ LỊCH HỌP & NHẮC HỌP TRONG TUẦN ĐANG XEM (THU GỌN / XỔ RA LINH HOẠT) */}
               {(() => {
                 const weekMeetings = filteredSchedules.filter((s: any) => {
-                  const isMtg = s.eventType === "MEETING" || String(s.title || "").toLowerCase().includes("họp");
-                  if (!isMtg) return false;
+                  if (!isScheduleRealMeeting(s)) return false;
                   return viewedWeek.all7Days.some((wd) => scheduleOnDay(s, wd));
                 });
                 if (weekMeetings.length === 0) return null;
                 return (
-                  <div className="mb-4 p-3.5 rounded-2xl bg-gradient-to-r from-rose-50/90 via-indigo-50/60 to-purple-50/80 dark:from-rose-950/30 dark:via-slate-900 dark:to-indigo-950/30 border border-rose-200/80 dark:border-rose-900/60 space-y-2.5">
+                  <div className="mb-3.5 p-3 rounded-2xl bg-gradient-to-r from-rose-50/90 via-indigo-50/60 to-purple-50/80 dark:from-rose-950/30 dark:via-slate-900 dark:to-indigo-950/30 border border-rose-200/80 dark:border-rose-900/60 space-y-2">
                     <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div className="flex items-center gap-2">
+                      <div
+                        className="flex items-center gap-2 flex-wrap cursor-pointer select-none"
+                        onClick={() => setIsMeetingBannerCollapsed((v) => !v)}
+                      >
                         <span className="px-2 py-0.5 rounded-lg bg-rose-600 text-white text-[11px] font-extrabold">
                           🎥 LỊCH HỌP TUẦN NÀY ({weekMeetings.length})
                         </span>
@@ -14112,14 +14320,54 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           Theo dõi thành viên tham dự, gửi tin nhắn thông báo họp &amp; nhắc lịch họp 1 chạm
                         </span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => openScheduleForm(undefined, undefined, "MEETING")}
-                        className="text-xs font-bold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
-                      >
-                        + Đặt lịch họp mới
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openScheduleForm(undefined, undefined, "MEETING")}
+                          className="text-xs font-bold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
+                        >
+                          + Đặt lịch họp mới
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setIsMeetingBannerCollapsed((v) => !v)}
+                          className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-slate-700 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 text-[11px] font-extrabold flex items-center gap-1 cursor-pointer shadow-2xs"
+                        >
+                          {isMeetingBannerCollapsed ? (
+                            <>
+                              <ChevronDown className="w-3.5 h-3.5" />
+                              <span>▼ Xổ ra chi tiết ({weekMeetings.length} cuộc họp)</span>
+                            </>
+                          ) : (
+                            <>
+                              <ChevronUp className="w-3.5 h-3.5" />
+                              <span>▲ Thu gọn danh sách họp</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
                     </div>
+
+                    {isMeetingBannerCollapsed ? (
+                      <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                        {weekMeetings.map((mtg: any) => (
+                          <button
+                            key={`compact-mtg-${mtg.id}`}
+                            type="button"
+                            onClick={() => setViewingScheduleEvent(mtg)}
+                            className="px-2.5 py-1 rounded-xl bg-white dark:bg-slate-900 hover:bg-rose-50 dark:hover:bg-slate-800 border border-rose-200/80 dark:border-slate-700 text-left text-[11px] flex items-center gap-1.5 shadow-2xs cursor-pointer max-w-full"
+                            title={`${mtg.day} (${mtg.time}) • ${mtg.title} — Bấm để xem chi tiết`}
+                          >
+                            <span className="px-1.5 py-0.2 rounded bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 font-mono font-extrabold text-[10px] shrink-0">
+                              {mtg.day} {mtg.date ? `${String(mtg.date).slice(8, 10)}/${String(mtg.date).slice(5, 7)}` : ""} • {mtg.time}
+                            </span>
+                            <span className="font-bold text-slate-800 dark:text-slate-200 truncate max-w-[260px]">
+                              {mtg.title}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                       {weekMeetings.map((mtg: any) => {
                         const rawActors = String(mtg.actor || "").split(/[,;\n]+/).map((s: string) => s.trim()).filter(Boolean);
@@ -14223,6 +14471,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         );
                       })}
                     </div>
+                    )}
                   </div>
                 );
               })()}
@@ -14310,8 +14559,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           {dayEvents.map((ev: any) => {
                             const isHubPlan = Boolean(ev.isHubWeeklyPlan);
                             const isBusinessTrip = Boolean(ev.sourceProposalCode) || String(ev.id || "").startsWith("prop-trip-");
-                            const isResourceEvt = !isHubPlan && !isBusinessTrip && ev.eventType === "RESOURCE";
-                            const isMeeting = !isHubPlan && !isBusinessTrip && !isResourceEvt && (ev.eventType === "MEETING" || String(ev.title || "").toLowerCase().includes("họp"));
+                            const isResourceEvt = !isHubPlan && !isBusinessTrip && ev.eventType === "RESOURCE" && !/^họp\b|^họp:/i.test(String(ev.title || "").trim());
+                            const isMeeting = !isHubPlan && !isBusinessTrip && !isResourceEvt && isScheduleRealMeeting(ev);
                             const isApp = ev.category === "Application";
                             const isSales = ev.category === "Kinh Doanh";
                             const isWh = ev.category === "Kho & Vận Hành" || isSameWorkspaceDept(ev.category, "Kho Nhà Máy");
@@ -14505,6 +14754,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   );
                 })}
               </div>
+              </>
+              )}
             </div>
             )}
         </div>
