@@ -381,7 +381,8 @@ describe("reagent preparation", () => {
     expect(qcRes.lot_status).toBe("RELEASED");
 
     // Even if a lot was somehow marked RELEASED while still sitting in quarantine location, preparing STO021 auto-heals and succeeds
-    await db().query("UPDATE inv.stock_balance SET location_id = $2 WHERE lot_id = $1", [prep022.lot_id, site.quarantine]);
+    await db().query("UPDATE inv.stock_balance SET qty_on_hand = 100 WHERE lot_id = $1 AND location_id = $2", [prep022.lot_id, site.quarantine]);
+    await db().query("UPDATE inv.stock_balance SET qty_on_hand = 0 WHERE lot_id = $1 AND location_id = $2", [prep022.lot_id, site.shelf]);
 
     // 3. Now prepare 100 mL of STO021 (needs 15 mL of STO022) -> must find the 100 mL lot of STO022 and consume 15 mL
     const prep021 = await withTransaction((tx) =>
