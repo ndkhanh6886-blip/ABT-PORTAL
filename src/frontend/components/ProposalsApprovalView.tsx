@@ -1752,6 +1752,8 @@ export function ProposalsApprovalView({
   const [leaveStatusFilter, setLeaveStatusFilter] = useState<string>("all");
   const [hideStaffLeaveForDirector, setHideStaffLeaveForDirector] = useState<boolean>(false);
   const [leaveQuotaByStaff, setLeaveQuotaByStaff] = useState<Record<string, number>>({});
+  const [isLeaveSummaryExpanded, setIsLeaveSummaryExpanded] = useState<boolean>(false);
+  const [showAllPersonnelInLeaveSummary, setShowAllPersonnelInLeaveSummary] = useState<boolean>(false);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -4113,6 +4115,24 @@ export function ProposalsApprovalView({
       map.set(key, existing);
     });
 
+    if (showAllPersonnelInLeaveSummary && Array.isArray(personnelList)) {
+      personnelList.forEach((person: any) => {
+        const key = cleanStaffDisplayName(person?.full_name || person?.name || "");
+        if (!key) return;
+        const dept = String(person?.department || "—").trim() || "—";
+        if (leaveDeptFilter !== "all" && dept.toLowerCase() !== leaveDeptFilter.toLowerCase()) {
+          return;
+        }
+        if (searchQuery.trim()) {
+          const q = searchQuery.toLowerCase().trim();
+          if (!key.toLowerCase().includes(q) && !dept.toLowerCase().includes(q)) return;
+        }
+        const existingKeys = Array.from(map.keys());
+        if (existingKeys.some((k) => isSamePerson(k, key))) return;
+        map.set(key, getOrCreateStaffRow(key, dept));
+      });
+    }
+
     return Array.from(map.values())
       .map((row) => {
         const quota = Math.max(0, Number(leaveQuotaByStaff[row.staffName] ?? 12));
@@ -4139,7 +4159,7 @@ export function ProposalsApprovalView({
         };
       })
       .sort((a, b) => b.totalAbsentDays - a.totalAbsentDays || b.otTotalHours - a.otTotalHours || a.staffName.localeCompare(b.staffName));
-  }, [monthlyLeaveProposals, monthlyOvertimeProposals, leaveQuotaByStaff]);
+  }, [monthlyLeaveProposals, monthlyOvertimeProposals, leaveQuotaByStaff, showAllPersonnelInLeaveSummary, personnelList, leaveDeptFilter, searchQuery]);
 
   const handleExportMonthlyLeaveCSV = () => {
     if (monthlyLeaveProposals.length === 0 && monthlyOvertimeProposals.length === 0) {
@@ -5026,181 +5046,234 @@ export function ProposalsApprovalView({
             </div>
           )}
 
-          {/* BẢNG 1: BẢNG TỔNG HỢP CHẤM CÔNG NGHỈ PHÉP CUỐI THÁNG THEO NHÂN VIÊN (DÀNH CHO KẾ TOÁN) */}
+          {/* BẢNG 1: BẢNG TỔNG HỢP CHẤM CÔNG NGHỈ PHÉP CUỐI THÁNG THEO NHÂN VIÊN (DÀNH CHO KẾ TOÁN - MẶC ĐỊNH THU GỌN, BẤM ĐỂ XỔ RA) */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
+              <div
+                onClick={() => setIsLeaveSummaryExpanded((prev) => !prev)}
+                className="cursor-pointer select-none flex-1 min-w-[260px]"
+              >
                 <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white uppercase flex items-center gap-2">
                   <span>📊 I. BẢNG TỔNG HỢP CHẤM CÔNG NGHỈ PHÉP &amp; CỘNG DỒN ĐI TRỄ / VỀ SỚM THEO NHÂN VIÊN ({leaveSummaryByStaff.length} NHÂN SỰ)</span>
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                    {isLeaveSummaryExpanded ? "▲ Đang mở" : "▼ Đang thu gọn"}
+                  </span>
                 </h4>
-                <p className="text-[11px] text-slate-500">
-                  Tự động cộng dồn thời gian <strong>Đi trễ / Về sớm theo ngày (8 giờ = 480 phút = 1 ngày công)</strong> trong kỳ <strong>{leaveMonthFilter === "all" ? "Tất cả các tháng" : leaveMonthFilter}</strong> để cấn trừ vào <strong>Quỹ phép năm còn lại</strong>; nếu nhân viên hết phép năm (nhập Quỹ phép = <code>0</code> hoặc số ngày vượt quá quỹ phép) thì hệ thống <strong>tự động chuyển phần vượt sang Nghỉ không lương</strong>.
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Tự động cộng dồn thời gian <strong>Đi trễ / Về sớm theo ngày (8 giờ = 480 phút = 1 ngày công)</strong> trong kỳ <strong>{leaveMonthFilter === "all" ? "Tất cả các tháng" : leaveMonthFilter}</strong> để cấn trừ vào <strong>Quỹ phép năm còn lại</strong>; bấm <strong>&ldquo;Xổ ra&rdquo;</strong> để xem bảng tổng hợp hoặc cập nhật quỹ phép năm cho toàn bộ nhân sự (kể cả người chưa phát sinh đơn nghỉ).
                 </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextShowAll = !showAllPersonnelInLeaveSummary;
+                    setShowAllPersonnelInLeaveSummary(nextShowAll);
+                    if (nextShowAll && !isLeaveSummaryExpanded) {
+                      setIsLeaveSummaryExpanded(true);
+                    }
+                  }}
+                  className={`px-3 py-1.5 rounded-xl text-[11px] font-extrabold border cursor-pointer transition-all ${
+                    showAllPersonnelInLeaveSummary
+                      ? "bg-teal-600 text-white border-teal-600 shadow-2xs"
+                      : "bg-teal-50 dark:bg-teal-950/50 text-teal-900 dark:text-teal-200 border-teal-300 dark:border-teal-700 hover:bg-teal-100"
+                  }`}
+                  title="Hiển thị toàn bộ danh sách nhân viên công ty (kể cả những người chưa có đơn xin nghỉ phép trong tháng) để cập nhật số ngày phép năm còn lại"
+                >
+                  {showAllPersonnelInLeaveSummary
+                    ? `👥 Đang hiện toàn bộ nhân sự (${leaveSummaryByStaff.length}) • Bấm chỉ hiện người có đơn`
+                    : `👥 Cập nhật phép cho cả người chưa nghỉ (Hiện tất cả ${(personnelList || []).length} NV)`}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsLeaveSummaryExpanded((prev) => !prev)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-extrabold border cursor-pointer transition-all flex items-center gap-1.5 ${
+                    isLeaveSummaryExpanded
+                      ? "bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border-slate-300 dark:border-slate-700"
+                      : "bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-600 shadow-2xs"
+                  }`}
+                >
+                  <span>{isLeaveSummaryExpanded ? "▲ Thu gọn bảng tổng hợp" : `▼ Xổ ra bảng tổng hợp & Quỹ phép (${leaveSummaryByStaff.length} người)`}</span>
+                </button>
               </div>
             </div>
 
-            {leaveSummaryByStaff.length === 0 ? (
-              <div className="p-6 text-center text-xs text-slate-500 bg-slate-50 dark:bg-slate-950/50 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
-                Chưa có nhân viên nào đăng ký nghỉ phép trong kỳ <strong>{leaveMonthFilter}</strong>.
-              </div>
-            ) : (
-              <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
-                <table className="w-full text-xs border-collapse">
-                  <thead>
-                    <tr className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-b border-slate-200 dark:border-slate-700">
-                      <th className="py-2.5 px-3 text-center w-10">STT</th>
-                      <th className="py-2.5 px-3 text-left">Họ tên nhân viên</th>
-                      <th className="py-2.5 px-3 text-left">Phòng ban</th>
-                      <th className="py-2.5 px-3 text-center">Số đơn</th>
-                      <th className="py-2.5 px-3 text-center text-amber-700 dark:text-amber-300">Đi trễ / Về sớm cộng dồn</th>
-                      <th className="py-2.5 px-3 text-center text-blue-700 dark:text-blue-300" title="Tổng giờ làm thêm (OT): tách rõ Giờ tính lương tăng ca và Giờ quy đổi nghỉ bù (8h = 1 ngày) tự động cấn trừ cho giờ đi trễ/về sớm hoặc ngày nghỉ">Tăng ca / OT (Lương &amp; Nghỉ bù)</th>
-                      <th className="py-2.5 px-3 text-center text-indigo-700 dark:text-indigo-300" title="Nhập số ngày phép năm còn lại của nhân viên (nhập 0 nếu đã hết phép)">Quỹ phép còn (Đầu kỳ)</th>
-                      <th className="py-2.5 px-3 text-center text-emerald-700 dark:text-emerald-300">Thực trừ Phép năm (Có lương)</th>
-                      <th className="py-2.5 px-3 text-center text-rose-700 dark:text-rose-300">Nghỉ không lương (Gồm vượt phép)</th>
-                      <th className="py-2.5 px-3 text-center text-teal-700 dark:text-teal-300">Phép còn cuối kỳ</th>
-                      <th className="py-2.5 px-3 text-center text-purple-700 dark:text-purple-300">Ốm / BHXH / Chế độ</th>
-                      <th className="py-2.5 px-3 text-center text-sky-700 dark:text-sky-300">WFH (Từ xa)</th>
-                      <th className="py-2.5 px-3 text-center font-black">Tổng ngày nghỉ</th>
-                      <th className="py-2.5 px-3 text-left">Chi tiết các đợt nghỉ / Tăng ca &amp; Người nhận bàn giao</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200/80 dark:divide-slate-800">
-                    {leaveSummaryByStaff.map((row, idx) => (
-                      <tr key={row.staffName} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                        <td className="py-2.5 px-3 text-center font-bold text-slate-400">{idx + 1}</td>
-                        <td className="py-2.5 px-3 font-extrabold text-slate-900 dark:text-white">{row.staffName}</td>
-                        <td className="py-2.5 px-3 text-slate-600 dark:text-slate-300">{row.dept}</td>
-                        <td className="py-2.5 px-3 text-center">
-                          <span className="font-bold">{row.totalRequests}</span>{" "}
-                          <span className="text-[10px] text-slate-400">
-                            ({row.approvedRequests} duyệt{row.pendingRequests > 0 ? `, ${row.pendingRequests} chờ` : ""})
-                          </span>
-                          {row.otCount > 0 && (
-                            <div className="text-[10px] font-bold text-blue-600 dark:text-blue-400">
-                              +{row.otCount} phiếu OT
-                            </div>
-                          )}
-                        </td>
-                        <td className="py-2.5 px-3 text-center">
-                          {row.lateEarlyCount > 0 ? (
-                            <div className="space-y-0.5">
-                              <div className="font-extrabold text-amber-700 dark:text-amber-300">
-                                ⏰ {row.lateEarlyMinutes} phút ({Math.round((row.lateEarlyMinutes / 60) * 100) / 100}h)
-                              </div>
-                              <div className="text-[10px] font-bold text-amber-600 dark:text-amber-400">
-                                {row.lateEarlyCount} lần ➔ {row.lateEarlyDays} ngày
-                              </div>
-                            </div>
-                          ) : (
-                            <span className="text-slate-400">—</span>
-                          )}
-                        </td>
-                        <td className="py-2.5 px-3 text-center">
-                          {row.otCount > 0 ? (
-                            <div className="space-y-0.5">
-                              {row.otPayHours > 0 && (
-                                <div className="font-extrabold text-blue-700 dark:text-blue-300">
-                                  💵 Tính lương: {row.otPayHours}h
-                                </div>
-                              )}
-                              {row.otCompHours > 0 && (
-                                <div className="text-[10px] font-bold text-teal-700 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/70 px-1.5 py-0.5 rounded">
-                                  🔄 Nghỉ bù: +{row.otCompHours}h ({row.otCompDays}d)
-                                  {row.compLeaveUsedDays > 0 ? ` • Đã cấn trừ ${row.compLeaveUsedDays}d` : ""}
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-slate-400">—</span>
-                          )}
-                        </td>
-                        <td className="py-2.5 px-3 text-center">
-                          <div className="inline-flex items-center gap-1">
-                            <input
-                              type="number"
-                              min={0}
-                              max={60}
-                              step={0.25}
-                              value={row.availableQuota}
-                              onChange={(e) => updateStaffLeaveQuota(row.staffName, Number(e.target.value))}
-                              className="w-16 px-1.5 py-1 rounded-lg border border-indigo-300 dark:border-indigo-700 bg-indigo-50/60 dark:bg-indigo-950/60 text-center font-extrabold text-indigo-800 dark:text-indigo-200 text-xs"
-                              title="Chỉnh số ngày phép năm còn lại của nhân viên (Nhập 0 nếu nhân viên đã hết phép để tự động chuyển sang Nghỉ không lương)"
-                            />
-                            <span className="text-[10px] text-slate-400">ngày</span>
-                          </div>
-                        </td>
-                        <td className="py-2.5 px-3 text-center font-extrabold text-emerald-600 dark:text-emerald-400">
-                          {row.paidLeaveDays > 0 ? (
-                            <div>
-                              <div>{row.paidLeaveDays} ngày</div>
-                              {row.lateEarlyDays > 0 && row.paidLeaveDays > row.rawPaidLeaveDays && (
-                                <div className="text-[10px] font-semibold text-emerald-700/80 dark:text-emerald-300/80">
-                                  (Gồm {Math.round((row.paidLeaveDays - Math.min(row.rawPaidLeaveDays, row.paidLeaveDays)) * 1000) / 1000}d trễ/sớm)
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td className="py-2.5 px-3 text-center font-extrabold text-rose-600 dark:text-rose-400">
-                          {row.unpaidLeaveDays > 0 ? (
-                            <div>
-                              <div>{row.unpaidLeaveDays} ngày</div>
-                              {row.overflowUnpaidDays > 0 && (
-                                <div className="text-[10px] font-bold text-rose-600 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/70 px-1.5 py-0.5 rounded mt-0.5">
-                                  +{row.overflowUnpaidDays}d do hết phép
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td className="py-2.5 px-3 text-center font-extrabold text-teal-700 dark:text-teal-300">
-                          <div className="space-y-0.5">
-                            <span className={`inline-block px-2 py-0.5 rounded-lg text-[11px] font-black ${row.remainingQuota === 0 ? "bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300" : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"}`}>
-                              {row.remainingQuota} ngày phép
-                            </span>
-                            {row.remainingCompDays > 0 && (
-                              <div className="text-[10px] font-bold text-teal-600 dark:text-teal-400">
-                                +{row.remainingCompDays}d nghỉ bù OT
+            {isLeaveSummaryExpanded && (
+              leaveSummaryByStaff.length === 0 ? (
+                <div className="p-6 text-center text-xs text-slate-500 bg-slate-50 dark:bg-slate-950/50 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
+                  Chưa có nhân viên nào đăng ký nghỉ phép trong kỳ <strong>{leaveMonthFilter}</strong>. Bấm nút <strong>&ldquo;👥 Cập nhật phép cho cả người chưa nghỉ&rdquo;</strong> ở góc phải để hiển thị toàn bộ danh sách nhân viên và cập nhật quỹ phép năm.
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-b border-slate-200 dark:border-slate-700">
+                        <th className="py-2.5 px-3 text-center w-10">STT</th>
+                        <th className="py-2.5 px-3 text-left">Họ tên nhân viên</th>
+                        <th className="py-2.5 px-3 text-left">Phòng ban</th>
+                        <th className="py-2.5 px-3 text-center">Số đơn</th>
+                        <th className="py-2.5 px-3 text-center text-amber-700 dark:text-amber-300">Đi trễ / Về sớm cộng dồn</th>
+                        <th className="py-2.5 px-3 text-center text-blue-700 dark:text-blue-300" title="Tổng giờ làm thêm (OT): tách rõ Giờ tính lương tăng ca và Giờ quy đổi nghỉ bù (8h = 1 ngày) tự động cấn trừ cho giờ đi trễ/về sớm hoặc ngày nghỉ">Tăng ca / OT (Lương &amp; Nghỉ bù)</th>
+                        <th className="py-2.5 px-3 text-center text-indigo-700 dark:text-indigo-300" title="Nhập số ngày phép năm còn lại của nhân viên (nhập 0 nếu đã hết phép)">Quỹ phép còn (Đầu kỳ)</th>
+                        <th className="py-2.5 px-3 text-center text-emerald-700 dark:text-emerald-300">Thực trừ Phép năm (Có lương)</th>
+                        <th className="py-2.5 px-3 text-center text-rose-700 dark:text-rose-300">Nghỉ không lương (Gồm vượt phép)</th>
+                        <th className="py-2.5 px-3 text-center text-teal-700 dark:text-teal-300">Phép còn cuối kỳ</th>
+                        <th className="py-2.5 px-3 text-center text-purple-700 dark:text-purple-300">Ốm / BHXH / Chế độ</th>
+                        <th className="py-2.5 px-3 text-center text-sky-700 dark:text-sky-300">WFH (Từ xa)</th>
+                        <th className="py-2.5 px-3 text-center font-black">Tổng ngày nghỉ</th>
+                        <th className="py-2.5 px-3 text-left">Chi tiết các đợt nghỉ / Tăng ca &amp; Người nhận bàn giao</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200/80 dark:divide-slate-800">
+                      {leaveSummaryByStaff.map((row, idx) => (
+                        <tr key={row.staffName} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                          <td className="py-2.5 px-3 text-center font-bold text-slate-400">{idx + 1}</td>
+                          <td className="py-2.5 px-3 font-extrabold text-slate-900 dark:text-white">{row.staffName}</td>
+                          <td className="py-2.5 px-3 text-slate-600 dark:text-slate-300">{row.dept}</td>
+                          <td className="py-2.5 px-3 text-center">
+                            {row.totalRequests > 0 ? (
+                              <>
+                                <span className="font-bold">{row.totalRequests}</span>{" "}
+                                <span className="text-[10px] text-slate-400">
+                                  ({row.approvedRequests} duyệt{row.pendingRequests > 0 ? `, ${row.pendingRequests} chờ` : ""})
+                                </span>
+                              </>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 italic">Chưa phát sinh</span>
+                            )}
+                            {row.otCount > 0 && (
+                              <div className="text-[10px] font-bold text-blue-600 dark:text-blue-400">
+                                +{row.otCount} phiếu OT
                               </div>
                             )}
-                          </div>
-                        </td>
-                        <td className="py-2.5 px-3 text-center font-extrabold text-purple-600 dark:text-purple-400">
-                          {row.socialOrPolicyDays > 0 ? `${row.socialOrPolicyDays} ngày` : "—"}
-                        </td>
-                        <td className="py-2.5 px-3 text-center font-extrabold text-sky-600 dark:text-sky-400">
-                          {row.wfhDays > 0 ? `${row.wfhDays} ngày` : "—"}
-                        </td>
-                        <td className="py-2.5 px-3 text-center">
-                          <span className="px-2 py-0.5 rounded-lg font-black bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-200">
-                            {row.totalAbsentDays} ngày
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3">
-                          <div className="flex flex-wrap gap-1">
-                            {row.periods.map((pr) => (
-                              <span
-                                key={pr.code}
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-                              >
-                                <strong className="font-mono text-indigo-600 dark:text-indigo-400">{pr.code}:</strong>
-                                <span>
-                                  {formatDayVN(pr.fromDate)} → {formatDayVN(pr.toDate)} ({pr.days} ngày)
-                                </span>
-                                <span className="text-teal-700 dark:text-teal-300 font-semibold">• Thay: {pr.handover}</span>
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            {row.lateEarlyCount > 0 ? (
+                              <div className="space-y-0.5">
+                                <div className="font-extrabold text-amber-700 dark:text-amber-300">
+                                  ⏰ {row.lateEarlyMinutes} phút ({Math.round((row.lateEarlyMinutes / 60) * 100) / 100}h)
+                                </div>
+                                <div className="text-[10px] font-bold text-amber-600 dark:text-amber-400">
+                                  {row.lateEarlyCount} lần ➔ {row.lateEarlyDays} ngày
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            {row.otCount > 0 ? (
+                              <div className="space-y-0.5">
+                                {row.otPayHours > 0 && (
+                                  <div className="font-extrabold text-blue-700 dark:text-blue-300">
+                                    💵 Tính lương: {row.otPayHours}h
+                                  </div>
+                                )}
+                                {row.otCompHours > 0 && (
+                                  <div className="text-[10px] font-bold text-teal-700 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/70 px-1.5 py-0.5 rounded">
+                                    🔄 Nghỉ bù: +{row.otCompHours}h ({row.otCompDays}d)
+                                    {row.compLeaveUsedDays > 0 ? ` • Đã cấn trừ ${row.compLeaveUsedDays}d` : ""}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <div className="inline-flex items-center gap-1">
+                              <input
+                                type="number"
+                                min={0}
+                                max={60}
+                                step={0.25}
+                                value={row.availableQuota}
+                                onChange={(e) => updateStaffLeaveQuota(row.staffName, Number(e.target.value))}
+                                className="w-16 px-1.5 py-1 rounded-lg border border-indigo-300 dark:border-indigo-700 bg-indigo-50/60 dark:bg-indigo-950/60 text-center font-extrabold text-indigo-800 dark:text-indigo-200 text-xs"
+                                title="Chỉnh số ngày phép năm còn lại của nhân viên (Nhập 0 nếu nhân viên đã hết phép để tự động chuyển sang Nghỉ không lương)"
+                              />
+                              <span className="text-[10px] text-slate-400">ngày</span>
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-extrabold text-emerald-600 dark:text-emerald-400">
+                            {row.paidLeaveDays > 0 ? (
+                              <div>
+                                <div>{row.paidLeaveDays} ngày</div>
+                                {row.lateEarlyDays > 0 && row.paidLeaveDays > row.rawPaidLeaveDays && (
+                                  <div className="text-[10px] font-semibold text-emerald-700/80 dark:text-emerald-300/80">
+                                    (Gồm {Math.round((row.paidLeaveDays - Math.min(row.rawPaidLeaveDays, row.paidLeaveDays)) * 1000) / 1000}d trễ/sớm)
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-extrabold text-rose-600 dark:text-rose-400">
+                            {row.unpaidLeaveDays > 0 ? (
+                              <div>
+                                <div>{row.unpaidLeaveDays} ngày</div>
+                                {row.overflowUnpaidDays > 0 && (
+                                  <div className="text-[10px] font-bold text-rose-600 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/70 px-1.5 py-0.5 rounded mt-0.5">
+                                    +{row.overflowUnpaidDays}d do hết phép
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-extrabold text-teal-700 dark:text-teal-300">
+                            <div className="space-y-0.5">
+                              <span className={`inline-block px-2 py-0.5 rounded-lg text-[11px] font-black ${row.remainingQuota === 0 ? "bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300" : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"}`}>
+                                {row.remainingQuota} ngày phép
                               </span>
-                            ))}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                              {row.remainingCompDays > 0 && (
+                                <div className="text-[10px] font-bold text-teal-600 dark:text-teal-400">
+                                  +{row.remainingCompDays}d nghỉ bù OT
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-extrabold text-purple-600 dark:text-purple-400">
+                            {row.socialOrPolicyDays > 0 ? `${row.socialOrPolicyDays} ngày` : "—"}
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-extrabold text-sky-600 dark:text-sky-400">
+                            {row.wfhDays > 0 ? `${row.wfhDays} ngày` : "—"}
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <span className="px-2 py-0.5 rounded-lg font-black bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-200">
+                              {row.totalAbsentDays} ngày
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3">
+                            {row.periods.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {row.periods.map((pr) => (
+                                  <span
+                                    key={pr.code}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                                  >
+                                    <strong className="font-mono text-indigo-600 dark:text-indigo-400">{pr.code}:</strong>
+                                    <span>
+                                      {formatDayVN(pr.fromDate)} → {formatDayVN(pr.toDate)} ({pr.days} ngày)
+                                    </span>
+                                    <span className="text-teal-700 dark:text-teal-300 font-semibold">• Thay: {pr.handover}</span>
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-[11px] text-slate-400 italic">100% đi làm bình thường trong kỳ</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )
             )}
           </div>
 
