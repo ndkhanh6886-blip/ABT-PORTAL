@@ -3159,6 +3159,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [isPlanModalOpen, setIsPlanModalOpen] = useState(false);
     const [isLogModalOpen, setIsLogModalOpen] = useState(false);
     const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
+    const [suggestedNextCustCode, setSuggestedNextCustCode] = useState<string>("");
 
     // Modal Control States for Office 13B
     const [isGiveStockModalOpen, setIsGiveStockModalOpen] = useState(false);
@@ -6938,8 +6939,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const codeTrimmed = custCode.trim();
         const nameTrimmed = custName.trim();
 
-        if (!codeTrimmed || !nameTrimmed) {
-            showToast("Vui lòng nhập đầy đủ Mã khách hàng và Tên khách hàng!", "warning");
+        if (!nameTrimmed) {
+            showToast("Vui lòng nhập Tên khách hàng / Đơn vị!", "warning");
+            return;
+        }
+        if (editingCustomer && !codeTrimmed) {
+            showToast("Vui lòng nhập Mã khách hàng khi chỉnh sửa!", "warning");
             return;
         }
 
@@ -7001,11 +7006,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
             if (res.ok) {
                 const savedRes = await res.json();
+                const finalCustomerCode = String(savedRes.customer?.customer_code || codeTrimmed || "").trim();
                 const savedCustomer = {
                     ...payload,
                     ...(savedRes.customer || {}),
                     id: savedRes.id || savedRes.customer?.id || (editingCustomer ? editingCustomer.id : Date.now()),
-                    customer_code: codeTrimmed,
+                    customer_code: finalCustomerCode,
                     name: nameTrimmed,
                     special_price_list: custSpecialPriceList,
                     created_at: editingCustomer?.created_at || new Date().toISOString()
@@ -7013,18 +7019,23 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                 // Update in-memory customer list immediately
                 setCustomers(prev => {
-                    const exists = prev.some(c => (editingCustomer && c.id === editingCustomer.id) || c.customer_code === codeTrimmed);
+                    const exists = prev.some(c => (editingCustomer && c.id === editingCustomer.id) || (finalCustomerCode && c.customer_code === finalCustomerCode));
                     if (exists) {
-                        return prev.map(c => ((editingCustomer && c.id === editingCustomer.id) || c.customer_code === codeTrimmed) ? { ...c, ...savedCustomer } : c);
+                        return prev.map(c => ((editingCustomer && c.id === editingCustomer.id) || (finalCustomerCode && c.customer_code === finalCustomerCode)) ? { ...c, ...savedCustomer } : c);
                     }
                     return [savedCustomer, ...prev];
                 });
 
-                if (selectedCustomer && ((editingCustomer && selectedCustomer.id === editingCustomer.id) || selectedCustomer.customer_code === codeTrimmed)) {
+                if (selectedCustomer && ((editingCustomer && selectedCustomer.id === editingCustomer.id) || (finalCustomerCode && selectedCustomer.customer_code === finalCustomerCode))) {
                     setSelectedCustomer((prev: any) => prev ? { ...prev, ...savedCustomer } : savedCustomer);
                 }
 
-                showToast(editingCustomer ? "Đã sửa khách hàng thành công!" : "Đã thêm khách hàng mới thành công!", "success");
+                showToast(
+                    editingCustomer
+                        ? `Đã sửa khách hàng (${finalCustomerCode}) thành công!`
+                        : `Đã thêm khách hàng mới (${finalCustomerCode}) thành công!`,
+                    "success"
+                );
                 setIsCustomerModalOpen(false);
                 fetchCustomers();
                 resetCustomerForm();
@@ -7315,6 +7326,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const resetCustomerForm = () => {
         setEditingCustomer(null);
         setCustCode("");
+        fetch("/api/sales?action=next_customer_code")
+            .then(r => (r.ok ? r.json() : null))
+            .then(d => {
+                if (d?.next_code) setSuggestedNextCustCode(String(d.next_code));
+            })
+            .catch(() => {});
         setCustTaxCode("");
         setCustName("");
         setCustContact("");
@@ -8459,8 +8476,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }
         const repName = salesPersonnel.find(p => p.employee_id === repId)?.full_name || repId;
 
+        const explicitCode = nvkdCustCode.trim();
+        const tempId = explicitCode || (editingNvkdCustomer ? editingNvkdCustomer.id : suggestedNextCustCode || `KH-${Date.now().toString().slice(-4)}`);
         const payload = {
-            id: nvkdCustCode.trim() || (editingNvkdCustomer ? editingNvkdCustomer.id : `RC-${Date.now()}`),
+            id: tempId,
             name: nvkdCustName.trim(),
             contact_person: nvkdCustContactPerson.trim() || nvkdCustName.trim(),
             phone: nvkdCustPhone.trim() || "-",
@@ -8483,13 +8502,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             showToast("Đã cập nhật khách hàng lẻ thành công!", "success");
         } else {
             setSalesNvkdCustomers(prev => [...prev, payload]);
-            showToast("Đã thêm khách hàng lẻ mới thành công!", "success");
         }
 
         // Sync to internal PostgreSQL DB via /api/sales so Tab 6 (Đơn hàng) immediately receives the updated customer
         const customerBody = {
             action: "customer",
-            customer_code: payload.id,
+            customer_code: explicitCode || (editingNvkdCustomer ? editingNvkdCustomer.id : ""),
             name: payload.name,
             contact_person: payload.contact_person,
             phone: payload.phone !== "-" ? payload.phone : null,
@@ -8513,6 +8531,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             if (!res.ok) {
                 console.error("Failed to save retail customer to /api/sales:", res.status);
             } else {
+                const saved = await res.json().catch(() => null);
+                const serverCode = saved?.customer?.customer_code;
+                if (!editingNvkdCustomer) {
+                    if (serverCode && serverCode !== tempId) {
+                        setSalesNvkdCustomers(prev => prev.map(c => c.id === tempId ? { ...c, id: serverCode } : c));
+                    }
+                    showToast(`Đã thêm khách hàng mới (${serverCode || tempId}) thành công!`, "success");
+                }
                 fetchCustomers();
             }
         }).catch(err => console.warn("Failed to sync retail customer to /api/sales:", err));
@@ -41308,14 +41334,29 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         
                         <div className="grid grid-cols-2 gap-4">
                             <div>
-                                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Mã khách hàng *</label>
+                                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                                    Mã khách hàng{" "}
+                                    {editingCustomer ? (
+                                        "*"
+                                    ) : (
+                                        <span className="text-emerald-400 font-normal normal-case">
+                                            (Để trống tự động nhảy STT{suggestedNextCustCode ? `: ${suggestedNextCustCode}` : ""})
+                                        </span>
+                                    )}
+                                </label>
                                 <FastInput
                                     type="text"
-                                    required
+                                    required={!!editingCustomer}
                                     value={custCode}
                                     onChange={(e) => setCustCode(e.target.value)}
                                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none font-mono text-white"
-                                    placeholder="Ví dụ: KH-ANH-SAU..."
+                                    placeholder={
+                                        editingCustomer
+                                            ? "Ví dụ: KH-001..."
+                                            : suggestedNextCustCode
+                                              ? `Để trống tự cấp mã: ${suggestedNextCustCode} (hoặc tự nhập mã riêng)`
+                                              : "Để trống hệ thống tự nhảy STT (hoặc tự nhập mã)..."
+                                    }
                                 />
                             </div>
 
@@ -43225,15 +43266,22 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             <Modal isOpen={isNvkdCustomerModalOpen} onClose={() => setIsNvkdCustomerModalOpen(false)} title={editingNvkdCustomer ? "CẬP NHẬT THÔNG TIN KHÁCH HÀNG" : "ĐĂNG KÝ KHÁCH HÀNG MỚI"} size="2xl">{() => (<>
                 <form onSubmit={handleSaveNvkdCustomer} className="space-y-4 p-2 text-slate-100">
                     <div>
-                        <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Mã khách hàng *</label>
+                        <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                            Mã khách hàng{" "}
+                            {editingNvkdCustomer ? "*" : <span className="text-emerald-400 font-normal normal-case">(Để trống tự động nhảy STT)</span>}
+                        </label>
                         <FastInput
                             type="text"
-                            required
+                            required={!!editingNvkdCustomer}
                             value={nvkdCustCode}
                             onChange={(e) => setNvkdCustCode(e.target.value)}
                             disabled={!!editingNvkdCustomer}
                             className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none text-white font-semibold disabled:opacity-50 font-mono"
-                            placeholder="Ví dụ: KH-001..."
+                            placeholder={
+                                suggestedNextCustCode
+                                    ? `Để trống tự cấp mã: ${suggestedNextCustCode}`
+                                    : "Để trống hệ thống tự nhảy STT..."
+                            }
                         />
                     </div>
 

@@ -187,6 +187,57 @@ async function openOrderCountForCustomer(idOrCode: any): Promise<number> {
   return (await openOrdersOfCustomer(cust)).length;
 }
 
+/**
+ * Generates the next sequential customer code (`customer_code`) across the entire `sales_customers` table
+ * so sales reps (who only see their own customers) can leave the customer code blank and get the next sequential STT.
+ * Preserves the dominant prefix & zero-padding width in `sales_customers` (e.g. `KH-001` -> `KH-002`, `KH0001` -> `KH0002`, `KH-125` -> `KH-126`).
+ */
+async function generateNextSequentialCustomerCode(): Promise<string> {
+  const res = await query(
+    "SELECT customer_code FROM sales_customers WHERE customer_code IS NOT NULL AND trim(customer_code) <> '' ORDER BY id DESC"
+  );
+  const existingUpper = new Set<string>();
+  let maxSeq = 0;
+  let bestPrefix = "KH-";
+  let bestWidth = 3;
+
+  for (const r of res.rows) {
+    const raw = String(r.customer_code || "").trim();
+    if (!raw) continue;
+    existingUpper.add(raw.toUpperCase());
+
+    // Match codes like KH-001, KH001, KH_001, KH-BV-015, or pure sequential digits 001..99999
+    // Ignore random epoch/timestamp suffixes (> 99999 or KH26-XX-0001 year-scoped document codes)
+    if (/^KH\d{2}-[A-Z0-9]{2}-\d{4}$/i.test(raw)) continue;
+    if (/^KH-(ABT|VIA)-\d{4}$/i.test(raw)) continue;
+
+    const m = raw.match(/^(KH[-_]?|KH-[A-Za-z]+-|)(\d{1,5})$/i);
+    if (m) {
+      const numStr = m[2];
+      const num = parseInt(numStr, 10);
+      if (Number.isFinite(num) && num > 0 && num < 90000) {
+        if (num > maxSeq) {
+          maxSeq = num;
+          bestPrefix = m[1] ? m[1].toUpperCase() : "KH-";
+          bestWidth = Math.max(3, numStr.length);
+        }
+      }
+    }
+  }
+
+  if (maxSeq === 0 && res.rows.length > 0) {
+    maxSeq = res.rows.length;
+  }
+
+  let nextSeq = maxSeq + 1;
+  let candidate = `${bestPrefix}${String(nextSeq).padStart(bestWidth, "0")}`;
+  while (existingUpper.has(candidate.toUpperCase())) {
+    nextSeq++;
+    candidate = `${bestPrefix}${String(nextSeq).padStart(bestWidth, "0")}`;
+  }
+  return candidate;
+}
+
 /** order_id from the UI is sometimes the numeric row id and sometimes the order CODE: only a number may be compared with the id column. */
 function numericIdOrNull(v: any): number | null {
   if (v === undefined || v === null || v === "") return null;
@@ -976,6 +1027,11 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ customers: enrichedCustomers });
     }
 
+    if (action === "next_customer_code") {
+      const next_code = await generateNextSequentialCustomerCode();
+      return NextResponse.json({ next_code });
+    }
+
     if (action === "orders") {
       const res = await query("SELECT * FROM sales_orders ORDER BY id DESC");
       return NextResponse.json({ orders: res.rows });
@@ -1526,7 +1582,7 @@ export async function POST(req: NextRequest) {
         await logAudit("UPDATE", "SALES_CUSTOMER", `Cập nhật khách hàng ${custName} (${customer_code || id}) - Khu vực: ${region || "Chưa rõ"}, Tỉnh thành: ${province || "Chưa rõ"}`);
         return NextResponse.json({ success: true, id: Number(id) });
       } else {
-        // Tạo mới: mã trùng phải báo lỗi chứ không được ghi đè lên khách hàng khác đang dùng mã đó
+        // Tạo mới: nếu để trống mã KH thì hệ thống tự động dò số thứ tự (STT) cao nhất trên toàn bộ bảng sales_customers để nhảy số tiếp theo
         let code = String(customer_code || "").trim();
         if (code) {
           const clash = await query("SELECT id, name FROM sales_customers WHERE customer_code = $1", [code]);
@@ -1534,8 +1590,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: `Mã khách hàng ${code} đã tồn tại (${clash.rows[0].name}). Vui lòng dùng mã khác hoặc mở hồ sơ hiện có để sửa.`, existing_id: clash.rows[0].id }, { status: 409 });
           }
         } else {
-          code = await generateDocumentCode({ docType: "KH", customerName: custName, salesRepName: sales_rep_name, tagMode: "GENERAL" } as any)
-            .catch(() => `KH-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`);
+          code = await generateNextSequentialCustomerCode();
         }
         const insRes = await query(
           `INSERT INTO sales_customers (customer_code, name, contact_person, contact_position, phone, email, address, tax_code, sales_rep_id, sales_rep_name, classification, payment_terms, notes, credit_limit, credit_term_days, customer_type, special_price_list, region, province, industry)
