@@ -109,7 +109,7 @@ export const UNIT_STATUS: Record<string, [string, string]> = {
   IN_ASSEMBLY: ["PENDING_QC", "Đang lắp ráp (Trạm 1–3)"],
   BURN_IN: ["QUARANTINE", "Đang kiểm tra thử nghiệm"],
   FQC: ["QUARANTINE", "Đang kiểm tra xuất xưởng (FQC)"],
-  QA_PASSED: ["RELEASED", "QA đã giải phóng xuất xưởng"],
+  QA_PASSED: ["RELEASED", "Đã FQC & Giải phóng QA (Sẵn sàng giao)"],
   DELIVERED: ["RELEASED", "Đã giao khách hàng"],
   IN_SERVICE_FIELD: ["RELEASED", "Đang vận hành tại khách hàng"],
   UNDER_SERVICE: ["ON_HOLD", "Đang bảo hành / sửa chữa"],

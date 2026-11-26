@@ -61,6 +61,12 @@ interface UnitSummary {
   firmware_version: string | null;
   fqc_passed: boolean | null;
   fqc_summary?: string | null;
+  fqc_test_code?: string | null;
+  fqc_test_status?: string | null;
+  fqc_test_result?: string | null;
+  fqc_analyst_name?: string | null;
+  fqc_reviewer_name?: string | null;
+  qa_released_by_name?: string | null;
   component_count: number;
   passed_burn_in_hours: number | null;
   warranty_end: string | null;
@@ -115,6 +121,8 @@ interface UnitDetail extends UnitSummary {
   handover_accessories?: unknown[];
   fqc_summary: string | null;
   qa_released_by_name: string | null;
+  is_unit_assembler?: boolean;
+  can_record_fqc?: boolean;
   components: {
     id: string;
     station_code: string;
@@ -771,6 +779,8 @@ export function AssemblyDhrView() {
                         ? ["REJECTED", "Chờ đủ linh kiện BOM (Chưa lắp)"]
                         : unitWaitingStart
                         ? ["PENDING_QC", "Đã cấp S/N — Chờ xuất Kitting"]
+                        : unit.status === "FQC" && unit.fqc_passed === true
+                        ? ["RELEASED", "Đã FQC (ĐẠT) — Chờ QA giải phóng"]
                         : (UNIT_STATUS[unit.status] ?? ["PENDING_QC", unit.status]);
                       const canEditSerial = ["IN_ASSEMBLY", "BURN_IN"].includes(unit.status);
                       return (
@@ -835,7 +845,27 @@ export function AssemblyDhrView() {
                             )}
                           </td>
                           <td className="py-2 pr-3">
-                            {unit.fqc_passed === true ? "ĐẠT" : unit.fqc_summary ? "KHÔNG ĐẠT" : "Chưa đo"}
+                            {unit.fqc_passed === true || ["QA_PASSED", "DELIVERED", "IN_SERVICE_FIELD"].includes(unit.status) ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                                ✅ Đã FQC: ĐẠT{unit.fqc_test_code ? ` (${unit.fqc_test_code})` : ""}
+                              </span>
+                            ) : unit.fqc_test_status === "RESULTS_ENTERED" ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300">
+                                📋 QC đã chấm ({unit.fqc_test_result === "PASS" ? "ĐẠT" : "KĐ"})
+                              </span>
+                            ) : unit.fqc_test_status === "IN_PROGRESS" ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                                ⏳ QC đang đo{unit.fqc_test_code ? ` (${unit.fqc_test_code})` : ""}
+                              </span>
+                            ) : unit.fqc_summary ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300">
+                                ❌ KHÔNG ĐẠT
+                              </span>
+                            ) : unit.fqc_test_code ? (
+                              <span className="text-xs text-slate-500 font-mono">Chờ QC ({unit.fqc_test_code})</span>
+                            ) : (
+                              "Chưa đo"
+                            )}
                           </td>
                           <td className="py-2 pr-3">{fmtDate(unit.warranty_end)}</td>
                           <td className="py-2 pr-3">
@@ -1195,10 +1225,60 @@ export function AssemblyDhrView() {
                 </div>
               )}
 
-              {u.status === "FQC" && (
+              {(u.status === "FQC" || u.status === "QA_PASSED" || u.fqc_passed === true) && (
+                <div
+                  className={`p-3 rounded-xl border flex flex-col gap-2 text-xs ${
+                    u.fqc_passed === true || u.status === "QA_PASSED"
+                      ? "border-emerald-300 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/30"
+                      : "border-sky-200 dark:border-sky-800 bg-sky-50/50 dark:bg-sky-950/20"
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-extrabold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                      <span>🛡️ Kết quả Kiểm tra xuất xưởng (FQC — Bộ phận QA/QC)</span>
+                      {u.fqc_test_code && (
+                        <span className="px-2 py-0.5 rounded-md bg-indigo-100 dark:bg-indigo-900/60 text-indigo-800 dark:text-indigo-200 font-mono">
+                          Phiếu QC: {u.fqc_test_code}
+                        </span>
+                      )}
+                    </div>
+                    <StatusBadge
+                      status={u.fqc_passed === true || u.status === "QA_PASSED" ? "RELEASED" : "QUARANTINE"}
+                      label={
+                        u.status === "QA_PASSED"
+                          ? "✅ ĐÃ FQC & GIẢI PHÓNG QA (SẴN SÀNG GIAO)"
+                          : u.fqc_passed === true
+                            ? "✅ ĐÃ FQC: ĐẠT (PASS)"
+                            : "⏳ ĐANG CHỜ QA/QC ĐO KIỂM FQC"
+                      }
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-slate-700 dark:text-slate-300">
+                    <div>
+                      <span className="text-slate-500">Kết luận FQC: </span>
+                      <b>{u.fqc_passed === true || u.status === "QA_PASSED" ? "ĐẠT (PASS)" : u.fqc_summary || "Đang chờ QC ghi nhận"}</b>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Nhân sự QC / QA: </span>
+                      <b>{u.fqc_reviewer_name || u.qa_released_by_name || u.fqc_analyst_name || "Bộ phận QA/QC"}</b>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Biên bản / Ghi chú QC: </span>
+                      <span>{u.fqc_summary || "—"}</span>
+                    </div>
+                  </div>
+                  {u.status === "FQC" && !u.can_record_fqc && (
+                    <div className="text-[11px] text-slate-600 dark:text-slate-400 pt-1 border-t border-slate-200/70 dark:border-slate-800">
+                      ℹ️ Theo quy định độc lập (Segregation of Duties — ISO 13485), việc chấm kết quả FQC và ký giải phóng xuất xưởng do bộ phận <b>QA/QC</b> thực hiện trên Phiếu QC{u.fqc_test_code ? ` (${u.fqc_test_code})` : ""}. Ngay khi QA/QC duyệt Đạt, máy sẽ tự động chuyển sang <b>Đã FQC &amp; Giải phóng QA</b> và gửi thông báo cho Phòng KTCN.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {u.status === "FQC" && u.can_record_fqc && (
                 <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 flex flex-col gap-2.5">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    <Field label="Kết luận đo kiểm xuất xưởng (FQC)">
+                    <Field label="Kết luận đo kiểm xuất xưởng (FQC — Dành cho QA/QC độc lập)">
                       <select
                         className={inputClass}
                         value={fqcForm.passed ? "PASS" : "FAIL"}

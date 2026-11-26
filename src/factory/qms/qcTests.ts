@@ -41,6 +41,7 @@ export interface QcSubjectHandler {
   applicable?(tx: Tx, entityId: string, params: SpecParameter[]): Promise<SpecParameter[]>;
   derive?(tx: Tx, entityId: string, param: SpecParameter, entered: number | null | undefined): Promise<{ value: number; observed: number | null }>;
   reference?(tx: Tx, entityId: string): Promise<Record<string, unknown>>;
+  onResultsSubmitted?(tx: Tx, actor: AuthzActor, test: QcTest): Promise<void>;
   onReviewed?(tx: Tx, actor: AuthzActor, test: QcTest): Promise<void>;
   onCancelled?(tx: Tx, actor: AuthzActor, test: QcTest, reason: string): Promise<void>;
 }
@@ -110,6 +111,9 @@ export const qcTestMachine = defineMachine<QcStatus, QcTest>({
         },
       ],
       patch: async ({ tx, row }) => ({ overall_result: overallResult(await specParameters(tx, row), await results(tx, row.id)).result }),
+      effects: async ({ tx, actor, updated }) => {
+        await subjects.get(updated.entity_type)?.onResultsSubmitted?.(tx, actor, updated);
+      },
     },
     {
       action: "review",
@@ -122,6 +126,18 @@ export const qcTestMachine = defineMachine<QcStatus, QcTest>({
           code: "SAME_PERSON",
           message: "Người duyệt kết quả phải khác người kiểm nghiệm và khác kỹ thuật viên trực tiếp thực hiện sản xuất lô này.",
           check: async ({ tx, actor, row }) => {
+            if (row.entity_type === "DEVICE_UNIT") {
+              const unit = (
+                await tx.query("SELECT assembled_by FROM device.device_unit WHERE id = $1", [row.entity_id])
+              ).rows[0];
+              if (unit?.assembled_by && unit.assembled_by === actor.userId) return false;
+              const comp = await tx.query(
+                "SELECT 1 FROM device.device_unit_component WHERE unit_id = $1 AND installed_by = $2 LIMIT 1",
+                [row.entity_id, actor.userId]
+              );
+              if (comp.rowCount) return false;
+              return true;
+            }
             if (row.analyst_id === actor.userId) return false;
             if (row.entity_type === "PRODUCTION_ORDER") {
               const prod = await tx.query(
@@ -284,7 +300,23 @@ export async function saveResults(tx: Tx, actor: AuthzActor, testId: string, inp
       await writeAudit(tx, actor, { entityType: "qc_test", entityId: testId, action: "result", changes: { [p.name]: [before, after] } });
     }
   }
-  await tx.query("UPDATE qms.qc_test SET version = version + 1, updated_at = now(), updated_by = $2 WHERE id = $1", [testId, actor.userId]);
+  const evalNow = overallResult(await specParameters(tx, test), await results(tx, testId));
+  const computedOverall = evalNow.missing.length === 0 ? evalNow.result : null;
+  await tx.query(
+    "UPDATE qms.qc_test SET overall_result = $3, version = version + 1, updated_at = now(), updated_by = $2 WHERE id = $1",
+    [testId, actor.userId, computedOverall]
+  );
+  if (test.entity_type === "DEVICE_UNIT" && computedOverall === "PASS") {
+    await tx.query(
+      `UPDATE device.device_unit
+          SET fqc_passed = true,
+              fqc_test_id = COALESCE(fqc_test_id, $2),
+              fqc_summary = COALESCE(fqc_summary, $3),
+              updated_at = now()
+        WHERE id = $1`,
+      [test.entity_id, testId, `Đạt phiếu FQC ${test.code}`]
+    );
+  }
   return getQcTest(tx, testId);
 }
 

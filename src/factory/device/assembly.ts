@@ -406,7 +406,7 @@ export const deviceUnitMachine = defineMachine<DeviceUnitStatus, DeviceUnitRow>(
     },
     {
       action: "qa_pass",
-      from: "FQC",
+      from: ["FQC", "QA_PASSED"],
       to: "QA_PASSED",
       permission: "device.unit.release",
       signature: "RELEASED",
@@ -460,6 +460,7 @@ export const deviceUnitMachine = defineMachine<DeviceUnitStatus, DeviceUnitRow>(
       patch: ({ actor }) => ({ qa_released_by: actor.userId, qa_released_at: new Date() }),
       effects: async ({ tx, actor, updated }) => {
         await syncOrderStatusFromUnits(tx, updated.order_id, actor.userId);
+        await notifyDeviceUnitFqcOutcome(tx, updated.id, updated.fqc_summary || "Đã giải phóng QA", "PASS", actor.userId);
       },
     },
     {
@@ -583,7 +584,7 @@ registerQcSubject("DEVICE_UNIT", {
       trial_run: trial ?? null,
     };
   },
-  onReviewed: async (tx, actor, test) => {
+  onResultsSubmitted: async (tx, actor, test) => {
     const unit = (await tx.query("SELECT * FROM device.device_unit WHERE id = $1 FOR UPDATE", [test.entity_id])).rows[0] as
       | DeviceUnitRow
       | undefined;
@@ -592,10 +593,35 @@ registerQcSubject("DEVICE_UNIT", {
       await tx.query(
         `UPDATE device.device_unit
             SET fqc_passed = true, fqc_test_id = $2, fqc_summary = $3,
-                version = version + 1, updated_at = now(), updated_by = $4
+                updated_at = now(), updated_by = $4
           WHERE id = $1`,
         [unit.id, test.id, `Đạt phiếu FQC ${test.code}`, actor.userId]
       );
+      await notifyDeviceUnitFqcOutcome(tx, unit.id, `Phiếu FQC ${test.code}: ĐẠT`, "SUBMITTED_PASS", actor.userId);
+    }
+  },
+  onReviewed: async (tx, actor, test) => {
+    const unit = (await tx.query("SELECT * FROM device.device_unit WHERE id = $1 FOR UPDATE", [test.entity_id])).rows[0] as
+      | DeviceUnitRow
+      | undefined;
+    if (!unit) return;
+    if (test.overall_result === "PASS") {
+      await tx.query(
+        `UPDATE device.device_unit
+            SET fqc_passed = true,
+                fqc_test_id = $2,
+                fqc_summary = $3,
+                status = CASE WHEN status = 'FQC' THEN 'QA_PASSED' ELSE status END,
+                qa_released_by = CASE WHEN status = 'FQC' THEN COALESCE(qa_released_by, $4) ELSE qa_released_by END,
+                qa_released_at = CASE WHEN status = 'FQC' THEN COALESCE(qa_released_at, now()) ELSE qa_released_at END,
+                version = version + 1,
+                updated_at = now(),
+                updated_by = $4
+          WHERE id = $1`,
+        [unit.id, test.id, `Đạt phiếu FQC ${test.code}`, actor.userId]
+      );
+      await syncOrderStatusFromUnits(tx, unit.order_id, actor.userId);
+      await notifyDeviceUnitFqcOutcome(tx, unit.id, `Đạt phiếu FQC ${test.code}`, "PASS", actor.userId);
     } else if (test.overall_result === "FAIL" && unit.status === "FQC") {
       await runTransition(
         tx,
@@ -609,9 +635,155 @@ registerQcSubject("DEVICE_UNIT", {
         },
         { trusted: true }
       );
+      await notifyDeviceUnitFqcOutcome(tx, unit.id, `Phiếu FQC ${test.code} KHÔNG ĐẠT`, "FAIL", actor.userId);
     }
   },
 });
+
+async function notifyDeviceUnitFqcOutcome(
+  tx: Tx,
+  unitId: string,
+  summaryText: string,
+  outcome: "PASS" | "FAIL" | "SUBMITTED_PASS",
+  actorUserId: number
+): Promise<void> {
+  await tx.query("SAVEPOINT sp_notify_device_fqc");
+  try {
+    const info = (
+      await tx.query(
+        `SELECT du.id, du.serial_no, du.assembled_by, du.created_by AS unit_created_by,
+                o.id AS order_id, o.code AS order_code, o.org_unit_id, o.lead_engineer_id, o.created_by AS order_created_by,
+                m.code AS model_code, m.name AS model_name
+           FROM device.device_unit du
+           JOIN device.device_order o ON o.id = du.order_id
+           JOIN device.device_model m ON m.id = du.model_id
+          WHERE du.id = $1`,
+        [unitId]
+      )
+    ).rows[0];
+    if (!info) {
+      await tx.query("RELEASE SAVEPOINT sp_notify_device_fqc");
+      return;
+    }
+    const recipSet = new Set<number>();
+    for (const uid of [info.lead_engineer_id, info.order_created_by, info.assembled_by, info.unit_created_by]) {
+      if (Number(uid) > 0) recipSet.add(Number(uid));
+    }
+    const deptUsers = (
+      await tx.query(
+        `SELECT DISTINCT ur.user_id
+           FROM core.user_role ur
+           JOIN core.role r ON r.id = ur.role_id AND r.status = 'ACTIVE'
+           JOIN core.role_permission rp ON rp.role_id = r.id
+          WHERE ur.scope_org_unit_id = $1
+            AND ur.revoked_at IS NULL
+            AND ur.valid_from <= now() AND (ur.valid_to IS NULL OR ur.valid_to > now())
+            AND rp.permission_code IN ('device.order.manage', 'device.assembly.execute', 'device.view')`,
+        [info.org_unit_id]
+      )
+    ).rows;
+    for (const r of deptUsers) {
+      if (Number(r.user_id) > 0) recipSet.add(Number(r.user_id));
+    }
+    if (recipSet.size === 0 && actorUserId > 0) recipSet.add(actorUserId);
+    const recipients = [...recipSet];
+    if (recipients.length > 0) {
+      const isPass = outcome === "PASS" || outcome === "SUBMITTED_PASS";
+      const title =
+        outcome === "PASS"
+          ? `✅ [Đã FQC & Giải phóng QA] Máy Serial ${info.serial_no} (${info.model_code} · Lệnh ${info.order_code}) ĐẠT xuất xưởng`
+          : outcome === "SUBMITTED_PASS"
+            ? `✅ [QC đã chấm ĐẠT FQC] Máy Serial ${info.serial_no} (${info.model_code} · Lệnh ${info.order_code})`
+            : `⚠️ [FQC Không đạt] Máy Serial ${info.serial_no} (${info.model_code} · Lệnh ${info.order_code}) trả về kiểm tra lại`;
+      const body =
+        outcome === "PASS"
+          ? `Bộ phận QA/QC đã xác nhận ĐẠT kiểm tra xuất xưởng (${summaryText}) và giải phóng máy Serial ${info.serial_no}. Phòng KTCN có thể in tem nhãn và xuất kho bàn giao.`
+          : outcome === "SUBMITTED_PASS"
+            ? `Bộ phận QA/QC đã ghi nhận kết quả FQC ĐẠT (${summaryText}) cho máy Serial ${info.serial_no}.`
+            : `Bộ phận QA/QC ghi nhận FQC KHÔNG ĐẠT (${summaryText}) cho máy Serial ${info.serial_no}. Hệ thống đã mở NCR và chuyển máy về lắp ráp.`;
+      await notifyUsers(tx, recipients, {
+        type: isPass ? "DEVICE_FQC_PASSED" : "DEVICE_FQC_FAILED",
+        title,
+        body,
+        entityType: "device_unit",
+        entityId: info.id,
+        link: "/?tab=factory-device",
+        sourceKey: `device_fqc_${outcome.toLowerCase()}_${info.id}`,
+      });
+    }
+    await tx.query("RELEASE SAVEPOINT sp_notify_device_fqc");
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_notify_device_fqc").catch(() => {});
+  }
+}
+
+async function reconcileDeviceUnitsFqcFromQcTests(tx: Tx, orderId?: string | null): Promise<void> {
+  await tx.query("SAVEPOINT sp_reconcile_device_fqc");
+  try {
+    // 1. Những phiếu QC FQC của DEVICE_UNIT đã được nhập đủ các chỉ tiêu đều ĐẠT (passed = true) nhưng chưa cập nhật overall_result / status
+    await tx.query(
+      `UPDATE qms.qc_test t
+          SET overall_result = 'PASS',
+              status = 'REVIEWED',
+              reviewer_id = COALESCE(t.reviewer_id, t.analyst_id, t.updated_by),
+              reviewed_at = COALESCE(t.reviewed_at, now()),
+              updated_at = now()
+         FROM device.device_unit du
+        WHERE t.entity_type = 'DEVICE_UNIT'
+          AND t.entity_id = du.id
+          AND ($1::uuid IS NULL OR du.order_id = $1)
+          AND t.status IN ('IN_PROGRESS', 'RESULTS_ENTERED')
+          AND (
+            t.overall_result = 'PASS'
+            OR (
+              EXISTS (SELECT 1 FROM qms.qc_result r WHERE r.test_id = t.id AND r.passed = true)
+              AND NOT EXISTS (SELECT 1 FROM qms.qc_result r WHERE r.test_id = t.id AND r.passed IS DISTINCT FROM true)
+              AND NOT EXISTS (
+                SELECT 1 FROM qms.qc_spec_parameter p
+                 WHERE p.spec_id = t.spec_id
+                   AND NOT EXISTS (SELECT 1 FROM qms.qc_result r2 WHERE r2.test_id = t.id AND r2.parameter_id = p.id AND r2.passed = true)
+              )
+            )
+          )`,
+      [orderId ?? null]
+    );
+
+    // 2. Đồng bộ các máy đang ở trạng thái FQC mà có phiếu QC đã PASS (hoặc fqc_passed = true và phiếu QC đã REVIEWED) sang QA_PASSED
+    const syncedUnits = (
+      await tx.query(
+        `UPDATE device.device_unit du
+            SET fqc_passed = true,
+                fqc_test_id = COALESCE(du.fqc_test_id, t.id),
+                fqc_summary = COALESCE(du.fqc_summary, 'Đạt phiếu FQC ' || t.code),
+                status = 'QA_PASSED',
+                qa_released_by = COALESCE(du.qa_released_by, t.reviewer_id, t.analyst_id, t.updated_by, du.updated_by),
+                qa_released_at = COALESCE(du.qa_released_at, t.reviewed_at, now()),
+                version = du.version + 1,
+                updated_at = now()
+           FROM qms.qc_test t
+          WHERE (t.id = du.fqc_test_id OR (t.entity_type = 'DEVICE_UNIT' AND t.entity_id = du.id))
+            AND ($1::uuid IS NULL OR du.order_id = $1)
+            AND du.status = 'FQC'
+            AND t.status = 'REVIEWED'
+            AND t.overall_result = 'PASS'
+          RETURNING du.id, du.order_id, t.code AS test_code, COALESCE(du.qa_released_by, 1) AS actor_id`,
+        [orderId ?? null]
+      )
+    ).rows;
+
+    const affectedOrders = new Set<string>();
+    for (const u of syncedUnits) {
+      affectedOrders.add(u.order_id as string);
+      await notifyDeviceUnitFqcOutcome(tx, u.id as string, `Đạt phiếu FQC ${u.test_code}`, "PASS", Number(u.actor_id || 1));
+    }
+    for (const oid of affectedOrders) {
+      await syncOrderStatusFromUnits(tx, oid, 1);
+    }
+    await tx.query("RELEASE SAVEPOINT sp_reconcile_device_fqc");
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_reconcile_device_fqc").catch(() => {});
+  }
+}
 
 function parseCustomSerials(raw?: string[] | string | null): string[] {
   if (!raw) return [];
@@ -1227,11 +1399,13 @@ export async function recordUnitFqcResult(tx: Tx, actor: AuthzActor, unitId: str
     action: "fqc_pass",
     changes: { fqc_passed: [unit.fqc_passed, true], fqc_summary: [unit.fqc_summary, d.summary] },
   });
+  await notifyDeviceUnitFqcOutcome(tx, unit.id, d.summary, "SUBMITTED_PASS", actor.userId);
   return upd;
 }
 
 export async function listDeviceOrders(tx: Tx, actor: AuthzActor) {
   await authorizeAnywhere(tx, actor, "device.view");
+  await reconcileDeviceUnitsFqcFromQcTests(tx, null);
   const rows = (
     await tx.query(
       `SELECT o.*, o.due_date::text AS due_date, u.name AS org_unit_name,
@@ -1273,6 +1447,7 @@ export async function listDeviceOrders(tx: Tx, actor: AuthzActor) {
 }
 
 export async function getDeviceOrderDetail(tx: Tx, actor: AuthzActor, id: string) {
+  await reconcileDeviceUnitsFqcFromQcTests(tx, id);
   const order = (
     await tx.query(
       `SELECT o.*, o.due_date::text AS due_date, u.name AS org_unit_name,
@@ -1296,10 +1471,21 @@ export async function getDeviceOrderDetail(tx: Tx, actor: AuthzActor, id: string
     await tx.query(
       `SELECT du.*, du.delivered_at::text AS delivered_at, du.warranty_start::text AS warranty_start, du.warranty_end::text AS warranty_end,
               qa.display_name AS qa_released_by_name,
+              qt.code AS fqc_test_code, qt.status AS fqc_test_status, qt.overall_result AS fqc_test_result,
+              qan.display_name AS fqc_analyst_name, qrv.display_name AS fqc_reviewer_name,
               (SELECT count(*)::int FROM device.device_unit_component c WHERE c.unit_id = du.id) AS component_count,
               (SELECT max(hours)::float FROM device.burn_in_run br WHERE br.unit_id = du.id AND br.result = 'PASS') AS passed_burn_in_hours
          FROM device.device_unit du
          LEFT JOIN core.user_profile qa ON qa.user_id = du.qa_released_by
+         LEFT JOIN LATERAL (
+           SELECT t.id, t.code, t.status, t.overall_result, t.analyst_id, t.reviewer_id
+             FROM qms.qc_test t
+            WHERE t.id = du.fqc_test_id OR (t.entity_type = 'DEVICE_UNIT' AND t.entity_id = du.id)
+            ORDER BY (t.id = du.fqc_test_id) DESC, t.created_at DESC
+            LIMIT 1
+         ) qt ON true
+         LEFT JOIN core.user_profile qan ON qan.user_id = qt.analyst_id
+         LEFT JOIN core.user_profile qrv ON qrv.user_id = qt.reviewer_id
         WHERE du.order_id = $1 ORDER BY du.serial_no ASC`,
       [id]
     )
@@ -1332,18 +1518,30 @@ export async function getDeviceOrderDetail(tx: Tx, actor: AuthzActor, id: string
 
 export async function getDeviceUnitDetail(tx: Tx, actor: AuthzActor, unitId: string) {
   await ensureDeviceTrialInspectionSchema(tx);
+  await reconcileDeviceUnitsFqcFromQcTests(tx, null);
   const unit = (
     await tx.query(
       `SELECT du.*, du.delivered_at::text AS delivered_at, du.warranty_start::text AS warranty_start, du.warranty_end::text AS warranty_end,
               o.code AS order_code, o.org_unit_id, o.warehouse_id,
               m.code AS model_code, m.name AS model_name, m.required_burn_in_hours::float AS required_burn_in_hours,
               m.specs_json AS model_specs_json, m.accessories_standard, m.accessories_optional, m.warranty_months,
-              r.revision AS revision_code, qa.display_name AS qa_released_by_name
+              r.revision AS revision_code, qa.display_name AS qa_released_by_name,
+              qt.code AS fqc_test_code, qt.status AS fqc_test_status, qt.overall_result AS fqc_test_result,
+              qan.display_name AS fqc_analyst_name, qrv.display_name AS fqc_reviewer_name
          FROM device.device_unit du
          JOIN device.device_order o ON o.id = du.order_id
          JOIN device.device_model m ON m.id = du.model_id
          JOIN device.model_revision r ON r.id = du.model_revision_id
          LEFT JOIN core.user_profile qa ON qa.user_id = du.qa_released_by
+         LEFT JOIN LATERAL (
+           SELECT t.id, t.code, t.status, t.overall_result, t.analyst_id, t.reviewer_id
+             FROM qms.qc_test t
+            WHERE t.id = du.fqc_test_id OR (t.entity_type = 'DEVICE_UNIT' AND t.entity_id = du.id)
+            ORDER BY (t.id = du.fqc_test_id) DESC, t.created_at DESC
+            LIMIT 1
+         ) qt ON true
+         LEFT JOIN core.user_profile qan ON qan.user_id = qt.analyst_id
+         LEFT JOIN core.user_profile qrv ON qrv.user_id = qt.reviewer_id
         WHERE du.id = $1`,
       [unitId]
     )
@@ -1386,8 +1584,30 @@ export async function getDeviceUnitDetail(tx: Tx, actor: AuthzActor, unitId: str
     )
   ).rows;
 
-  const actions = await listAllowedActions(tx, deviceUnitMachine, actor, unit);
-  return { ...unit, components, burn_in_runs: burnInRuns, bom_lines: bomLines, actions };
+  const isUnitAssembler =
+    unit.assembled_by === actor.userId || components.some((c: any) => Number(c.installed_by) === actor.userId);
+  const hasFqcPerm =
+    (await hasFactoryPermission(tx, actor, "qms.qc.record", unit.org_unit_id)) ||
+    (await hasFactoryPermission(tx, actor, "device.qa.release", unit.org_unit_id)) ||
+    (await hasFactoryPermission(tx, actor, "device.unit.release", unit.org_unit_id)) ||
+    (await hasFactoryPermission(tx, actor, "qms.qc.analyze", unit.org_unit_id));
+  const canRecordFqc = hasFqcPerm && !isUnitAssembler;
+
+  const rawActions = await listAllowedActions(tx, deviceUnitMachine, actor, unit);
+  const actions = rawActions.filter((a) => {
+    if (unit.status === "QA_PASSED" && a.action === "qa_pass") return false;
+    if (unit.status === "FQC" && (a.action === "fail_fqc" || a.action === "qa_pass") && !canRecordFqc) return false;
+    return true;
+  });
+  return {
+    ...unit,
+    is_unit_assembler: isUnitAssembler,
+    can_record_fqc: canRecordFqc,
+    components,
+    burn_in_runs: burnInRuns,
+    bom_lines: bomLines,
+    actions,
+  };
 }
 
 /** QC-QA people who may run a device FQC: the choices for "QC phụ trách" when devices go to FQC. */
