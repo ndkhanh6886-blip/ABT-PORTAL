@@ -1007,6 +1007,20 @@ export async function POST(req: NextRequest) {
         const renamed = prevTask && String(prevTask.title || "").trim() !== String(title || "").trim();
         await logAudit("UPDATE", "TASKS", `Cập nhật công việc ${prevTask?.task_code || ""}: ${renamed ? `"${prevTask.title}" → ` : ""}${title} (${department})${prevTask && String(prevTask.assignee_name || "") !== String(assignee_name || "") ? ` [phụ trách: ${prevTask.assignee_name || "-"} → ${assignee_name || "-"}]` : ""}`);
       } else {
+        // Chặn tạo trùng: cùng người tạo, cùng tiêu đề, cùng người phụ trách vừa tạo trong 60 giây (bấm Lưu 2 lần / mạng chậm
+        // gửi lại) -> trả về việc đã có, không tạo thêm. Tạo lại có chủ đích sau đó vẫn được.
+        const dup = (await query(
+          `SELECT task_code FROM company_tasks
+            WHERE created_by = $1
+              AND LOWER(TRIM(title)) = LOWER(TRIM($2))
+              AND COALESCE(TRIM(assignee_name), '') = COALESCE(TRIM($3), '')
+              AND created_at > CURRENT_TIMESTAMP - INTERVAL '60 seconds'
+            ORDER BY id DESC LIMIT 1`,
+          [me.username, String(title || ""), String(assignee_name || "")]
+        )).rows[0];
+        if (dup) {
+          return NextResponse.json({ success: true, duplicate: true, task: { task_code: dup.task_code } });
+        }
         const code = task_code || `TSK-${Date.now().toString().slice(-6)}`;
         await query(
           `INSERT INTO company_tasks (
@@ -1038,6 +1052,7 @@ export async function POST(req: NextRequest) {
         );
         await postReportToWorkflow(code);
         await logAudit("CREATE", "TASKS", `Tạo mới công việc: ${code} - ${title} (${department})`);
+        return NextResponse.json({ success: true, task: { task_code: code } });
       }
 
       return NextResponse.json({ success: true });

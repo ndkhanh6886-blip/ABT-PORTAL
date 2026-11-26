@@ -6768,8 +6768,22 @@ export const UnifiedWorkspace: React.FC = () => {
   }, [renderedSubTab, mergedWorkspaceTasks, workflows, dailyLogs, allCompanyProjects, weeklySchedule, hubWeeklyPlans, personnelList, filterDept, selectedAssignee, searchQuery, analyticsPeriod, viewedWeek, taskInvolvesDept, workflowInvolvesDept, taskBelongsToStaff]);
 
   // Handle Save Task
+  const isSavingTaskRef = useRef(false);
+  const [isSavingTask, setIsSavingTask] = useState(false);
   const handleSaveTask = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Bấm Lưu / Enter nhiều lần khi mạng chậm từng tạo 2 công việc giống hệt nhau: chỉ gửi 1 lần cho tới khi có kết quả
+    if (isSavingTaskRef.current) return;
+    isSavingTaskRef.current = true;
+    setIsSavingTask(true);
+    try {
+      await handleSaveTaskInner();
+    } finally {
+      isSavingTaskRef.current = false;
+      setIsSavingTask(false);
+    }
+  };
+  const handleSaveTaskInner = async () => {
     // Sửa một việc thành việc khác (đổi hẳn tiêu đề) sẽ làm mất việc cũ: hỏi tạo việc mới thay vì ghi đè
     let payload: any = taskForm;
     const original = taskForm.id ? tasks.find((t: any) => t.id === taskForm.id) : null;
@@ -18845,9 +18859,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               {(!taskForm.id || !isTaskReadOnlyForMe(taskForm)) && (
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-600/30"
+                  disabled={isSavingTask}
+                  className="px-5 py-2 rounded-xl font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-600/30 disabled:opacity-60 disabled:cursor-wait"
                 >
-                  {taskForm.id ? "Lưu Cập Nhật" : "Tạo Công Việc"}
+                  {isSavingTask ? "Đang lưu..." : (taskForm.id ? "Lưu Cập Nhật" : "Tạo Công Việc")}
                 </button>
               )}
             </div>
