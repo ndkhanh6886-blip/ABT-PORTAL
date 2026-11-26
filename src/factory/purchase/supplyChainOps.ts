@@ -1,6 +1,6 @@
 import { z } from "zod/v3";
 import type { Tx } from "../core/db";
-import { authorizeAnywhere, hasFactoryPermission, SYSTEM_ACTOR, type AuthzActor } from "../core/authz";
+import { authorizeAnywhere, authorizeAnywhereOneOf, hasFactoryPermission, SYSTEM_ACTOR, type AuthzActor } from "../core/authz";
 import { vnToday } from "../core/dates";
 import { invalid, notFound } from "../core/errors";
 import { parseInput } from "../core/records";
@@ -261,7 +261,7 @@ const fulfillFromHubSchema = z.object({
  * without needing to buy externally!
  */
 export async function fulfillPrLineFromCentralHub(tx: Tx, actor: AuthzActor, input: unknown) {
-  await authorizeAnywhere(tx, actor, "inv.doc.post");
+  await authorizeAnywhereOneOf(tx, actor, ["inv.document.post", "inv.document.create", "purchase.po.manage", "purchase.pr.approve"]);
   const d = parseInput(fulfillFromHubSchema, input);
   const line = (
     await tx.query(

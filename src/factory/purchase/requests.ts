@@ -103,7 +103,7 @@ export const prMachine = defineMachine<PrStatus, PurchaseRequest>({
     { action: "reject", from: ["SUBMITTED", "PENDING_BOD"], to: "REJECTED", permission: "purchase.pr.approve", reasonRequired: true },
     { action: "return", from: ["SUBMITTED", "PENDING_BOD"], to: "DRAFT", permission: "purchase.pr.approve", reasonRequired: true },
     { action: "cancel", from: ["DRAFT", "SUBMITTED"], to: "CANCELLED", permission: "purchase.pr.create", reasonRequired: true },
-    { action: "mark_ordered", from: "APPROVED", to: "ORDERED", permission: "purchase.system" },
+    { action: "mark_ordered", from: ["DRAFT", "SUBMITTED", "APPROVED"], to: "ORDERED", permission: "purchase.system" },
     { action: "reopen", from: "ORDERED", to: "APPROVED", permission: "purchase.system" },
     {
       action: "close",

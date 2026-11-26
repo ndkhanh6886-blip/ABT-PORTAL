@@ -29,7 +29,9 @@ export async function syncRequestStatus(tx: Tx, actor: AuthzActor, prIds: string
         [prId]
       )
     ).rows[0];
-    if (pr.status === "APPROVED" && pr.full) await runTransition(tx, prMachine, actor, { id: pr.id, action: "mark_ordered", expectedVersion: pr.version }, { trusted: true });
+    if (["DRAFT", "SUBMITTED", "APPROVED"].includes(pr.status) && pr.full) {
+      await runTransition(tx, prMachine, actor, { id: pr.id, action: "mark_ordered", expectedVersion: pr.version }, { trusted: true });
+    }
     if (pr.status === "ORDERED" && !pr.full) await runTransition(tx, prMachine, actor, { id: pr.id, action: "reopen", expectedVersion: pr.version }, { trusted: true });
   }
 }
