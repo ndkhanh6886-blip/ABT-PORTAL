@@ -680,12 +680,12 @@ const CustomerAllocationSearchInput: React.FC<{
                                                     {cust.name}
                                                 </span>
                                                 {cust.code && (
-                                                    <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                                                    <span className="text-[11px] font-mono px-1 py-0.2 rounded bg-slate-800 text-slate-300 border border-slate-700">
                                                         {cust.code}
                                                     </span>
                                                 )}
                                                 {cust.type && (
-                                                    <span className="text-[9px] px-1 py-0.2 rounded bg-slate-900 text-slate-400 border border-slate-800">
+                                                    <span className="text-[11px] px-1 py-0.2 rounded bg-slate-900 text-slate-400 border border-slate-800">
                                                         {cust.type}
                                                     </span>
                                                 )}
@@ -9777,7 +9777,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <tr key={`${comp.code}-${comp.role}`} className="hover:bg-slate-900/50">
                                     <td className="p-2">
                                         <span className={cn(
-                                            "px-1.5 py-0.5 rounded text-[9px] font-mono font-bold border",
+                                            "px-1.5 py-0.5 rounded text-[11px] font-mono font-bold border",
                                             comp.role === "PRIMARY"
                                                 ? "bg-emerald-950/80 text-emerald-300 border-emerald-700/60"
                                                 : "bg-sky-950/80 text-sky-300 border-sky-700/60"
@@ -20145,7 +20145,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <SubIcon className={cn("w-3.5 h-3.5 shrink-0", sub.iconClass)} />
                                     <span>{sub.label}</span>
                                     {sub.badge && (
-                                        <span className={cn("px-1.5 py-0.2 rounded-full text-[9px] font-extrabold border", sub.badgeClass)}>
+                                        <span className={cn("px-1.5 py-0.2 rounded-full text-[11px] font-extrabold border", sub.badgeClass)}>
                                             {sub.badge}
                                         </span>
                                     )}
@@ -20660,13 +20660,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     <div>
                                                                         <div className="flex items-center justify-between gap-1">
                                                                             <span className="text-xs font-bold text-white truncate">{rep.full_name}</span>
-                                                                            <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-500 text-slate-950">
+                                                                            <span className="text-[11px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-500 text-slate-950">
                                                                                 CHỜ DUYỆT
                                                                             </span>
                                                                         </div>
                                                                         <div className="text-[10px] text-slate-400 mt-1 flex items-center justify-between">
                                                                             <span>Số việc tuần: <strong>{repPlansCount}</strong></span>
-                                                                            {app.submittedAt && <span className="text-[9px] text-slate-500">{new Date(app.submittedAt).toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: '2-digit', minute: '2-digit' })}</span>}
+                                                                            {app.submittedAt && <span className="text-[11px] text-slate-500">{new Date(app.submittedAt).toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: '2-digit', minute: '2-digit' })}</span>}
                                                                         </div>
                                                                     </div>
                                                                     <div className="flex gap-1 pt-1 border-t border-slate-800">
@@ -20688,7 +20688,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                 </button>
                                                                             </>
                                                                         ) : (
-                                                                            <div className="w-full text-center text-[9px] text-amber-400/80 italic py-0.5">
+                                                                            <div className="w-full text-center text-[11px] text-amber-400/80 italic py-0.5">
                                                                                 Gửi {getApproverTitle(rep.employee_id)} duyệt
                                                                             </div>
                                                                         )}
@@ -20714,7 +20714,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     <div className="flex items-center justify-between gap-1">
                                                                         <span className="text-xs font-bold text-white truncate">{rep.full_name}</span>
                                                                         <span className={cn(
-                                                                            "text-[8px] font-mono font-bold px-1.5 py-0.5 rounded uppercase shrink-0",
+                                                                            "text-[11px] font-mono font-bold px-1.5 py-0.5 rounded uppercase shrink-0",
                                                                             app.status === "APPROVED" ? "bg-emerald-950/60 text-emerald-400 border border-emerald-800/60" :
                                                                             app.status === "PENDING" ? "bg-amber-950/60 text-amber-400 border border-amber-800/60 animate-pulse" :
                                                                             app.status === "REJECTED" ? "bg-rose-950/60 text-rose-400 border border-rose-800/60" :
@@ -20725,7 +20725,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     </div>
                                                                     <div className="text-[10px] text-slate-400 mt-1 flex items-center justify-between">
                                                                         <span>Số việc: <strong>{repPlansCount}</strong></span>
-                                                                        {app.reviewedAt && <span className="text-[9px] text-slate-500">{formatVNDate(app.reviewedAt)}</span>}
+                                                                        {app.reviewedAt && <span className="text-[11px] text-slate-500">{formatVNDate(app.reviewedAt)}</span>}
                                                                     </div>
                                                                 </div>
 
@@ -20736,14 +20736,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                 <button
                                                                                     type="button"
                                                                                     onClick={() => handleOpenReviewModal(app, "approve")}
-                                                                                    className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-[9px] font-bold py-1 rounded transition-colors cursor-pointer"
+                                                                                    className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold py-1 rounded transition-colors cursor-pointer"
                                                                                 >
                                                                                     Duyệt
                                                                                 </button>
                                                                                 <button
                                                                                     type="button"
                                                                                     onClick={() => handleOpenReviewModal(app, "reject")}
-                                                                                    className="flex-1 bg-rose-950/60 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[9px] font-bold py-1 rounded transition-colors cursor-pointer"
+                                                                                    className="flex-1 bg-rose-950/60 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[11px] font-bold py-1 rounded transition-colors cursor-pointer"
                                                                                 >
                                                                                     Yêu cầu sửa
                                                                                 </button>
@@ -20752,17 +20752,17 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             <button
                                                                                 type="button"
                                                                                 onClick={() => handleOpenReviewModal(app, "reject")}
-                                                                                className="w-full bg-slate-800 hover:bg-slate-750 text-slate-300 text-[9px] font-bold py-1 rounded transition-colors cursor-pointer"
+                                                                                className="w-full bg-slate-800 hover:bg-slate-750 text-slate-300 text-[11px] font-bold py-1 rounded transition-colors cursor-pointer"
                                                                             >
                                                                                 Đổi ý kiến
                                                                             </button>
                                                                         ) : (
-                                                                            <div className="w-full text-[9px] text-slate-500 text-center py-0.5 italic">
+                                                                            <div className="w-full text-[11px] text-slate-500 text-center py-0.5 italic">
                                                                                 Chưa gửi duyệt
                                                                             </div>
                                                                         )
                                                                     ) : (
-                                                                        <div className="w-full text-[9px] text-slate-500 text-center py-0.5 italic">
+                                                                        <div className="w-full text-[11px] text-slate-500 text-center py-0.5 italic">
                                                                             {app.status === "PENDING" ? `Chờ ${getApproverTitle(rep.employee_id)} duyệt` : app.status === "APPROVED" ? `Đã duyệt bởi ${app.reviewerName || "Quản lý"}` : "Chưa gửi duyệt"}
                                                                         </div>
                                                                     )}
@@ -20918,16 +20918,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             <div key={plan.plan_id} className="bg-slate-950/80 border border-slate-800/80 hover:border-indigo-500/40 p-3 rounded-lg space-y-2 relative group transition-all">
                                                                 <div className="flex justify-between items-start gap-2">
                                                                     {plan.project_name ? (
-                                                                        <span className="text-[9px] font-bold text-indigo-400 uppercase font-mono truncate max-w-[120px]" title={plan.project_name}>
+                                                                        <span className="text-[11px] font-bold text-indigo-400 uppercase font-mono truncate max-w-[120px]" title={plan.project_name}>
                                                                             {plan.project_name}
                                                                         </span>
                                                                     ) : (
-                                                                        <span className="text-[9px] font-bold text-slate-500 uppercase font-mono">
+                                                                        <span className="text-[11px] font-bold text-slate-500 uppercase font-mono">
                                                                             Hoạt động chung
                                                                         </span>
                                                                     )}
                                                                     <div className="flex items-center gap-1 shrink-0">
-                                                                        <span className="text-[9px] bg-cyan-500/10 text-cyan-300 px-2 py-0.5 rounded-full border border-cyan-500/20 font-semibold font-mono">
+                                                                        <span className="text-[11px] bg-cyan-500/10 text-cyan-300 px-2 py-0.5 rounded-full border border-cyan-500/20 font-semibold font-mono">
                                                                             🕒 {plan.time_slot.split(" (")[0]}
                                                                         </span>
                                                                     </div>
@@ -20947,14 +20947,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     </div>
                                                                 )}
 
-                                                                <div className="flex items-center justify-between pt-2 border-t border-slate-800/40 text-[9px]">
+                                                                <div className="flex items-center justify-between pt-2 border-t border-slate-800/40 text-[11px]">
                                                                     <div className="flex items-center gap-1.5 text-slate-300">
                                                                         <User className="w-3 h-3 text-indigo-400" />
                                                                         <span className="font-bold">{staff ? staff.full_name : "Chưa gán"}</span>
                                                                     </div>
                                                                     <div className="flex items-center gap-1.5">
                                                                         <span className={cn(
-                                                                            "px-1.5 py-0.5 rounded text-[8px] font-bold",
+                                                                            "px-1.5 py-0.5 rounded text-[11px] font-bold",
                                                                             plan.status === "Đã hoàn thành" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
                                                                             plan.status === "Đang thực hiện" ? "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20" :
                                                                             "bg-slate-800 text-slate-400"
@@ -21031,7 +21031,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             >
                                                 <div className="space-y-3">
                                                     <div className="flex justify-between items-start">
-                                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-indigo-900/25 text-indigo-350 border border-indigo-500/10">
+                                                        <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-indigo-900/25 text-indigo-350 border border-indigo-500/10">
                                                             {plan.type === "MarketDevelopment" ? "Phát triển thị trường" :
                                                              plan.type === "CustomerCare" ? "Chăm sóc khách hàng" :
                                                              plan.type === "EventParticipation" ? "Tham gia sự kiện" :
@@ -21039,7 +21039,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                              plan.type === "ProjectCoordination" ? "Điều phối dự án" : "Khảo sát thị trường"}
                                                         </span>
                                                         <span className={cn(
-                                                            "text-[9px] font-bold px-1.5 py-0.5 rounded-full font-mono uppercase",
+                                                            "text-[11px] font-bold px-1.5 py-0.5 rounded-full font-mono uppercase",
                                                             plan.status === "Pending" && "bg-slate-800 text-slate-400",
                                                             plan.status === "Approved" && "bg-indigo-600/20 text-indigo-400",
                                                             plan.status === "Completed" && "bg-emerald-600/20 text-emerald-450",
@@ -21058,7 +21058,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             {plan.title}
                                                             <span className="text-[10px] text-slate-500 font-normal">👁️</span>
                                                         </h4>
-                                                        <span className="text-[9px] text-slate-500 font-mono block">Mã: {plan.id} | Tạo: {plan.dateCreated}</span>
+                                                        <span className="text-[11px] text-slate-500 font-mono block">Mã: {plan.id} | Tạo: {plan.dateCreated}</span>
                                                     </div>
 
                                                     {/* Progress bar info */}
@@ -21096,20 +21096,20 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             <div className="flex gap-1.5 w-full">
                                                                 <button
                                                                     onClick={() => handleApproveSpecializedPlan(plan.id, true)}
-                                                                    className="bg-emerald-600 hover:bg-emerald-500 text-white text-[9px] px-2.5 py-1 rounded font-bold flex-1 flex items-center justify-center gap-1"
+                                                                    className="bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] px-2.5 py-1 rounded font-bold flex-1 flex items-center justify-center gap-1"
                                                                 >
                                                                     ✓ Duyệt
                                                                 </button>
                                                                 <button
                                                                     onClick={() => handleApproveSpecializedPlan(plan.id, false)}
-                                                                    className="bg-slate-800 hover:bg-slate-750 text-rose-400 text-[9px] px-2.5 py-1 rounded font-bold flex-1 flex items-center justify-center gap-1"
+                                                                    className="bg-slate-800 hover:bg-slate-750 text-rose-400 text-[11px] px-2.5 py-1 rounded font-bold flex-1 flex items-center justify-center gap-1"
                                                                 >
                                                                     ✕ Từ chối
                                                                 </button>
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => handleDeleteSpecializedPlan(plan.id)}
-                                                                    className="bg-rose-950/40 hover:bg-rose-900/60 border border-rose-900/60 hover:border-rose-850 text-rose-400 text-[9px] px-2 py-1 rounded font-bold"
+                                                                    className="bg-rose-950/40 hover:bg-rose-900/60 border border-rose-900/60 hover:border-rose-850 text-rose-400 text-[11px] px-2 py-1 rounded font-bold"
                                                                     title="Xóa kế hoạch"
                                                                 >
                                                                     Xóa
@@ -21504,7 +21504,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     </span>
 
                                                     {log.issues && (
-                                                        <span className="text-[9px] font-bold text-amber-400 bg-amber-950/50 border border-amber-800/50 px-1.5 py-0.5 rounded shrink-0 flex items-center gap-1">
+                                                        <span className="text-[11px] font-bold text-amber-400 bg-amber-950/50 border border-amber-800/50 px-1.5 py-0.5 rounded shrink-0 flex items-center gap-1">
                                                             <AlertTriangle className="w-2.5 h-2.5 text-amber-400" />
                                                             Có vướng mắc
                                                         </span>
@@ -21654,7 +21654,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div className="mb-3 bg-slate-950/60 p-2 rounded-lg border border-slate-850 space-y-2">
                             <div>
                                 <div className="flex items-center justify-between mb-1">
-                                    <label className="text-[9px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                                    <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
                                         <Building2 className="w-3 h-3 text-emerald-400" />
                                         <span>Nhóm khách hàng (Phân loại):</span>
                                     </label>
@@ -21662,7 +21662,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <button
                                             type="button"
                                             onClick={() => setSelectedCustomerTypeFilter("all")}
-                                            className="text-[8px] text-orange-400 hover:underline cursor-pointer"
+                                            className="text-[11px] text-orange-400 hover:underline cursor-pointer"
                                         >
                                             Đặt lại
                                         </button>
@@ -21681,7 +21681,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                             <div>
                                 <div className="flex items-center justify-between mb-1">
-                                    <label className="text-[9px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                                    <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
                                         <Tag className="w-3 h-3 text-indigo-400" />
                                         <span>Phân nhóm ngành hàng:</span>
                                     </label>
@@ -21690,7 +21690,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <button 
                                                 type="button" 
                                                 onClick={() => setSelectedCustomerIndustryFilter("all")}
-                                                className="text-[8px] text-orange-400 hover:underline cursor-pointer"
+                                                className="text-[11px] text-orange-400 hover:underline cursor-pointer"
                                             >
                                                 Đặt lại
                                             </button>
@@ -21698,7 +21698,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <button
                                             type="button"
                                             onClick={() => openAddIndustryModal()}
-                                            className="text-[9px] text-indigo-400 hover:text-indigo-300 font-bold underline cursor-pointer"
+                                            className="text-[11px] text-indigo-400 hover:text-indigo-300 font-bold underline cursor-pointer"
                                             title="Tạo mới hoặc quản lý danh sách phân nhóm ngành hàng"
                                         >
                                             ⚙️ Quản lý
@@ -21731,13 +21731,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         {/* Filter by Region & Province (Phân loại theo Khu vực Bắc, Trung, Nam & Tỉnh thành) */}
                         <div className="grid grid-cols-2 gap-2 mb-3 bg-slate-950/60 p-2 rounded-lg border border-slate-850">
                             <div>
-                                <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1 flex items-center justify-between">
+                                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1 flex items-center justify-between">
                                     <span>Khu vực (Miền):</span>
                                     {selectedCustomerRegionFilter !== "all" && (
                                         <button 
                                             type="button" 
                                             onClick={() => { setSelectedCustomerRegionFilter("all"); setSelectedCustomerProvinceFilter("all"); }}
-                                            className="text-[8px] text-orange-400 hover:underline"
+                                            className="text-[11px] text-orange-400 hover:underline"
                                         >
                                             Đặt lại
                                         </button>
@@ -21759,7 +21759,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
 
                             <div>
-                                <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                     Tỉnh / Thành phố:
                                 </label>
                                 <select
@@ -21783,14 +21783,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         {/* Filter by Sales Rep / NVKD lên SO */}
                         <div className="mb-3 bg-slate-950/60 p-2 rounded-lg border border-slate-850">
                             <div className="flex items-center justify-between mb-1">
-                                <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400">
                                     Lọc theo NVKD lên SO / Phụ trách:
                                 </label>
                                 {selectedWholesaleRepFilter !== "all" && (
                                     <button
                                         type="button"
                                         onClick={() => setSelectedWholesaleRepFilter("all")}
-                                        className="text-[8px] text-orange-400 hover:underline cursor-pointer"
+                                        className="text-[11px] text-orange-400 hover:underline cursor-pointer"
                                     >
                                         Đặt lại
                                     </button>
@@ -21845,7 +21845,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             )}
                                         >
                                             <span>🔥 Có đơn chờ giao / xử lý</span>
-                                            <span className="bg-amber-900/80 px-1 rounded text-[9px] font-mono">{pendingCount}</span>
+                                            <span className="bg-amber-900/80 px-1 rounded text-[11px] font-mono">{pendingCount}</span>
                                         </button>
                                         <button
                                             type="button"
@@ -21860,7 +21860,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         >
                                             <Receipt className="w-3 h-3 text-purple-600 dark:text-purple-400" />
                                             <span>📑 Đã giao - Chờ xuất HĐ</span>
-                                            <span className="bg-purple-200 dark:bg-purple-900/80 text-purple-900 dark:text-purple-100 px-1 rounded text-[9px] font-mono font-bold">{deliveredPendingInvoiceCount}</span>
+                                            <span className="bg-purple-200 dark:bg-purple-900/80 text-purple-900 dark:text-purple-100 px-1 rounded text-[11px] font-mono font-bold">{deliveredPendingInvoiceCount}</span>
                                         </button>
                                     </>
                                 );
@@ -21926,7 +21926,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             </span>
                                                         ) : null;
                                                     })()}
-                                                    <span className="text-[9px] font-mono bg-slate-800 px-1.5 py-0.5 text-slate-400 rounded">
+                                                    <span className="text-[11px] font-mono bg-slate-800 px-1.5 py-0.5 text-slate-400 rounded">
                                                         {cust.customer_code}
                                                     </span>
                                                 </div>
@@ -21982,7 +21982,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             {/* Order Status Badge if customer has pending/active orders */}
                                             {totalPendingCust > 0 && (
                                                 <div className="pt-0.5">
-                                                    <span className="inline-flex items-center gap-1 text-[9px] font-bold font-mono text-amber-300 bg-amber-950/80 border border-amber-700/50 px-2 py-0.5 rounded-full shadow-sm">
+                                                    <span className="inline-flex items-center gap-1 text-[11px] font-bold font-mono text-amber-300 bg-amber-950/80 border border-amber-700/50 px-2 py-0.5 rounded-full shadow-sm">
                                                         <Truck className="w-2.5 h-2.5 text-amber-400 animate-bounce" />
                                                         <span>{totalPendingCust} đơn đang chờ giao / xử lý</span>
                                                     </span>
@@ -21992,7 +21992,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             {/* Invoice Pending Badge if customer has delivered orders pending invoice */}
                                             {totalPendingInvoicesCust > 0 && (
                                                 <div className="pt-0.5">
-                                                    <span className="inline-flex items-center gap-1 text-[9px] font-bold font-mono text-purple-800 dark:text-purple-300 bg-purple-100 dark:bg-purple-950/80 border border-purple-300 dark:border-purple-700/50 px-2 py-0.5 rounded-full shadow-sm">
+                                                    <span className="inline-flex items-center gap-1 text-[11px] font-bold font-mono text-purple-800 dark:text-purple-300 bg-purple-100 dark:bg-purple-950/80 border border-purple-300 dark:border-purple-700/50 px-2 py-0.5 rounded-full shadow-sm">
                                                         <Receipt className="w-2.5 h-2.5 text-purple-600 dark:text-purple-400" />
                                                         <span>{totalPendingInvoicesCust} đơn đã giao - Chờ xuất HĐ</span>
                                                     </span>
@@ -22005,7 +22005,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         ? `${cust.address ? (cust.address.length > 28 ? cust.address.slice(0, 28) + "..." : cust.address) : (cust.region || "Khu vực")} • ${cust.tax_code ? `MST: ${cust.tax_code}` : cust.customer_code}`
                                                         : `${cust.phone || "Không SĐT"} • ${cust.contact_person || (Array.isArray(cust.contacts) && cust.contacts.length > 0 ? (cust.contacts.find((ct: any) => ct.is_primary)?.name || cust.contacts[0]?.name || `${cust.contacts.length} liên hệ`) : "Chưa có liên hệ")}`}
                                                 </span>
-                                                <span className="text-[9px] font-mono bg-indigo-950/80 text-indigo-300 border border-indigo-800/60 px-1.5 py-0.2 rounded shrink-0 ml-1 font-semibold">
+                                                <span className="text-[11px] font-mono bg-indigo-950/80 text-indigo-300 border border-indigo-800/60 px-1.5 py-0.2 rounded shrink-0 ml-1 font-semibold">
                                                     👤 {rep ? rep.full_name.split(' ').pop() : repName}
                                                 </span>
                                             </div>
@@ -22267,7 +22267,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 <span className="text-emerald-300 font-bold leading-relaxed flex-1">
                                                                     {(selectedCustomer as any).delivery_address || selectedCustomer.address || "-"}
                                                                     {(selectedCustomer as any).delivery_address && (selectedCustomer as any).delivery_address !== selectedCustomer.address && (
-                                                                        <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/60 font-mono">
+                                                                        <span className="ml-1.5 text-[11px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/60 font-mono">
                                                                             Ưu tiên trên Phiếu giao
                                                                         </span>
                                                                     )}
@@ -22315,7 +22315,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 <p className="text-[11px] text-slate-400 leading-relaxed max-w-xs">
                                                                     Với vai trò <strong className="text-amber-400 font-semibold">Admin Manager / Sale Admin</strong>, bạn chỉ được xem các thông tin phục vụ giao nhận đơn hàng (Địa chỉ, MST, Tên & SĐT người nhận hàng). Thông tin hồ sơ riêng tư cá nhân của khách hàng được bảo mật và không có quyền sửa/xóa.
                                                                 </p>
-                                                                <span className="text-[9px] font-mono text-slate-500 bg-slate-950 px-2.5 py-1 rounded border border-slate-800">
+                                                                <span className="text-[11px] font-mono text-slate-500 bg-slate-950 px-2.5 py-1 rounded border border-slate-800">
                                                                     Chỉ Ban Giám Đốc, Phó phòng KD & NVKD phụ trách có quyền xem toàn bộ hồ sơ & chỉnh sửa
                                                                 </span>
                                                             </div>
@@ -22328,7 +22328,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             ? selectedCustomer.contacts 
                                                                             : (typeof selectedCustomer.contacts === "string" ? (() => { try { return JSON.parse(selectedCustomer.contacts); } catch(e) { return []; } })() : []);
                                                                         return rawContacts.length > 0 ? (
-                                                                            <span className="text-[9px] font-mono bg-indigo-950 text-indigo-300 border border-indigo-800/60 px-2 py-0.5 rounded-full font-bold">
+                                                                            <span className="text-[11px] font-mono bg-indigo-950 text-indigo-300 border border-indigo-800/60 px-2 py-0.5 rounded-full font-bold">
                                                                                 {rawContacts.length} đầu mối
                                                                             </span>
                                                                         ) : null;
@@ -22423,7 +22423,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
                                                                 <h4 className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 font-mono">Thống kê mua, Báo giá & Doanh số</h4>
                                                             </div>
-                                                            <span className="text-[9px] text-slate-500 font-mono bg-slate-950/60 px-2 py-0.5 rounded border border-slate-800">Thực tế & Báo giá</span>
+                                                            <span className="text-[11px] text-slate-500 font-mono bg-slate-950/60 px-2 py-0.5 rounded border border-slate-800">Thực tế & Báo giá</span>
                                                         </div>
 
                                                         {/* Tầng 1: Tình trạng Đơn hàng & Chờ giao (2 cột rộng rãi) */}
@@ -22463,7 +22463,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             <div className="bg-slate-950/70 p-3 rounded-xl border border-cyan-900/40 space-y-1 shadow-2xs">
                                                                 <div className="flex items-center justify-between">
                                                                     <span className="text-[10px] text-cyan-400 uppercase font-bold tracking-wider">DS Trước VAT</span>
-                                                                    <span className="text-[9px] text-slate-500 font-mono">Chưa thuế</span>
+                                                                    <span className="text-[11px] text-slate-500 font-mono">Chưa thuế</span>
                                                                 </div>
                                                                 <div className="text-sm sm:text-base font-bold font-mono text-cyan-300 tracking-tight" title={`${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(displayRevBeforeVat)}đ`}>
                                                                     {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(displayRevBeforeVat)} ₫
@@ -22473,7 +22473,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             <div className="bg-slate-950/70 p-3 rounded-xl border border-amber-800/40 bg-amber-950/10 space-y-1 shadow-2xs">
                                                                 <div className="flex items-center justify-between">
                                                                     <span className="text-[10px] text-amber-300 uppercase font-bold tracking-wider">Tiền Chiết Khấu</span>
-                                                                    <span className="text-[9px] text-slate-500 font-mono">Trước VAT</span>
+                                                                    <span className="text-[11px] text-slate-500 font-mono">Trước VAT</span>
                                                                 </div>
                                                                 <div className="text-sm sm:text-base font-bold font-mono text-amber-400 tracking-tight" title={`${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(quoteDiscountTotal)}đ`}>
                                                                     {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(quoteDiscountTotal)} ₫
@@ -22700,7 +22700,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         ) : (
                                                             <div className="max-h-[380px] overflow-y-auto">
                                                                 <table className="w-full text-left text-xs border-collapse">
-                                                                    <thead className="sticky top-0 z-10 bg-slate-950 text-slate-400 uppercase text-[9px] font-mono tracking-wider border-b border-slate-800">
+                                                                    <thead className="sticky top-0 z-10 bg-slate-950 text-slate-400 uppercase text-[11px] font-mono tracking-wider border-b border-slate-800">
                                                                         <tr>
                                                                             <th className="p-2.5 pl-3">Họ và tên</th>
                                                                             <th className="p-2.5">Chức vụ / Phòng ban</th>
@@ -22740,7 +22740,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                                     )}
                                                                                                 </div>
                                                                                                 {ct.id && (
-                                                                                                    <span className="text-[9px] font-mono text-slate-500 block">
+                                                                                                    <span className="text-[11px] font-mono text-slate-500 block">
                                                                                                         {ct.id}
                                                                                                     </span>
                                                                                                 )}
@@ -22890,7 +22890,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <div className="overflow-x-auto">
                                                 <table className="w-full text-left text-xs border-collapse">
                                                     <thead>
-                                                        <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[9px] bg-slate-950/20">
+                                                        <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[11px] bg-slate-950/20">
                                                             <th className="p-3">Mã đơn</th>
                                                             <th className="p-3">Ngày đặt</th>
                                                             <th className="p-3">Trạng thái</th>
@@ -22940,7 +22940,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         <td className="p-3 whitespace-nowrap">
                                                                             <div className="flex flex-col gap-1 items-start">
                                                                                 <span className={cn(
-                                                                                    "text-[9px] font-bold px-2 py-0.5 rounded-full font-mono uppercase inline-flex items-center gap-1",
+                                                                                    "text-[11px] font-bold px-2 py-0.5 rounded-full font-mono uppercase inline-flex items-center gap-1",
                                                                                     isCompleted && "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30",
                                                                                     (!isCompleted && ord.status === "PARTIALLY_DELIVERED") && "bg-amber-500/20 text-amber-300 border border-amber-500/30",
                                                                                     (!isCompleted && linkedSlip) && "bg-sky-500/20 text-sky-300 border border-sky-500/30",
@@ -22977,7 +22977,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                             <button
                                                                                                 type="button"
                                                                                                 onClick={() => handleOpenPodLightbox(ord)}
-                                                                                                className="text-[9px] font-bold bg-teal-950/80 hover:bg-teal-900 text-teal-300 border border-teal-700/60 px-2 py-0.5 rounded flex items-center gap-1 cursor-pointer transition-colors shadow-sm"
+                                                                                                className="text-[11px] font-bold bg-teal-950/80 hover:bg-teal-900 text-teal-300 border border-teal-700/60 px-2 py-0.5 rounded flex items-center gap-1 cursor-pointer transition-colors shadow-sm"
                                                                                                 title="Bấm để xem ngay các ảnh khách đã ký nhận và hàng hóa tại Lab"
                                                                                             >
                                                                                                 <Camera className="w-2.5 h-2.5 text-teal-400" />
@@ -22987,7 +22987,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                         );
                                                                                     } else if (isCompleted || ord.status === "PARTIALLY_DELIVERED") {
                                                                                         return (
-                                                                                            <span className="text-[9px] text-amber-400/90 font-mono flex items-center gap-0.5">
+                                                                                            <span className="text-[11px] text-amber-400/90 font-mono flex items-center gap-0.5">
                                                                                                 <AlertTriangle className="w-2.5 h-2.5" /> Chưa có ảnh POD
                                                                                             </span>
                                                                                         );
@@ -23070,7 +23070,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                         )}
 
                                                                                         {((ord.invoiceFiles && ord.invoiceFiles.length > 0) || (linkedSlip?.invoiceFiles && linkedSlip.invoiceFiles.length > 0)) && (
-                                                                                            <span className="text-[9px] font-mono bg-indigo-950/80 text-indigo-300 border border-indigo-700/60 px-1.5 py-0.5 rounded flex items-center gap-0.5" title="Đã có tệp hóa đơn đính kèm">
+                                                                                            <span className="text-[11px] font-mono bg-indigo-950/80 text-indigo-300 border border-indigo-700/60 px-1.5 py-0.5 rounded flex items-center gap-0.5" title="Đã có tệp hóa đơn đính kèm">
                                                                                                 <Paperclip className="w-2.5 h-2.5" />
                                                                                                 {(ord.invoiceFiles || linkedSlip?.invoiceFiles).length}
                                                                                             </span>
@@ -23123,7 +23123,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <div className="overflow-x-auto">
                                                 <table className="w-full text-left text-xs border-collapse">
                                                     <thead>
-                                                        <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[9px] bg-slate-950/20">
+                                                        <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[11px] bg-slate-950/20">
                                                             <th className="p-3">Mã báo giá</th>
                                                             <th className="p-3">Ngày</th>
                                                             <th className="p-3">NVKD</th>
@@ -23179,7 +23179,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         </td>
                                                                         <td className="p-3 text-center whitespace-nowrap">
                                                                             <span className={cn(
-                                                                                "text-[9px] font-bold px-2 py-0.5 rounded-full font-mono uppercase",
+                                                                                "text-[11px] font-bold px-2 py-0.5 rounded-full font-mono uppercase",
                                                                                 q.status === "Approved" ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" :
                                                                                 q.status === "Sent" ? "bg-sky-500/20 text-sky-300 border border-sky-500/30" :
                                                                                 "bg-slate-800 text-slate-400"
@@ -23810,7 +23810,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         </span>
 
                                                         <span className={cn(
-                                                            "text-[9px] font-bold px-2 py-0.5 rounded-full uppercase font-mono whitespace-nowrap",
+                                                            "text-[11px] font-bold px-2 py-0.5 rounded-full uppercase font-mono whitespace-nowrap",
                                                             hasContract && isContractSigned && "bg-emerald-950 text-emerald-300 border border-emerald-800",
                                                             hasContract && !isContractSigned && "bg-sky-950 text-sky-300 border border-sky-800",
                                                             !hasContract && quote.status === "Draft" && "bg-slate-800 text-slate-300 border border-slate-700",
@@ -23876,14 +23876,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         </button>
 
                                                         {quoteHasZeroPrice && !quotePendingBGD && (
-                                                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-pink-950/80 text-pink-300 border border-pink-700/60 whitespace-nowrap" title="Báo giá có mặt hàng 0đ / hàng tặng đã được phê duyệt">
+                                                            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-pink-950/80 text-pink-300 border border-pink-700/60 whitespace-nowrap" title="Báo giá có mặt hàng 0đ / hàng tặng đã được phê duyệt">
                                                                 🎁 Đã duyệt 0đ
                                                             </span>
                                                         )}
 
                                                         {quotePendingBGD && (
                                                             <>
-                                                                <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-orange-950 text-orange-300 border border-orange-700 whitespace-nowrap animate-pulse">
+                                                                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-orange-950 text-orange-300 border border-orange-700 whitespace-nowrap animate-pulse">
                                                                     ⏳ Chờ duyệt giá 0đ
                                                                 </span>
                                                                 {(canApproveQuotations || canApproveZeroPriceOrders) && (
@@ -24087,7 +24087,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         <div className="bg-slate-900/60 rounded-lg border border-slate-800 overflow-hidden">
                                                             <table className="w-full text-left text-[11px]">
                                                                 <thead>
-                                                                    <tr className="border-b border-slate-800 bg-slate-950/40 text-slate-400 text-[9px] uppercase font-bold">
+                                                                    <tr className="border-b border-slate-800 bg-slate-950/40 text-slate-400 text-[11px] uppercase font-bold">
                                                                         <th className="py-1.5 px-2.5">Sản phẩm</th>
                                                                         <th className="py-1.5 px-1.5 text-center">Hãng</th>
                                                                         <th className="py-1.5 px-1.5 text-center">Quy cách</th>
@@ -24127,25 +24127,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                     <span className="font-mono text-indigo-300 font-bold mr-1">[{displayCode}]</span>
                                                                                     {it.productName}
                                                                                     {effectiveParentCode && effectiveParentCode !== it.productCode && (
-                                                                                        <span className="text-[9px] text-slate-400 font-mono ml-1 font-normal">(CT: {it.productCode})</span>
+                                                                                        <span className="text-[11px] text-slate-400 font-mono ml-1 font-normal">(CT: {it.productCode})</span>
                                                                                     )}
                                                                                     {(() => {
                                                                                         const intel = getProductLiveStockIntelligence(it.productCode);
                                                                                         if (intel.atp >= qty) {
                                                                                             return (
-                                                                                                <span className="text-[9px] px-1.5 py-0.5 rounded font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 ml-1.5 whitespace-nowrap inline-block" title={`Tồn thực tế kho: ${intel.onHand}, Đã giữ chỗ: ${intel.reserved}, Khả dụng: ${intel.atp}`}>
+                                                                                                <span className="text-[11px] px-1.5 py-0.5 rounded font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 ml-1.5 whitespace-nowrap inline-block" title={`Tồn thực tế kho: ${intel.onHand}, Đã giữ chỗ: ${intel.reserved}, Khả dụng: ${intel.atp}`}>
                                                                                                     🟢 Sẵn kho: {intel.atp}
                                                                                                 </span>
                                                                                             );
                                                                                         } else if (intel.atp > 0) {
                                                                                             return (
-                                                                                                <span className="text-[9px] px-1.5 py-0.5 rounded font-bold bg-amber-950/80 text-amber-300 border border-amber-800/60 ml-1.5 whitespace-nowrap inline-block" title={`Tồn thực tế kho: ${intel.onHand}, Đã giữ chỗ: ${intel.reserved}, Khả dụng: ${intel.atp}`}>
+                                                                                                <span className="text-[11px] px-1.5 py-0.5 rounded font-bold bg-amber-950/80 text-amber-300 border border-amber-800/60 ml-1.5 whitespace-nowrap inline-block" title={`Tồn thực tế kho: ${intel.onHand}, Đã giữ chỗ: ${intel.reserved}, Khả dụng: ${intel.atp}`}>
                                                                                                     🟡 Sẵn {intel.atp}/{qty}
                                                                                                 </span>
                                                                                             );
                                                                                         } else {
                                                                                             return (
-                                                                                                <span className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-rose-950/80 text-rose-300 border border-rose-800/60 ml-1.5 whitespace-nowrap inline-block" title={`Kho hết hàng (Thực tế kho: ${intel.onHand})${intel.incomingQty > 0 ? `. Có PO đang về: ${intel.incomingQty}` : ''}`}>
+                                                                                                <span className="text-[11px] px-1.5 py-0.5 rounded font-medium bg-rose-950/80 text-rose-300 border border-rose-800/60 ml-1.5 whitespace-nowrap inline-block" title={`Kho hết hàng (Thực tế kho: ${intel.onHand})${intel.incomingQty > 0 ? `. Có PO đang về: ${intel.incomingQty}` : ''}`}>
                                                                                                     🔴 Hết hàng{intel.incomingQty > 0 ? ` (PO về: ${intel.incomingQty})` : ''}
                                                                                                 </span>
                                                                                             );
@@ -24153,7 +24153,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                     })()}
                                                                                 </td>
                                                                                 <td className="py-1.5 px-1.5 text-center">
-                                                                                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold font-mono bg-indigo-950/80 text-indigo-300 border border-indigo-800/50">
+                                                                                    <span className="px-1.5 py-0.5 rounded text-[11px] font-bold font-mono bg-indigo-950/80 text-indigo-300 border border-indigo-800/50">
                                                                                         {mfg}
                                                                                     </span>
                                                                                 </td>
@@ -24173,7 +24173,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                 </td>
                                                                                 <td className="py-1.5 px-1.5 text-center font-mono">
                                                                                     {discountRate > 0 ? (
-                                                                                        <span className="px-1 py-0.5 rounded text-[9px] font-bold font-mono bg-amber-950/80 text-amber-300 border border-amber-800/50">
+                                                                                        <span className="px-1 py-0.5 rounded text-[11px] font-bold font-mono bg-amber-950/80 text-amber-300 border border-amber-800/50">
                                                                                             {discountRate}%
                                                                                         </span>
                                                                                     ) : (
@@ -24197,7 +24197,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         {/* Financial Breakdown Bar */}
                                                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-2.5 bg-slate-950/80 rounded-lg border border-slate-800 text-xs">
                                                             <div className="flex flex-col">
-                                                                <span className="text-[9px] uppercase font-bold text-cyan-400 font-mono">Doanh số trước VAT:</span>
+                                                                <span className="text-[11px] uppercase font-bold text-cyan-400 font-mono">Doanh số trước VAT:</span>
                                                                 <span className="font-mono font-bold text-cyan-300 text-xs">
                                                                     {new Intl.NumberFormat("vi-VN").format(quote.totalBeforeVat || quote.items.reduce((s: number, it: any) => {
                                                                         const vat = it.vatRate !== undefined ? Number(it.vatRate) : 8;
@@ -24207,13 +24207,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 </span>
                                                             </div>
                                                             <div className="flex flex-col">
-                                                                <span className="text-[9px] uppercase font-bold text-purple-400 font-mono">Tiền thuế VAT:</span>
+                                                                <span className="text-[11px] uppercase font-bold text-purple-400 font-mono">Tiền thuế VAT:</span>
                                                                 <span className="font-mono font-bold text-purple-300 text-xs">
                                                                     {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(quote.totalVat || (quote.totalAmount - (quote.totalBeforeVat || Math.round(quote.totalAmount / 1.08))))}đ
                                                                 </span>
                                                             </div>
                                                             <div className="flex flex-col">
-                                                                <span className="text-[9px] uppercase font-bold text-amber-400 font-mono">Tiền CK (Trước VAT):</span>
+                                                                <span className="text-[11px] uppercase font-bold text-amber-400 font-mono">Tiền CK (Trước VAT):</span>
                                                                 <span className="font-mono font-bold text-amber-300 text-xs">
                                                                     {new Intl.NumberFormat("vi-VN").format(quote.totalDiscount || quote.items.reduce((s: number, it: any) => {
                                                                         const vat = it.vatRate !== undefined ? Number(it.vatRate) : 8;
@@ -24224,7 +24224,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 </span>
                                                             </div>
                                                             <div className="flex flex-col">
-                                                                <span className="text-[9px] uppercase font-bold text-emerald-400 font-mono">TỔNG SAU VAT (BÁO KHÁCH):</span>
+                                                                <span className="text-[11px] uppercase font-bold text-emerald-400 font-mono">TỔNG SAU VAT (BÁO KHÁCH):</span>
                                                                 <span className="font-mono font-bold text-emerald-400 text-sm">
                                                                     {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(quote.totalAmount)}đ
                                                                 </span>
@@ -24343,7 +24343,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     <span className="font-bold text-amber-400">
                                                                         {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(discount)}đ
                                                                     </span>
-                                                                    <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-950/90 text-amber-300 border border-amber-800/70">
+                                                                    <span className="px-1.5 py-0.2 rounded text-[11px] font-bold bg-amber-950/90 text-amber-300 border border-amber-800/70">
                                                                         {discPercent}%
                                                                     </span>
                                                                 </div>
@@ -24362,7 +24362,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         </td>
                                                         <td className="py-2.5 px-2.5 text-center whitespace-nowrap">
                                                             <span className={cn(
-                                                                "text-[9px] font-bold px-2 py-0.5 rounded-full font-mono uppercase",
+                                                                "text-[11px] font-bold px-2 py-0.5 rounded-full font-mono uppercase",
                                                                 quote.status === "Approved" ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" :
                                                                 quote.status === "Sent" ? "bg-sky-500/20 text-sky-300 border border-sky-500/30" :
                                                                 "bg-slate-800 text-slate-400"
@@ -24785,7 +24785,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         </span>
 
                                                         {isPrincipleContract ? (
-                                                            <div className="inline-flex items-center gap-1.5 bg-amber-500/15 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-full text-[9px] font-mono whitespace-nowrap shadow-sm">
+                                                            <div className="inline-flex items-center gap-1.5 bg-amber-500/15 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-full text-[11px] font-mono whitespace-nowrap shadow-sm">
                                                                 <span className="font-bold">📜 HĐ Nguyên Tắc</span>
                                                                 <span className="text-amber-500/60">•</span>
                                                                 <span className="font-bold text-amber-400">Đã gọi: {progressPercent}%</span>
@@ -24798,16 +24798,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         style={{ width: `${Math.min(100, progressPercent)}%` }} 
                                                                     />
                                                                 </div>
-                                                                <span className="text-[8px] text-slate-400 hidden md:inline">({totalOrderedUnits}/{totalContractedUnits} SP)</span>
+                                                                <span className="text-[11px] text-slate-400 hidden md:inline">({totalOrderedUnits}/{totalContractedUnits} SP)</span>
                                                             </div>
                                                         ) : (
-                                                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-full uppercase font-mono whitespace-nowrap bg-sky-500/15 text-sky-400 border border-sky-500/40 flex items-center gap-1">
+                                                            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full uppercase font-mono whitespace-nowrap bg-sky-500/15 text-sky-400 border border-sky-500/40 flex items-center gap-1">
                                                                 📑 HĐ Kinh Tế
                                                             </span>
                                                         )}
 
                                                         <span className={cn(
-                                                            "text-[9px] font-bold px-2 py-0.5 rounded-full uppercase font-mono whitespace-nowrap",
+                                                            "text-[11px] font-bold px-2 py-0.5 rounded-full uppercase font-mono whitespace-nowrap",
                                                             contract.status === "Draft" 
                                                                 ? "bg-amber-950 text-amber-300 border border-amber-800" 
                                                                 : "bg-emerald-950 text-emerald-300 border border-emerald-800"
@@ -24824,20 +24824,20 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             const diffDays = Math.ceil((expDate.getTime() - Date.now()) / (1000 * 3600 * 24));
                                                             if (diffDays < 0) {
                                                                 return (
-                                                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-rose-950 text-rose-300 border border-rose-800 font-mono">
+                                                                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-rose-950 text-rose-300 border border-rose-800 font-mono">
                                                                         🔴 Hết hạn ({Math.abs(diffDays)}d)
                                                                     </span>
                                                                 );
                                                             }
                                                             if (diffDays <= 30) {
                                                                 return (
-                                                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 font-mono animate-pulse">
+                                                                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 font-mono animate-pulse">
                                                                         🟡 Sắp hết hạn ({diffDays}d)
                                                                     </span>
                                                                 );
                                                             }
                                                             return (
-                                                                <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-slate-900 text-slate-400 border border-slate-800 font-mono">
+                                                                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-900 text-slate-400 border border-slate-800 font-mono">
                                                                     🟢 Đến {parts[2]}/{parts[1]}/{parts[0]}
                                                                 </span>
                                                             );
@@ -24992,7 +24992,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 <div className="bg-slate-900/60 rounded-lg border border-slate-800 overflow-hidden">
                                                                     <table className="w-full text-left text-[11px]">
                                                                         <thead>
-                                                                            <tr className="border-b border-slate-800 bg-slate-950/40 text-slate-400 text-[9px] uppercase font-bold">
+                                                                            <tr className="border-b border-slate-800 bg-slate-950/40 text-slate-400 text-[11px] uppercase font-bold">
                                                                                 <th className="py-1.5 px-2.5">Sản phẩm</th>
                                                                                 {isPrincipleContract && <th className="py-1.5 px-2 text-center">ĐVT</th>}
                                                                                 <th className="py-1.5 px-2 text-center">{isPrincipleContract ? "Hạn mức HĐ" : "SL"}</th>
@@ -25029,7 +25029,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                                     <span className="font-mono text-emerald-400 font-bold mr-1">[{it.productCode}]</span>
                                                                                                     <span>{it.productName || prod?.name || it.productCode}</span>
                                                                                                     {((it.configurations && it.configurations.length > 0) || ((prod as any)?.configurations && (prod as any).configurations.length > 0)) && (
-                                                                                                        <span className="ml-1.5 text-[9px] bg-indigo-950/80 border border-indigo-700/50 text-indigo-300 px-1.5 py-0.5 rounded font-mono inline-flex items-center gap-0.5">
+                                                                                                        <span className="ml-1.5 text-[11px] bg-indigo-950/80 border border-indigo-700/50 text-indigo-300 px-1.5 py-0.5 rounded font-mono inline-flex items-center gap-0.5">
                                                                                                             ⚙️ {it.configurations?.length || (prod as any)?.configurations?.length} phụ kiện BOM
                                                                                                         </span>
                                                                                                     )}
@@ -25082,7 +25082,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         <div>
                                                                             <div className="font-bold text-xs text-amber-300 flex items-center gap-2">
                                                                                 <span>LỊCH SỬ CÁC ĐỢT GỌI HÀNG (CALL-OFF ORDERS)</span>
-                                                                                <span className="bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[9px] px-2 py-0.5 rounded-full font-mono">
+                                                                                <span className="bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[11px] px-2 py-0.5 rounded-full font-mono">
                                                                                     {linkedOrders.length} đợt đã tạo
                                                                                 </span>
                                                                             </div>
@@ -25140,13 +25140,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                                 {fo.id}
                                                                                             </span>
                                                                                             {fo.createdAt && (
-                                                                                                <span className="text-[9px] text-slate-500 font-mono">
+                                                                                                <span className="text-[11px] text-slate-500 font-mono">
                                                                                                     • {String(fo.createdAt).substring(0, 10)}
                                                                                                 </span>
                                                                                             )}
                                                                                         </div>
                                                                                         <span className={cn(
-                                                                                            "text-[9px] font-bold px-2 py-0.5 rounded-full font-mono uppercase",
+                                                                                            "text-[11px] font-bold px-2 py-0.5 rounded-full font-mono uppercase",
                                                                                             fo.status === "Approved" || fo.status === "Completed"
                                                                                                 ? "bg-emerald-950 text-emerald-300 border border-emerald-800"
                                                                                                 : fo.status === "Delivered" || fo.status === "Shipping"
@@ -25176,7 +25176,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                             </span>
                                                                                         </div>
                                                                                         {fo.notes && (
-                                                                                            <div className="text-[9px] text-slate-400 italic truncate" title={fo.notes}>
+                                                                                            <div className="text-[11px] text-slate-400 italic truncate" title={fo.notes}>
                                                                                                 Ghi chú: {fo.notes}
                                                                                             </div>
                                                                                         )}
@@ -25188,7 +25188,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                             {fo.items.map((it: any, iIdx: number) => (
                                                                                                 <span 
                                                                                                     key={iIdx} 
-                                                                                                    className="text-[9px] bg-slate-900 text-slate-300 px-1.5 py-0.5 rounded border border-slate-800 font-mono"
+                                                                                                    className="text-[11px] bg-slate-900 text-slate-300 px-1.5 py-0.5 rounded border border-slate-800 font-mono"
                                                                                                     title={`${it.productName || it.productCode}: ${it.quantity} SP`}
                                                                                                 >
                                                                                                     {it.productCode}: <strong className="text-white">{it.quantity}</strong>
@@ -26117,12 +26117,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                             </span>
                                                                                         )}
                                                                                         {overdueDeliveryDays > 0 && (
-                                                                                            <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-rose-950/90 text-rose-300 border border-rose-500/50">
+                                                                                            <span className="text-[11px] font-mono font-bold px-1.5 py-0.5 rounded bg-rose-950/90 text-rose-300 border border-rose-500/50">
                                                                                                 🚨 Trễ {overdueDeliveryDays} ngày
                                                                                             </span>
                                                                                         )}
                                                                                         {isDueToday && (
-                                                                                            <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-500/50">
+                                                                                            <span className="text-[11px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-500/50">
                                                                                                 ⏰ Hạn hôm nay
                                                                                             </span>
                                                                                         )}
@@ -26177,7 +26177,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     <div className="flex items-center gap-1.5 flex-wrap">
                                                                         <span>{req.id}</span>
                                                                         {isStockOrder && (
-                                                                            <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-cyan-950/90 text-cyan-300 border border-cyan-500/60 shadow-sm shrink-0">
+                                                                            <span className="text-[11px] px-1.5 py-0.5 rounded font-mono font-bold bg-cyan-950/90 text-cyan-300 border border-cyan-500/60 shadow-sm shrink-0">
                                                                                 📦 STOCK GỐI ĐẦU
                                                                             </span>
                                                                         )}
@@ -26193,15 +26193,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     <div className="flex items-center gap-1.5 w-full">
                                                                         <div className="flex items-center gap-1 shrink-0">
                                                                             {hasMfg && hasComm ? (
-                                                                                <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-amber-950/80 text-amber-200 border border-amber-500/50">
+                                                                                <span className="text-[11px] px-1.5 py-0.5 rounded font-mono font-bold bg-amber-950/80 text-amber-200 border border-amber-500/50">
                                                                                     Hãng + Mua ngoài
                                                                                 </span>
                                                                             ) : hasMfg ? (
-                                                                                <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-purple-100 dark:bg-purple-950/80 text-purple-800 dark:text-purple-200 border border-purple-300 dark:border-purple-400/50 shadow-sm">
+                                                                                <span className="text-[11px] px-1.5 py-0.5 rounded font-mono font-bold bg-purple-100 dark:bg-purple-950/80 text-purple-800 dark:text-purple-200 border border-purple-300 dark:border-purple-400/50 shadow-sm">
                                                                                     🏷️ Phân Phối Hãng
                                                                                 </span>
                                                                             ) : (
-                                                                                <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-cyan-950/80 text-cyan-200 border border-cyan-500/50">
+                                                                                <span className="text-[11px] px-1.5 py-0.5 rounded font-mono font-bold bg-cyan-950/80 text-cyan-200 border border-cyan-500/50">
                                                                                     🛒 Mua ngoài
                                                                                 </span>
                                                                             )}
@@ -26227,7 +26227,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         return totalVal > 0 ? (
                                                                             <>
                                                                                 <div className="text-[11px] text-emerald-400 font-mono font-bold flex items-center justify-between border-t border-slate-800/60 pt-0.5 mt-0.5 w-full">
-                                                                                    <span className="text-[9px] text-slate-400 font-normal">Trị giá:</span>
+                                                                                    <span className="text-[11px] text-slate-400 font-normal">Trị giá:</span>
                                                                                     <span>{totalVal.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ</span>
                                                                                 </div>
                                                                                 {paidVal > 0 && (
@@ -26307,7 +26307,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     {/* Price / 0d Approval Badge (Req 12 & 13) */}
                                                                     {isPendingBODApproval && (
                                                                         <span 
-                                                                            className="text-[9px] font-bold px-2 py-0.5 rounded bg-amber-950/90 text-amber-200 border border-amber-500/60 inline-flex items-center gap-1 shadow-sm font-mono cursor-help"
+                                                                            className="text-[11px] font-bold px-2 py-0.5 rounded bg-amber-950/90 text-amber-200 border border-amber-500/60 inline-flex items-center gap-1 shadow-sm font-mono cursor-help"
                                                                             title={req.priceApprovalNotes || "Đơn hàng có mặt hàng 0đ hoặc quà tặng khuyến mãi, chờ Ban Giám Đốc duyệt"}
                                                                         >
                                                                             ⏳ Chờ BGĐ duyệt giá 0đ
@@ -26324,7 +26324,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             }}
                                                                             title={(!isCancelledOrder && req.status !== "Rejected" && (stockAnalysis.hasPR || req.prCode)) ? "Bấm để xem lại hoặc cập nhật Đề xuất mua hàng (PR) đã gửi Cung Ứng" : undefined}
                                                                             className={cn(
-                                                                                "text-[9px] font-bold px-2 py-0.5 rounded-full font-mono uppercase inline-block text-center",
+                                                                                "text-[11px] font-bold px-2 py-0.5 rounded-full font-mono uppercase inline-block text-center",
                                                                                 (!isCancelledOrder && req.status !== "Rejected" && (stockAnalysis.hasPR || req.prCode)) && "cursor-pointer hover:brightness-110 transition-all",
                                                                                 isCancelledOrder
                                                                                     ? "bg-rose-950/90 text-rose-300 border border-rose-500/50"
@@ -26346,7 +26346,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             <div className="font-bold flex items-center gap-1 text-rose-400">
                                                                                 <span>{isCancelledOrder ? "🚫 Đơn hàng đã hủy" : "🔒 Khóa chuyển bước tiếp theo"}</span>
                                                                             </div>
-                                                                            <div className="text-[9px] text-slate-400">
+                                                                            <div className="text-[11px] text-slate-400">
                                                                                 {isCancelledOrder && <div>• {req.cancelReason || "Đã giải phóng giữ chỗ kho & hủy PR liên kết"}</div>}
                                                                                 {isPendingCreditApproval && <div>• Cảnh báo nợ quá hạn: Cần Kế toán duyệt</div>}
                                                                                 {isPendingBODApproval && <div>• Đơn giá 0đ / quà tặng: Cần BGĐ duyệt</div>}
@@ -26361,12 +26361,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                     <div className="flex items-center gap-1.5 flex-wrap">
                                                                                         <span className="text-cyan-300 font-bold shrink-0">🏢 Lưu kho:</span>
                                                                                         {isStockCompleted ? (
-                                                                                            <span className="text-teal-300 font-bold bg-teal-950/80 px-2 py-0.5 rounded border border-teal-500/40 text-[9px] flex items-center gap-1 shadow-sm">
+                                                                                            <span className="text-teal-300 font-bold bg-teal-950/80 px-2 py-0.5 rounded border border-teal-500/40 text-[11px] flex items-center gap-1 shadow-sm">
                                                                                                 <CheckCircle2 className="w-3 h-3 text-teal-400" />
                                                                                                 ✓ Đã nhập kho hoàn tất
                                                                                             </span>
                                                                                         ) : primaryPO ? (
-                                                                                            <span className={`font-bold px-2 py-0.5 rounded border text-[9px] flex items-center gap-1 ${
+                                                                                            <span className={`font-bold px-2 py-0.5 rounded border text-[11px] flex items-center gap-1 ${
                                                                                                 (primaryPO.status === "COMPLETED" || primaryPO.status === "Received")
                                                                                                     ? "text-emerald-300 bg-emerald-950/70 border-emerald-500/40"
                                                                                                     : "text-indigo-200 bg-indigo-950/70 border-indigo-500/40"
@@ -26376,11 +26376,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                                 <strong>{primaryPO.po_code}</strong> {poSupplierLabel(primaryPO) ? `(${poSupplierLabel(primaryPO)})` : ""}
                                                                                             </span>
                                                                                         ) : (req.prCode || stockAnalysis.hasPR) ? (
-                                                                                            <span className="text-amber-300 font-bold bg-amber-950/80 px-2 py-0.5 rounded border border-amber-500/40 text-[9px] flex items-center gap-1 shadow-sm">
+                                                                                            <span className="text-amber-300 font-bold bg-amber-950/80 px-2 py-0.5 rounded border border-amber-500/40 text-[11px] flex items-center gap-1 shadow-sm">
                                                                                                 <span>⏳ Đã gửi PR: <strong className="text-amber-200">{resolvedPrCode || "Chờ gom PO"}</strong></span>
                                                                                             </span>
                                                                                         ) : (
-                                                                                            <span className="text-cyan-300 font-bold bg-cyan-950/80 px-2 py-0.5 rounded border border-cyan-500/40 text-[9px] flex items-center gap-1 shadow-sm">
+                                                                                            <span className="text-cyan-300 font-bold bg-cyan-950/80 px-2 py-0.5 rounded border border-cyan-500/40 text-[11px] flex items-center gap-1 shadow-sm">
                                                                                                 <span>🛒 Dự trù kho — Chờ gửi PR</span>
                                                                                             </span>
                                                                                         )}
@@ -26392,7 +26392,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                             <button
                                                                                                 type="button"
                                                                                                 onClick={() => setExpandedOrderProgressIds(prev => ({ ...prev, [req.id]: !prev[req.id] }))}
-                                                                                                className="text-[9px] text-cyan-300 hover:text-cyan-100 flex items-center gap-1 bg-cyan-950/60 hover:bg-cyan-900/80 px-2 py-0.5 rounded border border-cyan-700/50 transition-colors cursor-pointer w-fit shadow-sm"
+                                                                                                className="text-[11px] text-cyan-300 hover:text-cyan-100 flex items-center gap-1 bg-cyan-950/60 hover:bg-cyan-900/80 px-2 py-0.5 rounded border border-cyan-700/50 transition-colors cursor-pointer w-fit shadow-sm"
                                                                                                 title={expandedOrderProgressIds[req.id] ? "Thu gọn chi tiết tiến độ nhập kho" : "Xem chi tiết tiến độ nhập kho của các mã hàng"}
                                                                                             >
                                                                                                 {expandedOrderProgressIds[req.id] ? (
@@ -26416,27 +26416,27 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                     <div className="flex items-center gap-1.5 flex-wrap">
                                                                                         <span className="text-cyan-300 font-bold shrink-0">🏢 Cung ứng:</span>
                                                                                         {stockAnalysis.isFullyDelivered ? (
-                                                                                            <span className="text-teal-300 font-bold bg-teal-950/80 px-2 py-0.5 rounded border border-teal-500/40 text-[9px] flex items-center gap-1 shadow-sm">
+                                                                                            <span className="text-teal-300 font-bold bg-teal-950/80 px-2 py-0.5 rounded border border-teal-500/40 text-[11px] flex items-center gap-1 shadow-sm">
                                                                                                 <CheckCircle2 className="w-3 h-3 text-teal-400" />
                                                                                                 ✓ Đã giao hoàn tất
                                                                                             </span>
                                                                                         ) : stockAnalysis.isPartiallyDelivered ? (
-                                                                                            <span className="text-sky-300 font-bold bg-sky-950/80 px-2 py-0.5 rounded border border-sky-500/40 text-[9px] flex items-center gap-1 shadow-sm">
+                                                                                            <span className="text-sky-300 font-bold bg-sky-950/80 px-2 py-0.5 rounded border border-sky-500/40 text-[11px] flex items-center gap-1 shadow-sm">
                                                                                                 <Truck className="w-3 h-3 text-sky-400" />
                                                                                                 📦 Đã giao một phần
                                                                                             </span>
                                                                                         ) : stockAnalysis.isReadyAll ? (
-                                                                                            <span className="text-emerald-300 font-bold bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/40 text-[9px] flex items-center gap-1 shadow-sm">
+                                                                                            <span className="text-emerald-300 font-bold bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/40 text-[11px] flex items-center gap-1 shadow-sm">
                                                                                                 <CheckCircle2 className="w-3 h-3 text-emerald-400" />
                                                                                                 🟢 Kho đủ hàng (Sẵn sàng giao)
                                                                                             </span>
                                                                                         ) : stockAnalysis.isPartialReady ? (
-                                                                                            <span className="text-amber-300 font-bold bg-amber-950/80 px-2 py-0.5 rounded border border-amber-500/40 text-[9px] flex items-center gap-1 shadow-sm">
+                                                                                            <span className="text-amber-300 font-bold bg-amber-950/80 px-2 py-0.5 rounded border border-amber-500/40 text-[11px] flex items-center gap-1 shadow-sm">
                                                                                                 <Package className="w-3 h-3 text-amber-400" />
                                                                                                 🟡 Có sẵn 1 phần ({stockAnalysis.itemsBreakdown.filter((i: any) => i.availableStock > 0).length}/{stockAnalysis.itemsBreakdown.length} món)
                                                                                             </span>
                                                                                         ) : (
-                                                                                            <span className="text-rose-300 font-bold bg-rose-950/60 px-2 py-0.5 rounded border border-rose-500/30 text-[9px] flex items-center gap-1">
+                                                                                            <span className="text-rose-300 font-bold bg-rose-950/60 px-2 py-0.5 rounded border border-rose-500/30 text-[11px] flex items-center gap-1">
                                                                                                 <span>🔴 Cần mua ngoài NCC ({stockAnalysis.itemsBreakdown.length} món)</span>
                                                                                             </span>
                                                                                         )}
@@ -26449,7 +26449,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                                 <button
                                                                                                     type="button"
                                                                                                     onClick={() => handleOpenSingleProcureModal(req)}
-                                                                                                    className="w-fit text-amber-300 hover:text-amber-100 font-bold bg-amber-950/60 hover:bg-amber-900/70 px-1.5 py-0.5 rounded border border-amber-500/30 text-[9px] flex items-center gap-1 cursor-pointer transition-colors"
+                                                                                                    className="w-fit text-amber-300 hover:text-amber-100 font-bold bg-amber-950/60 hover:bg-amber-900/70 px-1.5 py-0.5 rounded border border-amber-500/30 text-[11px] flex items-center gap-1 cursor-pointer transition-colors"
                                                                                                     title="Bấm để xem lại hoặc cập nhật Đề xuất mua hàng (PR) đã gửi Cung Ứng"
                                                                                                 >
                                                                                                     <span>📋 PR: <strong className="text-amber-200">{resolvedPrCode}</strong></span>
@@ -26460,7 +26460,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                             type="button"
                                                                                             onClick={() => setExpandedOrderProgressIds(prev => ({ ...prev, [req.id]: !prev[req.id] }))}
                                                                                             className={cn(
-                                                                                                "w-fit font-bold px-1.5 py-0.5 rounded border text-[9px] flex items-center gap-1 cursor-pointer",
+                                                                                                "w-fit font-bold px-1.5 py-0.5 rounded border text-[11px] flex items-center gap-1 cursor-pointer",
                                                                                                 linkedPODoneCount === linkedPOs.length
                                                                                                     ? "text-emerald-300 bg-emerald-950/70 border-emerald-500/40"
                                                                                                     : "text-cyan-200 bg-cyan-950/60 border-cyan-500/30 hover:bg-cyan-900/60"
@@ -26485,7 +26485,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                                     disabled={!isApprovedForNextSteps}
                                                                                                     onClick={() => stockAnalysis.isPartiallyDelivered ? handleOpenPartialShipOrder(req) : handleShipOrderToCustomer(req.id)}
                                                                                                     className={cn(
-                                                                                                        "text-[9px] px-2.5 py-1 rounded font-bold transition-all border flex items-center gap-1 shadow-sm",
+                                                                                                        "text-[11px] px-2.5 py-1 rounded font-bold transition-all border flex items-center gap-1 shadow-sm",
                                                                                                         isApprovedForNextSteps
                                                                                                             ? "bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400 shadow-md shadow-emerald-950/60 animate-pulse cursor-pointer ring-2 ring-emerald-400/30"
                                                                                                             : "bg-slate-900/80 border-slate-800 text-slate-500 cursor-not-allowed opacity-50"
@@ -26503,7 +26503,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                                     type="button"
                                                                                                     disabled={!isApprovedForNextSteps}
                                                                                                     onClick={() => handleOpenPartialShipOrder(req)}
-                                                                                                    className="text-[9px] px-2.5 py-1 rounded font-bold bg-sky-700 hover:bg-sky-600 text-white border border-sky-400 shadow-sm cursor-pointer flex items-center gap-1"
+                                                                                                    className="text-[11px] px-2.5 py-1 rounded font-bold bg-sky-700 hover:bg-sky-600 text-white border border-sky-400 shadow-sm cursor-pointer flex items-center gap-1"
                                                                                                     title="Kho đang có sẵn một số mặt hàng! Bấm để xuất giao trước đợt 1 cho khách, các món thiếu sẽ giao đợt sau"
                                                                                                 >
                                                                                                     <Truck className="w-3 h-3 text-white" />
@@ -26516,7 +26516,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                                 <button
                                                                                                     type="button"
                                                                                                     onClick={() => setExpandedOrderProgressIds(prev => ({ ...prev, [req.id]: !prev[req.id] }))}
-                                                                                                    className="text-[9px] text-cyan-300 hover:text-cyan-100 flex items-center gap-1 bg-cyan-950/60 hover:bg-cyan-900/80 px-2 py-0.5 rounded border border-cyan-700/50 transition-colors cursor-pointer w-fit shadow-sm"
+                                                                                                    className="text-[11px] text-cyan-300 hover:text-cyan-100 flex items-center gap-1 bg-cyan-950/60 hover:bg-cyan-900/80 px-2 py-0.5 rounded border border-cyan-700/50 transition-colors cursor-pointer w-fit shadow-sm"
                                                                                                     title={expandedOrderProgressIds[req.id] ? "Thu gọn chi tiết tiến độ nhập hàng" : "Xem chi tiết tiến độ nhập hàng từng mã sản phẩm"}
                                                                                                 >
                                                                                                     {expandedOrderProgressIds[req.id] ? (
@@ -26831,7 +26831,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                 {canManageAllOrders && req.status === "Approved" && !req.linkedSalesOrderId && !hasMfg && !hasComm && (
                                                                                     <button
                                                                                         onClick={() => handleCreateSalesOrderFromRequests([req.id])}
-                                                                                        className="bg-indigo-600 hover:bg-indigo-500 text-white text-[9px] px-2 py-1 rounded font-bold"
+                                                                                        className="bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] px-2 py-1 rounded font-bold"
                                                                                     >
                                                                                         Tạo Đơn Lẻ
                                                                                     </button>
@@ -26935,7 +26935,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                                             <span className="text-slate-400 ml-1">x{it.quantity || 1} {it.unit || ""}</span>
                                                                                                             {itemPOs.length > 0 && (
                                                                                                                 <span
-                                                                                                                    className="text-cyan-300/90 ml-1.5 text-[9px]"
+                                                                                                                    className="text-cyan-300/90 ml-1.5 text-[11px]"
                                                                                                                     title={itemPOs.map((po: any) => `${po.po_code}${poSupplierLabel(po) ? ` — ${poSupplierLabel(po)}` : ""}`).join("\n")}
                                                                                                                 >
                                                                                                                     [{itemPOs.map((po: any) => po.po_code).join(", ")}]
@@ -26943,7 +26943,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                                             )}
                                                                                                         </div>
                                                                                                         <span className={cn(
-                                                                                                            "font-bold shrink-0 text-[9px] px-1.5 py-0.2 rounded",
+                                                                                                            "font-bold shrink-0 text-[11px] px-1.5 py-0.2 rounded",
                                                                                                             isItReceived ? "bg-emerald-900/80 text-emerald-300 border border-emerald-500/40" : "bg-amber-950/80 text-amber-300 border border-amber-600/40"
                                                                                                         )}>
                                                                                                             {isItemInStock && !isStockOrder ? "🟢 Sẵn trong kho" : isItReceived ? "✓ Đã về kho" : (matchingPO ? (matchedLineRecQty > 0 ? `⏳ Đã về ${matchedLineRecQty}/${matchedLineOrdQty}` : `🚚 Đang về (${matchingPO.po_code})`) : "⏳ Chờ đặt PO")}
@@ -27169,7 +27169,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 >
                                     <span className="text-[10px] text-orange-400 uppercase tracking-wider font-bold block">Tổng sản phẩm kinh doanh</span>
                                     <div className="text-lg font-bold font-mono text-white mt-1">{commercialProducts.length} mặt hàng</div>
-                                    <span className="text-[9px] text-slate-400 block mt-0.5">
+                                    <span className="text-[11px] text-slate-400 block mt-0.5">
                                         {commercialCategoryStats.actualCategories.length} phân loại thực tế
                                     </span>
                                 </div>
@@ -27186,13 +27186,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <div className="flex items-center justify-between">
                                         <span className="text-[10px] text-amber-400 uppercase tracking-wider font-bold block">⚠️ Cần đặt giá</span>
                                         {unpricedProducts.length > 0 && (
-                                            <span className="text-[9px] bg-amber-500 text-slate-950 px-1.5 py-0.2 rounded font-mono font-bold">Cảnh báo</span>
+                                            <span className="text-[11px] bg-amber-500 text-slate-950 px-1.5 py-0.2 rounded font-mono font-bold">Cảnh báo</span>
                                         )}
                                     </div>
                                     <div className="text-lg font-bold font-mono text-amber-300 mt-1">
                                         {unpricedProducts.length} mặt hàng
                                     </div>
-                                    <span className="text-[9px] text-slate-400 block mt-0.5">
+                                    <span className="text-[11px] text-slate-400 block mt-0.5">
                                         {unpricedProducts.length > 0 ? "Bấm để lọc & nhập giá ➔" : "Đã đủ giá bán ✓"}
                                     </span>
                                 </div>
@@ -27210,7 +27210,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <div className="text-lg font-bold font-mono text-indigo-300 mt-1">
                                         {commercialCategoryStats.groupCounts.PCR_EXTRACT} loại
                                     </div>
-                                    <span className="text-[9px] text-slate-400 block mt-0.5">
+                                    <span className="text-[11px] text-slate-400 block mt-0.5">
                                         {commercialCategoryFilter === "GROUP:PCR_EXTRACT" ? "Đang lọc nhóm này (Bấm bỏ lọc)" : "Kit PCR, Tách chiết, SHPT"}
                                     </span>
                                 </div>
@@ -27228,7 +27228,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <div className="text-lg font-bold font-mono text-purple-300 mt-1">
                                         {commercialCategoryStats.groupCounts.EQUIPMENT} máy
                                     </div>
-                                    <span className="text-[9px] text-slate-400 block mt-0.5">
+                                    <span className="text-[11px] text-slate-400 block mt-0.5">
                                         {commercialCategoryFilter === "GROUP:EQUIPMENT" ? "Đang lọc nhóm này (Bấm bỏ lọc)" : "Máy & Thiết bị phòng Lab"}
                                     </span>
                                 </div>
@@ -27246,7 +27246,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <div className="text-lg font-bold font-mono text-emerald-300 mt-1">
                                         {commercialCategoryStats.groupCounts.CHEMICAL} loại
                                     </div>
-                                    <span className="text-[9px] text-slate-400 block mt-0.5">
+                                    <span className="text-[11px] text-slate-400 block mt-0.5">
                                         {commercialCategoryFilter === "GROUP:CHEMICAL" ? "Đang lọc nhóm này (Bấm bỏ lọc)" : "Hóa chất, Sinh phẩm, Nhuộm"}
                                     </span>
                                 </div>
@@ -27264,7 +27264,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <div className="text-lg font-bold font-mono text-cyan-300 mt-1">
                                         {commercialCategoryStats.groupCounts.CONSUMABLE_OTHER} mục
                                     </div>
-                                    <span className="text-[9px] text-slate-400 block mt-0.5">
+                                    <span className="text-[11px] text-slate-400 block mt-0.5">
                                         {commercialCategoryFilter === "GROUP:CONSUMABLE_OTHER" ? "Đang lọc nhóm này (Bấm bỏ lọc)" : "Tiêu hao, Dụng cụ, Phần mềm"}
                                     </span>
                                 </div>
@@ -27277,12 +27277,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 >
                                     <div className="flex items-center justify-between">
                                         <span className="text-[10px] text-indigo-400 uppercase tracking-wider font-bold block">📦 Giữ chỗ theo Lô</span>
-                                        <span className="text-[9px] bg-indigo-900/80 text-indigo-200 px-1.5 py-0.2 rounded font-mono font-bold">Tại Kho</span>
+                                        <span className="text-[11px] bg-indigo-900/80 text-indigo-200 px-1.5 py-0.2 rounded font-mono font-bold">Tại Kho</span>
                                     </div>
                                     <div className="text-lg font-bold font-mono text-indigo-300 mt-1">
                                         {reservations.filter(r => r.status === "ACTIVE").reduce((s, r) => s + Number(r.quantity_reserved), 0)} SP
                                     </div>
-                                    <span className="text-[9px] text-slate-400 block mt-0.5">
+                                    <span className="text-[11px] text-slate-400 block mt-0.5">
                                         {reservations.filter(r => r.status === "ACTIVE").length} phiếu (Xem tại Kho ➔)
                                     </span>
                                 </div>
@@ -27405,7 +27405,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <div className="overflow-x-auto select-none">
                                     <table className="w-full text-left text-xs border-collapse">
                                         <thead>
-                                            <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[9px] bg-slate-900/20">
+                                            <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[11px] bg-slate-900/20">
                                                 <th className="py-2.5 px-2 text-left w-24">Mã SKU</th>
                                                 <th className="py-2.5 px-2 min-w-[180px]">Tên Hàng Hóa & Model / Hãng SX</th>
                                                 <th className="py-2.5 px-2 w-32 text-center">Phân loại & Tình trạng</th>
@@ -27446,11 +27446,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             <td className="py-2 px-2 font-mono font-bold text-sky-600 dark:text-sky-400 text-left select-all">
                                                                 <div>{p.code}</div>
                                                                 {isSvc && (!p.price || Number(p.price) === 0) ? (
-                                                                    <span className="inline-block mt-0.5 px-1 py-0.2 rounded text-[9px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 font-bold whitespace-nowrap" title="Dịch vụ sửa chữa / kỹ thuật định giá theo từng lần phát sinh thực tế trên Báo giá / Đơn hàng">
+                                                                    <span className="inline-block mt-0.5 px-1 py-0.2 rounded text-[11px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 font-bold whitespace-nowrap" title="Dịch vụ sửa chữa / kỹ thuật định giá theo từng lần phát sinh thực tế trên Báo giá / Đơn hàng">
                                                                         🛠️ Giá theo phát sinh
                                                                     </span>
                                                                 ) : isUnpriced ? (
-                                                                    <span className="inline-block mt-0.5 px-1 py-0.2 rounded text-[9px] bg-amber-500/25 text-amber-300 border border-amber-500/40 font-bold whitespace-nowrap">
+                                                                    <span className="inline-block mt-0.5 px-1 py-0.2 rounded text-[11px] bg-amber-500/25 text-amber-300 border border-amber-500/40 font-bold whitespace-nowrap">
                                                                         ⚠️ Chưa có giá
                                                                     </span>
                                                                 ) : null}
@@ -27504,7 +27504,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             <span className="text-[9.5px] text-slate-400 font-medium truncate max-w-[120px]" title={p.leadTime}>
                                                                                 {p.leadTime || "Có sẵn kho"}
                                                                             </span>
-                                                                            {p.warranty && <span className="text-[9px] text-indigo-400">BH: {p.warranty}</span>}
+                                                                            {p.warranty && <span className="text-[11px] text-indigo-400">BH: {p.warranty}</span>}
                                                                         </div>
                                                                     );
                                                                 })()}
@@ -27543,7 +27543,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             <button
                                                                                 type="button"
                                                                                 onClick={() => setViewingProductComponents({ product: p, components: comps })}
-                                                                                className="text-[9px] text-indigo-700 dark:text-indigo-400 hover:text-indigo-900 dark:hover:text-indigo-300 underline mt-0.5 cursor-pointer font-bold"
+                                                                                className="text-[11px] text-indigo-700 dark:text-indigo-400 hover:text-indigo-900 dark:hover:text-indigo-300 underline mt-0.5 cursor-pointer font-bold"
                                                                                 title="Xem điều kiện bảo quản của từng phụ kiện"
                                                                             >
                                                                                 Xem {comps.length} PK
@@ -27560,7 +27560,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     placeholder="Theo lô nhập..."
                                                                 />
                                                                 {(p as any).previousCostPrice > 0 && Number((p as any).previousCostPrice) !== Number(p.costPrice) && (
-                                                                    <span className="block text-[8px] text-sky-400 font-medium text-right mt-0.5" title="Giá vốn đã tự động cập nhật theo lô nhập kho mới nhất">
+                                                                    <span className="block text-[11px] text-sky-400 font-medium text-right mt-0.5" title="Giá vốn đã tự động cập nhật theo lô nhập kho mới nhất">
                                                                         🔄 Cũ: {Number((p as any).previousCostPrice).toLocaleString("vi-VN", { maximumFractionDigits: 0 })}đ
                                                                     </span>
                                                                 )}
@@ -27582,11 +27582,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     />
                                                                     <div className="flex items-center justify-between gap-1 mt-1">
                                                                         {isSvc && (!p.price || Number(p.price) === 0) ? (
-                                                                            <span className="px-1 py-0.2 rounded text-[9px] font-mono font-bold text-indigo-300 bg-indigo-950/60 border border-indigo-500/40 whitespace-nowrap">
+                                                                            <span className="px-1 py-0.2 rounded text-[11px] font-mono font-bold text-indigo-300 bg-indigo-950/60 border border-indigo-500/40 whitespace-nowrap">
                                                                                 Nhập khi báo giá / SO
                                                                             </span>
                                                                         ) : isUnpriced ? (
-                                                                            <span className="px-1 py-0.2 rounded text-[9px] font-mono font-bold text-amber-400 bg-amber-950/50 border border-amber-500/30 whitespace-nowrap">
+                                                                            <span className="px-1 py-0.2 rounded text-[11px] font-mono font-bold text-amber-400 bg-amber-950/50 border border-amber-500/30 whitespace-nowrap">
                                                                                 Chờ giá
                                                                             </span>
                                                                         ) : (
@@ -27600,15 +27600,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             </span>
                                                                         )}
                                                                         {isUnpriced ? (
-                                                                            <span className="text-[8px] text-amber-400/90 font-medium text-right">
+                                                                            <span className="text-[11px] text-amber-400/90 font-medium text-right">
                                                                                 Báo theo đợt
                                                                             </span>
                                                                         ) : (Number(p.costPrice) > 0 && Number(p.price) <= Number(p.costPrice)) ? (
-                                                                            <span className="text-[8px] text-rose-400 font-bold text-right">
+                                                                            <span className="text-[11px] text-rose-400 font-bold text-right">
                                                                                 ⚠️ ≤ Giá vốn!
                                                                             </span>
                                                                         ) : ((p as any).previousCostPrice > 0 && Number((p as any).previousCostPrice) !== Number(p.costPrice)) ? (
-                                                                            <span className="text-[8px] text-amber-300 font-semibold text-right">
+                                                                            <span className="text-[11px] text-amber-300 font-semibold text-right">
                                                                                 ⚠️ Vốn đổi
                                                                             </span>
                                                                         ) : null}
@@ -28200,7 +28200,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <div className="overflow-x-auto">
                                     <table className="w-full text-left text-xs border-collapse">
                                         <thead>
-                                            <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[9px] bg-slate-950/60">
+                                            <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[11px] bg-slate-950/60">
                                                 <th className="p-3 w-10 text-center">STT</th>
                                                 <th className="p-3 whitespace-nowrap">Mã Đơn SO</th>
                                                 <th className="p-3">Khách Hàng & MST · Ngày Giao · NVKD</th>
@@ -28304,7 +28304,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                 {/* Badge số mã xuất hóa đơn */}
                                                                                 {slipItemsList.length > 0 && (
                                                                                     <span
-                                                                                        className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-bold inline-flex items-center gap-1 ${
+                                                                                        className={`text-[11px] px-1.5 py-0.5 rounded font-mono font-bold inline-flex items-center gap-1 ${
                                                                                             isSlipNoInvoice
                                                                                                 ? "bg-slate-800/80 text-slate-400 border border-slate-700/60"
                                                                                                 : hasExcludedInvoice
@@ -28320,7 +28320,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                 {/* Partial Invoicing status & button (Yêu cầu 9) */}
                                                                                 {isSlipInvoiced ? (
                                                                                     <span className="inline-flex items-center gap-1">
-                                                                                        <span className="text-[9px] font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60 px-1.5 py-0.5 rounded" title={`HĐ: ${slipInv?.invoice_no}${slipInv?.invoice_date ? ` (${formatVNDate(slipInv.invoice_date)})` : ""}`}>
+                                                                                        <span className="text-[11px] font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60 px-1.5 py-0.5 rounded" title={`HĐ: ${slipInv?.invoice_no}${slipInv?.invoice_date ? ` (${formatVNDate(slipInv.invoice_date)})` : ""}`}>
                                                                                             ✅ HĐ {slipInv?.invoice_no}
                                                                                         </span>
                                                                                         {canViewCustomerDebt && (
@@ -28344,7 +28344,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                                     setPartialInvAmount(Number(slipInvRec?.invoice_amount) || getSlipValue(sl, ord.rawOrder || ord));
                                                                                                     setPartialInvIsFinal(false);
                                                                                                 }}
-                                                                                                className="text-[9px] px-1 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                                                                                                className="text-[11px] px-1 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
                                                                                                 title="Sửa số hóa đơn / ngày / số tiền của phiếu này (Kế toán)"
                                                                                             >
                                                                                                 ✎
@@ -28392,7 +28392,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                             setPartialInvAmount(hasCalculatedPrice && initialTotal > 0 ? initialTotal : (sl.totalAmount || ord.total_amount || 0));
                                                                                             setPartialInvIsFinal(false);
                                                                                         }}
-                                                                                        className="bg-amber-600 hover:bg-amber-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded inline-flex items-center gap-0.5 shadow cursor-pointer transition-colors"
+                                                                                        className="bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-bold px-1.5 py-0.5 rounded inline-flex items-center gap-0.5 shadow cursor-pointer transition-colors"
                                                                                         title={`Xuất hóa đơn VAT từng phần riêng cho phiếu ${sl.id}`}
                                                                                     >
                                                                                         <Receipt className="w-2.5 h-2.5" />
@@ -28486,9 +28486,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             title={`Bấm để xem/tải về: ${f.name}`}
                                                                         >
                                                                             {f.name.toLowerCase().endsWith(".pdf") ? (
-                                                                                <span className="text-[8px] bg-red-950 text-red-400 px-1 rounded font-bold font-mono">PDF</span>
+                                                                                <span className="text-[11px] bg-red-950 text-red-400 px-1 rounded font-bold font-mono">PDF</span>
                                                                             ) : f.name.toLowerCase().endsWith(".xml") ? (
-                                                                                <span className="text-[8px] bg-sky-950 text-sky-400 px-1 rounded font-bold font-mono">XML</span>
+                                                                                <span className="text-[11px] bg-sky-950 text-sky-400 px-1 rounded font-bold font-mono">XML</span>
                                                                             ) : (
                                                                                 <Paperclip className="w-2.5 h-2.5 text-slate-400" />
                                                                             )}
@@ -28922,7 +28922,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 <td className="p-2.5 text-right font-mono font-bold text-emerald-400 text-xs">
                                                                     {d.lineTotal > 0 ? new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(d.lineTotal) : "-"}
                                                                     {d.lineTotal > 0 && d.vatRate > 0 && (
-                                                                        <div className="text-[9px] font-normal text-slate-500">Trước VAT {new Intl.NumberFormat("vi-VN").format(d.lineBeforeVat)}</div>
+                                                                        <div className="text-[11px] font-normal text-slate-500">Trước VAT {new Intl.NumberFormat("vi-VN").format(d.lineBeforeVat)}</div>
                                                                     )}
                                                                 </td>
                                                                 <td className="p-2.5 text-center">
@@ -29043,7 +29043,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 <form onSubmit={handleSaveCommercialProduct} className="space-y-4 p-2 text-slate-100">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Mã Hàng Hóa (SKU) * <span className="text-[9px] font-normal text-slate-500 normal-case">(Không dấu, không khoảng trắng)</span></label>
+                            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Mã Hàng Hóa (SKU) * <span className="text-[11px] font-normal text-slate-500 normal-case">(Không dấu, không khoảng trắng)</span></label>
                             <FastInput
                                 type="text"
                                 required
@@ -29232,7 +29232,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </span>
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                             <div>
-                                <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Giá Vốn / Giá Nhập</label>
+                                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Giá Vốn / Giá Nhập</label>
                                 <FormattedNumberInput
                                     value={commCostPrice}
                                     onChangeValue={(val) => setCommCostPrice(val)}
@@ -29241,7 +29241,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 />
                             </div>
                             <div>
-                                <label className="block text-[9px] font-bold uppercase tracking-wider text-emerald-400 mb-1">Giá End User *</label>
+                                <label className="block text-[11px] font-bold uppercase tracking-wider text-emerald-400 mb-1">Giá End User *</label>
                                 <FormattedNumberInput
                                     value={commPrice}
                                     onChangeValue={(val) => setCommPrice(val)}
@@ -29250,7 +29250,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 />
                             </div>
                             <div>
-                                <label className="block text-[9px] font-bold uppercase tracking-wider text-amber-400 mb-1">Giá Dealer 1</label>
+                                <label className="block text-[11px] font-bold uppercase tracking-wider text-amber-400 mb-1">Giá Dealer 1</label>
                                 <FormattedNumberInput
                                     value={commPriceDealer1}
                                     onChangeValue={(val) => setCommPriceDealer1(val)}
@@ -29259,7 +29259,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 />
                             </div>
                             <div>
-                                <label className="block text-[9px] font-bold uppercase tracking-wider text-indigo-400 mb-1">Giá Dealer 2</label>
+                                <label className="block text-[11px] font-bold uppercase tracking-wider text-indigo-400 mb-1">Giá Dealer 2</label>
                                 <FormattedNumberInput
                                     value={commPriceDealer2}
                                     onChangeValue={(val) => setCommPriceDealer2(val)}
@@ -29416,7 +29416,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                     {/* Preview Box */}
                                     <div className="flex flex-col items-center">
-                                        <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Xem trước ảnh máy</span>
+                                        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Xem trước ảnh máy</span>
                                         <div className="w-32 h-24 border border-slate-700 rounded-lg overflow-hidden bg-slate-900 flex items-center justify-center relative shadow-inner">
                                             {commImageUrl ? (
                                                 <>
@@ -29424,7 +29424,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     <button
                                                         type="button"
                                                         onClick={() => setCommImageUrl("")}
-                                                        className="absolute top-1 right-1 bg-rose-600/80 hover:bg-rose-600 text-white rounded-full p-0.5 text-[9px]"
+                                                        className="absolute top-1 right-1 bg-rose-600/80 hover:bg-rose-600 text-white rounded-full p-0.5 text-[11px]"
                                                         title="Gỡ ảnh"
                                                     >
                                                         ✕
@@ -29585,7 +29585,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     next[cIdx] = { ...next[cIdx], isIncluded: !(next[cIdx].isIncluded !== false) };
                                                                     setCommConfigurations(next);
                                                                 }}
-                                                                className={`px-1.5 py-0.5 rounded text-[9px] font-bold cursor-pointer ${
+                                                                className={`px-1.5 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
                                                                     cfg.isIncluded !== false
                                                                         ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
                                                                         : "bg-slate-800 text-slate-500 border border-slate-700"
@@ -29898,7 +29898,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                             Danh mục sản phẩm & Hàng hóa báo giá *
                             {allSalesProducts.length > 0 && (
-                                <span className="text-[9px] text-slate-500 normal-case ml-2 font-normal">
+                                <span className="text-[11px] text-slate-500 normal-case ml-2 font-normal">
                                     (Đã tải {allSalesProducts.length} sản phẩm bao gồm hàng Hãng phân phối & hàng thương mại)
                                 </span>
                             )}
@@ -30125,7 +30125,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                                 </div>
                                                                                                 {custSpecialPrice !== null && (
                                                                                                     <div className="flex items-center justify-end gap-1 mt-0.5">
-                                                                                                        <span className="text-[9px] font-bold text-amber-300 bg-amber-950/80 border border-amber-600/50 px-1.5 py-0.5 rounded">
+                                                                                                        <span className="text-[11px] font-bold text-amber-300 bg-amber-950/80 border border-amber-600/50 px-1.5 py-0.5 rounded">
                                                                                                             🏷️ Giá riêng KH
                                                                                                         </span>
                                                                                                         {stdTierPrice > 0 && stdTierPrice !== custSpecialPrice && (
@@ -30282,7 +30282,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 </span>
                                                             )}
                                                             {oligoRole && (
-                                                                <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${oligoRole === "PRIMARY" ? "bg-violet-900/80 text-violet-200 border border-violet-500/40" : "bg-cyan-950/80 text-cyan-300 border border-cyan-600/40"}`}>
+                                                                <span className={`px-1.5 py-0.5 rounded text-[11px] font-bold uppercase ${oligoRole === "PRIMARY" ? "bg-violet-900/80 text-violet-200 border border-violet-500/40" : "bg-cyan-950/80 text-cyan-300 border border-cyan-600/40"}`}>
                                                                     {oligoRole === "PRIMARY" ? "Mã chính" : "Phối hợp"}
                                                                 </span>
                                                             )}
@@ -30529,7 +30529,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 {(item.imageUrl || (thisProd as any)?.imageUrl) ? (
                                                                     <img src={item.imageUrl || (thisProd as any)?.imageUrl} alt="Equipment" className="max-w-full max-h-full object-contain p-1" />
                                                                 ) : (
-                                                                    <span className="text-[9px] text-slate-500 italic">Chưa có ảnh</span>
+                                                                    <span className="text-[11px] text-slate-500 italic">Chưa có ảnh</span>
                                                                 )}
                                                             </div>
                                                             <div className="w-full flex gap-1 pt-0.5">
@@ -31014,7 +31014,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     <div className="overflow-x-auto border border-slate-800 rounded-xl">
                         <table className="w-full text-left text-xs border-collapse">
                             <thead>
-                                <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[9px] bg-slate-900/50">
+                                <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[11px] bg-slate-900/50">
                                     <th className="py-2.5 px-3 w-20">Mã NV</th>
                                     <th className="py-2.5 px-3 w-40">Họ và Tên *</th>
                                     <th className="py-2.5 px-3 w-52">Vị Trí / Phân Quyền *</th>
@@ -31366,7 +31366,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     </option>
                                 ))}
                             </select>
-                            <p className="text-[9px] text-slate-500 italic">
+                            <p className="text-[11px] text-slate-500 italic">
                                 * Lựa chọn báo giá sẽ tự động điền danh sách sản phẩm, thông tin khách hàng và các điều khoản giao hàng/thanh toán tương ứng.
                             </p>
                         </div>
@@ -31559,7 +31559,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 >
                                                                     <div className="min-w-0 flex-1">
                                                                         <div className="flex items-center gap-1.5 flex-wrap mb-1">
-                                                                            <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-slate-900 text-slate-400 border border-slate-800">{p.badge}</span>
+                                                                            <span className="text-[11px] px-1.5 py-0.5 rounded font-mono font-bold bg-slate-900 text-slate-400 border border-slate-800">{p.badge}</span>
                                                                             <strong className="text-indigo-300 font-mono text-[13px]">{p.code}</strong>
                                                                             {p.category && (
                                                                                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-400">{p.category}</span>
@@ -31579,7 +31579,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(resolveQuoteProductPrice(p, directContractCustomerId, contractPriceTier, p.code))} đ
                                                                         </div>
                                                                         {getCustomerSpecialPrice(directContractCustomerId, p.code, (p as any).parent_code || (p as any).parent_item_code) !== null && (
-                                                                            <div className="text-[9px] font-bold text-amber-300 bg-amber-950/80 border border-amber-600/50 px-1.5 py-0.5 rounded inline-block mt-0.5">
+                                                                            <div className="text-[11px] font-bold text-amber-300 bg-amber-950/80 border border-amber-600/50 px-1.5 py-0.5 rounded inline-block mt-0.5">
                                                                                 🏷️ Giá riêng KH
                                                                             </div>
                                                                         )}
@@ -31668,7 +31668,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 🏢 Bên Bán (BÊN A) - Tự điền từ Cấu hình công ty
                             </h4>
                             <div>
-                                <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Tên doanh nghiệp *</label>
+                                <label className="block text-[11px] font-bold uppercase text-slate-400 mb-0.5">Tên doanh nghiệp *</label>
                                 <FastInput
                                     type="text"
                                     required
@@ -31679,7 +31679,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                             <div className="grid grid-cols-2 gap-2">
                                 <div>
-                                    <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Người đại diện Bên A *</label>
+                                    <label className="block text-[11px] font-bold uppercase text-slate-400 mb-0.5">Người đại diện Bên A *</label>
                                     <FastInput
                                         type="text"
                                         required
@@ -31689,7 +31689,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Chức vụ Bên A *</label>
+                                    <label className="block text-[11px] font-bold uppercase text-slate-400 mb-0.5">Chức vụ Bên A *</label>
                                     <FastInput
                                         type="text"
                                         required
@@ -31700,7 +31700,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                             </div>
                             <div>
-                                <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Địa chỉ văn phòng *</label>
+                                <label className="block text-[11px] font-bold uppercase text-slate-400 mb-0.5">Địa chỉ văn phòng *</label>
                                 <FastInput
                                     type="text"
                                     required
@@ -31711,7 +31711,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                             <div className="grid grid-cols-3 gap-2">
                                 <div>
-                                    <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Số điện thoại *</label>
+                                    <label className="block text-[11px] font-bold uppercase text-slate-400 mb-0.5">Số điện thoại *</label>
                                     <FastInput
                                         type="text"
                                         required
@@ -31721,7 +31721,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Email *</label>
+                                    <label className="block text-[11px] font-bold uppercase text-slate-400 mb-0.5">Email *</label>
                                     <FastInput
                                         type="text"
                                         inputMode="email"
@@ -31732,7 +31732,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Mã số thuế Bên A</label>
+                                    <label className="block text-[11px] font-bold uppercase text-slate-400 mb-0.5">Mã số thuế Bên A</label>
                                     <FastInput
                                         type="text"
                                         value={contractPartyATaxCode}
@@ -31744,7 +31744,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                             {/* Dynamic custom fields for Side A */}
                             <div className="space-y-2 pt-2 border-t border-slate-900">
-                                <label className="block text-[9px] font-bold uppercase text-slate-450">Các trường thông tin bổ sung Bên A</label>
+                                <label className="block text-[11px] font-bold uppercase text-slate-450">Các trường thông tin bổ sung Bên A</label>
                                 {contractPartyACustomFields.map((cf, idx) => (
                                     <div key={idx} className="flex gap-2 items-center">
                                         <input
@@ -31794,7 +31794,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 🤝 Bên Mua (BÊN B) - Tải động từ CRM
                             </h4>
                             <div>
-                                <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Tên khách hàng / Đơn vị *</label>
+                                <label className="block text-[11px] font-bold uppercase text-slate-400 mb-0.5">Tên khách hàng / Đơn vị *</label>
                                 <FastInput
                                     type="text"
                                     required
@@ -31805,7 +31805,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                             <div className="grid grid-cols-2 gap-2">
                                 <div>
-                                    <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Người đại diện Bên B</label>
+                                    <label className="block text-[11px] font-bold uppercase text-slate-400 mb-0.5">Người đại diện Bên B</label>
                                     <FastInput
                                         type="text"
                                         placeholder="Ông/Bà Nguyễn Văn A"
@@ -31815,7 +31815,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Chức vụ Bên B</label>
+                                    <label className="block text-[11px] font-bold uppercase text-slate-400 mb-0.5">Chức vụ Bên B</label>
                                     <FastInput
                                         type="text"
                                         placeholder="Ví dụ: Đại diện pháp luật"
@@ -31827,7 +31827,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                             <div className="grid grid-cols-3 gap-2">
                                 <div className="col-span-2">
-                                    <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Địa chỉ Bên B</label>
+                                    <label className="block text-[11px] font-bold uppercase text-slate-400 mb-0.5">Địa chỉ Bên B</label>
                                     <FastInput
                                         type="text"
                                         placeholder="Địa chỉ..."
@@ -31837,7 +31837,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Mã số thuế Bên B</label>
+                                    <label className="block text-[11px] font-bold uppercase text-slate-400 mb-0.5">Mã số thuế Bên B</label>
                                     <FastInput
                                         type="text"
                                         placeholder="MST..."
@@ -31849,7 +31849,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                             <div className="grid grid-cols-2 gap-2">
                                 <div>
-                                    <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Số điện thoại Bên B</label>
+                                    <label className="block text-[11px] font-bold uppercase text-slate-400 mb-0.5">Số điện thoại Bên B</label>
                                     <FastInput
                                         type="text"
                                         placeholder="SĐT..."
@@ -31859,7 +31859,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Email Bên B</label>
+                                    <label className="block text-[11px] font-bold uppercase text-slate-400 mb-0.5">Email Bên B</label>
                                     <FastInput
                                         type="text"
                                         inputMode="email"
@@ -31872,7 +31872,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                             {/* Dynamic custom fields for Side B */}
                             <div className="space-y-2 pt-2 border-t border-slate-900">
-                                <label className="block text-[9px] font-bold uppercase text-slate-450">Các trường thông tin bổ sung Bên B</label>
+                                <label className="block text-[11px] font-bold uppercase text-slate-450">Các trường thông tin bổ sung Bên B</label>
                                 {contractPartyBCustomFields.map((cf, idx) => (
                                     <div key={idx} className="flex gap-2 items-center">
                                         <input
@@ -32356,7 +32356,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <span className="flex items-center gap-1.5 truncate">
                                         🏢 {factoryOrderCustomerName || defaultStockCustomer}
                                     </span>
-                                    <span className="text-[9px] px-2 py-0.5 rounded bg-cyan-900/60 text-cyan-300 font-mono border border-cyan-600/40 shrink-0">
+                                    <span className="text-[11px] px-2 py-0.5 rounded bg-cyan-900/60 text-cyan-300 font-mono border border-cyan-600/40 shrink-0">
                                         KHO LƯU TRỮ
                                     </span>
                                 </div>
@@ -32865,12 +32865,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             <div className="flex items-center gap-1.5 flex-wrap">
                                                                 <span className="font-bold text-amber-300">{q.id}</span>
                                                                 {qIsPending && (
-                                                                    <span className="text-[9px] bg-orange-950 text-orange-300 border border-orange-700/60 px-1 py-0.2 rounded font-bold">
+                                                                    <span className="text-[11px] bg-orange-950 text-orange-300 border border-orange-700/60 px-1 py-0.2 rounded font-bold">
                                                                         ⏳ Chờ duyệt BGĐ
                                                                     </span>
                                                                 )}
                                                                 {qIsLocked && (
-                                                                    <span className="text-[9px] bg-purple-950 text-purple-300 border border-purple-700/60 px-1 py-0.2 rounded font-bold">
+                                                                    <span className="text-[11px] bg-purple-950 text-purple-300 border border-purple-700/60 px-1 py-0.2 rounded font-bold">
                                                                         🔒 Đã tạo SO ({qLinkedOrders[0].id})
                                                                     </span>
                                                                 )}
@@ -33050,7 +33050,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         <div className="flex items-center gap-1.5 min-w-0">
                                                                             <strong className="text-white font-mono break-all">{p.code}</strong>
                                                                             {p.badge === "THƯƠNG MẠI" && (
-                                                                                <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-cyan-950/70 text-cyan-100 border border-cyan-500/40 shrink-0">
+                                                                                <span className="text-[11px] px-1.5 py-0.5 rounded font-mono font-bold bg-cyan-950/70 text-cyan-100 border border-cyan-500/40 shrink-0">
                                                                                     🛒 Mua ngoài
                                                                                 </span>
                                                                             )}
@@ -33062,7 +33062,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                 return displayPr ? (
                                                                                     <span className="text-[11px] text-emerald-400 font-mono font-bold flex items-center gap-1">
                                                                                         {sp !== null && (
-                                                                                            <span className="text-[9px] px-1 py-0.2 rounded bg-amber-950/90 text-amber-300 border border-amber-600/50 font-sans">
+                                                                                            <span className="text-[11px] px-1 py-0.2 rounded bg-amber-950/90 text-amber-300 border border-amber-600/50 font-sans">
                                                                                                 🏷️ Giá riêng KH
                                                                                             </span>
                                                                                         )}
@@ -33231,7 +33231,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         </span>
                                                     )}
                                                     {oligoRole && (
-                                                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${oligoRole === "PRIMARY" ? "bg-violet-900/80 text-violet-200 border border-violet-500/40" : "bg-cyan-950/80 text-cyan-300 border border-cyan-600/40"}`}>
+                                                        <span className={`px-1.5 py-0.5 rounded text-[11px] font-bold uppercase ${oligoRole === "PRIMARY" ? "bg-violet-900/80 text-violet-200 border border-violet-500/40" : "bg-cyan-950/80 text-cyan-300 border border-cyan-600/40"}`}>
                                                             {oligoRole === "PRIMARY" ? "Mã chính" : "Phối hợp"}
                                                         </span>
                                                     )}
@@ -33654,7 +33654,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         </div>
                                         <div>
                                             <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
-                                                Email nhận hóa đơn điện tử <span className="text-[9px] font-normal normal-case text-slate-500">(nhập nhiều email cách nhau bằng dấu phẩy , hoặc chấm phẩy ;)</span>
+                                                Email nhận hóa đơn điện tử <span className="text-[11px] font-normal normal-case text-slate-500">(nhập nhiều email cách nhau bằng dấu phẩy , hoặc chấm phẩy ;)</span>
                                             </label>
                                             <FastInput
                                                 type="text"
@@ -33831,7 +33831,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <div className="border border-slate-800 rounded-lg overflow-hidden max-h-[30vh] overflow-y-auto bg-slate-950/60">
                                                 <table className="w-full text-left text-xs border-collapse">
                                                     <thead>
-                                                        <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[9px] bg-slate-900/90 sticky top-0 z-10">
+                                                        <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[11px] bg-slate-900/90 sticky top-0 z-10">
                                                             <th className="p-2.5 w-10 text-center">STT</th>
                                                             <th className="p-2.5 w-24">Mã SP</th>
                                                             <th className="p-2.5 min-w-[160px]">Tên Mặt Hàng Đặt Hãng</th>
@@ -33857,7 +33857,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 <td className="p-2.5">
                                                                     <div className="flex flex-wrap gap-1">
                                                                         {it.sourceOrderCodes.map(code => (
-                                                                            <span key={code} className="text-[9px] font-mono bg-slate-900 px-1.5 py-0.5 rounded border border-slate-750 text-slate-300">
+                                                                            <span key={code} className="text-[11px] font-mono bg-slate-900 px-1.5 py-0.5 rounded border border-slate-750 text-slate-300">
                                                                                 {code}
                                                                             </span>
                                                                         ))}
@@ -33938,7 +33938,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <div className="border border-slate-800 rounded-lg overflow-hidden max-h-[30vh] overflow-y-auto bg-slate-950/60">
                                                 <table className="w-full text-left text-xs border-collapse">
                                                     <thead>
-                                                        <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[9px] bg-slate-900/90 sticky top-0 z-10">
+                                                        <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[11px] bg-slate-900/90 sticky top-0 z-10">
                                                             <th className="p-2.5 w-10 text-center">STT</th>
                                                             <th className="p-2.5 w-24">Mã SP</th>
                                                             <th className="p-2.5 min-w-[160px]">Tên Mặt Hàng / Nhà Cung Cấp</th>
@@ -33964,7 +33964,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 <td className="p-2.5">
                                                                     <div className="flex flex-wrap gap-1">
                                                                         {it.sourceOrderCodes.map(code => (
-                                                                            <span key={code} className="text-[9px] font-mono bg-slate-900 px-1.5 py-0.5 rounded border border-slate-750 text-slate-300">
+                                                                            <span key={code} className="text-[11px] font-mono bg-slate-900 px-1.5 py-0.5 rounded border border-slate-750 text-slate-300">
                                                                                 {code}
                                                                             </span>
                                                                         ))}
@@ -34114,7 +34114,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <div className="border border-slate-800 rounded-lg overflow-hidden bg-slate-950/60 max-h-[32vh] overflow-y-auto">
                                     <table className="w-full text-left text-xs border-collapse">
                                         <thead>
-                                            <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[9px] bg-slate-900/90 sticky top-0 z-10">
+                                            <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[11px] bg-slate-900/90 sticky top-0 z-10">
                                                 <th className="p-2.5 w-8 text-center">Chọn</th>
                                                 <th className="p-2.5 w-10 text-center">STT</th>
                                                 <th className="p-2.5 w-24">Mã SP</th>
@@ -34149,7 +34149,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             )}
                                                         </td>
                                                         <td className="p-2.5 text-center">
-                                                            <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-purple-950/70 text-purple-100 border border-purple-400/40">
+                                                            <span className="text-[11px] px-1.5 py-0.5 rounded font-mono font-bold bg-purple-950/70 text-purple-100 border border-purple-400/40">
                                                                 🏷️ Phân Phối Hãng
                                                             </span>
                                                         </td>
@@ -34255,7 +34255,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <div className="text-[10px] text-slate-400 uppercase font-bold tracking-wider flex items-center gap-2">
                                     <span>{checkIsPureStock(viewingFactoryOrderItems) ? "Đơn vị lưu kho nội bộ" : "Khách hàng đặt hàng"}</span>
                                     {checkIsPureStock(viewingFactoryOrderItems) && (
-                                        <span className="text-[9px] px-2 py-0.5 rounded font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                        <span className="text-[11px] px-2 py-0.5 rounded font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
                                             📦 ĐƠN SO STOCK (GỐI ĐẦU / LƯU KHO DỰ PHÒNG)
                                         </span>
                                     )}
@@ -34463,7 +34463,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         )}>
                                                             {st.label}
                                                         </div>
-                                                        <div className="text-[9px] text-slate-400 mt-0.5 hidden sm:block">
+                                                        <div className="text-[11px] text-slate-400 mt-0.5 hidden sm:block">
                                                             {st.desc}
                                                         </div>
                                                     </div>
@@ -34479,21 +34479,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 <div className="bg-slate-950/70 p-2 rounded-lg border border-slate-800/80 flex items-center gap-2">
                                                     <Building2 className="w-4 h-4 text-emerald-400 shrink-0" />
                                                     <div>
-                                                        <div className="text-[9px] text-slate-400 uppercase font-semibold">Mục đích đơn hàng:</div>
+                                                        <div className="text-[11px] text-slate-400 uppercase font-semibold">Mục đích đơn hàng:</div>
                                                         <div className="font-bold text-white truncate">Lưu kho dự phòng / Gối đầu nội bộ</div>
                                                     </div>
                                                 </div>
                                                 <div className="bg-slate-950/70 p-2 rounded-lg border border-slate-800/80 flex items-center gap-2">
                                                     <Package className="w-4 h-4 text-indigo-400 shrink-0" />
                                                     <div>
-                                                        <div className="text-[9px] text-slate-400 uppercase font-semibold">Kho nhập & lưu trữ:</div>
+                                                        <div className="text-[11px] text-slate-400 uppercase font-semibold">Kho nhập & lưu trữ:</div>
                                                         <div className="font-bold text-sky-300 truncate">Kho trung tâm / Kho bảo quản nội bộ</div>
                                                     </div>
                                                 </div>
                                                 <div className="bg-slate-950/70 p-2 rounded-lg border border-slate-800/80 flex items-center gap-2 sm:col-span-2 lg:col-span-1">
                                                     <PackageCheck className="w-4 h-4 text-teal-400 shrink-0" />
                                                     <div>
-                                                        <div className="text-[9px] text-slate-400 uppercase font-semibold">Quy trình đơn SO Stock:</div>
+                                                        <div className="text-[11px] text-slate-400 uppercase font-semibold">Quy trình đơn SO Stock:</div>
                                                         <div className="font-bold truncate text-teal-300">
                                                             {isStockAllDone ? "✓ Hàng đã nhập kho lưu trữ hoàn tất" : "Nhập kho QC xong là hoàn tất (Không giao khách)"}
                                                         </div>
@@ -34505,21 +34505,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 <div className="bg-slate-950/70 p-2 rounded-lg border border-slate-800/80 flex items-center gap-2">
                                                     <Truck className="w-4 h-4 text-sky-400 shrink-0" />
                                                     <div>
-                                                        <div className="text-[9px] text-slate-400 uppercase font-semibold">Phương thức giao hàng:</div>
+                                                        <div className="text-[11px] text-slate-400 uppercase font-semibold">Phương thức giao hàng:</div>
                                                         <div className="font-bold text-white truncate">{shipping}</div>
                                                     </div>
                                                 </div>
                                                 <div className="bg-slate-950/70 p-2 rounded-lg border border-slate-800/80 flex items-center gap-2">
                                                     <Package className="w-4 h-4 text-indigo-400 shrink-0" />
                                                     <div>
-                                                        <div className="text-[9px] text-slate-400 uppercase font-semibold">Mã vận đơn / Tracking:</div>
+                                                        <div className="text-[11px] text-slate-400 uppercase font-semibold">Mã vận đơn / Tracking:</div>
                                                         <div className="font-mono font-bold text-sky-300 truncate">{tracking}</div>
                                                     </div>
                                                 </div>
                                                 <div className="bg-slate-950/70 p-2 rounded-lg border border-slate-800/80 flex items-center gap-2 sm:col-span-2 lg:col-span-1">
                                                     <Receipt className="w-4 h-4 text-amber-400 shrink-0" />
                                                     <div>
-                                                        <div className="text-[9px] text-slate-400 uppercase font-semibold">Yêu cầu hóa đơn VAT:</div>
+                                                        <div className="text-[11px] text-slate-400 uppercase font-semibold">Yêu cầu hóa đơn VAT:</div>
                                                         <div className="font-bold truncate text-slate-200">
                                                             {vatReq ? (
                                                                 <span className="text-amber-300 font-medium">
@@ -34864,11 +34864,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     <td className="py-2.5 px-3 text-center text-slate-400 font-mono">{idx + 1}</td>
                                                     <td className="py-2.5 px-3 text-center">
                                                         {it?.sourceType === "COMMERCIAL" ? (
-                                                            <span className="text-[9px] px-2 py-0.5 rounded-full font-mono font-bold bg-cyan-950 text-cyan-200 border border-cyan-500/50 inline-block shadow-sm">
+                                                            <span className="text-[11px] px-2 py-0.5 rounded-full font-mono font-bold bg-cyan-950 text-cyan-200 border border-cyan-500/50 inline-block shadow-sm">
                                                                 🛒 Mua ngoài
                                                             </span>
                                                         ) : (
-                                                            <span className="text-[9px] px-2 py-0.5 rounded-full font-mono font-bold bg-purple-950 text-purple-200 border border-purple-400/50 inline-block shadow-sm">
+                                                            <span className="text-[11px] px-2 py-0.5 rounded-full font-mono font-bold bg-purple-950 text-purple-200 border border-purple-400/50 inline-block shadow-sm">
                                                                 🏷️ Phân Phối Hãng
                                                             </span>
                                                         )}
@@ -34908,31 +34908,31 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             return (
                                                                 <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                                                                     {itemStat.deliveredQty >= itemStat.orderQty ? (
-                                                                        <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-teal-950 text-teal-300 border border-teal-500/50">
+                                                                        <span className="text-[11px] px-1.5 py-0.5 rounded font-mono font-bold bg-teal-950 text-teal-300 border border-teal-500/50">
                                                                             {vIsStock ? `✓ Đã nhập kho (${itemStat.deliveredQty}/${itemStat.orderQty})` : `✓ Đã giao (${itemStat.deliveredQty}/${itemStat.orderQty})`}
                                                                         </span>
                                                                     ) : itemStat.lineStatus === "INCOMING" ? (
-                                                                        <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-sky-950 text-sky-300 border border-sky-500/50">
+                                                                        <span className="text-[11px] px-1.5 py-0.5 rounded font-mono font-bold bg-sky-950 text-sky-300 border border-sky-500/50">
                                                                             🚚 Hàng sắp về (PO: {itemStat.incomingQty} sp)
                                                                         </span>
                                                                     ) : orderHasPR ? (
-                                                                        <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-amber-950 text-amber-300 border border-amber-500/50 shadow-sm">
+                                                                        <span className="text-[11px] px-1.5 py-0.5 rounded font-mono font-bold bg-amber-950 text-amber-300 border border-amber-500/50 shadow-sm">
                                                                             ⏳ Đã tạo PR: <strong className="text-amber-200">{activePrCode || "Chờ PO"}</strong> ({itemStat.orderQty || 1} sp)
                                                                         </span>
                                                                     ) : vIsStock ? (
-                                                                        <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-500/50">
+                                                                        <span className="text-[11px] px-1.5 py-0.5 rounded font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-500/50">
                                                                             🛒 Cần tạo PR mua hàng ({itemStat.orderQty || 1} sp)
                                                                         </span>
                                                                     ) : (itemStat.isServiceItem || isServiceProduct({ code: itCode, name: it?.productName || it?.name || "", category: it?.category || "" })) ? (
-                                                                        <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-indigo-950 text-indigo-300 border border-indigo-500/50">
+                                                                        <span className="text-[11px] px-1.5 py-0.5 rounded font-mono font-bold bg-indigo-950 text-indigo-300 border border-indigo-500/50">
                                                                             🛠️ Dịch vụ kỹ thuật / Sửa chữa (Phát sinh theo thực tế – Không tính tồn kho)
                                                                         </span>
                                                                     ) : itemStat.lineStatus === "IN_STOCK" ? (
-                                                                        <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/50">
+                                                                        <span className="text-[11px] px-1.5 py-0.5 rounded font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/50">
                                                                             🟢 Có sẵn trong kho (Tồn khả dụng: {itemStat.availableStock} sp)
                                                                         </span>
                                                                     ) : (
-                                                                        <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-amber-950 text-amber-300 border border-amber-500/50">
+                                                                        <span className="text-[11px] px-1.5 py-0.5 rounded font-mono font-bold bg-amber-950 text-amber-300 border border-amber-500/50">
                                                                             🟡 Cần đặt mua NCC: thiếu {itemStat.missingQty || Math.max(1, (itemStat.orderQty || 1) - (itemStat.availableStock || 0))} sp (Sẵn kho: {itemStat.availableStock || 0})
                                                                         </span>
                                                                     )}
@@ -34978,7 +34978,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         <span className="text-amber-300 font-mono">
                                                                             📅 Hẹn: {linkedPO.expected_delivery_date ? formatVNDate(linkedPO.expected_delivery_date) : "Sắp về"}
                                                                         </span>
-                                                                        <span className="px-1.5 py-0.2 rounded font-mono font-bold bg-slate-900 text-emerald-400 border border-slate-700 text-[9px]">
+                                                                        <span className="px-1.5 py-0.2 rounded font-mono font-bold bg-slate-900 text-emerald-400 border border-slate-700 text-[11px]">
                                                                             ● {linkedPO.status}
                                                                         </span>
                                                                     </div>
@@ -34997,7 +34997,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         <span className="text-slate-300">
                                                                             Phòng Cung Ứng đang tổng hợp PO đặt Hãng/NCC
                                                                         </span>
-                                                                        <span className="px-1.5 py-0.2 rounded font-mono font-bold bg-slate-900 text-amber-400 border border-slate-700 text-[9px]">
+                                                                        <span className="px-1.5 py-0.2 rounded font-mono font-bold bg-slate-900 text-amber-400 border border-slate-700 text-[11px]">
                                                                             ● Chờ gom PO
                                                                         </span>
                                                                     </div>
@@ -35047,7 +35047,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             <span className="text-[8.5px] text-rose-500/90 font-sans font-medium">(Cần đặt Hãng)</span>
                                                                         </span>
                                                                     )}
-                                                                    <span className="text-[9px] text-indigo-400 font-sans font-semibold ml-0.5 bg-indigo-950/80 px-1 py-0.2 rounded border border-indigo-800/60" title={tooltipInfo}>
+                                                                    <span className="text-[11px] text-indigo-400 font-sans font-semibold ml-0.5 bg-indigo-950/80 px-1 py-0.2 rounded border border-indigo-800/60" title={tooltipInfo}>
                                                                         🔍 Rê chuột xem tồn
                                                                     </span>
                                                                 </div>
@@ -35116,7 +35116,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     {/* Cancel / Edit Line Item Action (Yêu cầu 15) */}
                                                     <td className="py-2.5 px-3 text-center">
                                                         {it?.status === "CANCELLED" ? (
-                                                            <span className="text-[9px] px-2 py-0.5 rounded-full font-bold bg-rose-950 text-rose-300 border border-rose-800/80 inline-block font-mono" title={it.cancel_reason || "Đã hủy dòng"}>
+                                                            <span className="text-[11px] px-2 py-0.5 rounded-full font-bold bg-rose-950 text-rose-300 border border-rose-800/80 inline-block font-mono" title={it.cancel_reason || "Đã hủy dòng"}>
                                                                 ✕ Đã hủy
                                                             </span>
                                                         ) : (
@@ -35820,7 +35820,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 )}
                                                 <table className="w-full text-left text-xs border-collapse">
                                                 <thead>
-                                                    <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[9px] bg-slate-900/90 sticky top-0 z-10">
+                                                    <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[11px] bg-slate-900/90 sticky top-0 z-10">
                                                         <th className="p-2.5 w-8 text-center">Chọn</th>
                                                         <th className="p-2.5 w-10 text-center">STT</th>
                                                         <th className="p-2.5 w-24">Mã SP</th>
@@ -36256,7 +36256,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div className={cn("border border-slate-800 rounded-xl bg-slate-950/40", openDeliveryLotDropdownIndex !== null ? "overflow-visible" : "overflow-x-auto")}>
                             <table className="w-full text-left text-xs border-collapse">
                                 <thead>
-                                    <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[9px] bg-slate-900/40">
+                                    <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[11px] bg-slate-900/40">
                                         <th className="py-2 px-2.5 w-10 text-center">STT</th>
                                         <th className="py-2 px-2 w-16 text-center">ĐVT</th>
                                         <th className="py-2 px-2 w-14 text-center">SL Đặt</th>
@@ -36416,7 +36416,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => handleRemoveLotRow(idx)}
-                                                                    className="text-[9px] text-rose-400 hover:text-rose-200 bg-rose-950/70 hover:bg-rose-900 border border-rose-800/60 px-1.5 py-0.5 rounded flex items-center gap-0.5 transition-colors cursor-pointer shadow-xs"
+                                                                    className="text-[11px] text-rose-400 hover:text-rose-200 bg-rose-950/70 hover:bg-rose-900 border border-rose-800/60 px-1.5 py-0.5 rounded flex items-center gap-0.5 transition-colors cursor-pointer shadow-xs"
                                                                     title="Không giao mặt hàng này trong phiếu này (phần còn lại vẫn nằm trên đơn để giao đợt sau)"
                                                                 >
                                                                     <span>✕ Bỏ mã này</span>
@@ -36434,14 +36434,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 <td className="py-2 px-2 text-center text-slate-400 font-mono">
                                                     {sameCodeCount > 1 ? (
                                                         <div className="flex flex-col items-center gap-0.5">
-                                                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-950/90 text-indigo-300 border border-indigo-700/60 font-bold">
+                                                            <span className="text-[11px] px-1.5 py-0.5 rounded bg-indigo-950/90 text-indigo-300 border border-indigo-700/60 font-bold">
                                                                 Lô #{lotOrderWithinSku}
                                                             </span>
                                                             {item.isExtraLot && (
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => handleRemoveLotRow(idx)}
-                                                                    className="text-[8px] text-rose-400 hover:text-rose-200 underline cursor-pointer"
+                                                                    className="text-[11px] text-rose-400 hover:text-rose-200 underline cursor-pointer"
                                                                     title="Xóa dòng lô phụ này"
                                                                 >
                                                                     Bỏ lô
@@ -36455,9 +36455,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 <td className="py-2 px-2 text-center text-slate-400 font-medium">
                                                     {item.unit || "Bộ"}
                                                 </td>
-                                                <td className="py-2 px-2 text-center font-mono text-slate-300">{item.isExtraLot ? <span className="text-[9px] text-slate-500">↑ Cùng mã</span> : (item.orderedQty ?? "-")}</td>
-                                                <td className="py-2 px-2 text-center font-mono text-sky-400">{item.isExtraLot ? <span className="text-[9px] text-slate-500">—</span> : (item.prevAllocatedQty ?? 0)}</td>
-                                                <td className="py-2 px-2 text-center font-mono text-amber-300 font-bold">{item.isExtraLot ? <span className="text-[9px] text-indigo-300">Gộp chung</span> : (item.remainingQty ?? "-")}</td>
+                                                <td className="py-2 px-2 text-center font-mono text-slate-300">{item.isExtraLot ? <span className="text-[11px] text-slate-500">↑ Cùng mã</span> : (item.orderedQty ?? "-")}</td>
+                                                <td className="py-2 px-2 text-center font-mono text-sky-400">{item.isExtraLot ? <span className="text-[11px] text-slate-500">—</span> : (item.prevAllocatedQty ?? 0)}</td>
+                                                <td className="py-2 px-2 text-center font-mono text-amber-300 font-bold">{item.isExtraLot ? <span className="text-[11px] text-indigo-300">Gộp chung</span> : (item.remainingQty ?? "-")}</td>
                                                 <td className="py-2 px-2 text-center">
                                                     <div className="flex flex-col items-center">
                                                         <span className={cn(
@@ -36468,7 +36468,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         )}>
                                                             {availStock}
                                                         </span>
-                                                        <span className={cn("text-[8px] mt-0.5 font-sans", availStock <= 0 ? "text-rose-500 font-semibold" : isEnough ? "text-teal-400" : "text-amber-400")}>
+                                                        <span className={cn("text-[11px] mt-0.5 font-sans", availStock <= 0 ? "text-rose-500 font-semibold" : isEnough ? "text-teal-400" : "text-amber-400")}>
                                                             {availStock <= 0 ? (unusableLots.length > 0 ? "Lô hết hạn / cách ly" : "Hết tồn") : isEnough ? "Đủ hàng" : "Thiếu"}
                                                         </span>
                                                     </div>
@@ -36527,7 +36527,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         }}
                                                                         className="w-3 h-3 rounded text-fuchsia-500 bg-slate-900 border-slate-700 cursor-pointer focus:ring-0"
                                                                     />
-                                                                    <span className="text-[9px] font-sans text-fuchsia-300">0đ (Bù/Tặng)</span>
+                                                                    <span className="text-[11px] font-sans text-fuchsia-300">0đ (Bù/Tặng)</span>
                                                                 </label>
                                                             </div>
                                                         );
@@ -36588,7 +36588,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     setOpenDeliveryLotDropdownIndex(prev => prev === idx ? null : idx);
                                                                     setDeliveryLotSearchQueries(prev => ({ ...prev, [idx]: "" }));
                                                                 }}
-                                                                className="absolute right-1 top-1/2 -translate-y-1/2 px-1.5 py-0.5 rounded bg-amber-950/90 hover:bg-amber-900 text-amber-300 border border-amber-700/60 text-[9px] font-sans font-bold flex items-center gap-0.5 cursor-pointer transition-colors"
+                                                                className="absolute right-1 top-1/2 -translate-y-1/2 px-1.5 py-0.5 rounded bg-amber-950/90 hover:bg-amber-900 text-amber-300 border border-amber-700/60 text-[11px] font-sans font-bold flex items-center gap-0.5 cursor-pointer transition-colors"
                                                                 title="Chọn từ danh sách lô đang có trong kho (hiển thị kèm số lượng khả dụng theo lô)"
                                                             >
                                                                 <span>{availLots.length > 0 ? `${availLots.length} lô` : `Kho (${allWarehouseLots.length})`}</span>
@@ -36687,7 +36687,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                     <div>
                                                                                         <div className="px-3 py-1.5 bg-emerald-950/40 text-[10px] font-bold text-emerald-300 flex items-center justify-between">
                                                                                             <span>🎯 Lô tồn kho của {item.productCode} ({filteredProductLots.length} lô)</span>
-                                                                                            <span className="text-[9px] font-normal text-emerald-400/80">Ưu tiên FEFO</span>
+                                                                                            <span className="text-[11px] font-normal text-emerald-400/80">Ưu tiên FEFO</span>
                                                                                         </div>
                                                                                         <div className="divide-y divide-slate-800/60">
                                                                                             {filteredProductLots.map((l: any, lIdx: number) => {
@@ -36709,12 +36709,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                                             <div className="flex items-center gap-1.5 flex-wrap">
                                                                                                                 <span className="font-mono font-bold text-xs text-amber-300">{l.lot_number}</span>
                                                                                                                 {isTwoFormKit(item.productCode) && (
-                                                                                                                    <span className={cn("text-[9px] px-1.5 rounded font-bold border", packagingFormOfLot(l.lot_number) === "PREALIQUOT" ? "bg-sky-950 text-sky-300 border-sky-700/60" : "bg-violet-950 text-violet-300 border-violet-700/60")}>
+                                                                                                                    <span className={cn("text-[11px] px-1.5 rounded font-bold border", packagingFormOfLot(l.lot_number) === "PREALIQUOT" ? "bg-sky-950 text-sky-300 border-sky-700/60" : "bg-violet-950 text-violet-300 border-violet-700/60")}>
                                                                                                                         {kitSpecLabel(lotKitSpec(l.lot_number))}
                                                                                                                     </span>
                                                                                                                 )}
                                                                                                                 {lIdx === 0 && (
-                                                                                                                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/60 font-bold">FEFO</span>
+                                                                                                                    <span className="text-[11px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/60 font-bold">FEFO</span>
                                                                                                                 )}
                                                                                                                 {expStr && (
                                                                                                                     <span className="text-[10px] font-mono text-indigo-300">HSD: {expStr}</span>
@@ -36757,7 +36757,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                     <div>
                                                                                         <div className="px-3 py-1.5 bg-slate-900/90 text-[10px] font-bold text-slate-300 flex items-center justify-between">
                                                                                             <span>📦 {filteredProductLots.length > 0 ? "Các lô hàng khác đang có trong kho" : "Danh sách lô đang có trong kho"} ({filteredOtherLots.length} lô)</span>
-                                                                                            <span className="text-[9px] font-normal text-slate-400">Click để chọn</span>
+                                                                                            <span className="text-[11px] font-normal text-slate-400">Click để chọn</span>
                                                                                         </div>
                                                                                         <div className="divide-y divide-slate-800/60">
                                                                                             {filteredOtherLots.map((l: any, oIdx: number) => {
@@ -36892,7 +36892,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         className="sr-only"
                                     />
                                     <span className="text-xs font-bold">{opt.name}</span>
-                                    <span className="text-[9px] text-slate-500 mt-0.5">{opt.desc}</span>
+                                    <span className="text-[11px] text-slate-500 mt-0.5">{opt.desc}</span>
                                 </label>
                             ))}
                         </div>
@@ -37704,7 +37704,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         </td>
                                                         <td className="p-1.5 text-center">
                                                             <span className={cn(
-                                                                "text-[9px] px-1.5 py-0.5 rounded-full border font-bold",
+                                                                "text-[11px] px-1.5 py-0.5 rounded-full border font-bold",
                                                                 st === "DELIVERED"
                                                                     ? "bg-emerald-950/60 text-emerald-300 border-emerald-600/50"
                                                                     : "bg-amber-950/60 text-amber-300 border-amber-600/50"
@@ -37745,7 +37745,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             setCustomerPaymentAmount(String(amt));
                                                             if (!customerPaymentRef) setCustomerPaymentRef(`Khách đặt cọc ${pct}% đơn ${customerPaymentTarget.order_code}`);
                                                         }}
-                                                        className="px-1.5 py-0.5 rounded bg-purple-950/80 hover:bg-purple-900 text-purple-300 border border-purple-700/60 text-[9px] font-bold cursor-pointer"
+                                                        className="px-1.5 py-0.5 rounded bg-purple-950/80 hover:bg-purple-900 text-purple-300 border border-purple-700/60 text-[11px] font-bold cursor-pointer"
                                                     >
                                                         Cọc {pct}%
                                                     </button>
@@ -37757,7 +37757,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     const rem = Math.max(0, Math.round(customerPaymentTarget.total - customerPaymentTarget.paid));
                                                     setCustomerPaymentAmount(String(rem));
                                                 }}
-                                                className="px-1.5 py-0.5 rounded bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 text-[9px] font-bold cursor-pointer"
+                                                className="px-1.5 py-0.5 rounded bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 text-[11px] font-bold cursor-pointer"
                                             >
                                                 100%
                                             </button>
@@ -38001,7 +38001,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     <td className="p-2 font-mono font-bold text-white">{it.order_code}</td>
                                                     <td className="p-2 text-center">
                                                         <span className={cn(
-                                                            "text-[9px] px-1.5 py-0.5 rounded-full border font-bold",
+                                                            "text-[11px] px-1.5 py-0.5 rounded-full border font-bold",
                                                             it.status === "DELIVERED"
                                                                 ? "bg-emerald-950/60 text-emerald-300 border-emerald-600/50"
                                                                 : "bg-amber-950/60 text-amber-300 border-amber-600/50"
@@ -38299,7 +38299,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <h5 className="text-xs font-bold uppercase tracking-wider text-teal-300">
                                             BẰNG CHỨNG NHẬN HÀNG (PROOF OF DELIVERY - POD)
                                         </h5>
-                                        <span className="text-[9px] bg-slate-800 text-slate-300 border border-slate-600 px-1.5 py-0.5 rounded font-bold font-mono">KHÔNG BẮT BUỘC</span>
+                                        <span className="text-[11px] bg-slate-800 text-slate-300 border border-slate-600 px-1.5 py-0.5 rounded font-bold font-mono">KHÔNG BẮT BUỘC</span>
                                     </div>
                                     <p className="text-[10px] text-slate-400 mt-0.5">
                                         Chụp trực tiếp bằng camera hoặc tải lên ảnh <strong>Biên bản bàn giao có chữ ký khách hàng</strong> và/hoặc <strong>ảnh chụp kiện hàng tại phòng Lab</strong>.
@@ -38376,7 +38376,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     className="w-full h-full object-cover group-hover:scale-105 transition-transform" 
                                                 />
                                                 <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                                                    <span className="bg-black/70 text-white text-[9px] font-bold px-2 py-1 rounded flex items-center gap-1">
+                                                    <span className="bg-black/70 text-white text-[11px] font-bold px-2 py-1 rounded flex items-center gap-1">
                                                         <Maximize2 className="w-2.5 h-2.5" /> Xem to
                                                     </span>
                                                 </div>
@@ -38394,7 +38394,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     <option value="Ảnh nghiệm thu thiết bị">🔬 Nghiệm thu thiết bị</option>
                                                     <option value="Khác">📄 Chứng từ khác</option>
                                                 </select>
-                                                <div className="flex items-center justify-between text-[9px] text-slate-400">
+                                                <div className="flex items-center justify-between text-[11px] text-slate-400">
                                                     <span className="truncate max-w-[90px]">{img.name}</span>
                                                     <button
                                                         type="button"
@@ -38987,7 +38987,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </h4>
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
-                                    <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Hiệu lực báo giá mặc định *</label>
+                                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Hiệu lực báo giá mặc định *</label>
                                     <FastInput
                                         type="text"
                                         value={defaultQuoteValidityTerms}
@@ -38997,7 +38997,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Điều khoản giao hàng mặc định *</label>
+                                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Điều khoản giao hàng mặc định *</label>
                                     <FastInput
                                         type="text"
                                         value={defaultQuoteDeliveryTerms}
@@ -39009,7 +39009,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
-                                    <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Điều khoản thanh toán mặc định *</label>
+                                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Điều khoản thanh toán mặc định *</label>
                                     <FastInput
                                         type="text"
                                         value={defaultQuotePaymentTerms}
@@ -39019,7 +39019,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Ghi chú bổ sung mặc định *</label>
+                                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Ghi chú bổ sung mặc định *</label>
                                     <FastInput
                                         type="text"
                                         value={defaultQuoteNoteTerms}
@@ -39046,7 +39046,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         setDefaultGeneralTerms(STANDARD_GENERAL_TERMS);
                                         showToast("Đã khôi phục toàn bộ Mẫu Hợp Đồng về chuẩn ban đầu!", "info");
                                     }}
-                                    className="text-[9px] text-indigo-400 hover:text-indigo-300 font-bold underline cursor-pointer"
+                                    className="text-[11px] text-indigo-400 hover:text-indigo-300 font-bold underline cursor-pointer"
                                 >
                                     🔄 Khôi phục tất cả về Mẫu Chuẩn
                                 </button>
@@ -39055,13 +39055,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             {/* Điều 2 */}
                             <div>
                                 <div className="flex items-center justify-between mb-1">
-                                    <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400">
                                         ĐIỀU 2: TIÊU CHUẨN CHẤT LƯỢNG & BẢO HÀNH *
                                     </label>
                                     <button
                                         type="button"
                                         onClick={() => setDefaultQualityTerms(STANDARD_QUALITY_TERMS)}
-                                        className="text-[9px] text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
+                                        className="text-[11px] text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
                                     >
                                         Khôi phục Điều 2
                                     </button>
@@ -39078,13 +39078,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             {/* Điều 3 */}
                             <div>
                                 <div className="flex items-center justify-between mb-1">
-                                    <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400">
                                         ĐIỀU 3: THỜI GIAN & ĐỊA ĐIỂM GIAO HÀNG *
                                     </label>
                                     <button
                                         type="button"
                                         onClick={() => setDefaultDeliveryTerms(STANDARD_DELIVERY_TERMS)}
-                                        className="text-[9px] text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
+                                        className="text-[11px] text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
                                     >
                                         Khôi phục Điều 3
                                     </button>
@@ -39101,13 +39101,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             {/* Điều 4 */}
                             <div>
                                 <div className="flex items-center justify-between mb-1">
-                                    <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400">
                                         ĐIỀU 4: PHƯƠNG THỨC & TIẾN ĐỘ THANH TOÁN *
                                     </label>
                                     <button
                                         type="button"
                                         onClick={() => setDefaultPaymentTerms(STANDARD_PAYMENT_TERMS)}
-                                        className="text-[9px] text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
+                                        className="text-[11px] text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
                                     >
                                         Khôi phục Điều 4
                                     </button>
@@ -39124,13 +39124,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             {/* Điều 5 */}
                             <div>
                                 <div className="flex items-center justify-between mb-1">
-                                    <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400">
                                         ĐIỀU 5: TRÁCH NHIỆM CỦA CÁC BÊN *
                                     </label>
                                     <button
                                         type="button"
                                         onClick={() => setDefaultResponsibilityTerms(STANDARD_RESPONSIBILITY_TERMS)}
-                                        className="text-[9px] text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
+                                        className="text-[11px] text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
                                     >
                                         Khôi phục Điều 5
                                     </button>
@@ -39147,13 +39147,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             {/* Điều 6 */}
                             <div>
                                 <div className="flex items-center justify-between mb-1">
-                                    <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400">
                                         ĐIỀU 6: ĐIỀU KHOẢN CHUNG & HIỆU LỰC THI HÀNH *
                                     </label>
                                     <button
                                         type="button"
                                         onClick={() => setDefaultGeneralTerms(STANDARD_GENERAL_TERMS)}
-                                        className="text-[9px] text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
+                                        className="text-[11px] text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
                                     >
                                         Khôi phục Điều 6
                                     </button>
@@ -39252,7 +39252,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         </button>
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pr-8">
                                             <div>
-                                                <label className="block text-[9px] uppercase font-bold text-slate-500 mb-0.5">Tên khách hàng *</label>
+                                                <label className="block text-[11px] uppercase font-bold text-slate-500 mb-0.5">Tên khách hàng *</label>
                                                 <input
                                                     type="text"
                                                     placeholder="Tên cơ sở, bệnh viện, đối tác..."
@@ -39266,7 +39266,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 />
                                             </div>
                                             <div>
-                                                <label className="block text-[9px] uppercase font-bold text-slate-500 mb-0.5">Địa chỉ</label>
+                                                <label className="block text-[11px] uppercase font-bold text-slate-500 mb-0.5">Địa chỉ</label>
                                                 <input
                                                     type="text"
                                                     placeholder="Địa chỉ..."
@@ -39279,7 +39279,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 />
                                             </div>
                                             <div>
-                                                <label className="block text-[9px] uppercase font-bold text-slate-500 mb-0.5">Người liên hệ</label>
+                                                <label className="block text-[11px] uppercase font-bold text-slate-500 mb-0.5">Người liên hệ</label>
                                                 <input
                                                     type="text"
                                                     placeholder="Họ tên người liên hệ..."
@@ -39293,7 +39293,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             </div>
                                             <div className="grid grid-cols-2 gap-2">
                                                 <div>
-                                                    <label className="block text-[9px] uppercase font-bold text-slate-500 mb-0.5">Số điện thoại</label>
+                                                    <label className="block text-[11px] uppercase font-bold text-slate-500 mb-0.5">Số điện thoại</label>
                                                     <input
                                                         type="text"
                                                         placeholder="SĐT..."
@@ -39306,7 +39306,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     />
                                                 </div>
                                                 <div>
-                                                    <label className="block text-[9px] uppercase font-bold text-slate-500 mb-0.5">Email</label>
+                                                    <label className="block text-[11px] uppercase font-bold text-slate-500 mb-0.5">Email</label>
                                                     <input
                                                         type="text"
                                                         inputMode="email"
@@ -39520,7 +39520,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         </div>
                                         <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                                             <div>
-                                                <label className="block text-[9px] text-slate-500 mb-0.5">Tên hoạt động *</label>
+                                                <label className="block text-[11px] text-slate-500 mb-0.5">Tên hoạt động *</label>
                                                 <input
                                                     type="text"
                                                     placeholder="Ví dụ: Đón tiếp khách mời"
@@ -39534,7 +39534,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 />
                                             </div>
                                             <div>
-                                                <label className="block text-[9px] text-slate-500 mb-0.5">Nội dung chi tiết</label>
+                                                <label className="block text-[11px] text-slate-500 mb-0.5">Nội dung chi tiết</label>
                                                 <input
                                                     type="text"
                                                     placeholder="Ví dụ: Đón tại sảnh và phát tài liệu"
@@ -39547,7 +39547,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 />
                                             </div>
                                             <div>
-                                                <label className="block text-[9px] text-slate-500 mb-0.5">Kết quả mong đợi</label>
+                                                <label className="block text-[11px] text-slate-500 mb-0.5">Kết quả mong đợi</label>
                                                 <input
                                                     type="text"
                                                     placeholder="Ví dụ: 100% khách mời nhận đủ tài liệu"
@@ -39940,21 +39940,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs pt-1">
                                                 <div className="bg-slate-950/50 p-2.5 rounded-xl border border-slate-850">
-                                                    <span className="text-slate-500 block font-bold text-[9px] uppercase tracking-wider">Đối tượng mục tiêu:</span>
+                                                    <span className="text-slate-500 block font-bold text-[11px] uppercase tracking-wider">Đối tượng mục tiêu:</span>
                                                     <span className="text-slate-200 font-semibold block mt-0.5 truncate" title={plan.targetAudience || "—"}>
                                                         {plan.targetAudience || "Chưa xác định"}
                                                     </span>
                                                 </div>
 
                                                 <div className="bg-slate-950/50 p-2.5 rounded-xl border border-slate-850">
-                                                    <span className="text-slate-500 block font-bold text-[9px] uppercase tracking-wider">Địa điểm & Khu vực:</span>
+                                                    <span className="text-slate-500 block font-bold text-[11px] uppercase tracking-wider">Địa điểm & Khu vực:</span>
                                                     <span className="text-slate-200 font-semibold block mt-0.5 truncate" title={`${plan.location || ""} ${plan.targetRegion ? `(${plan.targetRegion})` : ""}`}>
                                                         {plan.location || plan.targetRegion || "Toàn quốc"}
                                                     </span>
                                                 </div>
 
                                                 <div className="bg-slate-950/50 p-2.5 rounded-xl border border-slate-850">
-                                                    <span className="text-slate-500 block font-bold text-[9px] uppercase tracking-wider">Kinh phí dự trù:</span>
+                                                    <span className="text-slate-500 block font-bold text-[11px] uppercase tracking-wider">Kinh phí dự trù:</span>
                                                     <span className="text-emerald-400 font-bold font-mono text-sm block mt-0.5">
                                                         {(plan.generalBudget || plan.estimatedBudget) > 0 
                                                             ? `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(plan.generalBudget || plan.estimatedBudget)}đ`
@@ -39998,13 +39998,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs pt-1">
                                                     {plan.targetKPIs && (
                                                         <div className="bg-slate-950/50 p-2.5 rounded-xl border border-slate-850 space-y-0.5">
-                                                            <span className="text-slate-500 block font-bold text-[9px] uppercase tracking-wider">KPI dự kiến:</span>
+                                                            <span className="text-slate-500 block font-bold text-[11px] uppercase tracking-wider">KPI dự kiến:</span>
                                                             <span className="text-slate-200 font-medium">{plan.targetKPIs}</span>
                                                         </div>
                                                     )}
                                                     {plan.expectedDeliverables && (
                                                         <div className="bg-slate-950/50 p-2.5 rounded-xl border border-slate-850 space-y-0.5">
-                                                            <span className="text-slate-500 block font-bold text-[9px] uppercase tracking-wider">Kết quả bàn giao:</span>
+                                                            <span className="text-slate-500 block font-bold text-[11px] uppercase tracking-wider">Kết quả bàn giao:</span>
                                                             <span className="text-slate-200 font-medium">{plan.expectedDeliverables}</span>
                                                         </div>
                                                     )}
@@ -40021,25 +40021,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 <div className="space-y-2 text-xs">
                                                     {plan.approachStrategy && (
                                                         <div>
-                                                            <span className="text-slate-500 block font-bold text-[9px] uppercase">Chiến lược tiếp cận:</span>
+                                                            <span className="text-slate-500 block font-bold text-[11px] uppercase">Chiến lược tiếp cận:</span>
                                                             <p className="text-slate-300 mt-0.5">{plan.approachStrategy}</p>
                                                         </div>
                                                     )}
                                                     {plan.competitors && (
                                                         <div>
-                                                            <span className="text-slate-500 block font-bold text-[9px] uppercase">Đối thủ / Tình hình cạnh tranh:</span>
+                                                            <span className="text-slate-500 block font-bold text-[11px] uppercase">Đối thủ / Tình hình cạnh tranh:</span>
                                                             <p className="text-slate-300 mt-0.5">{plan.competitors}</p>
                                                         </div>
                                                     )}
                                                     {plan.infoSources && (
                                                         <div>
-                                                            <span className="text-slate-500 block font-bold text-[9px] uppercase">Nguồn thông tin khảo sát:</span>
+                                                            <span className="text-slate-500 block font-bold text-[11px] uppercase">Nguồn thông tin khảo sát:</span>
                                                             <p className="text-slate-300 mt-0.5">{plan.infoSources}</p>
                                                         </div>
                                                     )}
                                                     {plan.researchMethods && (
                                                         <div>
-                                                            <span className="text-slate-500 block font-bold text-[9px] uppercase">Phương pháp nghiên cứu:</span>
+                                                            <span className="text-slate-500 block font-bold text-[11px] uppercase">Phương pháp nghiên cứu:</span>
                                                             <p className="text-slate-300 mt-0.5">{plan.researchMethods}</p>
                                                         </div>
                                                     )}
@@ -40577,7 +40577,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     {newTaskLogAttachment}
                                                                 </p>
                                                                 {newTaskLogFileSize && (
-                                                                    <p className="text-[9px] text-slate-400 font-mono">{newTaskLogFileSize}</p>
+                                                                    <p className="text-[11px] text-slate-400 font-mono">{newTaskLogFileSize}</p>
                                                                 )}
                                                             </div>
                                                         </div>
@@ -40658,7 +40658,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     >
                                                                         <Paperclip className="w-3 h-3 shrink-0" />
                                                                         <span className="truncate">{log.attachment}</span>
-                                                                        {log.size && <span className="text-[9px] text-slate-500">({log.size})</span>}
+                                                                        {log.size && <span className="text-[11px] text-slate-500">({log.size})</span>}
                                                                     </a>
                                                                 )}
                                                                 <button
@@ -41026,7 +41026,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 )}
                             >
                                 <span className="text-xs">📋 Việc được giao</span>
-                                <span className="text-[9px] text-slate-500 mt-0.5">Tab Nhiệm vụ</span>
+                                <span className="text-[11px] text-slate-500 mt-0.5">Tab Nhiệm vụ</span>
                             </button>
 
                             <button
@@ -41045,7 +41045,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 )}
                             >
                                 <span className="text-xs">🎯 KH chuyên đề</span>
-                                <span className="text-[9px] text-slate-500 mt-0.5">Chuyên đề tham gia</span>
+                                <span className="text-[11px] text-slate-500 mt-0.5">Chuyên đề tham gia</span>
                             </button>
 
                             <button
@@ -41066,7 +41066,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 )}
                             >
                                 <span className="text-xs">✍️ Việc tự nhập</span>
-                                <span className="text-[9px] text-slate-500 mt-0.5">Công việc phát sinh</span>
+                                <span className="text-[11px] text-slate-500 mt-0.5">Công việc phát sinh</span>
                             </button>
                         </div>
                     </div>
@@ -41123,7 +41123,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 {planTaskName && (
                                     <div className="grid grid-cols-1 gap-2 pt-2 border-t border-slate-850">
                                         <div>
-                                            <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Tên Dự án / Nhóm công việc</label>
+                                            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Tên Dự án / Nhóm công việc</label>
                                             <FastInput
                                                 type="text"
                                                 value={planProjectName}
@@ -41132,7 +41132,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             />
                                         </div>
                                         <div>
-                                            <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Nội dung công việc</label>
+                                            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Nội dung công việc</label>
                                             <FastInput
                                                 type="text"
                                                 required
@@ -41207,13 +41207,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <div className="space-y-3 pt-2 border-t border-slate-850">
                                         <div>
                                             <div className="flex justify-between items-center mb-1">
-                                                <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                                                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400">
                                                     Công việc cụ thể cho chuyên đề này *
                                                 </label>
                                                 <button
                                                     type="button"
                                                     onClick={() => setIsCustomSpecializedSubtask(!isCustomSpecializedSubtask)}
-                                                    className="text-[9px] text-indigo-400 hover:text-indigo-300 font-bold"
+                                                    className="text-[11px] text-indigo-400 hover:text-indigo-300 font-bold"
                                                 >
                                                     {isCustomSpecializedSubtask ? "Chọn hoạt động con" : "Tự gõ nội dung việc"}
                                                 </button>
@@ -41260,7 +41260,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         </div>
 
                                         <div>
-                                            <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Tên Dự án / Chuyên đề</label>
+                                            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Tên Dự án / Chuyên đề</label>
                                             <FastInput
                                                 type="text"
                                                 value={planProjectName}
@@ -41503,7 +41503,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 ) : (
                                     <div className="w-full bg-slate-900/90 border border-slate-800 rounded-lg px-3 py-2 text-xs text-indigo-300 font-bold flex items-center justify-between">
                                         <span>👤 {loggedInStaff?.full_name || "Nhân viên kinh doanh"} ({loggedInStaff?.employee_id || "NV-00X"})</span>
-                                        <span className="text-[9px] bg-indigo-950 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-800 font-mono">Tự động gán</span>
+                                        <span className="text-[11px] bg-indigo-950 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-800 font-mono">Tự động gán</span>
                                     </div>
                                 )}
                             </div>
@@ -41712,7 +41712,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <span className="text-[10px] font-bold text-amber-400 font-mono tracking-wider uppercase">
                                 💳 QUẢN TRỊ HẠN MỨC CÔNG NỢ & BẢNG GIÁ RIÊNG
                             </span>
-                            <span className="text-[9px] px-2 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-600/40 font-mono font-bold">
+                            <span className="text-[11px] px-2 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-600/40 font-mono font-bold">
                                 Stage 1 • Chốt chặn ERP
                             </span>
                         </div>
@@ -41746,7 +41746,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs outline-none text-emerald-400 font-mono font-bold"
                                     placeholder="Ví dụ: 100000000"
                                 />
-                                <span className="text-[9px] text-slate-500 font-mono block mt-0.5">
+                                <span className="text-[11px] text-slate-500 font-mono block mt-0.5">
                                     {custCreditLimit ? `${Number(custCreditLimit).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ` : '0 đ'}
                                 </span>
                             </div>
@@ -41764,7 +41764,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs outline-none text-amber-300 font-mono font-bold text-center"
                                     placeholder="Số ngày (vd: 30)"
                                 />
-                                <span className="text-[9px] text-slate-500 block mt-0.5 text-center">
+                                <span className="text-[11px] text-slate-500 block mt-0.5 text-center">
                                     Quá ngày này hệ thống tự động KHÓA đơn mới
                                 </span>
                             </div>
@@ -41776,7 +41776,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wider">
                                     🏷️ Bảng giá riêng cho khách hàng này (Ưu tiên áp dụng trước giá chuẩn)
                                 </span>
-                                <span className="text-[9px] text-slate-400 font-mono">
+                                <span className="text-[11px] text-slate-400 font-mono">
                                     {custSpecialPriceList.length} mặt hàng đặc biệt
                                 </span>
                             </div>
@@ -41844,7 +41844,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             {custSpecialPriceList.length > 0 && (
                                 <div className="max-h-32 overflow-y-auto border border-slate-800 rounded-lg mt-2">
                                     <table className="w-full text-left text-[11px] text-slate-300">
-                                        <thead className="bg-slate-900 text-slate-400 uppercase text-[9px] font-mono">
+                                        <thead className="bg-slate-900 text-slate-400 uppercase text-[11px] font-mono">
                                             <tr>
                                                 <th className="p-2">Mã SP</th>
                                                 <th className="p-2">Tên sản phẩm</th>
@@ -42457,7 +42457,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 {compStorage}
                                                             </span>
                                                             {isDifferentFromParent && (
-                                                                <span className="block text-[9px] text-amber-700 dark:text-amber-400 mt-0.5 font-bold">
+                                                                <span className="block text-[11px] text-amber-700 dark:text-amber-400 mt-0.5 font-bold">
                                                                     ⚠️ Khác SP chính
                                                                 </span>
                                                             )}
@@ -42597,7 +42597,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         className="p-2.5 text-xs text-slate-300 hover:bg-slate-900 hover:text-white cursor-pointer transition-colors flex items-center justify-between"
                                                     >
                                                         <div>
-                                                            <span className="text-[9px] px-1.5 py-0.2 rounded font-mono mr-1.5 bg-slate-900 text-slate-400 border border-slate-800">{p.badge}</span>
+                                                            <span className="text-[11px] px-1.5 py-0.2 rounded font-mono mr-1.5 bg-slate-900 text-slate-400 border border-slate-800">{p.badge}</span>
                                                             <strong className="text-white">{p.code}</strong> - {p.name}
                                                             {p.specification && <span className="text-slate-400 ml-1">({p.specification})</span>}
                                                         </div>
@@ -42787,7 +42787,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     <div className="overflow-x-auto select-none border border-slate-800 rounded-xl">
                         <table className="w-full text-left text-xs border-collapse">
                             <thead>
-                                <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[9px] bg-slate-900/40">
+                                <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[11px] bg-slate-900/40">
                                     <th className="py-2.5 px-3">Mã phiếu</th>
                                     <th className="py-2.5 px-3">Ngày</th>
                                     <th className="py-2.5 px-3">Loại</th>
@@ -42827,7 +42827,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <td className="py-2.5 px-3 text-slate-400">{log.date}</td>
                                             <td className="py-2.5 px-3">
                                                 <span className={cn(
-                                                    "text-[9px] px-1.5 py-0.5 rounded font-bold uppercase",
+                                                    "text-[11px] px-1.5 py-0.5 rounded font-bold uppercase",
                                                     log.type === "commercial" ? "bg-amber-950 text-amber-400 border border-amber-800/60" : "bg-blue-950 text-blue-400 border border-blue-800/60"
                                                 )}>
                                                     {log.type === "commercial" ? "Thương mại" : "Sản xuất"}
@@ -42840,7 +42840,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <td className="py-2.5 px-3 text-slate-300 font-medium">{log.supplierName}</td>
                                             <td className="py-2.5 px-3 font-mono text-slate-400">
                                                 {log.lotOrSerial || "—"}
-                                                {log.expDate && <span className="block text-[9px] text-slate-500">HSD: {log.expDate}</span>}
+                                                {log.expDate && <span className="block text-[11px] text-slate-500">HSD: {log.expDate}</span>}
                                             </td>
                                             <td className="py-2.5 px-3 text-center font-bold text-white font-mono">{log.quantity}</td>
                                             <td className="py-2.5 px-3 text-right font-mono text-slate-300">
@@ -42933,7 +42933,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         }}
                                                         className="p-2 text-xs text-slate-300 hover:bg-slate-900 hover:text-white cursor-pointer transition-colors text-left font-semibold"
                                                     >
-                                                        <span className="text-[9px] px-1 py-0.2 rounded font-mono mr-1.5 bg-slate-900 text-slate-400 border border-slate-800">{p.badge}</span>
+                                                        <span className="text-[11px] px-1 py-0.2 rounded font-mono mr-1.5 bg-slate-900 text-slate-400 border border-slate-800">{p.badge}</span>
                                                         <strong className="text-white">{p.code}</strong> - {p.name} {p.specification ? `(${p.specification})` : ""}
                                                     </div>
                                                 ));
@@ -42984,7 +42984,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 onChange={(e) => setGiveStockHoldUntil(e.target.value)}
                                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-amber-300 font-mono font-bold outline-none text-center cursor-pointer"
                             />
-                            <span className="text-[9px] text-slate-500 block mt-0.5 text-center">
+                            <span className="text-[11px] text-slate-500 block mt-0.5 text-center">
                                 Quá hạn hệ thống cảnh báo tồn giữ lâu
                             </span>
                         </div>
@@ -43045,7 +43045,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     onClick={() => {
                                         setIsAddCustomerQuickOpen(!isAddCustomerQuickOpen);
                                     }}
-                                    className="text-[9px] text-amber-400 hover:text-amber-300 font-bold underline"
+                                    className="text-[11px] text-amber-400 hover:text-amber-300 font-bold underline"
                                 >
                                     {isAddCustomerQuickOpen ? "Đóng form thêm nhanh" : "+ Thêm nhanh khách hàng"}
                                 </button>
@@ -43155,7 +43155,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div className="overflow-x-auto border border-slate-800 rounded-lg bg-slate-950/40">
                             <table className="w-full text-left text-xs border-collapse">
                                 <thead>
-                                    <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[9px] bg-slate-950/20">
+                                    <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[11px] bg-slate-950/20">
                                         <th className="p-2">Sản phẩm</th>
                                         <th className="p-2 text-center" style={{ width: "90px" }}>Tồn kho Sales</th>
                                         <th className="p-2" style={{ width: "100px" }}>Số lượng</th>
@@ -43236,7 +43236,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                 }}
                                                                                 className="p-2 text-xs text-slate-300 hover:bg-slate-900 hover:text-white cursor-pointer transition-colors text-left font-semibold"
                                                                             >
-                                                                                <span className="text-[9px] px-1 py-0.2 rounded font-mono mr-1.5 bg-slate-900 text-slate-400 border border-slate-800">{p.badge}</span>
+                                                                                <span className="text-[11px] px-1 py-0.2 rounded font-mono mr-1.5 bg-slate-900 text-slate-400 border border-slate-800">{p.badge}</span>
                                                                                 <strong className="text-white">{p.code}</strong> - {p.name} {p.specification ? `(${p.specification})` : ""}
                                                                             </div>
                                                                         ));
@@ -43466,7 +43466,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                     <div className="grid grid-cols-3 gap-3 pt-2 border-t border-slate-900">
                         <div>
-                            <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Giới tính</label>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Giới tính</label>
                             <select
                                 value={nvkdCustGender}
                                 onChange={(e) => setNvkdCustGender(e.target.value)}
@@ -43479,7 +43479,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </select>
                         </div>
                         <div>
-                            <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Quê quán</label>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Quê quán</label>
                             <FastInput
                                 type="text"
                                 value={nvkdCustHometown}
@@ -43489,7 +43489,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             />
                         </div>
                         <div>
-                            <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Độ tuổi</label>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Độ tuổi</label>
                             <input
                                 type="number"
                                 value={nvkdCustAge}
@@ -43607,7 +43607,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div className="space-y-1 relative">
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center justify-between">
                                 <span>Sản phẩm liên quan *</span>
-                                <span className="text-[9px] text-purple-400 lowercase font-normal">(gõ để tìm kiếm)</span>
+                                <span className="text-[11px] text-purple-400 lowercase font-normal">(gõ để tìm kiếm)</span>
                             </label>
                             <div className="relative">
                                 <input
@@ -43661,7 +43661,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         return (
                                             <>
                                                 {mfgItems.length > 0 && (
-                                                    <div className="text-[9px] font-bold uppercase tracking-wider text-purple-400 px-2.5 py-1 bg-purple-950/40 rounded-lg">
+                                                    <div className="text-[11px] font-bold uppercase tracking-wider text-purple-400 px-2.5 py-1 bg-purple-950/40 rounded-lg">
                                                         📦 Sản phẩm Hãng Phân Phối ({mfgItems.length})
                                                     </div>
                                                 )}
@@ -43683,14 +43683,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             <span className="text-[10px] text-purple-300 font-mono ml-1.5">[{p.code}]</span>
                                                             {p.specification && <span className="text-[10px] text-slate-400 block">{p.specification}</span>}
                                                         </div>
-                                                        <span className="text-[9px] bg-slate-950 text-purple-400 px-1.5 py-0.5 rounded border border-purple-900/60 shrink-0 font-mono font-bold">
+                                                        <span className="text-[11px] bg-slate-950 text-purple-400 px-1.5 py-0.5 rounded border border-purple-900/60 shrink-0 font-mono font-bold">
                                                             SX
                                                         </span>
                                                     </div>
                                                 ))}
 
                                                 {commItems.length > 0 && (
-                                                    <div className="text-[9px] font-bold uppercase tracking-wider text-indigo-400 px-2.5 py-1 bg-indigo-950/40 rounded-lg mt-2">
+                                                    <div className="text-[11px] font-bold uppercase tracking-wider text-indigo-400 px-2.5 py-1 bg-indigo-950/40 rounded-lg mt-2">
                                                         🛒 Hàng hóa Thương mại ({commItems.length})
                                                     </div>
                                                 )}
@@ -43712,7 +43712,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             <span className="text-[10px] text-indigo-300 font-mono ml-1.5">[{p.code}]</span>
                                                             {p.category && <span className="text-[10px] text-slate-400 block">{p.category} {p.specification ? `• ${p.specification}` : ''}</span>}
                                                         </div>
-                                                        <span className="text-[9px] bg-slate-950 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-900/60 shrink-0 font-mono font-bold">
+                                                        <span className="text-[11px] bg-slate-950 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-900/60 shrink-0 font-mono font-bold">
                                                             TM
                                                         </span>
                                                     </div>
@@ -43887,7 +43887,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     Kết quả phản hồi từ Phòng Application
                                 </h4>
                                 {selectedAppRequestDetail.testReportFile && (
-                                    <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                    <span className="px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                                         Đã có báo cáo chính thức
                                     </span>
                                 )}
@@ -44180,7 +44180,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                         <div className="border border-slate-800 rounded-xl overflow-hidden max-h-[50vh] overflow-y-auto">
                             <table className="w-full text-left text-xs border-collapse">
-                                <thead className="bg-slate-950 text-slate-400 uppercase text-[9px] font-mono sticky top-0 z-10 border-b border-slate-800">
+                                <thead className="bg-slate-950 text-slate-400 uppercase text-[11px] font-mono sticky top-0 z-10 border-b border-slate-800">
                                     <tr>
                                         <th className="p-2.5">Mã phiếu / NVKD</th>
                                         <th className="p-2.5">Khách hàng & Ghi chú</th>
@@ -44267,7 +44267,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     📅 {item.hold_until_date}
                                                                 </span>
                                                                 {item.status === "ACTIVE" && (
-                                                                    <span className={cn("block text-[9px]", isExpired ? "text-rose-500 font-bold" : "text-slate-500")}>
+                                                                    <span className={cn("block text-[11px]", isExpired ? "text-rose-500 font-bold" : "text-slate-500")}>
                                                                         {isExpired ? `Quá hạn ${Math.abs(daysLeft || 0)} ngày` : `Còn ${daysLeft} ngày`}
                                                                     </span>
                                                                 )}
@@ -44276,15 +44276,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     </td>
                                                     <td className="p-2.5 text-center whitespace-nowrap">
                                                         {item.status === "RELEASED" ? (
-                                                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold font-mono bg-slate-800 text-slate-400 border border-slate-700">
+                                                            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold font-mono bg-slate-800 text-slate-400 border border-slate-700">
                                                                 ĐÃ GIẢI PHÓNG
                                                             </span>
                                                         ) : isExpired ? (
-                                                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold font-mono bg-rose-950 text-rose-300 border border-rose-500/80 shadow-xs animate-pulse">
+                                                            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold font-mono bg-rose-950 text-rose-300 border border-rose-500/80 shadow-xs animate-pulse">
                                                                 ⚠️ GIỮ LÂU QUÁ HẠN
                                                             </span>
                                                         ) : (
-                                                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold font-mono bg-emerald-950 text-emerald-300 border border-emerald-600/60">
+                                                            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold font-mono bg-emerald-950 text-emerald-300 border border-emerald-600/60">
                                                                 🟢 ĐANG GIỮ CHỖ
                                                             </span>
                                                         )}

@@ -4234,7 +4234,7 @@ export const WarehouseModule: React.FC = () => {
           <BarcodeIcon className="w-4 h-4 text-emerald-500" />
           <span className="flex items-center gap-1.5">
             <span>Barcode &amp; RFID 4.0</span>
-            <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-indigo-100 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-300">
+            <span className="px-1.5 py-0.2 rounded-full text-[11px] font-black bg-indigo-100 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-300">
               NEW
             </span>
           </span>
@@ -4744,7 +4744,7 @@ export const WarehouseModule: React.FC = () => {
                                     [itemKey]: !prev[itemKey]
                                   }));
                                 }}
-                                className={`px-2 py-0.5 rounded-full font-bold text-[9px] border flex items-center gap-1 cursor-pointer transition-all shadow-2xs ${
+                                className={`px-2 py-0.5 rounded-full font-bold text-[11px] border flex items-center gap-1 cursor-pointer transition-all shadow-2xs ${
                                   isExpanded
                                     ? "bg-purple-600 text-white border-purple-700 shadow-xs"
                                     : "bg-purple-100 dark:bg-purple-950/80 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-900 border-purple-300 dark:border-purple-800"
@@ -4753,7 +4753,7 @@ export const WarehouseModule: React.FC = () => {
                               >
                                 <span>🧩</span>
                                 <span>Bộ/Kit ({itemComponents.length} phụ kiện)</span>
-                                <span className="font-mono font-bold text-[8px]">{isExpanded ? "▲ Thu gọn" : "▼ Xem phụ kiện"}</span>
+                                <span className="font-mono font-bold text-[11px]">{isExpanded ? "▲ Thu gọn" : "▼ Xem phụ kiện"}</span>
                               </button>
                               <button
                                 type="button"
@@ -4761,7 +4761,7 @@ export const WarehouseModule: React.FC = () => {
                                   e.stopPropagation();
                                   setSelectedKitModalItem({ ...item, itemComponents });
                                 }}
-                                className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 hover:bg-purple-100 text-slate-600 hover:text-purple-700 text-[9px] border border-slate-200 dark:border-slate-700 cursor-pointer"
+                                className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 hover:bg-purple-100 text-slate-600 hover:text-purple-700 text-[11px] border border-slate-200 dark:border-slate-700 cursor-pointer"
                                 title="Mở bảng chi tiết phụ kiện & in tem phụ kiện"
                               >
                                 🔍 Chi tiết
@@ -4803,7 +4803,7 @@ export const WarehouseModule: React.FC = () => {
                                   +{item.incoming_po_qty}
                                 </span>
                                 {item.incoming_pos && item.incoming_pos.length > 0 && (
-                                  <div className="text-[9px] text-slate-500 mt-0.5 font-sans truncate max-w-[130px] ml-auto" title={item.incoming_pos.map((p: any) => `${p.po_code} (${p.supplier_name || 'NCC'}): +${p.quantity} (Hẹn giao: ${p.expected_delivery_date || 'Chờ xác nhận'})`).join('\n')}>
+                                  <div className="text-[11px] text-slate-500 mt-0.5 font-sans truncate max-w-[130px] ml-auto" title={item.incoming_pos.map((p: any) => `${p.po_code} (${p.supplier_name || 'NCC'}): +${p.quantity} (Hẹn giao: ${p.expected_delivery_date || 'Chờ xác nhận'})`).join('\n')}>
                                     PO: {item.incoming_pos[0]?.po_code} ({item.incoming_pos[0]?.expected_delivery_date || "Sắp về"})
                                   </div>
                                 )}
@@ -4932,7 +4932,7 @@ export const WarehouseModule: React.FC = () => {
                                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
                                   <AlertOctagon className="w-3 h-3 text-rose-600" /> CẬN DATE ({item.days_to_expiry}d)
                                 </span>
-                                <span className="text-[9px] text-rose-600 font-bold uppercase tracking-wider">
+                                <span className="text-[11px] text-rose-600 font-bold uppercase tracking-wider">
                                   RỦI RO HỦY HÀNG
                                 </span>
                               </div>
@@ -4941,7 +4941,7 @@ export const WarehouseModule: React.FC = () => {
                                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
                                   <AlertTriangle className="w-3 h-3 text-amber-600" /> TỒN THẤP (Min: {item.min_stock_level || 10})
                                 </span>
-                                <span className="text-[9px] text-amber-600 font-bold uppercase tracking-wider">
+                                <span className="text-[11px] text-amber-600 font-bold uppercase tracking-wider">
                                   RỦI RO ĐỨT HÀNG
                                 </span>
                               </div>
@@ -4950,7 +4950,7 @@ export const WarehouseModule: React.FC = () => {
                                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300 border border-purple-300 dark:border-purple-800">
                                   <Clock className="w-3 h-3 text-purple-600" /> CHẬM LUÂN CHUYỂN
                                 </span>
-                                <span className="text-[9px] text-purple-600 font-semibold">
+                                <span className="text-[11px] text-purple-600 font-semibold">
                                   &gt;{item.days_inactive} ngày chưa xuất
                                 </span>
                               </div>
@@ -5235,7 +5235,7 @@ export const WarehouseModule: React.FC = () => {
                                             </span>
                                           </div>
                                           {isDiffTemp && (
-                                            <span className="block text-[9px] text-amber-600 dark:text-amber-400 font-bold mt-0.5">
+                                            <span className="block text-[11px] text-amber-600 dark:text-amber-400 font-bold mt-0.5">
                                               ⚠️ Khác nhiệt độ Kit chính!
                                             </span>
                                           )}
@@ -6730,7 +6730,7 @@ export const WarehouseModule: React.FC = () => {
                                   <AlertOctagon className="w-4 h-4 text-rose-400" />
                                   ĐANG BỊ PHONG TỎA CÁCH LY
                                 </span>
-                                <span className="text-[9px] bg-rose-900 text-rose-200 px-1.5 py-0.2 rounded font-mono font-bold">
+                                <span className="text-[11px] bg-rose-900 text-rose-200 px-1.5 py-0.2 rounded font-mono font-bold">
                                   CẤM XUẤT
                                 </span>
                               </div>
@@ -8223,7 +8223,7 @@ export const WarehouseModule: React.FC = () => {
                               <div className="flex items-center gap-1.5">
                                 <span>{r.product_name}</span>
                                 {r.isAutoLookedUp && (
-                                  <span className="px-1.5 py-0.2 rounded bg-teal-100 dark:bg-teal-950/70 text-teal-700 dark:text-teal-300 text-[9px] font-bold">
+                                  <span className="px-1.5 py-0.2 rounded bg-teal-100 dark:bg-teal-950/70 text-teal-700 dark:text-teal-300 text-[11px] font-bold">
                                     Auto-Lookup
                                   </span>
                                 )}
@@ -9148,15 +9148,15 @@ export const WarehouseModule: React.FC = () => {
                                             </td>
                                             <td className="py-2 px-2.5 whitespace-nowrap">
                                               {comp.tracking_type === "SERIAL" ? (
-                                                <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 font-bold text-[9px]">
+                                                <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 font-bold text-[11px]">
                                                   Serial (S/N)
                                                 </span>
                                               ) : comp.tracking_type === "LOT" ? (
-                                                <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-bold text-[9px]">
+                                                <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-bold text-[11px]">
                                                   Số Lô (LOT)
                                                 </span>
                                               ) : (
-                                                <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300 text-[9px]">
+                                                <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300 text-[11px]">
                                                   Tiêu chuẩn
                                                 </span>
                                               )}
@@ -9461,15 +9461,15 @@ export const WarehouseModule: React.FC = () => {
                               </td>
                               <td className="py-2 px-2.5 whitespace-nowrap">
                                 {c.tracking_type === "SERIAL" ? (
-                                  <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 font-bold text-[9px]">
+                                  <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 font-bold text-[11px]">
                                     Quét Serial S/N
                                   </span>
                                 ) : c.tracking_type === "LOT" ? (
-                                  <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-bold text-[9px]">
+                                  <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-bold text-[11px]">
                                     Kiểm Số Lô/EXP
                                   </span>
                                 ) : (
-                                  <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300 text-[9px]">
+                                  <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300 text-[11px]">
                                     Phụ kiện chuẩn
                                   </span>
                                 )}
@@ -10920,7 +10920,7 @@ export const WarehouseModule: React.FC = () => {
                                 📍 {comp.shelf_position || "Kho TBR"}
                               </div>
                               {isDiffTemp && (
-                                <span className="inline-block text-[9px] text-amber-600 dark:text-amber-400 font-bold mt-0.5">
+                                <span className="inline-block text-[11px] text-amber-600 dark:text-amber-400 font-bold mt-0.5">
                                   ⚠️ Khác nhiệt độ Kit chính!
                                 </span>
                               )}

@@ -1812,7 +1812,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
                                 {att.name}
                               </p>
                               <div className="flex items-center gap-1.5 mt-1 text-[10px] text-slate-400">
-                                <span className={`px-1.5 py-0.2 rounded uppercase font-bold text-[9px] ${
+                                <span className={`px-1.5 py-0.2 rounded uppercase font-bold text-[11px] ${
                                   att.category === "image"
                                     ? "bg-emerald-950 text-emerald-300 border border-emerald-800"
                                     : att.category === "video"
@@ -2082,7 +2082,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
                                   </a>
                                 </div>
                                 {file.size && (
-                                  <span className="text-[9px] text-slate-500">{formatFileSize(file.size)}</span>
+                                  <span className="text-[11px] text-slate-500">{formatFileSize(file.size)}</span>
                                 )}
                               </div>
                             );

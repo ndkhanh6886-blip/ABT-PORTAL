@@ -730,7 +730,7 @@ export const SalesEvaluationAnalytics: React.FC<SalesEvaluationAnalyticsProps> =
                                                                 style={{ width: `${m.taskCompletionRate}%` }}
                                                             ></div>
                                                         </div>
-                                                        <span className="text-[9px] text-slate-400 font-mono mt-0.5">
+                                                        <span className="text-[11px] text-slate-400 font-mono mt-0.5">
                                                             {m.taskCompletionRate}%
                                                             {m.overdueTasks > 0 && (
                                                                 <span className="text-rose-400 ml-1">({m.overdueTasks} trễ)</span>
@@ -753,7 +753,7 @@ export const SalesEvaluationAnalytics: React.FC<SalesEvaluationAnalyticsProps> =
                                                                 style={{ width: `${m.planCompletionRate}%` }}
                                                             ></div>
                                                         </div>
-                                                        <span className="text-[9px] text-slate-400 font-mono mt-0.5">
+                                                        <span className="text-[11px] text-slate-400 font-mono mt-0.5">
                                                             {m.planCompletionRate}%
                                                         </span>
                                                     </div>
@@ -771,7 +771,7 @@ export const SalesEvaluationAnalytics: React.FC<SalesEvaluationAnalyticsProps> =
                                                                 style={{ width: `${m.dailyDisciplineRate}%` }}
                                                             ></div>
                                                         </div>
-                                                        <span className="text-[9px] text-slate-400 font-mono mt-0.5">
+                                                        <span className="text-[11px] text-slate-400 font-mono mt-0.5">
                                                             {m.activeDaysCount} ngày có log
                                                         </span>
                                                     </div>
@@ -1072,7 +1072,7 @@ export const SalesEvaluationAnalytics: React.FC<SalesEvaluationAnalyticsProps> =
                                                 <span className="font-mono text-orange-400 text-[10px] font-bold">
                                                     📅 {l.date}
                                                 </span>
-                                                <span className="text-[9px] text-slate-500">
+                                                <span className="text-[11px] text-slate-500">
                                                     {l.created_at ? new Date(l.created_at).toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" }) : ""}
                                                 </span>
                                             </div>
@@ -1166,8 +1166,8 @@ export const SalesEvaluationAnalytics: React.FC<SalesEvaluationAnalyticsProps> =
                                                         className="p-2 bg-slate-900/80 rounded-lg border border-slate-800 text-[11px] space-y-0.5"
                                                     >
                                                         <div className="flex items-center justify-between">
-                                                            <span className="text-[9px] text-slate-400 font-mono">{p.time_slot}</span>
-                                                            <span className={`text-[9px] font-bold ${
+                                                            <span className="text-[11px] text-slate-400 font-mono">{p.time_slot}</span>
+                                                            <span className={`text-[11px] font-bold ${
                                                                 (p.status || "").toLowerCase() === "completed" ? "text-emerald-400" : "text-amber-400"
                                                             }`}>
                                                                 {p.status || "Pending"}

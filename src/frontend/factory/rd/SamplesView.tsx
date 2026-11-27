@@ -967,7 +967,7 @@ Hệ thống Quản trị R&D & Biobank ABT - Xác nhận điện tử.`;
                                 <span>•</span>
                                 <span>{sample.category}</span>
                                 {sample.parentId && (
-                                  <span className="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400 font-bold text-[9px] border border-blue-500/25">
+                                  <span className="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400 font-bold text-[11px] border border-blue-500/25">
                                     Mẫu con từ {sample.parentCode || sample.parentId}
                                   </span>
                                 )}
@@ -1019,7 +1019,7 @@ Hệ thống Quản trị R&D & Biobank ABT - Xác nhận điện tử.`;
                             <div className="flex items-center gap-1.5">
                               {sample.growthStatus && (
                                 <span
-                                  className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                  className={`px-1.5 py-0.5 rounded text-[11px] font-bold ${
                                     sample.growthStatus === "Activated"
                                       ? "bg-blue-500/10 text-blue-400"
                                       : sample.growthStatus === "Culturing"
@@ -1038,7 +1038,7 @@ Hệ thống Quản trị R&D & Biobank ABT - Xác nhận điện tử.`;
                               )}
                               {sample.freezeThawCount > 0 && (
                                 <span
-                                  className={`px-1.5 py-0.5 rounded text-[9px] font-mono ${
+                                  className={`px-1.5 py-0.5 rounded text-[11px] font-mono ${
                                     sample.thawWarning
                                       ? "bg-rose-500/15 text-rose-400 font-bold"
                                       : "bg-slate-800 text-slate-400"
@@ -1759,7 +1759,7 @@ Hệ thống Quản trị R&D & Biobank ABT - Xác nhận điện tử.`;
                               </td>
                               <td className="py-2 px-3">
                                 <span
-                                  className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
+                                  className={`px-1.5 py-0.5 rounded text-[11px] font-bold uppercase ${
                                     spec.status === "Đạt" && spec.volume > 0
                                       ? "bg-emerald-500/10 text-emerald-400"
                                       : spec.volume <= 0 || spec.status === "Hết mẫu"
@@ -1878,7 +1878,7 @@ Hệ thống Quản trị R&D & Biobank ABT - Xác nhận điện tử.`;
                       <div className="flex justify-between items-center">
                         <div className="flex items-center gap-2">
                           <span
-                            className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${
+                            className={`px-2 py-0.5 rounded text-[11px] font-bold uppercase ${
                               item.action === "Tăng sinh"
                                 ? "bg-blue-500/15 text-blue-400"
                                 : item.action === "Sử dụng"

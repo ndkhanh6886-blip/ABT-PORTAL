@@ -5088,7 +5088,7 @@ export function ProposalsApprovalView({
                             const vMeta = PROPOSAL_VISIBILITY_META[vKey];
                             return (
                               <div className="mt-1">
-                                <span className={`inline-block text-[9px] font-bold px-1.5 py-0.5 rounded border ${vMeta.badgeCls}`}>
+                                <span className={`inline-block text-[11px] font-bold px-1.5 py-0.5 rounded border ${vMeta.badgeCls}`}>
                                   {vMeta.shortLabel}
                                 </span>
                               </div>
@@ -6322,7 +6322,7 @@ export function ProposalsApprovalView({
                         <div className="flex items-center justify-between gap-1">
                           <span className="text-xs font-extrabold text-slate-900 dark:text-white">{meta.shortLabel}</span>
                           {isSelected && (
-                            <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black bg-indigo-600 text-white">
+                            <span className="px-1.5 py-0.5 rounded-full text-[11px] font-black bg-indigo-600 text-white">
                               Đang chọn
                             </span>
                           )}

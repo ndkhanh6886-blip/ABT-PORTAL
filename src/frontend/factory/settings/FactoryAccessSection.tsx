@@ -720,7 +720,7 @@ export function FactoryFeatureGroups({
         <div className="space-y-0.5 flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
             <span className={`text-xs font-bold ${checked ? "text-slate-900 dark:text-white" : "text-slate-600 dark:text-slate-400"}`}>{p.description}</span>
-            <span className="text-[9px] font-mono text-slate-400 shrink-0">{p.code}</span>
+            <span className="text-[11px] font-mono text-slate-400 shrink-0">{p.code}</span>
           </div>
           <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
             {isEdit && (

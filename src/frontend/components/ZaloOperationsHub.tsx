@@ -921,7 +921,7 @@ export const ZaloOperationsHub: React.FC = () => {
                         <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
                           <span>{b.display_name}</span>
                           {b.role === "DIRECTOR" && (
-                            <span className="px-1.5 py-0.2 text-[9px] font-black rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                            <span className="px-1.5 py-0.2 text-[11px] font-black rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
                               BGĐ
                             </span>
                           )}
@@ -1816,7 +1816,7 @@ export const ZaloOperationsHub: React.FC = () => {
                         </div>
                       )}
                     </div>
-                    <span className="text-[9px] text-slate-400 mt-1 px-1">{msg.time}</span>
+                    <span className="text-[11px] text-slate-400 mt-1 px-1">{msg.time}</span>
                   </div>
                 ))}
 
@@ -2276,7 +2276,7 @@ export const ZaloOperationsHub: React.FC = () => {
                                 setEditZaloId(log.zalo_user_id);
                               }
                             }}
-                            className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 font-bold cursor-pointer"
+                            className="text-[11px] px-1.5 py-0.5 rounded bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 font-bold cursor-pointer"
                             title="Bấm để gán Zalo User ID này cho nhân sự trong danh bạ"
                           >
                             + Gán Zalo ID
@@ -2351,7 +2351,7 @@ export const ZaloOperationsHub: React.FC = () => {
                             <AlertOctagon className="w-3 h-3 text-rose-600" />
                             <span>FAILED -224</span>
                           </span>
-                          <div className="text-[9px] text-rose-600 dark:text-rose-400 font-medium">Chưa mua gói OA Zalo Cloud</div>
+                          <div className="text-[11px] text-rose-600 dark:text-rose-400 font-medium">Chưa mua gói OA Zalo Cloud</div>
                         </div>
                       ) : log.status?.includes("-216") || log.status?.includes("-204") || log.status?.includes("FAILED_TOKEN_EXPIRED") ? (
                         <div className="space-y-0.5">
@@ -2359,7 +2359,7 @@ export const ZaloOperationsHub: React.FC = () => {
                             <AlertTriangle className="w-3 h-3 text-amber-600" />
                             <span>FAILED TOKEN HẾT HẠN</span>
                           </span>
-                          <div className="text-[9px] text-amber-600 dark:text-amber-400 font-medium">Cần cấp lại Refresh Token</div>
+                          <div className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">Cần cấp lại Refresh Token</div>
                         </div>
                       ) : log.status === "FAILED_NO_TOKEN" ? (
                         <div className="space-y-0.5">
@@ -2367,7 +2367,7 @@ export const ZaloOperationsHub: React.FC = () => {
                             <AlertOctagon className="w-3 h-3 text-rose-600" />
                             <span>CHƯA CÓ TOKEN</span>
                           </span>
-                          <div className="text-[9px] text-rose-600 dark:text-rose-400 font-medium">Cần dán Access Token vào Cấu hình</div>
+                          <div className="text-[11px] text-rose-600 dark:text-rose-400 font-medium">Cần dán Access Token vào Cấu hình</div>
                         </div>
                       ) : (
                         <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400">

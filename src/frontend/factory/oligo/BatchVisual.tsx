@@ -40,7 +40,7 @@ export function BatchVisual({ positions, columnCount, lots }: { positions: Posit
               <div key={i} title={p ? `${p.sequence_code} · ${p.name} · ${p.couplings} chu kỳ` : "Trống"} className={`aspect-square rounded-full border-2 flex flex-col items-center justify-center text-center p-1 ${tone(p)}`}>
                 <span className="text-[10px] opacity-70">#{i + 1}</span>
                 {p && <span className="text-[10px] font-bold leading-tight break-all">{p.sequence_code}</span>}
-                {p && <span className="text-[9px] opacity-70">{p.couplings} ck</span>}
+                {p && <span className="text-[11px] opacity-70">{p.couplings} ck</span>}
               </div>
             );
           })}
@@ -67,8 +67,8 @@ export function BatchVisual({ positions, columnCount, lots }: { positions: Posit
                   <div className="absolute left-0 right-0 bg-orange-300/80 dark:bg-orange-500/60" style={{ bottom: `${leftPct}%`, height: `${takePct}%` }} />
                 </div>
                 <span className="mt-1 text-[10px] font-bold text-center leading-tight">{l.port_role ?? l.item_code}</span>
-                <span className="text-[9px] text-slate-500 text-center leading-tight">mẻ: {fmtQty(take)} {l.base_uom}</span>
-                <span className={`text-[9px] text-center leading-tight ${low ? "text-amber-700 dark:text-amber-400 font-bold" : "text-slate-500"}`}>còn {fmtQty(left)}</span>
+                <span className="text-[11px] text-slate-500 text-center leading-tight">mẻ: {fmtQty(take)} {l.base_uom}</span>
+                <span className={`text-[11px] text-center leading-tight ${low ? "text-amber-700 dark:text-amber-400 font-bold" : "text-slate-500"}`}>còn {fmtQty(left)}</span>
               </div>
             );
           })}

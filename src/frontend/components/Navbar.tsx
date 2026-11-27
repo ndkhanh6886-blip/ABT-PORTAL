@@ -130,11 +130,11 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                   <span className="font-extrabold tracking-tight text-slate-900 dark:text-white text-sm sm:text-base whitespace-nowrap">
                     ABT PORTAL
                   </span>
-                  <span className="hidden xl:inline-block px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-orange-50 dark:bg-orange-950/60 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-800 whitespace-nowrap">
+                  <span className="hidden xl:inline-block px-1.5 py-0.5 text-[11px] font-bold rounded-full bg-orange-50 dark:bg-orange-950/60 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-800 whitespace-nowrap">
                     Y Sinh ABT
                   </span>
                 </div>
-                <span className="text-[9px] font-semibold text-slate-400 dark:text-slate-500 tracking-wider uppercase block mt-0.5 whitespace-nowrap">
+                <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 tracking-wider uppercase block mt-0.5 whitespace-nowrap">
                   Kinh Doanh &amp; Sản Xuất
                 </span>
               </div>
@@ -264,7 +264,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                   <MessageSquare className="w-3.5 h-3.5 shrink-0" />
                   <span>Chat Nội Bộ</span>
                   {chatUnreadCount > 0 ? (
-                    <span className="min-w-[16px] h-4 px-1 rounded-full bg-rose-600 text-white text-[9px] font-extrabold flex items-center justify-center shrink-0">
+                    <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white text-[11px] font-extrabold flex items-center justify-center shrink-0">
                       {chatUnreadCount > 99 ? "99+" : chatUnreadCount}
                     </span>
                   ) : (

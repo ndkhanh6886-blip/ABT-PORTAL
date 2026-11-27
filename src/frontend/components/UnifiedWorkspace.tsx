@@ -1297,7 +1297,7 @@ const SearchablePersonnelSelect: React.FC<SearchablePersonnelSelectProps> = ({
                           {p.full_name}
                         </span>
                         {p.employee_code && (
-                          <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
+                          <span className="text-[11px] font-mono px-1 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
                             {p.employee_code}
                           </span>
                         )}
@@ -1547,7 +1547,7 @@ const SearchableCustomerSelect: React.FC<SearchableCustomerSelectProps> = ({
                   <div className="min-w-0 pr-2">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span
-                        className={`text-[9px] px-1.5 py-0.2 rounded font-extrabold border ${
+                        className={`text-[11px] px-1.5 py-0.2 rounded font-extrabold border ${
                           isSup
                             ? "bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-800"
                             : "bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
@@ -1559,7 +1559,7 @@ const SearchableCustomerSelect: React.FC<SearchableCustomerSelectProps> = ({
                         {c.name}
                       </span>
                       {c.customer_code && (
-                        <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 font-bold">
+                        <span className="text-[11px] font-mono px-1 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 font-bold">
                           {c.customer_code}
                         </span>
                       )}
@@ -1747,7 +1747,7 @@ const SearchableProductSelect: React.FC<SearchableProductSelectProps> = ({
                         {p.name}
                       </span>
                       {p.code && (
-                        <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold">
+                        <span className="text-[11px] font-mono px-1.5 py-0.2 rounded bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold">
                           {p.code}
                         </span>
                       )}
@@ -2063,7 +2063,7 @@ const MultiDepartmentDropdownSelect: React.FC<MultiDepartmentDropdownSelectProps
                     />
                     <span className="truncate text-xs">{d.name}</span>
                     {d.isFunctionalGroup && (
-                      <span className="px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 text-[9px] font-extrabold shrink-0">
+                      <span className="px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 text-[11px] font-extrabold shrink-0">
                         Nhóm chức năng
                       </span>
                     )}
@@ -2534,12 +2534,12 @@ const MultiPersonnelWithLeadSelect: React.FC<MultiPersonnelWithLeadSelectProps> 
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="truncate text-xs">{cleanName}</span>
                           {isGroupMember && matchedFunctionalGroups[0] && (
-                            <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300">
+                            <span className="text-[11px] font-extrabold px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300">
                               🏛️ TV {matchedFunctionalGroups[0].id}
                             </span>
                           )}
                           {p.employee_code && (
-                            <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
+                            <span className="text-[11px] font-mono px-1 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
                               {p.employee_code}
                             </span>
                           )}
@@ -13314,10 +13314,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           <span className="text-[10px] font-semibold text-slate-400">
                             {wf.source_dept || wf.sourceDept} ➔ {wf.target_dept || wf.targetDept}
                           </span>
-                          <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 border border-indigo-200/50">
+                          <span className="px-1.5 py-0.2 rounded text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 border border-indigo-200/50">
                             {stepsCount} bước
                           </span>
-                          <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200/50">
+                          <span className="px-1.5 py-0.2 rounded text-[11px] font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200/50">
                             ⏱ SLA: {slaDays} ngày
                           </span>
                         </div>
@@ -14050,7 +14050,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                           Bước {sIdx + 1}
                                         </span>
                                         {isWorkflowApprovalGateStep(st) && (
-                                          <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700">
+                                          <span className="text-[11px] font-extrabold px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700">
                                             🛡️ Cổng Duyệt{st.proposal_template_code ? ` · ${st.proposal_template_code}` : ""}
                                           </span>
                                         )}
@@ -14668,7 +14668,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                 title="Bấm để lọc lịch tài nguyên"
                               >
                                 <span>{resItem.icon} {resItem.name}</span>
-                                <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-extrabold ${
+                                <span className={`px-1.5 py-0.2 rounded-full text-[11px] font-extrabold ${
                                   isFilteringThis
                                     ? "bg-white/20 text-white"
                                     : count > 0
@@ -14872,7 +14872,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                       className="group relative rounded-lg p-2 text-[11px] bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-800 text-slate-900 dark:text-slate-100 shadow-2xs cursor-pointer hover:ring-2 hover:ring-emerald-400"
                                     >
                                       <div className="flex items-center justify-between gap-1 mb-0.5">
-                                        <span className="px-1.5 py-0.2 rounded bg-emerald-600 text-white text-[9px] font-extrabold truncate">
+                                        <span className="px-1.5 py-0.2 rounded bg-emerald-600 text-white text-[11px] font-extrabold truncate">
                                           {matchedRes ? `${matchedRes.icon} ${matchedRes.name}` : `🏢 ${bk.resourceName || bk.location || "Tài nguyên"}`}
                                         </span>
                                         <span className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
@@ -15364,22 +15364,22 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                 <div className="flex items-center justify-between gap-1 mb-0.5">
                                   <div className="flex items-center gap-1 flex-wrap">
                                     {isMeeting && (
-                                      <span className="px-1.5 py-0.2 rounded bg-rose-600 text-white text-[9px] font-extrabold uppercase">
+                                      <span className="px-1.5 py-0.2 rounded bg-rose-600 text-white text-[11px] font-extrabold uppercase">
                                         🎥 HỌP
                                       </span>
                                     )}
                                     {isResourceEvt && (
-                                      <span className="px-1.5 py-0.2 rounded bg-emerald-600 text-white text-[9px] font-extrabold uppercase">
+                                      <span className="px-1.5 py-0.2 rounded bg-emerald-600 text-white text-[11px] font-extrabold uppercase">
                                         🏢 TÀI NGUYÊN
                                       </span>
                                     )}
                                     {isBusinessTrip && (
-                                      <span className="px-1.5 py-0.2 rounded bg-teal-600 text-white text-[9px] font-extrabold uppercase">
+                                      <span className="px-1.5 py-0.2 rounded bg-teal-600 text-white text-[11px] font-extrabold uppercase">
                                         ✈️ CÔNG TÁC ĐÃ DUYỆT
                                       </span>
                                     )}
                                     {isHubPlan && (
-                                      <span className="px-1.5 py-0.2 rounded bg-white/80 dark:bg-slate-900/70 text-[9px] font-extrabold border border-current/25">
+                                      <span className="px-1.5 py-0.2 rounded bg-white/80 dark:bg-slate-900/70 text-[11px] font-extrabold border border-current/25">
                                         🏭 {ev.category}
                                       </span>
                                     )}
@@ -15427,7 +15427,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                 </div>
                                 <div className="font-semibold leading-tight line-clamp-2" title={ev.title}>{ev.title}</div>
                                 {isHubPlan && ev.sourceLabel && (
-                                  <div className="text-[9px] opacity-75 mt-0.5 font-semibold">
+                                  <div className="text-[11px] opacity-75 mt-0.5 font-semibold">
                                     🔗 Nguồn: {ev.sourceLabel}
                                   </div>
                                 )}
@@ -15441,7 +15441,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                     {ev.linkedTaskCodes.map((code: string) => (
                                       <span
                                         key={code}
-                                        className="px-1.5 py-0.5 rounded bg-white/70 dark:bg-slate-900/70 text-[9px] font-mono font-bold border border-current/20"
+                                        className="px-1.5 py-0.5 rounded bg-white/70 dark:bg-slate-900/70 text-[11px] font-mono font-bold border border-current/20"
                                         title={`Liên kết công việc / quy trình: ${code}`}
                                       >
                                         🔗 {code}
@@ -15461,14 +15461,14 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                       type="button"
                                       disabled={sendingMeetingRemindId === ev.id}
                                       onClick={() => handleRemindMeetingNow(ev)}
-                                      className="px-1.5 py-0.5 rounded bg-white/80 dark:bg-slate-900/80 hover:bg-white text-rose-700 dark:text-rose-300 font-bold text-[9px] flex items-center gap-1 cursor-pointer transition-colors"
+                                      className="px-1.5 py-0.5 rounded bg-white/80 dark:bg-slate-900/80 hover:bg-white text-rose-700 dark:text-rose-300 font-bold text-[11px] flex items-center gap-1 cursor-pointer transition-colors"
                                       title="Gửi tin nhắn Chat & thông báo nhắc lịch họp cho các thành viên"
                                     >
                                       <Bell className="w-2.5 h-2.5" />
                                       <span>{sendingMeetingRemindId === ev.id ? "Đang nhắc..." : "🔔 Nhắc họp"}</span>
                                     </button>
                                     {ev.lastRemindedAt && (
-                                      <span className="text-[9px] opacity-75 font-mono">Đã nhắc {ev.lastRemindedAt}</span>
+                                      <span className="text-[11px] opacity-75 font-mono">Đã nhắc {ev.lastRemindedAt}</span>
                                     )}
                                   </div>
                                 )}
@@ -16009,14 +16009,14 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                                   Giai đoạn {sIdx + 1}
                                                 </span>
                                                 {stg.due && (
-                                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                                                  <span className="px-1.5 py-0.2 rounded text-[11px] font-mono font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
                                                     📅 Hạn: {/^\d{4}-\d{2}-\d{2}$/.test(String(stg.due)) ? String(stg.due).split("-").reverse().join("/") : stg.due}
                                                   </span>
                                                 )}
                                                 {(Array.isArray(stg.depts) && stg.depts.length > 0 ? stg.depts : (stg.dept ? [stg.dept] : [])).map((dName: string) => (
                                                   <span
                                                     key={dName}
-                                                    className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"
+                                                    className="px-1.5 py-0.2 rounded text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"
                                                   >
                                                     🏢 {dName}
                                                   </span>
@@ -16025,7 +16025,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                                   const parsedStgAssignee = parseAssigneeWithLead(stg.assignee);
                                                   return (
                                                     <span
-                                                      className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
+                                                      className="px-1.5 py-0.2 rounded text-[11px] font-semibold bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
                                                       title={`⭐ Chịu trách nhiệm chính: ${parsedStgAssignee.lead}${parsedStgAssignee.members.length > 0 ? `\n👥 Thành viên cùng tham gia: ${parsedStgAssignee.members.join(", ")}` : ""}`}
                                                     >
                                                       ⭐ {parsedStgAssignee.lead}
@@ -16034,7 +16034,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                                   );
                                                 })()}
                                                 {stageTasks.length > 0 && (
-                                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-purple-100/80 dark:bg-purple-950 text-purple-700 dark:text-purple-300">
+                                                  <span className="px-1.5 py-0.2 rounded text-[11px] font-mono font-bold bg-purple-100/80 dark:bg-purple-950 text-purple-700 dark:text-purple-300">
                                                     {doneCount}/{stageTasks.length} việc
                                                   </span>
                                                 )}
@@ -16126,7 +16126,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                                       >
                                                         {isTaskDone ? <Check className="w-2.5 h-2.5 stroke-[3]" /> : isTaskProg ? <span className="w-1.5 h-1.5 rounded-full bg-amber-500" /> : null}
                                                       </button>
-                                                      <span className="font-mono text-[9px] text-slate-400 shrink-0">
+                                                      <span className="font-mono text-[11px] text-slate-400 shrink-0">
                                                         {sIdx + 1}.{tIdx + 1}
                                                       </span>
                                                       <span className={`font-medium truncate ${isTaskDone ? "line-through opacity-75" : ""}`} title={stTask.title}>
@@ -16136,7 +16136,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                                     <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
                                                       {subAtts.length > 0 && (
                                                         <span
-                                                          className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[9px] font-bold bg-sky-50 dark:bg-sky-950/70 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800"
+                                                          className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[11px] font-bold bg-sky-50 dark:bg-sky-950/70 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800"
                                                           title={`Đã đính kèm ${subAtts.length} tệp: ${subAtts.map((a: any) => a.name).join(", ")}`}
                                                         >
                                                           <Paperclip className="w-2.5 h-2.5" />
@@ -16144,7 +16144,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                                         </span>
                                                       )}
                                                       {stTask.dept && (
-                                                        <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300">
+                                                        <span className="px-1.5 py-0.2 rounded text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300">
                                                           {stTask.dept}
                                                         </span>
                                                       )}
@@ -16152,7 +16152,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                                         const parsedSubAssignee = parseAssigneeWithLead(stTask.assignee);
                                                         return (
                                                           <span
-                                                            className="px-1.5 py-0.2 rounded text-[9px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
+                                                            className="px-1.5 py-0.2 rounded text-[11px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
                                                             title={`⭐ Chịu trách nhiệm chính: ${parsedSubAssignee.lead}${parsedSubAssignee.members.length > 0 ? `\n👥 Thành viên cùng tham gia: ${parsedSubAssignee.members.join(", ")}` : ""}`}
                                                           >
                                                             ⭐ {parsedSubAssignee.lead}
@@ -16161,7 +16161,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                                         );
                                                       })()}
                                                       {stTask.due && (
-                                                        <span className="text-[9px] font-mono text-slate-400">
+                                                        <span className="text-[11px] font-mono text-slate-400">
                                                           {String(stTask.due).slice(8, 10)}/{String(stTask.due).slice(5, 7)}
                                                         </span>
                                                       )}
@@ -16172,7 +16172,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                                             e.stopPropagation();
                                                             handleOpenProjectSubTaskDetail(prj, stg, sIdx, stTask, tIdx);
                                                           }}
-                                                          className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 cursor-pointer inline-flex items-center gap-0.5"
+                                                          className="px-1.5 py-0.5 rounded text-[11px] font-bold bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 cursor-pointer inline-flex items-center gap-0.5"
                                                           title="Cập nhật thông tin, báo cáo kết quả, đính kèm file & trao đổi"
                                                         >
                                                           <Pencil className="w-2.5 h-2.5" />
@@ -17274,11 +17274,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                     </div>
                                     <div className="flex items-center justify-between gap-1.5 flex-wrap pt-0.5">
                                       <div className="flex items-center gap-1.5 flex-wrap">
-                                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold ${piOrigin.badgeClass}`}>
+                                        <span className={`px-1.5 py-0.5 rounded text-[11px] font-extrabold ${piOrigin.badgeClass}`}>
                                           {piOrigin.badgeLabel}
                                         </span>
                                         {piOrigin.subDetail && (
-                                          <span className="text-[9px] font-semibold text-slate-500">
+                                          <span className="text-[11px] font-semibold text-slate-500">
                                             {piOrigin.subDetail}
                                           </span>
                                         )}
@@ -17288,7 +17288,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                           <button
                                             type="button"
                                             onClick={() => handleOpenDailyItemSource(pi)}
-                                            className="text-[9px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                                            className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
                                           >
                                             {piOrigin.actionLabel}
                                           </button>
@@ -19006,7 +19006,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   >
                     <Eye className="w-3 h-3 text-sky-600 shrink-0" />
                     <span>{fName}</span>
-                    <span className="text-[9px] font-semibold px-1 py-0.2 rounded bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300">
+                    <span className="text-[11px] font-semibold px-1 py-0.2 rounded bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300">
                       Chỉ theo dõi
                     </span>
                     {(!isTaskReadOnlyForMe(taskForm) || sameStaffName(fName, currentStaffName)) && (
@@ -19340,11 +19340,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           <div className="flex items-center justify-between gap-2 text-[10px]">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               {isDir ? (
-                                <span className="px-1.5 py-0.5 rounded bg-amber-200/80 dark:bg-amber-900/80 text-amber-900 dark:text-amber-200 font-extrabold text-[9px]">
+                                <span className="px-1.5 py-0.5 rounded bg-amber-200/80 dark:bg-amber-900/80 text-amber-900 dark:text-amber-200 font-extrabold text-[11px]">
                                   👑 CHỈ ĐẠO TIẾP THEO
                                 </span>
                               ) : (
-                                <span className="px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-bold text-[9px]">
+                                <span className="px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-bold text-[11px]">
                                   💬 TRAO ĐỔI
                                 </span>
                               )}
@@ -20275,7 +20275,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             giờ
                           </span>
                         </div>
-                        <span className="block text-[9px] text-slate-400">
+                        <span className="block text-[11px] text-slate-400">
                           ~{((Number(step.sla_hours) || 24) / 24).toFixed(1).replace(/\.0$/, "")} ngày
                         </span>
                       </div>
@@ -21334,7 +21334,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       <div className="flex items-center justify-between text-[11px]">
                         <strong className="text-indigo-600 dark:text-indigo-400">
                           {c.author}
-                          {c.source === "task" && <span className="ml-1.5 px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 text-[9px] font-bold">Báo cáo công việc{c.task_code ? ` ${c.task_code}` : ""}</span>}
+                          {c.source === "task" && <span className="ml-1.5 px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 text-[11px] font-bold">Báo cáo công việc{c.task_code ? ` ${c.task_code}` : ""}</span>}
                         </strong>
                         <span className="text-slate-400 font-mono text-[10px]">{c.time}</span>
                       </div>
@@ -22128,7 +22128,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               {resItem.icon} {resItem.name}
                             </span>
                             <span
-                              className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold shrink-0 ${
+                              className={`px-1.5 py-0.5 rounded text-[11px] font-extrabold shrink-0 ${
                                 isPicked
                                   ? "bg-white/20 text-white"
                                   : isBusyInSlot
@@ -22140,7 +22140,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             </span>
                           </div>
                           <div className="flex items-center justify-between gap-1 pt-0.5">
-                            <div className={`text-[9px] truncate ${isPicked ? "text-emerald-100" : "text-slate-500"}`}>
+                            <div className={`text-[11px] truncate ${isPicked ? "text-emerald-100" : "text-slate-500"}`}>
                               {resItem.capacityOrSpec}
                             </div>
                             <button
@@ -22150,7 +22150,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                 handleDeleteResource(resItem);
                               }}
                               title="Xóa tài nguyên này khỏi danh mục"
-                              className={`opacity-60 group-hover:opacity-100 px-1 rounded text-[9px] font-bold cursor-pointer ${
+                              className={`opacity-60 group-hover:opacity-100 px-1 rounded text-[11px] font-bold cursor-pointer ${
                                 isPicked ? "hover:bg-white/20 text-white" : "text-rose-500 hover:bg-rose-100 dark:hover:bg-slate-800"
                               }`}
                             >
@@ -22542,7 +22542,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             />
                             <div className="min-w-0 flex-1">
                               <div className="font-bold text-[11px] truncate">{name}</div>
-                              <div className={`text-[9px] truncate ${checked ? "text-rose-100" : "text-slate-500"}`}>
+                              <div className={`text-[11px] truncate ${checked ? "text-rose-100" : "text-slate-500"}`}>
                                 {dept}
                               </div>
                             </div>
@@ -22729,7 +22729,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               checked={isPicked}
                               className="w-3.5 h-3.5 rounded accent-indigo-500 pointer-events-none shrink-0"
                             />
-                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold shrink-0 ${
+                            <span className={`px-1.5 py-0.5 rounded text-[11px] font-mono font-bold shrink-0 ${
                               isPicked ? "bg-white/20 text-white" : "bg-slate-100 dark:bg-slate-800 text-indigo-600 dark:text-indigo-400"
                             }`}>
                               {item.code}
@@ -22738,7 +22738,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0 text-[10px]">
                             {item.dept && (
-                              <span className={`hidden sm:inline px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                              <span className={`hidden sm:inline px-1.5 py-0.5 rounded text-[11px] font-bold ${
                                 isPicked ? "bg-white/20 text-white" : "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300"
                               }`}>
                                 {item.dept}
@@ -22754,7 +22754,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                 {item.metaSummary}
                               </span>
                             )}
-                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold ${
+                            <span className={`px-1.5 py-0.5 rounded text-[11px] font-semibold ${
                               isPicked ? "bg-white/20 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
                             }`}>
                               {item.typeLabel}
@@ -23420,7 +23420,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             <button
                               type="button"
                               onClick={() => setPreviewDoc({ url: att.url, name: att.name, type: att.type })}
-                              className="w-7 h-7 rounded bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-bold text-[9px] flex items-center justify-center shrink-0 cursor-pointer"
+                              className="w-7 h-7 rounded bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-bold text-[11px] flex items-center justify-center shrink-0 cursor-pointer"
                             >
                               {isImg ? "IMG" : "DOC"}
                             </button>
@@ -23428,7 +23428,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               <p className="font-semibold text-slate-800 dark:text-slate-200 truncate text-[11px]">
                                 {att.name}
                               </p>
-                              <span className="text-[9px] text-slate-400">
+                              <span className="text-[11px] text-slate-400">
                                 {att.size ? `${(att.size / 1024).toFixed(0)} KB` : "Tệp tin"}
                               </span>
                             </div>
@@ -25963,14 +25963,14 @@ const TaskCard: React.FC<{
             title={task.result ? `${task.title}\n\nKết quả: ${task.result}` : task.title}
           >
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 text-[9px] font-black shrink-0">
+              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 text-[11px] font-black shrink-0">
                 ✓
               </span>
               <span className="text-[10px] font-mono font-bold text-slate-400 shrink-0">
                 {task.task_code}
               </span>
               {task.result && (
-                <span className="px-1.5 py-0.2 rounded bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 text-[9px] font-bold border border-emerald-200/70 dark:border-emerald-800">
+                <span className="px-1.5 py-0.2 rounded bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 text-[11px] font-bold border border-emerald-200/70 dark:border-emerald-800">
                   📝 Có KQ
                 </span>
               )}
@@ -26040,7 +26040,7 @@ const TaskCard: React.FC<{
             </span>
           )}
           {isFollowedByMe && (
-            <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-sky-100 text-sky-800 dark:bg-sky-950/70 dark:text-sky-300 border border-sky-200 dark:border-sky-800">
+            <span className="px-1.5 py-0.2 rounded text-[11px] font-bold bg-sky-100 text-sky-800 dark:bg-sky-950/70 dark:text-sky-300 border border-sky-200 dark:border-sky-800">
               👁️ Đang theo dõi
             </span>
           )}
@@ -26074,7 +26074,7 @@ const TaskCard: React.FC<{
       </h4>
 
       {task.related_workflow_code && (
-        <span className="inline-flex items-center gap-1 text-[9px] font-bold text-purple-600 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/60 px-1.5 py-0.5 rounded border border-purple-200 dark:border-purple-800">
+        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-purple-600 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/60 px-1.5 py-0.5 rounded border border-purple-200 dark:border-purple-800">
           🔗 Liên phòng: {task.related_workflow_code}
         </span>
       )}
@@ -26104,7 +26104,7 @@ const TaskCard: React.FC<{
             </strong>{" "}
             {lastComment.text}
             {taskComments.length > 1 && (
-              <span className="ml-1 text-[9px] font-bold opacity-75">
+              <span className="ml-1 text-[11px] font-bold opacity-75">
                 (+{taskComments.length - 1} trao đổi)
               </span>
             )}
@@ -26148,7 +26148,7 @@ const TaskCard: React.FC<{
                 {parsedAssignee.members.length > 0 ? "⭐" : "👤"} {parsedAssignee.lead}
               </span>
               {parsedAssignee.members.length > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 font-extrabold text-[9px] shrink-0 border border-indigo-200 dark:border-indigo-800">
+                <span className="px-1.5 py-0.2 rounded-full bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 font-extrabold text-[11px] shrink-0 border border-indigo-200 dark:border-indigo-800">
                   👥 +{parsedAssignee.members.length}
                 </span>
               )}
@@ -26195,7 +26195,7 @@ const TaskCard: React.FC<{
               return (
                 <div
                   onClick={() => onEdit(task)}
-                  className="text-[9px] font-sans font-bold text-indigo-600 dark:text-indigo-400 cursor-pointer hover:underline"
+                  className="text-[11px] font-sans font-bold text-indigo-600 dark:text-indigo-400 cursor-pointer hover:underline"
                   title={`Lịch sử đổi hạn (${dlChanges.length} lần):\n${dlChanges
                     .map((c) => `• ${c.oldVN} → ${c.newVN} (${c.author}${c.time ? ` lúc ${c.time}` : ""})`)
                     .join("\n")}`}
@@ -26292,27 +26292,27 @@ const PriorityBadge: React.FC<{ priority: string }> = ({ priority }) => {
   const p = (priority || "MEDIUM").toUpperCase();
   if (p === "URGENT") {
     return (
-      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
+      <span className="px-1.5 py-0.5 rounded text-[11px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
         Khẩn cấp
       </span>
     );
   }
   if (p === "HIGH") {
     return (
-      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-orange-100 text-orange-800 dark:bg-orange-950/60 dark:text-orange-300 border border-orange-300 dark:border-orange-800">
+      <span className="px-1.5 py-0.5 rounded text-[11px] font-bold bg-orange-100 text-orange-800 dark:bg-orange-950/60 dark:text-orange-300 border border-orange-300 dark:border-orange-800">
         Cao
       </span>
     );
   }
   if (p === "LOW") {
     return (
-      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-400">
+      <span className="px-1.5 py-0.5 rounded text-[11px] font-bold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-400">
         Thấp
       </span>
     );
   }
   return (
-    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300">
+    <span className="px-1.5 py-0.5 rounded text-[11px] font-bold bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300">
       Trung bình
     </span>
   );

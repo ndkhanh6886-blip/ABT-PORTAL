@@ -2467,7 +2467,7 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
                           Cấp {st.stage_no}: {actualDept}
                         </span>
                         <span
-                          className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                          className={`px-1.5 py-0.5 rounded text-[11px] font-bold ${
                             willAutoSkip
                               ? "bg-slate-200 text-slate-600"
                               : "bg-emerald-100 text-emerald-800"

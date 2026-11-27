@@ -299,7 +299,7 @@ export const LoginScreen: React.FC = () => {
                       <div>
                         <div className="text-xs font-bold text-white group-hover:text-teal-300 transition-colors flex items-center gap-1.5">
                           <span>Dành Cho Khách Hàng Y Tế &amp; Bệnh Viện</span>
-                          <span className="text-[9px] px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-300 font-mono font-bold">Client Hub</span>
+                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-300 font-mono font-bold">Client Hub</span>
                         </div>
                         <div className="text-[11px] text-slate-400 mt-0.5">
                           Tra cứu đơn hàng, Góp ý CSAT/NPS &amp; Báo cáo sự cố Lô chuẩn ISO 13485
