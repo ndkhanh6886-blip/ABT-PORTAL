@@ -6045,14 +6045,51 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const combinedCompanyStaff = [...mappedStaff, ...mappedUsers];
             setAllCompanyPersonnel(combinedCompanyStaff);
 
-            // Filter for Sales & Leadership (or all relevant staff)
-            const salesStaff = mappedStaff.filter((p: any) => {
+            // Also check org_position_assignments & user permissions so staff concurrently appointed to Sales are included in salesPersonnel
+            let concurrentSalesCodes = new Set<string>();
+            try {
+                const assignRes = await fetch("/api/storage?key=org_position_assignments").then(r => r.json()).catch(() => null);
+                const assignData = assignRes?.data || (typeof window !== "undefined" ? JSON.parse(localStorage.getItem("tbr_org_position_assignments") || "{}") : {});
+                if (assignData && typeof assignData === "object") {
+                    Object.entries(assignData).forEach(([dKey, posMap]: [string, any]) => {
+                        const dLow = String(dKey || "").toLowerCase();
+                        if (dLow.includes("kinh doanh") || dLow.includes("sales") || dLow.includes("ban giám đốc") || dLow.includes("giám đốc")) {
+                            if (posMap && typeof posMap === "object") {
+                                Object.values(posMap).forEach((holders: any) => {
+                                    if (Array.isArray(holders)) {
+                                        holders.forEach((h: any) => concurrentSalesCodes.add(String(h || "").trim().toLowerCase()));
+                                    }
+                                });
+                            }
+                        }
+                    });
+                }
+            } catch (e) {}
+            const normCode = (s: any) => String(s || "").trim().toLowerCase().replace(/^nv[-_]?(tbrs|tbr|via|abt)[-_]?/i, "$1").replace(/[-_\s]/g, "");
+            const usersWithSalesPerm = new Set<string>();
+            rawUsers.forEach((u: any) => {
+                let perms: any = u?.permissions;
+                if (typeof perms === "string") { try { perms = JSON.parse(perms); } catch { perms = null; } }
+                if (perms && typeof perms === "object" && (perms["sales.create"] || perms["sales.edit"] || perms["dept.sales"])) {
+                    if (u.username) usersWithSalesPerm.add(normCode(u.username));
+                    if (u.employee_code) usersWithSalesPerm.add(normCode(u.employee_code));
+                    if (u.full_name) usersWithSalesPerm.add(String(u.full_name).trim().toLowerCase());
+                }
+            });
+
+            // Filter for Sales & Leadership (or concurrently appointed sales staff)
+            const salesStaff = combinedCompanyStaff.filter((p: any) => {
                 const dept = (p.department || "").toLowerCase();
                 const pos = (p.position || "").toLowerCase();
+                const empCodeLow = String(p.employee_code || p.employee_id || "").trim().toLowerCase();
+                const empNorm = normCode(empCodeLow);
+                const nameLow = String(p.full_name || "").trim().toLowerCase();
                 return dept.includes("kinh doanh") || dept.includes("sales") || 
                        dept.includes("ban giám đốc") || dept.includes("giám đốc") ||
                        pos.includes("kinh doanh") || pos.includes("sales") ||
-                       pos.includes("giám đốc") || pos.includes("pm") || pos.includes("sản phẩm");
+                       pos.includes("giám đốc") || pos.includes("pm") || pos.includes("sản phẩm") ||
+                       concurrentSalesCodes.has(empCodeLow) || concurrentSalesCodes.has(nameLow) ||
+                       (empNorm && usersWithSalesPerm.has(empNorm)) || (nameLow && usersWithSalesPerm.has(nameLow));
             });
 
             const finalList = salesStaff.length > 0 ? salesStaff : mappedStaff;
@@ -7894,23 +7931,27 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     };
 
     const loggedInStaff = useMemo(() => {
-        if (!user || !salesPersonnel || salesPersonnel.length === 0) return null;
+        if (!user) return null;
         const uName = normalizeComparableVN(user.name || (user as any).full_name || "");
         const uEmail = (user.email || "").toLowerCase().trim();
         const uNameRaw = ((user as any).username || "").toLowerCase().trim();
         const uId = (user.id || "").toLowerCase().trim();
         const uEmpCode = String((user as any).employee_code || "").toLowerCase().trim();
+        const normCode = (s: string) => s.replace(/^nv[-_]?(tbrs|tbr|via|abt)[-_]?/i, "$1").replace(/[-_\s]/g, "");
+        const uNormCode = normCode(uEmpCode || uNameRaw);
 
-        return salesPersonnel.find(p => {
+        const matchStaff = (p: any) => {
             const pEmail = (p.email || "").toLowerCase().trim();
             const pName = normalizeComparableVN(p.full_name || "");
             const pEmpId = (p.employee_id || "").toLowerCase().trim();
             const pEmpCode = String((p as any).employee_code || "").toLowerCase().trim();
+            const pNormCode = normCode(pEmpCode || pEmpId);
 
             if (pEmail && uEmail && pEmail === uEmail) return true;
             if (pName && uName && pName === uName) return true;
             if (pEmpId && (uId.includes(pEmpId) || uNameRaw.includes(pEmpId) || (uEmpCode && pEmpId === uEmpCode))) return true;
             if (pEmpCode && (uEmpCode === pEmpCode || uNameRaw === pEmpCode || uId.includes(pEmpCode))) return true;
+            if (pNormCode && uNormCode && pNormCode === uNormCode) return true;
             
             // Exact / specific mappings for linked accounts
             if (pEmpId === "kd-01" && (uNameRaw === "quan.kd" || uEmail.includes("phuongquan") || uName.includes("phương quân"))) return true;
@@ -7927,8 +7968,31 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             if (pEmpId === "kd-12" && (uNameRaw === "thao.kd" || uEmail.includes("sales01") || uName.includes("mai thảo") || uName.includes("mai thao"))) return true;
             if (pEmpId === "ql-03" && (uNameRaw === "truc.kd" || uNameRaw === "diemtruc.kd" || uEmail.includes("dongocdiemtruc") || uName.includes("diễm trúc") || uName.includes("diem truc"))) return true;
             return false;
-        });
-    }, [user, salesPersonnel]);
+        };
+
+        const foundInSales = (salesPersonnel || []).find(matchStaff);
+        if (foundInSales) return foundInSales;
+
+        const foundInCompany = (allCompanyPersonnel || []).find(matchStaff);
+        if (foundInCompany) return foundInCompany;
+
+        const fallbackName = String((user as any).full_name || user.name || "").trim();
+        const fallbackCode = String((user as any).employee_code || (user as any).username || user.id || "").trim();
+        if (fallbackName && fallbackCode) {
+            return {
+                id: user.id || fallbackCode,
+                employee_id: fallbackCode,
+                employee_code: fallbackCode,
+                full_name: fallbackName,
+                department: (user as any).department || "Kinh Doanh",
+                position: (user as any).position || user.role || "Nhân Viên",
+                email: user.email || "",
+                phone: (user as any).phone || "",
+                is_active: true
+            };
+        }
+        return null;
+    }, [user, salesPersonnel, allCompanyPersonnel]);
 
     // 1. Ban Giám Đốc & Admin hệ thống
     const isSalesExecutive = useMemo(() => {
@@ -13880,6 +13944,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return;
         }
 
+        const linkedQuoteObj = factoryOrderQuoteId ? quotations.find(q => String(q.id).trim().toLowerCase() === String(factoryOrderQuoteId).trim().toLowerCase()) : null;
+        const quoteRepId = String(linkedQuoteObj?.salesRepId || (linkedQuoteObj as any)?.sales_rep_id || "").trim();
+        const quoteRepName = String(linkedQuoteObj?.salesRepName || (linkedQuoteObj as any)?.sales_rep_name || "").trim();
         const isStock = isStockOrder || isInternalStockCustomerName(factoryOrderCustomerName);
         const existingOrdForRep = editingFactoryOrderId ? factoryOrders.find(o => o.id === editingFactoryOrderId) : null;
         const existingRealRepName = (existingOrdForRep?.salesRepName && existingOrdForRep.salesRepName !== "Bộ Phận Kho Vận" && existingOrdForRep.salesRepName !== "Phòng Kinh Doanh")
@@ -13888,13 +13955,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const existingRealRepId = (existingOrdForRep?.salesRepId && existingOrdForRep.salesRepId !== "NV-TBR-007")
             ? String(existingOrdForRep.salesRepId).trim()
             : "";
-        const repId = existingRealRepId || loggedInStaff?.employee_id || (user as any)?.employee_code || salesPersonnel[0]?.employee_id || "NV-TBR-018";
-        let repName = existingRealRepName || loggedInStaff?.full_name || (user as any)?.full_name || user?.name || salesPersonnel[0]?.full_name || "Phòng Kinh Doanh";
+        const repId = existingRealRepId || loggedInStaff?.employee_id || (user as any)?.employee_code || quoteRepId || salesPersonnel[0]?.employee_id || "NV-TBR-018";
+        let repName = existingRealRepName || loggedInStaff?.full_name || (user as any)?.full_name || user?.name || quoteRepName || salesPersonnel[0]?.full_name || "Phòng Kinh Doanh";
         if (repName.toLowerCase().includes("nguyễn đăng khánh") || repName.toLowerCase().includes("ndkhanh")) {
             repName = "Phòng Kinh Doanh";
         }
-
-        const linkedQuoteObj = factoryOrderQuoteId ? quotations.find(q => String(q.id).trim().toLowerCase() === String(factoryOrderQuoteId).trim().toLowerCase()) : null;
         const items = factoryOrderItems.map((item, itemIdx) => {
             const prod = allSalesProducts.find(p => p.code === item.productCode) || biolabProducts.find(p => p.code === item.productCode);
             const quoteItem = linkedQuoteObj?.items?.[itemIdx] && (linkedQuoteObj.items[itemIdx].productCode || linkedQuoteObj.items[itemIdx].product_code || linkedQuoteObj.items[itemIdx].code) === item.productCode

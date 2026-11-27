@@ -708,10 +708,10 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
     const newPerms = { ...currentEditingPermissions };
     newPerms[deptMod.key] = nextVal;
 
-    // Nếu BẬT phòng ban, tự động bật kèm các quyền tính năng cơ bản của phòng ban đó nếu chưa được bật
+    // Nếu BẬT phòng ban, tự động bật kèm các quyền tính năng cơ bản của phòng ban đó
     if (nextVal && deptMod.defaultPermissions) {
       Object.entries(deptMod.defaultPermissions).forEach(([k, v]) => {
-        if (v && newPerms[k] === undefined) {
+        if (v) {
           newPerms[k] = true;
         }
       });
@@ -1023,6 +1023,66 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
     };
 
     await persistPositionAssignments(updatedAssigns);
+
+    // Tự động cộng gộp quyền (Union / OR-merge permissions) của vị trí mới vào tài khoản nhân sự được bổ nhiệm
+    try {
+      const deptInfoForRole = getDeptInfoData(deptKey);
+      const posDef = deptInfoForRole?.positions?.find((p: any) => p.title === posTitle);
+      const targetRole = posDef?.defaultRole || inferSystemRoleFromPosition(posTitle, deptKey);
+      const addedPerms = getDefaultDepartmentPermissions(deptKey, targetRole);
+      const normCode = (s: any) => String(s || "").trim().toLowerCase().replace(/^nv[-_]?(tbrs|tbr|via|abt)[-_]?/i, "$1").replace(/[-_\s]/g, "");
+      const empNormCode = normCode(emp.employee_code);
+      const empNameLow = String(emp.full_name || "").trim().toLowerCase();
+      const empEmailLow = String(emp.email || "").trim().toLowerCase();
+      const matchedUser = users.find((u: any) => {
+        const uUserNorm = normCode(u.username);
+        const uCodeNorm = normCode((u as any).employee_code);
+        const uNameLow = String(u.full_name || "").trim().toLowerCase();
+        const uEmailLow = String(u.email || "").trim().toLowerCase();
+        return (empNormCode && (uUserNorm === empNormCode || uCodeNorm === empNormCode)) ||
+               (empNameLow && uNameLow === empNameLow) ||
+               (empEmailLow && uEmailLow === empEmailLow);
+      });
+      if (matchedUser) {
+        const basePerms = getEffectivePermissions(matchedUser);
+        const mergedPerms: Record<string, boolean> = { ...basePerms };
+        Object.entries(addedPerms).forEach(([k, v]) => {
+          if (v) mergedPerms[k] = true;
+        });
+        const permRes = await fetch("/api/settings?action=update_permissions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: matchedUser.id,
+            username: matchedUser.username,
+            full_name: matchedUser.full_name,
+            permissions: mergedPerms
+          })
+        });
+        if (permRes.ok) {
+          setUsers(prev => prev.map(u => (u.id === matchedUser.id || u.username === matchedUser.username) ? { ...u, permissions: mergedPerms } : u));
+          try {
+            const stored = localStorage.getItem("tbr_current_user") || localStorage.getItem("current_user");
+            if (stored) {
+              const cur = JSON.parse(stored);
+              if (cur.id === matchedUser.id || cur.username === matchedUser.username) {
+                const updatedCur = { ...cur, permissions: mergedPerms };
+                localStorage.setItem("current_user", JSON.stringify(updatedCur));
+                localStorage.setItem("tbr_current_user", JSON.stringify(updatedCur));
+                localStorage.setItem("via_current_user", JSON.stringify(updatedCur));
+              }
+            }
+          } catch (e) {}
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("permissions-updated", {
+              detail: { userId: matchedUser.id, username: matchedUser.username, permissions: mergedPerms }
+            }));
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Failed to union permissions on concurrent appointment:", err);
+    }
 
     if (!appointModal.isConcurrent) {
       try {
