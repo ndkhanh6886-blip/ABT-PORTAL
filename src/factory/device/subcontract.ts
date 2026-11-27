@@ -1,7 +1,7 @@
 import { z } from "zod/v3";
 import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
-import { authorize, authorizeAnywhere, hasFactoryPermission, SYSTEM_ACTOR, type AuthzActor } from "../core/authz";
+import { authorize, authorizeAnywhere, authorizeAnywhereOneOf, hasFactoryPermission, SYSTEM_ACTOR, type AuthzActor } from "../core/authz";
 import { invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { insertRecord, parseInput } from "../core/records";
@@ -196,7 +196,7 @@ export async function ensurePartnerContactColumns(tx: Tx) {
 export async function createSubcontractVendor(tx: Tx, actor: AuthzActor, input: unknown) {
   await ensurePartnerContactColumns(tx);
   const d = parseInput(createSubVendorSchema, input);
-  await authorizeAnywhere(tx, actor, "device.subcontract.manage");
+  await authorizeAnywhereOneOf(tx, actor, ["device.subcontract.manage", "device.model.manage", "device.order.manage", "master.partner.manage"]);
   const code = d.code.trim().toUpperCase();
   const taxCode = d.tax_code?.trim() || null;
   const contactName = d.contact_name?.trim() || null;
@@ -309,7 +309,7 @@ export async function createSubcontractVendor(tx: Tx, actor: AuthzActor, input: 
 
 export async function deleteSubcontractVendor(tx: Tx, actor: AuthzActor, input: unknown) {
   await ensurePartnerContactColumns(tx);
-  await authorizeAnywhere(tx, actor, "device.subcontract.manage");
+  await authorizeAnywhereOneOf(tx, actor, ["device.subcontract.manage", "device.model.manage", "device.order.manage", "master.partner.manage"]);
   const raw = (input ?? {}) as Record<string, unknown>;
   const id = parseInput(z.string().uuid("ID đơn vị gia công không hợp lệ"), raw.id);
   const cur = (await tx.query("SELECT * FROM master.partner WHERE id = $1 FOR UPDATE", [id])).rows[0];
@@ -317,19 +317,39 @@ export async function deleteSubcontractVendor(tx: Tx, actor: AuthzActor, input: 
 
   const usedPart = (await tx.query("SELECT 1 FROM device.subcontract_part WHERE vendor_id = $1 LIMIT 1", [id])).rowCount;
   const usedOrder = (await tx.query("SELECT 1 FROM device.subcontract_order WHERE vendor_id = $1 LIMIT 1", [id])).rowCount;
-  if (usedPart || usedOrder) {
-    await tx.query("UPDATE master.partner SET status = 'INACTIVE', updated_at = now(), updated_by = $2 WHERE id = $1", [id, actor.userId]);
+
+  // If this partner is also a general supplier/customer/internal partner (or used in PO/lots), unset is_subcontractor = false
+  // so it is immediately removed from the Subcontract Vendors list without breaking other modules' foreign keys!
+  if (cur.is_supplier || cur.is_customer || cur.is_internal) {
+    await tx.query(
+      "UPDATE master.partner SET is_subcontractor = false, status = CASE WHEN $2::boolean THEN status ELSE 'INACTIVE' END, updated_at = now(), updated_by = $3 WHERE id = $1",
+      [id, Boolean((cur.is_supplier && !cur.code?.startsWith("NCC-")) || cur.is_customer || cur.is_internal), actor.userId]
+    );
+  } else if (usedPart || usedOrder) {
+    await tx.query(
+      "UPDATE master.partner SET is_subcontractor = false, status = 'INACTIVE', updated_at = now(), updated_by = $2 WHERE id = $1",
+      [id, actor.userId]
+    );
   } else {
-    await tx.query("DELETE FROM master.partner_contact WHERE partner_id = $1", [id]);
-    await tx.query("DELETE FROM master.partner WHERE id = $1", [id]).catch(async () => {
-      await tx.query("UPDATE master.partner SET status = 'INACTIVE', updated_at = now(), updated_by = $2 WHERE id = $1", [id, actor.userId]);
-    });
+    await tx.query("SAVEPOINT sp_delete_sub_vendor");
+    try {
+      await tx.query("DELETE FROM device.vendor_evaluation WHERE vendor_id = $1", [id]);
+      await tx.query("DELETE FROM master.partner_contact WHERE partner_id = $1", [id]);
+      await tx.query("DELETE FROM master.partner WHERE id = $1", [id]);
+      await tx.query("RELEASE SAVEPOINT sp_delete_sub_vendor");
+    } catch {
+      await tx.query("ROLLBACK TO SAVEPOINT sp_delete_sub_vendor");
+      await tx.query(
+        "UPDATE master.partner SET is_subcontractor = false, status = 'INACTIVE', updated_at = now(), updated_by = $2 WHERE id = $1",
+        [id, actor.userId]
+      );
+    }
   }
   await writeAudit(tx, actor, {
     entityType: "partner",
     entityId: id,
     action: "delete",
-    changes: { code: [cur.code, null], name: [cur.name, null] },
+    changes: { code: [cur.code, null], name: [cur.name, null], is_subcontractor: [cur.is_subcontractor, false] },
   });
   return { deleted: id };
 }

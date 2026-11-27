@@ -39,8 +39,8 @@ export const GET = factoryRoute(async (tx, { actor }) => {
               ORDER BY id DESC
               LIMIT 1
            ) pc ON true
-          WHERE (p.is_supplier = true OR p.is_subcontractor = true) AND p.status = 'ACTIVE'
-          ORDER BY p.is_subcontractor DESC, p.name LIMIT 300`
+          WHERE p.is_subcontractor = true AND p.status = 'ACTIVE'
+          ORDER BY p.name LIMIT 300`
       )
     ).rows;
     await tx.query("RELEASE SAVEPOINT sp_device_vendors");
@@ -58,8 +58,8 @@ export const GET = factoryRoute(async (tx, { actor }) => {
               ORDER BY id DESC
               LIMIT 1
            ) pc ON true
-          WHERE (p.is_supplier = true OR p.is_subcontractor = true) AND p.status = 'ACTIVE'
-          ORDER BY p.is_subcontractor DESC, p.name LIMIT 300`
+          WHERE p.is_subcontractor = true AND p.status = 'ACTIVE'
+          ORDER BY p.name LIMIT 300`
       )
     ).rows;
   }

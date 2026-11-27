@@ -1462,7 +1462,7 @@ export async function createSubcontractFromPo(
   if (!vendorId) {
     const v = (
       await tx.query(
-        "SELECT id FROM master.partner WHERE is_supplier = true AND status = 'ACTIVE' ORDER BY (code = 'NCC-CNC-01') DESC, created_at ASC LIMIT 1"
+        "SELECT id FROM master.partner WHERE is_subcontractor = true AND status = 'ACTIVE' ORDER BY (code = 'NCC-CNC-01') DESC, created_at ASC LIMIT 1"
       )
     ).rows[0];
     if (v) {

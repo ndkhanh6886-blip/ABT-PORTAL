@@ -682,6 +682,7 @@ export function SubcontractView() {
             </div>
           )}
 
+          <ErrorNote error={postMut.error} />
           {(opts.data?.vendors?.length ?? 0) > 0 && (
             <div className="mb-3 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50">
               <div className="text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1.5">
