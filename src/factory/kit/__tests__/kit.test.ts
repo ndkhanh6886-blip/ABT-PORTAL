@@ -1412,6 +1412,26 @@ describe("Phase 4b — Module Phòng Sản xuất Kit (kit schema)", () => {
       )
     ).rejects.toMatchObject({ code: "INVALID" });
 
+    // 1b'. Pressing "Gửi mẫu chờ QC" again while the step already waits for QC notifies QA only once
+    {
+      const qaWatcher = await createUser("QA nhận IPQC");
+      await grant(qaWatcher, ["qms.qc.view"], null);
+      await getFactoryPool().query("UPDATE kit.production_order SET status = 'IN_PROGRESS', materials_issued = true WHERE id = $1", [draftOrder.id]);
+      for (let i = 0; i < 3; i++) {
+        await withTransaction((tx) => verifyStepQcGate(tx, operator, draftOrder.id, { step_id: draftStep.id, decision: "REQUEST_QC" }));
+      }
+      const sent = await getFactoryPool().query(
+        "SELECT 1 FROM core.notification WHERE user_id = $1 AND type = 'KIT_IPC_GATE_REQUEST' AND entity_id = $2",
+        [qaWatcher.userId, draftStep.id]
+      );
+      expect(sent.rowCount).toBe(1);
+      await getFactoryPool().query("UPDATE kit.production_order SET status = 'DRAFT', materials_issued = false WHERE id = $1", [draftOrder.id]);
+      await getFactoryPool().query(
+        "UPDATE kit.production_step SET status = 'PENDING', qc_gate_status = NULL, started_at = NULL, performed_by = NULL WHERE id = $1",
+        [draftStep.id]
+      );
+    }
+
     await expect(act(lotMachine, operator, draftOrder.lot_id!, "sample")).rejects.toMatchObject({
       code: "GUARD_FAILED",
       details: [{ code: "DRAFT_KIT_ORDER" }],
