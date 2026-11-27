@@ -3347,6 +3347,17 @@ export const UnifiedWorkspace: React.FC = () => {
     attachments: []
   });
   const [attendeeSearchQuery, setAttendeeSearchQuery] = useState("");
+  const [scheduleBatchItems, setScheduleBatchItems] = useState<
+    Array<{
+      uid: string;
+      date: string;
+      time: string;
+      title: string;
+      location: string;
+      linkedTaskCodes: string[];
+      autoCreateTask: boolean;
+    }>
+  >([]);
   const [sendingMeetingRemindId, setSendingMeetingRemindId] = useState<number | string | null>(null);
   const [weeklySchedule, setWeeklySchedule] = useState<any[]>([]);
   // Lịch tuần theo NGÀY THẬT: tuần đang xem (0 = tuần này), lịch đang sửa
@@ -3631,6 +3642,7 @@ export const UnifiedWorkspace: React.FC = () => {
     const today = todayVN();
     const pick = date || (viewedWeek.days.some(d => d.date === today) ? today : viewedWeek.days[0].date);
     setAttendeeSearchQuery("");
+    setScheduleBatchItems([]);
     setScheduleScopeMode("person");
     setScheduleWorkSearch("");
     if (item) {
@@ -8909,27 +8921,19 @@ export const UnifiedWorkspace: React.FC = () => {
     };
   }, [weeklySchedule, currentStaffName, showToast, handleBroadcastMeetingMessage]);
 
-  // Handle Save Weekly Schedule Item / Meeting (Hỗ trợ Lịch Công Tác & Lịch Họp + Chọn thành viên tham dự + Nhắn tin thông báo họp + Nhắc lịch họp)
-  const handleSaveSchedule = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!scheduleForm.title.trim()) {
-      showToast("Vui lòng nhập tiêu đề lịch họp / nội dung công tác hoặc chọn từ công việc đang có", "error");
-      return;
-    }
-
-    const getDayNameFromIso = (isoStr: string) => {
-      const idx = (new Date(isoStr + "T00:00:00").getDay() + 6) % 7;
-      return ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"][idx] || "Thứ 2";
-    };
-
+  // Resolve target ISO dates from current scheduleForm (SINGLE / RANGE / MULTI_DAYS)
+  const resolveTargetDatesFromScheduleForm = () => {
     const startIso = scheduleForm.date || todayVN();
-    const endIso = scheduleForm.dateMode === "RANGE" && scheduleForm.endDate && scheduleForm.endDate >= startIso
-      ? scheduleForm.endDate
-      : startIso;
-
-    // Xây dựng danh sách các ngày cần tạo lịch
+    const endIso =
+      scheduleForm.dateMode === "RANGE" && scheduleForm.endDate && scheduleForm.endDate >= startIso
+        ? scheduleForm.endDate
+        : startIso;
     let targetIsoDates: string[] = [startIso];
-    if (scheduleForm.dateMode === "MULTI_DAYS" && Array.isArray(scheduleForm.selectedDates) && scheduleForm.selectedDates.length > 0) {
+    if (
+      scheduleForm.dateMode === "MULTI_DAYS" &&
+      Array.isArray(scheduleForm.selectedDates) &&
+      scheduleForm.selectedDates.length > 0
+    ) {
       targetIsoDates = Array.from(new Set(scheduleForm.selectedDates)).sort();
     } else if (scheduleForm.dateMode === "RANGE" && endIso > startIso) {
       const list: string[] = [];
@@ -8946,16 +8950,108 @@ export const UnifiedWorkspace: React.FC = () => {
       }
       if (list.length > 0) targetIsoDates = list;
     }
+    return targetIsoDates;
+  };
+
+  // Thêm mục đang nhập ở Mục 3 & Mục 4 vào danh sách tạo nhiều lịch cùng lúc
+  const handleAddCurrentToScheduleBatch = () => {
+    if (!scheduleForm.title.trim()) {
+      showToast("Vui lòng nhập Tiêu đề & Nội dung công tác (hoặc tích chọn công việc ở Mục 2) trước khi bấm Thêm vào danh sách!", "warning");
+      return;
+    }
+    const targetDates = resolveTargetDatesFromScheduleForm();
+    const cleanTitle = scheduleForm.title.trim();
+    const cleanLoc = scheduleForm.location || "";
+    const cleanTime = scheduleForm.time || "08:30 - 11:30";
+    const linkedCodes = Array.isArray(scheduleForm.linkedTaskCodes) ? [...scheduleForm.linkedTaskCodes] : [];
+    const autoTask = Boolean(scheduleForm.autoCreateTask);
+
+    const newRows = targetDates.map((isoDate, i) => ({
+      uid: `batch-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+      date: isoDate,
+      time: cleanTime,
+      title: cleanTitle,
+      location: cleanLoc,
+      linkedTaskCodes: linkedCodes,
+      autoCreateTask: autoTask
+    }));
+
+    setScheduleBatchItems((prev) => [...prev, ...newRows]);
+    // Tự động gợi ý chuyển sang ca chiều nếu vừa thêm ca sáng, hoặc giữ nguyên để nhập nhanh việc tiếp theo
+    const isMorning = /^0?8[:h]/i.test(cleanTime) && /11:30|12:00/.test(cleanTime);
+    setScheduleForm((prev) => ({
+      ...prev,
+      title: "",
+      linkedTaskCodes: [],
+      startTime: isMorning ? "13:30" : prev.startTime,
+      endTime: isMorning ? "17:30" : prev.endTime,
+      time: isMorning ? "13:30 - 17:30" : prev.time
+    }));
+    showToast(
+      `➕ Đã thêm ${newRows.length} lịch ("${cleanTitle}") vào danh sách chờ lưu! Bạn có thể chọn ngày/giờ khác để thêm tiếp.`,
+      "info"
+    );
+  };
+
+  // Handle Save Weekly Schedule Item / Meeting (Hỗ trợ tạo nhiều lịch trong ngày & trong tuần + Lưu & Tạo tiếp)
+  const handleSaveSchedule = async (e?: React.FormEvent, options?: { keepOpen?: boolean }) => {
+    if (e) e.preventDefault();
+    const hasCurrentTitle = Boolean(scheduleForm.title.trim());
+    const validBatchRows = scheduleBatchItems.filter((r) => r.title.trim());
+
+    if (!hasCurrentTitle && validBatchRows.length === 0) {
+      showToast("Vui lòng nhập tiêu đề lịch họp / nội dung công tác hoặc thêm ít nhất 1 dòng vào danh sách lịch tuần", "error");
+      return;
+    }
+
+    const getDayNameFromIso = (isoStr: string) => {
+      const idx = (new Date(isoStr + "T00:00:00").getDay() + 6) % 7;
+      return ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"][idx] || "Thứ 2";
+    };
+
+    const targetIsoDates = resolveTargetDatesFromScheduleForm();
+    const startIso = scheduleForm.date || todayVN();
+
+    // Xây dựng danh sách tất cả các bản ghi lịch cần lưu (kết hợp danh sách chờ scheduleBatchItems + form hiện tại nếu có nhập tiêu đề)
+    const entriesToCreate: Array<{
+      date: string;
+      time: string;
+      title: string;
+      location: string;
+      linkedTaskCodes: string[];
+      autoCreateTask: boolean;
+    }> = [
+      ...validBatchRows.map((r) => ({
+        date: r.date || startIso,
+        time: r.time || "08:30 - 11:30",
+        title: r.title.trim(),
+        location: r.location || "",
+        linkedTaskCodes: Array.isArray(r.linkedTaskCodes) ? [...r.linkedTaskCodes] : [],
+        autoCreateTask: Boolean(r.autoCreateTask)
+      })),
+      ...(hasCurrentTitle
+        ? targetIsoDates.map((isoDate) => ({
+            date: isoDate,
+            time: scheduleForm.time || "08:30 - 11:30",
+            title: scheduleForm.title.trim(),
+            location: scheduleForm.location || "",
+            linkedTaskCodes: Array.isArray(scheduleForm.linkedTaskCodes) ? scheduleForm.linkedTaskCodes.filter(Boolean) : [],
+            autoCreateTask: Boolean(scheduleForm.autoCreateTask)
+          }))
+        : [])
+    ];
 
     const isMeeting = scheduleForm.eventType === "MEETING";
     const isResourceBooking = scheduleForm.eventType === "RESOURCE";
     const activeResourceKey = scheduleForm.resourceId || scheduleForm.location || "";
-    const resourceConflicts = findResourceTimeConflicts(
-      activeResourceKey,
-      targetIsoDates,
-      scheduleForm.time || "08:30 - 11:30",
-      editingScheduleId
-    );
+    const resourceConflicts = hasCurrentTitle
+      ? findResourceTimeConflicts(
+          activeResourceKey,
+          targetIsoDates,
+          scheduleForm.time || "08:30 - 11:30",
+          editingScheduleId
+        )
+      : [];
     if (resourceConflicts.length > 0) {
       const firstConflict = resourceConflicts[0];
       const cDateLabel = `${firstConflict.date.slice(8, 10)}/${firstConflict.date.slice(5, 7)}/${firstConflict.date.slice(0, 4)}`;
@@ -8975,53 +9071,57 @@ export const UnifiedWorkspace: React.FC = () => {
     const combinedActorDisplay = coActorsList.length > 0
       ? `${cleanActor}, ${coActorsList.join(", ")}`
       : cleanActor;
-    const linkedCodes = Array.isArray(scheduleForm.linkedTaskCodes) ? scheduleForm.linkedTaskCodes.filter(Boolean) : [];
 
-    // Nếu người dùng tích chọn "Đồng thời tạo Nhiệm vụ (Task) mới giao cho nhân sự này"
-    if (scheduleForm.autoCreateTask && !editingScheduleId) {
-      try {
-        const taskRes = await fetch("/api/workflows?action=task", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: scheduleForm.title.trim(),
-            department: scheduleForm.category || "Kinh Doanh",
-            task_category: isMeeting ? "Lịch họp & Điều phối" : isResourceBooking ? "Sử dụng Tài nguyên Công ty" : "Kế hoạch công tác tuần",
-            assignee_name: combinedActorDisplay,
-            customer_name: scheduleForm.location || "",
-            priority: isMeeting ? "HIGH" : "MEDIUM",
-            status: "TODO",
-            deadline: targetIsoDates[targetIsoDates.length - 1] || startIso,
-            description: `${isMeeting ? "Tạo từ Lịch họp" : isResourceBooking ? "Đăng ký sử dụng Tài nguyên công ty" : "Tự động tạo từ Lịch công tác tuần"} (${scheduleForm.time}) tại ${scheduleForm.location || "Công ty"}${scheduleForm.meetingAgenda ? `\nNội dung: ${scheduleForm.meetingAgenda}` : ""}`
-          })
-        });
-        const taskData = await taskRes.json();
-        if (taskData?.task?.task_code && !linkedCodes.includes(taskData.task.task_code)) {
-          linkedCodes.push(taskData.task.task_code);
+    // Nếu có mục chọn "Đồng thời tạo Nhiệm vụ (Task) mới giao cho nhân sự này"
+    let anyAutoTaskCreated = false;
+    for (const entry of entriesToCreate) {
+      if (entry.autoCreateTask && !editingScheduleId && entry.linkedTaskCodes.length === 0) {
+        try {
+          const taskRes = await fetch("/api/workflows?action=task", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: entry.title,
+              department: scheduleForm.category || "Kinh Doanh",
+              task_category: isMeeting ? "Lịch họp & Điều phối" : isResourceBooking ? "Sử dụng Tài nguyên Công ty" : "Kế hoạch công tác tuần",
+              assignee_name: combinedActorDisplay,
+              customer_name: entry.location || "",
+              priority: isMeeting ? "HIGH" : "MEDIUM",
+              status: "TODO",
+              deadline: entry.date || startIso,
+              description: `${isMeeting ? "Tạo từ Lịch họp" : isResourceBooking ? "Đăng ký sử dụng Tài nguyên công ty" : "Tự động tạo từ Lịch công tác tuần"} (${entry.time}) tại ${entry.location || "Công ty"}${scheduleForm.meetingAgenda ? `\nNội dung: ${scheduleForm.meetingAgenda}` : ""}`
+            })
+          });
+          const taskData = await taskRes.json();
+          if (taskData?.task?.task_code && !entry.linkedTaskCodes.includes(taskData.task.task_code)) {
+            entry.linkedTaskCodes.push(taskData.task.task_code);
+          }
+          anyAutoTaskCreated = true;
+        } catch (err) {
+          console.warn("Auto-create task from schedule warning:", err);
         }
-        fetchData();
-      } catch (err) {
-        console.warn("Auto-create task from schedule warning:", err);
       }
+    }
+    if (anyAutoTaskCreated) {
+      fetchData();
     }
 
     const wasEditing = editingScheduleId !== null;
     const baseId = editingScheduleId || Date.now();
-    let createdItems = targetIsoDates.map((isoDate, idx) => ({
+    let createdItems = entriesToCreate.map((entry, idx) => ({
       id: wasEditing && idx === 0 ? editingScheduleId : baseId + idx,
-      day: getDayNameFromIso(isoDate),
-      date: isoDate,
-      // Mỗi ngày trong khoảng đã có thẻ riêng: thẻ chỉ thuộc đúng ngày đó (trước đây endDate = ngày cuối -> ngày thứ n hiện n thẻ)
-      endDate: isoDate,
-      time: scheduleForm.time || "08:30 - 11:30",
+      day: getDayNameFromIso(entry.date),
+      date: entry.date,
+      endDate: entry.date,
+      time: entry.time || "08:30 - 11:30",
       category: scheduleForm.category,
-      title: scheduleForm.title.trim(),
+      title: entry.title,
       actor: combinedActorDisplay,
       coActors: coActorsList,
-      location: matchedCompanyResource ? matchedCompanyResource.name : scheduleForm.location,
+      location: matchedCompanyResource ? matchedCompanyResource.name : entry.location,
       resourceId: matchedCompanyResource ? matchedCompanyResource.id : (scheduleForm.resourceId || ""),
       resourceName: matchedCompanyResource ? matchedCompanyResource.name : (scheduleForm.resourceName || ""),
-      linkedTaskCodes: linkedCodes,
+      linkedTaskCodes: entry.linkedTaskCodes,
       eventType: scheduleForm.eventType || "WORK",
       meetingAgenda: scheduleForm.meetingAgenda || "",
       meetingLink: scheduleForm.meetingLink || "",
@@ -9088,11 +9188,15 @@ export const UnifiedWorkspace: React.FC = () => {
       console.warn("Error saving weekly schedule:", err);
     }
 
-    const firstDayName = getDayNameFromIso(targetIsoDates[0]);
-    const firstDateLabel = `${targetIsoDates[0].slice(8, 10)}/${targetIsoDates[0].slice(5, 7)}`;
-    const rangeSummary = targetIsoDates.length > 1
-      ? `${targetIsoDates.length} ngày (${firstDateLabel} → ${targetIsoDates[targetIsoDates.length - 1].slice(8, 10)}/${targetIsoDates[targetIsoDates.length - 1].slice(5, 7)})`
-      : `${firstDayName} ${firstDateLabel}`;
+    const uniqueCreatedDates = Array.from(new Set(createdItems.map((it) => it.date))).sort();
+    const firstIso = uniqueCreatedDates[0] || targetIsoDates[0];
+    const lastIso = uniqueCreatedDates[uniqueCreatedDates.length - 1] || firstIso;
+    const firstDayName = getDayNameFromIso(firstIso);
+    const firstDateLabel = `${firstIso.slice(8, 10)}/${firstIso.slice(5, 7)}`;
+    const rangeSummary =
+      createdItems.length > 1
+        ? `${createdItems.length} lịch (${firstDateLabel}${lastIso !== firstIso ? ` → ${lastIso.slice(8, 10)}/${lastIso.slice(5, 7)}` : ""})`
+        : `${firstDayName} ${firstDateLabel}`;
 
     const totalAttendeesCount = 1 + coActorsList.length;
     showToast(
@@ -9100,10 +9204,15 @@ export const UnifiedWorkspace: React.FC = () => {
         ? `🎥 Đã ${wasEditing ? "cập nhật" : "tạo"} lịch họp (${rangeSummary}) & gửi thông báo tới ${totalAttendeesCount} thành viên tham dự!`
         : wasEditing
         ? `Đã cập nhật lịch công tác (${rangeSummary})`
-        : `Đã thêm lịch công tác vào ${rangeSummary}!`,
+        : options?.keepOpen
+        ? `✅ Đã lưu ${createdItems.length} lịch công tác (${rangeSummary})! Mời bạn nhập tiếp lịch tiếp theo.`
+        : `✅ Đã thêm ${createdItems.length} lịch công tác vào ${rangeSummary}!`,
       "success"
     );
-    setIsScheduleModalOpen(false);
+    setScheduleBatchItems([]);
+    if (!options?.keepOpen) {
+      setIsScheduleModalOpen(false);
+    }
     if (wasEditing) {
       setScheduleForm((prev) => ({ ...prev, title: "", linkedTaskCodes: [], attachments: [] }));
       return;
@@ -22585,7 +22694,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     </label>
                     <FastInput
                       type="text"
-                      required
+                      required={scheduleBatchItems.length === 0}
                       value={scheduleForm.title}
                       onChange={(e) => setScheduleForm({ ...scheduleForm, title: e.target.value })}
                       placeholder={
@@ -22624,6 +22733,171 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     />
                   </div>
                 </div>
+
+                {/* THANH & BẢNG LẬP NHIỀU LỊCH TRONG NGÀY / TRONG TUẦN CÙNG LÚC */}
+                {!editingScheduleId && !isResourceMode && (
+                  <div className="p-3 rounded-xl bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/80 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-xs font-extrabold text-indigo-900 dark:text-indigo-200 flex items-center gap-1.5 flex-wrap">
+                        <span>🗓️ Lập nhiều lịch công tác trong ngày &amp; trong tuần ({scheduleBatchItems.length} lịch đang chờ lưu)</span>
+                        <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                          • Nhập mục 3 &amp; 4 rồi bấm &ldquo;+ Thêm vào danh sách&rdquo; hoặc thêm trực tiếp nhiều dòng bên dưới
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={handleAddCurrentToScheduleBatch}
+                          className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-extrabold shadow-2xs cursor-pointer flex items-center gap-1"
+                          title="Đưa lịch vừa nhập ở Mục 3 & Mục 4 xuống danh sách chờ để tiếp tục chọn ngày/giờ/công việc khác"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>+ Đưa mục đang nhập vào danh sách &amp; Nhập tiếp</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const lastDate =
+                              scheduleBatchItems.length > 0
+                                ? scheduleBatchItems[scheduleBatchItems.length - 1].date
+                                : scheduleForm.date || todayVN();
+                            const lastTime =
+                              scheduleBatchItems.length > 0
+                                ? scheduleBatchItems[scheduleBatchItems.length - 1].time
+                                : "";
+                            const nextSlot =
+                              lastTime === "08:00 - 12:00" || lastTime === "08:30 - 11:30"
+                                ? "13:30 - 17:30"
+                                : "08:00 - 12:00";
+                            setScheduleBatchItems((prev) => [
+                              ...prev,
+                              {
+                                uid: `batch-${Date.now()}-${prev.length}`,
+                                date: lastDate,
+                                time: nextSlot,
+                                title: "",
+                                location: scheduleForm.location || "",
+                                linkedTaskCodes: [],
+                                autoCreateTask: Boolean(scheduleForm.autoCreateTask)
+                              }
+                            ]);
+                          }}
+                          className="px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-800 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-700 text-[11px] font-bold cursor-pointer"
+                        >
+                          + Thêm dòng trống
+                        </button>
+                      </div>
+                    </div>
+
+                    {scheduleBatchItems.length > 0 && (
+                      <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+                        {scheduleBatchItems.map((row, rIdx) => (
+                          <div
+                            key={row.uid}
+                            className="grid grid-cols-1 sm:grid-cols-12 gap-1.5 items-center bg-white dark:bg-slate-900 p-2 rounded-xl border border-indigo-200/80 dark:border-slate-800 text-xs"
+                          >
+                            <div className="sm:col-span-3 flex items-center gap-1">
+                              <span className="px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-mono font-extrabold text-[10px] shrink-0">
+                                #{rIdx + 1}
+                              </span>
+                              <select
+                                value={row.date}
+                                onChange={(e) => {
+                                  const nextDate = e.target.value;
+                                  setScheduleBatchItems((prev) =>
+                                    prev.map((it, i) => (i === rIdx ? { ...it, date: nextDate } : it))
+                                  );
+                                }}
+                                className="w-full px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 font-bold text-[11px]"
+                              >
+                                {viewedWeek.all7Days.map((wd) => (
+                                  <option key={wd.date} value={wd.date}>
+                                    {wd.name} ({wd.label})
+                                  </option>
+                                ))}
+                                {!viewedWeek.all7Days.some((wd) => wd.date === row.date) && (
+                                  <option value={row.date}>{formatDayVN(row.date)}</option>
+                                )}
+                              </select>
+                            </div>
+                            <div className="sm:col-span-2">
+                              <input
+                                type="text"
+                                value={row.time}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setScheduleBatchItems((prev) =>
+                                    prev.map((it, i) => (i === rIdx ? { ...it, time: val } : it))
+                                  );
+                                }}
+                                placeholder="08:00 - 12:00"
+                                className="w-full px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 font-mono font-bold text-[11px]"
+                              />
+                            </div>
+                            <div className="sm:col-span-4">
+                              <input
+                                type="text"
+                                value={row.title}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setScheduleBatchItems((prev) =>
+                                    prev.map((it, i) => (i === rIdx ? { ...it, title: val } : it))
+                                  );
+                                }}
+                                placeholder="Nhập nội dung công việc / lịch tuần..."
+                                className="w-full px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 font-semibold text-xs"
+                              />
+                            </div>
+                            <div className="sm:col-span-2">
+                              <input
+                                type="text"
+                                value={row.location}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setScheduleBatchItems((prev) =>
+                                    prev.map((it, i) => (i === rIdx ? { ...it, location: val } : it))
+                                  );
+                                }}
+                                placeholder="Địa điểm / Lab..."
+                                className="w-full px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-[11px]"
+                              />
+                            </div>
+                            <div className="sm:col-span-1 flex items-center justify-end gap-1">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setScheduleBatchItems((prev) => [
+                                    ...prev.slice(0, rIdx + 1),
+                                    {
+                                      ...row,
+                                      uid: `batch-dup-${Date.now()}-${rIdx}`,
+                                      time: row.time === "08:00 - 12:00" ? "13:30 - 17:30" : row.time
+                                    },
+                                    ...prev.slice(rIdx + 1)
+                                  ])
+                                }
+                                className="px-1.5 py-1 rounded text-[10px] font-bold bg-slate-100 dark:bg-slate-800 hover:bg-indigo-100 text-slate-600 dark:text-slate-300 cursor-pointer"
+                                title="Nhân bản dòng này để đổi thứ / khung giờ"
+                              >
+                                📋
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setScheduleBatchItems((prev) => prev.filter((_, i) => i !== rIdx))
+                                }
+                                className="p-1 rounded text-rose-500 hover:bg-rose-50 dark:hover:bg-slate-800 cursor-pointer"
+                                title="Xóa dòng lịch này"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Mở rộng cho Lịch Họp: Link họp trực tuyến & Nội dung chuẩn bị (Agenda) */}
                 {isMeetingMode && (
@@ -22855,7 +23129,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 )}
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800 flex-wrap">
                 <button
                   type="button"
                   onClick={() => setIsScheduleModalOpen(false)}
@@ -22863,6 +23137,17 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 >
                   Hủy
                 </button>
+                {!editingScheduleId && (
+                  <button
+                    type="button"
+                    disabled={liveResourceConflicts.length > 0}
+                    onClick={() => handleSaveSchedule(undefined, { keepOpen: true })}
+                    className="px-4 py-2 rounded-xl font-extrabold border-2 border-indigo-500 text-indigo-700 dark:text-indigo-300 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/70 cursor-pointer disabled:opacity-50"
+                    title="Lưu ngay lịch hiện tại vào Lịch Tuần và giữ nguyên cửa sổ để nhập tiếp lịch khác"
+                  >
+                    ⚡ Lưu &amp; Thêm Tiếp Lịch Khác
+                  </button>
+                )}
                 <button
                   type="submit"
                   disabled={liveResourceConflicts.length > 0}
@@ -22884,6 +23169,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     ? editingScheduleId
                       ? "💾 Cập Nhật Lịch Họp & Gửi Thông Báo"
                       : "🎥 Tạo Lịch Họp & Gửi Tin Nhắn Mời Họp"
+                    : scheduleBatchItems.filter((r) => r.title.trim()).length > 0
+                    ? `💾 Lưu Tất Cả (${scheduleBatchItems.filter((r) => r.title.trim()).length + (scheduleForm.title.trim() ? 1 : 0)} Lịch) Vào Lịch Tuần`
                     : "Lưu Vào Lịch Tuần"}
                 </button>
               </div>
