@@ -1,6 +1,7 @@
 import fs from "fs";
 import { syncLegacySalesData } from "./legacySalesSync";
 import { hashPassword, generateTemporaryPassword } from "@/backend/services/passwords";
+import { quoteTotalsFromItems } from "@/backend/services/quoteTotals";
 import { EMBEDDED_FILE_KEYS, externalizeDataUrls } from "@/backend/services/externalizeDataUrls";
 import { employeeCodeVariants, normalizePersonText, personNameKey } from "@/backend/services/utils";
 import path from "path";
@@ -138,6 +139,36 @@ async function runIntegrityMigrations() {
          ON CONFLICT (key) DO NOTHING`,
         [key]
       );
+
+    // Báo giá lưu lại tổng tiền CŨ sau khi sửa (máy chủ đọc total_amount cũ còn trên màn hình thay vì tổng vừa tính):
+    // tính lại 1 lần tổng tiền / trước VAT / VAT / chiết khấu theo các dòng hàng cho báo giá đang lệch > 1.000đ.
+    await step("fix_quote_totals_from_items", async () => {
+      if (await flagDone("fix_quote_totals_from_items_v1")) return;
+      const rows = (await client.query("SELECT id, quote_code, items, total_amount, tax_rate FROM sales_quotations")).rows;
+      let fixed = 0;
+      const changed: string[] = [];
+      for (const r of rows) {
+        let items: any = r.items;
+        if (typeof items === "string") { try { items = JSON.parse(items); } catch { items = []; } }
+        if (!Array.isArray(items) || items.length === 0) continue;
+        const t = quoteTotalsFromItems(items, Number(r.tax_rate) || 8);
+        const cur = Number(r.total_amount) || 0;
+        if (Math.abs(t.total - cur) <= 1000) continue;
+        await client.query(
+          "UPDATE sales_quotations SET total_amount = $1, subtotal = $2, tax_amount = $3, discount_amount = $4 WHERE id = $5",
+          [t.total, t.subtotal, t.tax, t.discount, r.id]
+        );
+        fixed++;
+        if (changed.length < 40) changed.push(`${r.quote_code}: ${cur} -> ${t.total}`);
+      }
+      if (fixed > 0) {
+        await client.query(
+          "INSERT INTO audit_logs (action, module, details, actor_name) VALUES ('SYNC_FIX', 'SALES', $1, 'Hệ thống')",
+          [`Tính lại tổng tiền ${fixed} báo giá theo các dòng hàng: ${changed.join("; ")}`.slice(0, 2000)]
+        ).catch(() => {});
+      }
+      await setFlag("fix_quote_totals_from_items_v1");
+    });
 
     // H6: chat DDL moved out of the request path (was executed on every poll / message)
     await step("chat_schema", () =>

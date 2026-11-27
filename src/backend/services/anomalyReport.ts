@@ -1,4 +1,5 @@
 import { query } from "@/backend/db/db";
+import { quoteTotalsFromItems } from "@/backend/services/quoteTotals";
 
 /**
  * Báo cáo bất thường (hàng tuần): gom các thao tác / dữ liệu lệch quy trình để quản lý phát hiện sớm,
@@ -311,6 +312,22 @@ export async function buildAnomalyReport(days = 7): Promise<AnomalyReport> {
                AND NOT (details ILIKE '%cấp lại mã%' AND details NOT ILIKE '%chặn%' AND details NOT ILIKE '%giữ lại%')))
         ORDER BY created_at DESC LIMIT ${MAX_ROWS}`
     );
+    // "Báo giá X: tổng tiền … lệch tổng các dòng …": bỏ các báo giá mà tổng tiền hiện đã khớp các dòng hàng
+    const quoteCodeOf = (d: any) => String(d || "").match(/^Báo giá (\S+): tổng tiền .* lệch tổng các dòng/)?.[1] || "";
+    const quoteCodes = Array.from(new Set(rows.map((r: any) => quoteCodeOf(r.details)).filter(Boolean)));
+    const fixedQuotes = new Set<string>();
+    if (quoteCodes.length > 0) {
+      const qs = await safeRows("SELECT quote_code, items, total_amount, tax_rate FROM sales_quotations WHERE quote_code = ANY($1::text[])", [quoteCodes]);
+      for (const q of qs) {
+        let items: any = q.items;
+        if (typeof items === "string") { try { items = JSON.parse(items); } catch { items = []; } }
+        const t = quoteTotalsFromItems(Array.isArray(items) ? items : [], Number(q.tax_rate) || 8);
+        if (Math.abs(t.total - (Number(q.total_amount) || 0)) <= 1000) fixedQuotes.add(String(q.quote_code));
+      }
+    }
+    const stillOpen = rows.filter((r: any) => { const c = quoteCodeOf(r.details); return !c || !fixedQuotes.has(c); });
+    rows.length = 0;
+    rows.push(...stillOpen);
     sections.push({
       key: "system_errors",
       title: "Lỗi lưu / đồng bộ dữ liệu",

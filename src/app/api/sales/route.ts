@@ -4,6 +4,7 @@ import { query, logAudit, withTransaction, HttpError, httpErrorStatus } from "@/
 import { generateDocumentCode, getShortRepCode, getShortCustCode } from "@/backend/services/codeGenerator";
 import { addStock, sortByProductCode, reserveStock, releaseReservation, releaseReservationsFor } from "@/backend/services/inventoryLedger";
 import { stableStringify } from "@/backend/services/storagePatch";
+import { quoteTotalsFromItems } from "@/backend/services/quoteTotals";
 import { getAuthorizedUser, unauthorizedResponse, forbiddenResponse, isAdminUser, isAccountantUser, setAuditActor } from "@/backend/services/authz";
 import { hasPermission } from "@/backend/services/permissions";
 import { stripCostFields } from "@/backend/services/costVisibility";
@@ -3125,12 +3126,16 @@ export async function POST(req: NextRequest) {
       const dateVal = parseSqlDate(body.date);
       const validUntilVal = body.valid_until ? parseSqlDate(body.valid_until) : (body.validUntil ? parseSqlDate(body.validUntil) : null);
       const items = Array.isArray(body.items) ? body.items : (typeof body.items === 'string' ? JSON.parse(body.items || '[]') : []);
-      const subtotal = Number(body.subtotal !== undefined ? body.subtotal : body.totalBeforeVat) || 0;
-      const discountRate = Number(body.discount_rate !== undefined ? body.discount_rate : body.discountRate) || 0;
-      const discountAmount = Number(body.discount_amount !== undefined ? body.discount_amount : body.totalDiscount) || 0;
-      const taxRate = Number(body.tax_rate !== undefined ? body.tax_rate : body.taxRate) || 8;
-      const taxAmount = Number(body.tax_amount !== undefined ? body.tax_amount : body.totalVat) || 0;
-      const totalAmount = Number(body.total_amount !== undefined ? body.total_amount : body.totalAmount) || 0;
+      // Ưu tiên số màn hình VỪA TÍNH (totalAmount, totalBeforeVat...): báo giá tải từ máy chủ còn mang theo các trường
+      // gốc total_amount / subtotal / tax_amount của lần lưu trước; đọc chúng trước làm sửa báo giá xong vẫn lưu lại
+      // tổng tiền cũ.
+      const pickNum = (camel: any, snake: any) => Number(camel !== undefined && camel !== null && camel !== "" ? camel : snake) || 0;
+      let subtotal = pickNum(body.totalBeforeVat, body.subtotal);
+      const discountRate = Number(body.discountRate !== undefined ? body.discountRate : body.discount_rate) || 0;
+      let discountAmount = pickNum(body.totalDiscount, body.discount_amount);
+      const taxRate = Number(body.taxRate !== undefined ? body.taxRate : body.tax_rate) || 8;
+      let taxAmount = pickNum(body.totalVat, body.tax_amount);
+      let totalAmount = pickNum(body.totalAmount, body.total_amount);
       const status = body.status || "DRAFT";
       const terms = body.terms !== undefined ? body.terms : (body.paymentTerms !== undefined ? body.paymentTerms : "");
 
@@ -3149,14 +3154,15 @@ export async function POST(req: NextRequest) {
       }
       // Tổng tiền báo giá do màn hình gửi: đối chiếu với Σ SL × giá sau VAT của các dòng (giá báo khách là giá sau VAT).
       // Lệch > 1.000đ thì ghi nhật ký (hiện trong Báo cáo bất thường) thay vì âm thầm lưu số sai.
-      const itemsGross = items.reduce((sum: number, it: any) => {
-        const q = Number(it.quantity ?? it.qty ?? 0) || 0;
-        const p = Number(it.price ?? it.unitPrice ?? it.unit_price ?? 0) || 0;
-        return sum + q * p;
-      }, 0);
-      if (items.length > 0 && Math.abs(Math.round(itemsGross) - totalAmount) > 1000) {
-        console.warn(`[sales] Báo giá ${code || "(mới)"}: tổng tiền gửi lên ${totalAmount} lệch Σ dòng hàng ${Math.round(itemsGross)}`);
-        await logAudit("SYNC_ERROR", "SALES", `Báo giá ${code || "(mới)"}: tổng tiền ${totalAmount.toLocaleString("vi-VN")} đ lệch tổng các dòng ${Math.round(itemsGross).toLocaleString("vi-VN")} đ`).catch(() => {});
+      // Lệch > 1.000đ so với Σ SL × giá sau VAT (đúng con số khách thấy trên bản in): lưu theo các dòng hàng, ghi nhật ký.
+      const lineTotals = quoteTotalsFromItems(items, taxRate);
+      if (items.length > 0 && Math.abs(lineTotals.total - totalAmount) > 1000) {
+        console.warn(`[sales] Báo giá ${code || "(mới)"}: tổng tiền gửi lên ${totalAmount} lệch Σ dòng hàng ${lineTotals.total} -> lưu theo dòng hàng`);
+        await logAudit("SYNC_FIX", "SALES", `Báo giá ${code || "(mới)"}: tổng tiền gửi lên ${totalAmount.toLocaleString("vi-VN")} đ lệch tổng các dòng ${lineTotals.total.toLocaleString("vi-VN")} đ — đã lưu theo tổng các dòng`).catch(() => {});
+        totalAmount = lineTotals.total;
+        subtotal = lineTotals.subtotal;
+        taxAmount = lineTotals.tax;
+        discountAmount = lineTotals.discount;
       }
 
       let finalCode = (code && /^BG\d{2}-[A-Z0-9]{2}-\d{4}$/.test(code))
