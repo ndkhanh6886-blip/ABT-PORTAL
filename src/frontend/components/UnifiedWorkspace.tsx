@@ -22426,12 +22426,12 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 )}
               </div>
 
-              {/* BƯỚC 3: CHỌN KHOẢNG THỜI GIAN (1 NGÀY / TỪ NGÀY -> ĐẾN NGÀY / NHIỀU THỨ) & KHUNG GIỜ LINH HOẠT */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
-                {/* Cột trái: Ngày / Khoảng ngày */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-1 flex-wrap">
-                    <label className="font-bold text-slate-700 dark:text-slate-200">3. Ngày / Khoảng ngày *</label>
+              {/* BƯỚC 3: CHỌN KHOẢNG THỜI GIAN & KHUNG GIỜ (THIẾT KẾ GỌN GÀNG 2 DÒNG) */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                {/* Cột trái (7 phần): Ngày / Khoảng ngày + 7 nút Thứ nằm gọn trên cùng 1 hàng */}
+                <div className="lg:col-span-7 space-y-1.5">
+                  <div className="flex items-center justify-between gap-1.5 flex-wrap">
+                    <label className="font-bold text-slate-700 dark:text-slate-200 text-xs">3. Ngày / Khoảng ngày *</label>
                     <div className="inline-flex rounded-lg bg-slate-200/80 dark:bg-slate-800 p-0.5 text-[10px] font-bold">
                       <button
                         type="button"
@@ -22459,7 +22459,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             : "text-slate-600 dark:text-slate-300"
                         }`}
                       >
-                        Từ ngày → Đến ngày
+                        Từ → Đến ngày
                       </button>
                       <button
                         type="button"
@@ -22481,10 +22481,9 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     </div>
                   </div>
 
-                  {scheduleForm.dateMode === "RANGE" ? (
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <span className="block text-[10px] text-slate-500 mb-0.5">Từ ngày *</span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {scheduleForm.dateMode === "RANGE" ? (
+                      <div className="inline-flex items-center gap-1 shrink-0">
                         <DateInputVN
                           required
                           value={scheduleForm.date || ""}
@@ -22496,174 +22495,169 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               endDate: scheduleForm.endDate && scheduleForm.endDate >= v ? scheduleForm.endDate : v
                             });
                           }}
-                          className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
+                          className="w-28 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold text-xs"
                         />
-                      </div>
-                      <div>
-                        <span className="block text-[10px] text-slate-500 mb-0.5">Đến ngày *</span>
+                        <span className="text-slate-400 text-xs">→</span>
                         <DateInputVN
                           required
                           min={scheduleForm.date || undefined}
                           value={scheduleForm.endDate || scheduleForm.date || ""}
                           onChange={(e) => setScheduleForm({ ...scheduleForm, endDate: e.target.value })}
-                          className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
+                          className="w-28 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold text-xs"
                         />
                       </div>
-                    </div>
-                  ) : (
-                    <DateInputVN
-                      required={scheduleForm.dateMode !== "MULTI_DAYS"}
-                      value={scheduleForm.date || ""}
-                      onChange={(e) =>
-                        setScheduleForm({
-                          ...scheduleForm,
-                          date: e.target.value,
-                          endDate: e.target.value,
-                          selectedDates: [e.target.value]
-                        })
-                      }
-                      className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
-                    />
-                  )}
+                    ) : (
+                      <DateInputVN
+                        required={scheduleForm.dateMode !== "MULTI_DAYS"}
+                        value={scheduleForm.date || ""}
+                        onChange={(e) =>
+                          setScheduleForm({
+                            ...scheduleForm,
+                            date: e.target.value,
+                            endDate: e.target.value,
+                            selectedDates: [e.target.value]
+                          })
+                        }
+                        className="w-32 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold text-xs shrink-0"
+                      />
+                    )}
 
-                  {/* Các nút chọn nhanh Thứ 2 -> Chủ nhật trong tuần */}
-                  <div className="flex flex-wrap gap-1 pt-0.5">
-                    {viewedWeek.all7Days.map((wd) => {
-                      const shortName = wd.name === "Chủ nhật" ? "CN" : wd.name.replace("Thứ ", "T");
-                      const isSelected =
-                        scheduleForm.dateMode === "MULTI_DAYS"
-                          ? (scheduleForm.selectedDates || []).includes(wd.date)
-                          : scheduleForm.dateMode === "RANGE"
-                          ? Boolean(scheduleForm.date && scheduleForm.endDate && wd.date >= scheduleForm.date && wd.date <= scheduleForm.endDate)
-                          : scheduleForm.date === wd.date;
-                      return (
-                        <button
-                          key={wd.date}
-                          type="button"
-                          onClick={() => {
-                            if (scheduleForm.dateMode === "MULTI_DAYS") {
-                              const cur = scheduleForm.selectedDates || [];
-                              const next = cur.includes(wd.date)
-                                ? cur.filter((d) => d !== wd.date)
-                                : [...cur, wd.date];
-                              setScheduleForm({
-                                ...scheduleForm,
-                                date: next[0] || wd.date,
-                                selectedDates: next.length > 0 ? next : [wd.date]
-                              });
-                            } else if (scheduleForm.dateMode === "RANGE") {
-                              const curStart = scheduleForm.date || wd.date;
-                              if (wd.date < curStart) {
-                                setScheduleForm({ ...scheduleForm, date: wd.date, endDate: curStart });
+                    {/* Các nút chọn nhanh Thứ 2 -> Chủ nhật nằm ngay cùng hàng với ô Ngày */}
+                    <div className="flex flex-wrap items-center gap-1">
+                      {viewedWeek.all7Days.map((wd) => {
+                        const shortName = wd.name === "Chủ nhật" ? "CN" : wd.name.replace("Thứ ", "T");
+                        const isSelected =
+                          scheduleForm.dateMode === "MULTI_DAYS"
+                            ? (scheduleForm.selectedDates || []).includes(wd.date)
+                            : scheduleForm.dateMode === "RANGE"
+                            ? Boolean(scheduleForm.date && scheduleForm.endDate && wd.date >= scheduleForm.date && wd.date <= scheduleForm.endDate)
+                            : scheduleForm.date === wd.date;
+                        return (
+                          <button
+                            key={wd.date}
+                            type="button"
+                            onClick={() => {
+                              if (scheduleForm.dateMode === "MULTI_DAYS") {
+                                const cur = scheduleForm.selectedDates || [];
+                                const next = cur.includes(wd.date)
+                                  ? cur.filter((d) => d !== wd.date)
+                                  : [...cur, wd.date];
+                                setScheduleForm({
+                                  ...scheduleForm,
+                                  date: next[0] || wd.date,
+                                  selectedDates: next.length > 0 ? next : [wd.date]
+                                });
+                              } else if (scheduleForm.dateMode === "RANGE") {
+                                const curStart = scheduleForm.date || wd.date;
+                                if (wd.date < curStart) {
+                                  setScheduleForm({ ...scheduleForm, date: wd.date, endDate: curStart });
+                                } else {
+                                  setScheduleForm({ ...scheduleForm, endDate: wd.date });
+                                }
                               } else {
-                                setScheduleForm({ ...scheduleForm, endDate: wd.date });
+                                setScheduleForm({ ...scheduleForm, date: wd.date, endDate: wd.date, selectedDates: [wd.date] });
                               }
-                            } else {
-                              setScheduleForm({ ...scheduleForm, date: wd.date, endDate: wd.date, selectedDates: [wd.date] });
-                            }
-                          }}
-                          className={`px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors ${
-                            isSelected
-                              ? "bg-indigo-600 text-white shadow-2xs"
-                              : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-indigo-400"
-                          }`}
-                        >
-                          {shortName} {wd.label}
-                        </button>
-                      );
-                    })}
+                            }}
+                            className={`px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors ${
+                              isSelected
+                                ? "bg-indigo-600 text-white shadow-2xs"
+                                : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-indigo-400"
+                            }`}
+                          >
+                            {shortName} {wd.label}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
 
-                {/* Cột phải: Khung giờ thực hiện linh hoạt (Chọn Từ giờ -> Đến giờ + Chọn nhanh Ca + Gõ tự do) */}
-                <div className="space-y-2">
-                  <label className="block font-bold text-slate-700 dark:text-slate-200">
-                    Khung giờ {isMeetingMode ? "họp" : "thực hiện"} (Chọn khoảng giờ hoặc gõ tự do) *
-                  </label>
-
-                  {/* Chọn nhanh Từ giờ -> Đến giờ */}
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] text-slate-500 shrink-0">Từ:</span>
-                      <select
-                        value={scheduleForm.startTime || "08:30"}
-                        onChange={(e) => {
-                          const st = e.target.value;
-                          const et = scheduleForm.endTime || "11:30";
-                          setScheduleForm({
-                            ...scheduleForm,
-                            startTime: st,
-                            time: `${st} - ${et}`
-                          });
-                        }}
-                        className="w-full px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-mono font-bold text-xs cursor-pointer"
-                      >
-                        {timeSlotOptions.map((t) => (
-                          <option key={`st-${t}`} value={t}>{t}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] text-slate-500 shrink-0">Đến:</span>
-                      <select
-                        value={scheduleForm.endTime || "11:30"}
-                        onChange={(e) => {
-                          const et = e.target.value;
-                          const st = scheduleForm.startTime || "08:30";
-                          setScheduleForm({
-                            ...scheduleForm,
-                            endTime: et,
-                            time: `${st} - ${et}`
-                          });
-                        }}
-                        className="w-full px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-mono font-bold text-xs cursor-pointer"
-                      >
-                        {timeSlotOptions.map((t) => (
-                          <option key={`et-${t}`} value={t}>{t}</option>
-                        ))}
-                      </select>
+                {/* Cột phải (5 phần): Khung giờ thực hiện gọn trên 2 dòng (Header có nút Ca nhanh + Hàng chọn Từ -> Đến) */}
+                <div className="lg:col-span-5 space-y-1.5">
+                  <div className="flex items-center justify-between gap-1.5 flex-wrap">
+                    <label className="font-bold text-slate-700 dark:text-slate-200 text-xs shrink-0">
+                      Khung giờ {isMeetingMode ? "họp" : "thực hiện"} *
+                    </label>
+                    <div className="flex flex-wrap items-center gap-1">
+                      {[
+                        { label: "🌅 Ca Sáng", title: "08:00 - 12:00", val: "08:00 - 12:00", st: "08:00", et: "12:00" },
+                        { label: "🌤️ Ca Chiều", title: "13:30 - 17:30", val: "13:30 - 17:30", st: "13:30", et: "17:30" },
+                        { label: "🗓️ Cả ngày", title: "08:00 - 17:30", val: "08:00 - 17:30", st: "08:00", et: "17:30" },
+                        { label: "⚡ Họp sáng", title: "08:30 - 10:00", val: "08:30 - 10:00", st: "08:30", et: "10:00" },
+                        { label: "☀️ Họp chiều", title: "14:00 - 15:30", val: "14:00 - 15:30", st: "14:00", et: "15:30" }
+                      ].map((preset) => (
+                        <button
+                          key={preset.val}
+                          type="button"
+                          title={`Chọn nhanh: ${preset.title}`}
+                          onClick={() =>
+                            setScheduleForm({
+                              ...scheduleForm,
+                              startTime: preset.st,
+                              endTime: preset.et,
+                              time: preset.val
+                            })
+                          }
+                          className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold cursor-pointer transition-colors ${
+                            scheduleForm.time === preset.val
+                              ? "bg-amber-600 text-white"
+                              : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-amber-500"
+                          }`}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
                     </div>
                   </div>
 
-                  {/* Ô gõ thời gian tự do linh hoạt */}
-                  <FastInput
-                    type="text"
-                    required
-                    value={scheduleForm.time}
-                    onChange={(e) => setScheduleForm({ ...scheduleForm, time: e.target.value })}
-                    placeholder="Gõ tự do VD: 08:30 - 10:00, Sáng 8h30-10h, Đầu giờ chiều..."
-                    className="w-full px-3 py-1.5 rounded-xl border border-indigo-300 dark:border-indigo-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-mono font-bold"
-                  />
-
-                  {/* Các nút chọn nhanh Ca làm việc / Khung giờ họp */}
-                  <div className="flex flex-wrap gap-1">
-                    {[
-                      { label: "⚡ Họp sáng (08:30 - 10:00)", val: "08:30 - 10:00", st: "08:30", et: "10:00" },
-                      { label: "🌅 Ca Sáng (08:00 - 12:00)", val: "08:00 - 12:00", st: "08:00", et: "12:00" },
-                      { label: "☀️ Họp chiều (14:00 - 15:30)", val: "14:00 - 15:30", st: "14:00", et: "15:30" },
-                      { label: "🌤️ Ca Chiều (13:30 - 17:30)", val: "13:30 - 17:30", st: "13:30", et: "17:30" },
-                      { label: "🗓️ Cả ngày (08:00 - 17:30)", val: "08:00 - 17:30", st: "08:00", et: "17:30" }
-                    ].map((preset) => (
-                      <button
-                        key={preset.val}
-                        type="button"
-                        onClick={() =>
-                          setScheduleForm({
-                            ...scheduleForm,
-                            startTime: preset.st,
-                            endTime: preset.et,
-                            time: preset.val
-                          })
-                        }
-                        className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold cursor-pointer transition-colors ${
-                          scheduleForm.time === preset.val
-                            ? "bg-amber-600 text-white"
-                            : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-amber-500"
-                        }`}
-                      >
-                        {preset.label}
-                      </button>
-                    ))}
+                  {/* Hàng đơn hợp nhất: Từ giờ -> Đến giờ + Ô gõ/hiển thị khung giờ */}
+                  <div className="flex items-center gap-1.5">
+                    <select
+                      value={scheduleForm.startTime || "08:30"}
+                      onChange={(e) => {
+                        const st = e.target.value;
+                        const et = scheduleForm.endTime || "11:30";
+                        setScheduleForm({
+                          ...scheduleForm,
+                          startTime: st,
+                          time: `${st} - ${et}`
+                        });
+                      }}
+                      title="Giờ bắt đầu"
+                      className="w-22 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-mono font-bold text-xs cursor-pointer shrink-0"
+                    >
+                      {timeSlotOptions.map((t) => (
+                        <option key={`st-${t}`} value={t}>{t}</option>
+                      ))}
+                    </select>
+                    <span className="text-slate-400 text-xs font-bold shrink-0">→</span>
+                    <select
+                      value={scheduleForm.endTime || "11:30"}
+                      onChange={(e) => {
+                        const et = e.target.value;
+                        const st = scheduleForm.startTime || "08:30";
+                        setScheduleForm({
+                          ...scheduleForm,
+                          endTime: et,
+                          time: `${st} - ${et}`
+                        });
+                      }}
+                      title="Giờ kết thúc"
+                      className="w-22 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-mono font-bold text-xs cursor-pointer shrink-0"
+                    >
+                      {timeSlotOptions.map((t) => (
+                        <option key={`et-${t}`} value={t}>{t}</option>
+                      ))}
+                    </select>
+                    <FastInput
+                      type="text"
+                      required
+                      value={scheduleForm.time}
+                      onChange={(e) => setScheduleForm({ ...scheduleForm, time: e.target.value })}
+                      placeholder="Hoặc gõ tự do..."
+                      title="Khung giờ thực tế (có thể chỉnh sửa hoặc gõ tự do)"
+                      className="flex-1 min-w-[110px] px-2.5 py-1 rounded-lg border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-mono font-bold text-xs"
+                    />
                   </div>
                 </div>
               </div>
