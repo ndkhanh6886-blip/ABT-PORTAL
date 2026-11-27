@@ -9563,10 +9563,16 @@ export const UnifiedWorkspace: React.FC = () => {
   };
 
   // Đồng bộ các công việc trong từng giai đoạn của Dự án sang Bảng Công Việc (company_tasks) theo đúng Phòng ban & Người thực hiện
-  const syncThematicProjectTasks = async (prj: any) => {
+  // Khi đổi Mã dự án (previousPrjId -> prj.id), tự động cập nhật trực tiếp mã task_code & related_workflow_code của toàn bộ công việc cũ,
+  // không tạo bản sao mới và luôn giữ nguyên Người giao việc gốc (created_by_name).
+  const syncThematicProjectTasks = async (prj: any, previousPrjId?: string | null) => {
     const stages = Array.isArray(prj.stages) ? prj.stages : [];
     const prjId = String(prj.id || "").trim();
     if (!prjId || stages.length === 0) return;
+    const oldPrjId = previousPrjId && String(previousPrjId).trim().toUpperCase() !== prjId.toUpperCase()
+      ? String(previousPrjId).trim()
+      : null;
+    const projectCreatorName = String(prj.createdBy || prj.lead || currentStaffName || "").trim();
 
     const prioMap: Record<string, string> = { "Cao": "HIGH", "Trung bình": "MEDIUM", "Bình thường": "LOW" };
     const taskPriority = prioMap[prj.priority] || "HIGH";
@@ -9581,13 +9587,30 @@ export const UnifiedWorkspace: React.FC = () => {
           const stTask = subTasks[tIdx];
           if (!stTask.title || !String(stTask.title).trim()) continue;
           const subTaskCode = `TSK-${prjId}-S${idx + 1}-T${tIdx + 1}`;
-          const existingTask = tasks.find((t: any) => String(t.task_code || "").toUpperCase() === subTaskCode.toUpperCase());
+          const oldSubTaskCode = oldPrjId ? `TSK-${oldPrjId}-S${idx + 1}-T${tIdx + 1}` : null;
+          const existingByNewCode = tasks.find((t: any) => String(t.task_code || "").toUpperCase() === subTaskCode.toUpperCase());
+          const existingByOldCode = oldSubTaskCode
+            ? tasks.find((t: any) => String(t.task_code || "").toUpperCase() === oldSubTaskCode.toUpperCase())
+            : null;
+          const existingTask = existingByNewCode || existingByOldCode;
+          // Nếu cả bản mã cũ lẫn bản mã mới đều đã tồn tại (do lần đổi mã trước tạo thừa bản sao), xóa bản mã cũ để không bị trùng
+          if (existingByNewCode && existingByOldCode && existingByNewCode.id !== existingByOldCode.id) {
+            fetch("/api/workflows?action=delete_task", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id: existingByOldCode.id })
+            }).catch(() => {});
+          }
           const mappedStatus = stTask.status === "completed" || stg.status === "completed"
             ? "DONE"
             : stTask.status === "in_progress" || stg.status === "in_progress"
             ? "IN_PROGRESS"
             : (idx === 0 && tIdx === 0 ? "IN_PROGRESS" : "TODO");
           const itemDept = stTask.dept || stageDept;
+          const preservedCreatorName =
+            existingByOldCode?.created_by_name ||
+            existingTask?.created_by_name ||
+            projectCreatorName;
           const payload = {
             id: existingTask?.id || null,
             task_code: subTaskCode,
@@ -9605,8 +9628,9 @@ Công việc: ${stTask.title}${prj.customerOrRef ? `
 Khách hàng / Mã liên kết: ${prj.customerOrRef}` : ""}
 Phòng ban tham gia: ${(prj.participatingDepts || [itemDept]).join(", ")}`,
             related_workflow_code: prjId,
-            result: existingTask?.result || (stTask.status === "completed" ? "Đã hoàn thành công việc trong giai đoạn dự án" : ""),
-            attachments: existingTask?.attachments || []
+            result: existingTask?.result || existingByOldCode?.result || (stTask.status === "completed" ? "Đã hoàn thành công việc trong giai đoạn dự án" : ""),
+            attachments: existingTask?.attachments || existingByOldCode?.attachments || [],
+            created_by_name: preservedCreatorName
           };
           try {
             await reportWriteResult(fetch("/api/workflows?action=task", {
@@ -9618,8 +9642,24 @@ Phòng ban tham gia: ${(prj.participatingDepts || [itemDept]).join(", ")}`,
         }
       } else {
         const stageTaskCode = `TSK-${prjId}-S${idx + 1}`;
-        const existingTask = tasks.find((t: any) => String(t.task_code || "").toUpperCase() === stageTaskCode.toUpperCase());
+        const oldStageTaskCode = oldPrjId ? `TSK-${oldPrjId}-S${idx + 1}` : null;
+        const existingByNewCode = tasks.find((t: any) => String(t.task_code || "").toUpperCase() === stageTaskCode.toUpperCase());
+        const existingByOldCode = oldStageTaskCode
+          ? tasks.find((t: any) => String(t.task_code || "").toUpperCase() === oldStageTaskCode.toUpperCase())
+          : null;
+        const existingTask = existingByNewCode || existingByOldCode;
+        if (existingByNewCode && existingByOldCode && existingByNewCode.id !== existingByOldCode.id) {
+          fetch("/api/workflows?action=delete_task", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: existingByOldCode.id })
+          }).catch(() => {});
+        }
         const taskStatus = stg.status === "completed" ? "DONE" : stg.status === "in_progress" ? "IN_PROGRESS" : (idx === 0 ? "IN_PROGRESS" : "TODO");
+        const preservedCreatorName =
+          existingByOldCode?.created_by_name ||
+          existingTask?.created_by_name ||
+          projectCreatorName;
         const payload = {
           id: existingTask?.id || null,
           task_code: stageTaskCode,
@@ -9637,8 +9677,9 @@ Phòng ban tham gia: ${(prj.participatingDepts || [stageDept]).join(", ")}
 Mục tiêu: ${prj.description || ""}
 Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           related_workflow_code: prjId,
-          result: existingTask?.result || (stg.status === "completed" ? "Đã nghiệm thu giai đoạn dự án" : ""),
-          attachments: existingTask?.attachments || []
+          result: existingTask?.result || existingByOldCode?.result || (stg.status === "completed" ? "Đã nghiệm thu giai đoạn dự án" : ""),
+          attachments: existingTask?.attachments || existingByOldCode?.attachments || [],
+          created_by_name: preservedCreatorName
         };
         try {
           await reportWriteResult(fetch("/api/workflows?action=task", {
@@ -9698,6 +9739,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
     const totalSubTasksCount = stagesList.reduce((acc: number, s: any) => acc + (Array.isArray(s.tasks) && s.tasks.length > 0 ? s.tasks.length : 1), 0);
 
+    const existingPrj = editingThematicId ? labProjects.find((p) => p.id === editingThematicId) : null;
     const projectData = {
       id: labProjectForm.id || `DA-0${labProjects.length + 1}`,
       name: labProjectForm.name.trim(),
@@ -9707,6 +9749,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       typeId: labProjectForm.typeId || "custom_project",
       typeName: (labProjectForm.typeName || "Dự án / Nhóm công việc tùy chỉnh").trim(),
       lead: labProjectForm.lead || currentStaffName,
+      createdBy: existingPrj?.createdBy || existingPrj?.lead || labProjectForm.lead || currentStaffName,
       collaborators: mergedCollaborators,
       startDate: labProjectForm.startDate,
       endDate: labProjectForm.endDate,
@@ -9719,6 +9762,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       stages: stagesList
     };
 
+    const previousProjectId = editingThematicId;
     let updated: any[];
     if (editingThematicId) {
       updated = labProjects.map(p => p.id === editingThematicId ? { ...p, ...projectData } : p);
@@ -9758,7 +9802,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updated)
       });
-      await syncThematicProjectTasks(projectData);
+      await syncThematicProjectTasks(projectData, previousProjectId);
       fetchData();
     } catch (err) {
       console.warn("Error saving thematic projects:", err);

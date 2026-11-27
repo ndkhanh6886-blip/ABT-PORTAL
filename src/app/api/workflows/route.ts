@@ -396,6 +396,70 @@ async function ensureFictionalAssigneesCleaned() {
        SET assignee_name = '' 
        WHERE LOWER(TRIM(assignee_name)) IN ('phạm quốc tuấn', 'lê kỹ thuật', 'nguyễn văn a', 'nguyễn văn nam', 'trần thủ kho', 'trần thị thảo', 'đội vận chuyển')`
     );
+
+    // 2b. Khôi phục Người giao gốc (Chủ nhiệm dự án) và gộp bản sao trùng khi Dự án được đổi mã (VD: DA-THAU-01 -> DTNS-01)
+    try {
+      const prjStorageRes = await query(`SELECT data FROM app_storage WHERE key = 'unified_thematic_projects' LIMIT 1`);
+      const activeProjects: any[] = Array.isArray(prjStorageRes.rows[0]?.data) ? prjStorageRes.rows[0].data : [];
+      const activeProjectIds = new Set(activeProjects.map((p: any) => String(p?.id || "").trim().toUpperCase()).filter(Boolean));
+
+      for (const prj of activeProjects) {
+        const prjId = String(prj?.id || "").trim();
+        const prjIdUpper = prjId.toUpperCase();
+        const prjLead = String(prj?.createdBy || prj?.lead || "").trim();
+        if (!prjId || !prjLead) continue;
+
+        // Nếu các công việc thuộc dự án này bị ghi đè created_by_name bởi người vào sửa mã dự án (khác với Chủ nhiệm dự án prj.lead),
+        // khôi phục created_by_name về đúng Chủ nhiệm dự án / Người giao gốc của dự án
+        const prjTasksRes = await query(
+          `SELECT id, task_code, title, status, result, created_by_name
+             FROM company_tasks
+            WHERE UPPER(COALESCE(related_workflow_code, '')) = $1
+               OR UPPER(COALESCE(task_code, '')) LIKE $2`,
+          [prjIdUpper, `TSK-${prjIdUpper}-S%`]
+        );
+
+        for (const tRow of prjTasksRes.rows) {
+          // Kiểm tra nếu có bản ghi anh em cùng mã dự án cũ (orphan) cho cùng Stage & Task suffix (VD: -S1-T2)
+          const suffixMatch = String(tRow.task_code || "").match(/(-S\d+(?:-T\d+)?)$/i);
+          let originalCreatorFromOldCopy = "";
+          if (suffixMatch) {
+            const suffixUpper = suffixMatch[1].toUpperCase();
+            const stripPrefix = (s: string) => String(s || "").replace(/^\[[^\]]+\]\s*/, "").trim().toLowerCase();
+            const cleanCurrentTitle = stripPrefix(tRow.title);
+            const oldCopiesRes = await query(
+              `SELECT id, task_code, title, status, result, created_by, created_by_name, related_workflow_code
+                 FROM company_tasks
+                WHERE id != $1
+                  AND UPPER(COALESCE(task_code, '')) LIKE $2`,
+              [tRow.id, `%${suffixUpper}`]
+            );
+            for (const oldRow of oldCopiesRes.rows) {
+              const oldWfUpper = String(oldRow.related_workflow_code || "").trim().toUpperCase();
+              const isOrphanProject = !oldWfUpper || !activeProjectIds.has(oldWfUpper);
+              if (isOrphanProject && stripPrefix(oldRow.title) === cleanCurrentTitle) {
+                if (oldRow.created_by_name && !originalCreatorFromOldCopy) {
+                  originalCreatorFromOldCopy = oldRow.created_by_name;
+                }
+                // Xóa bản sao mang mã dự án cũ đã không còn tồn tại trong danh sách Dự án
+                await query(`DELETE FROM company_tasks WHERE id = $1`, [oldRow.id]);
+              }
+            }
+          }
+
+          const targetCreator = originalCreatorFromOldCopy || prjLead;
+          if (targetCreator && String(tRow.created_by_name || "").trim() !== targetCreator) {
+            // Khôi phục tên người giao gốc của dự án
+            await query(
+              `UPDATE company_tasks SET created_by_name = $1 WHERE id = $2`,
+              [targetCreator, tRow.id]
+            );
+          }
+        }
+      }
+    } catch (prjCleanErr) {
+      console.warn("Project rename task reconciliation warning:", prjCleanErr);
+    }
     const wfRows = await query(`SELECT * FROM workflow_requests WHERE steps IS NOT NULL`);
     const doneTasksRes = await query(`SELECT task_code, related_workflow_code, result FROM company_tasks WHERE status = 'DONE' AND related_workflow_code IS NOT NULL`);
     const doneTasksByWf = new Map<string, Array<{ task_code: string; result: string }>>();
@@ -697,11 +761,13 @@ export async function POST(req: NextRequest) {
         related_workflow_code,
         logs,
         result,
-        attachments
+        attachments,
+        created_by_name: requestedCreatedByName,
+        created_by: requestedCreatedBy
       } = body;
 
       // Báo cáo kết quả của công việc thuộc một phiếu phối hợp: đăng vào "Trao đổi nội bộ" của phiếu để bên yêu cầu thấy
-      const prevTask = id ? (await query("SELECT task_code, title, assignee_name, status, deadline, priority, department, result, attachments, logs, related_workflow_code, followers FROM company_tasks WHERE id = $1", [id])).rows[0] : null;
+      const prevTask = id ? (await query("SELECT task_code, title, assignee_name, status, deadline, priority, department, result, attachments, logs, related_workflow_code, followers, created_by, created_by_name FROM company_tasks WHERE id = $1", [id])).rows[0] : null;
       // Lịch sử thay đổi tự động (ai đổi gì, lúc nào): luôn lấy prevTask.logs từ CSDL làm gốc, rồi gộp thêm các comment mới từ client
       let mergedLogs: any[] = [];
       if (prevTask) {
@@ -977,11 +1043,17 @@ export async function POST(req: NextRequest) {
       };
 
       if (id) {
+        const nextTaskCode = String(task_code || prevTask?.task_code || "").trim() || null;
+        const preservedCreatedBy = prevTask?.created_by || requestedCreatedBy || me.username;
+        const preservedCreatedByName = prevTask?.created_by_name || requestedCreatedByName || me.full_name || me.username;
         await query(
           `UPDATE company_tasks
            SET title=$1, department=$2, task_category=$3, assignee_name=$4, customer_name=$5,
                priority=$6, status=$7, deadline=$8, description=$9, related_workflow_code=COALESCE($10, related_workflow_code),
-               logs=$11, result=$12, attachments=$13, related_type=$15, related_ref=$16, followers=$17::jsonb
+               logs=$11, result=$12, attachments=$13, related_type=$15, related_ref=$16, followers=$17::jsonb,
+               task_code=COALESCE($18, task_code),
+               created_by=COALESCE($19, created_by),
+               created_by_name=COALESCE($20, created_by_name)
            WHERE id=$14`,
           [
             title,
@@ -1000,15 +1072,20 @@ export async function POST(req: NextRequest) {
             id,
             relatedType,
             relatedRef,
-            JSON.stringify(normalizedFollowers)
+            JSON.stringify(normalizedFollowers),
+            nextTaskCode,
+            preservedCreatedBy,
+            preservedCreatedByName
           ]
         );
-        await postReportToWorkflow(prevTask?.task_code || task_code || null);
+        await postReportToWorkflow(nextTaskCode || prevTask?.task_code || null);
         const renamed = prevTask && String(prevTask.title || "").trim() !== String(title || "").trim();
-        await logAudit("UPDATE", "TASKS", `Cập nhật công việc ${prevTask?.task_code || ""}: ${renamed ? `"${prevTask.title}" → ` : ""}${title} (${department})${prevTask && String(prevTask.assignee_name || "") !== String(assignee_name || "") ? ` [phụ trách: ${prevTask.assignee_name || "-"} → ${assignee_name || "-"}]` : ""}`);
+        await logAudit("UPDATE", "TASKS", `Cập nhật công việc ${nextTaskCode || prevTask?.task_code || ""}: ${renamed ? `"${prevTask.title}" → ` : ""}${title} (${department})${prevTask && String(prevTask.assignee_name || "") !== String(assignee_name || "") ? ` [phụ trách: ${prevTask.assignee_name || "-"} → ${assignee_name || "-"}]` : ""}`);
       } else {
         // Chặn tạo trùng: cùng người tạo, cùng tiêu đề, cùng người phụ trách vừa tạo trong 60 giây (bấm Lưu 2 lần / mạng chậm
         // gửi lại) -> trả về việc đã có, không tạo thêm. Tạo lại có chủ đích sau đó vẫn được.
+        const effectiveCreatorUsername = String(requestedCreatedBy || me.username || "").trim();
+        const effectiveCreatorName = String(requestedCreatedByName || me.full_name || me.username || "").trim();
         const dup = (await query(
           `SELECT task_code FROM company_tasks
             WHERE created_by = $1
@@ -1016,7 +1093,7 @@ export async function POST(req: NextRequest) {
               AND COALESCE(TRIM(assignee_name), '') = COALESCE(TRIM($3), '')
               AND created_at > CURRENT_TIMESTAMP - INTERVAL '60 seconds'
             ORDER BY id DESC LIMIT 1`,
-          [me.username, String(title || ""), String(assignee_name || "")]
+          [effectiveCreatorUsername, String(title || ""), String(assignee_name || "")]
         )).rows[0];
         if (dup) {
           return NextResponse.json({ success: true, duplicate: true, task: { task_code: dup.task_code } });
@@ -1043,8 +1120,8 @@ export async function POST(req: NextRequest) {
             JSON.stringify(logs || []),
             result || "",
             JSON.stringify(attachments || []),
-            me.username,
-            me.full_name || me.username,
+            effectiveCreatorUsername,
+            effectiveCreatorName,
             relatedType,
             relatedRef,
             JSON.stringify(normalizedFollowers)
