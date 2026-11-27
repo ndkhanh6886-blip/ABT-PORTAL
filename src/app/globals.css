@@ -2374,4 +2374,49 @@ html.dark {
 .flex > button:not(.flex-1):not(.flex-2):not(.grow):not(.w-full):not(.truncate),
 .inline-flex > button:not(.flex-1):not(.flex-2):not(.grow):not(.w-full):not(.truncate) {
   flex-shrink: 0;
-}
+}
+/* ==========================================================================
+   STATUS BADGE TONES (factory/ui.tsx StatusBadge)
+   Real hex values on purpose: orange-* / indigo-* are remapped to the brand blue in @theme,
+   and the light-mode overrides above target Tailwind class names, not these classes.
+   A dot + text keeps the state readable without relying on colour alone.
+   ========================================================================== */
+.status-badge {
+  --tone-bg: #f1f5f9;
+  --tone-fg: #475569;
+  --tone-line: #cbd5e1;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  padding: 1px 8px;
+  border-radius: 9999px;
+  border: 1px solid var(--tone-line);
+  background-color: var(--tone-bg);
+  color: var(--tone-fg);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.status-badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background-color: currentColor;
+  flex-shrink: 0;
+}
+.status-badge.tone-success { --tone-bg: #ecfdf3; --tone-fg: #067647; --tone-line: #a6e9c5; }
+.status-badge.tone-info    { --tone-bg: #eaf5fd; --tone-fg: #02659a; --tone-line: #b3dcf5; }
+.status-badge.tone-pending { --tone-bg: #fffbeb; --tone-fg: #92400e; --tone-line: #fde68a; }
+.status-badge.tone-review  { --tone-bg: #f5f3ff; --tone-fg: #5b21b6; --tone-line: #ddd6fe; }
+.status-badge.tone-hold    { --tone-bg: #fff4ed; --tone-fg: #b93815; --tone-line: #fdc9a8; }
+.status-badge.tone-danger  { --tone-bg: #fff1f2; --tone-fg: #b42335; --tone-line: #fecdd3; }
+
+html.dark .status-badge                { --tone-bg: #1e293b; --tone-fg: #cbd5e1; --tone-line: #334155; }
+html.dark .status-badge.tone-success   { --tone-bg: rgba(16, 185, 129, 0.14); --tone-fg: #6ee7b7; --tone-line: rgba(16, 185, 129, 0.35); }
+html.dark .status-badge.tone-info      { --tone-bg: rgba(14, 165, 233, 0.14); --tone-fg: #7dd3fc; --tone-line: rgba(14, 165, 233, 0.35); }
+html.dark .status-badge.tone-pending   { --tone-bg: rgba(245, 158, 11, 0.14); --tone-fg: #fcd34d; --tone-line: rgba(245, 158, 11, 0.35); }
+html.dark .status-badge.tone-review    { --tone-bg: rgba(139, 92, 246, 0.16); --tone-fg: #c4b5fd; --tone-line: rgba(139, 92, 246, 0.4); }
+html.dark .status-badge.tone-hold      { --tone-bg: rgba(249, 115, 22, 0.15); --tone-fg: #fdba74; --tone-line: rgba(249, 115, 22, 0.4); }
+html.dark .status-badge.tone-danger    { --tone-bg: rgba(244, 63, 94, 0.14); --tone-fg: #fda4af; --tone-line: rgba(244, 63, 94, 0.4); }
