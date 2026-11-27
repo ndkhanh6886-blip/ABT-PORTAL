@@ -2887,7 +2887,7 @@ export function ApplicationFullABT() {
                         >
                             <Wrench className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                             <span>Bảo trì &amp; Dịch vụ KH (FSE)</span>
-                            <span className="px-1.5 py-0.5 text-[9px] rounded-full bg-amber-500/20 text-amber-300 font-extrabold border border-amber-500/30">Mới</span>
+                            <span className="px-1.5 py-0.5 text-[11px] rounded-full bg-amber-500/20 text-amber-300 font-extrabold border border-amber-500/30">Mới</span>
                         </button>
                         <button
                             onClick={() => setActiveTab("techcare")}
@@ -2982,19 +2982,19 @@ export function ApplicationFullABT() {
                                                 <div className="flex items-center gap-2 mt-1">
                                                     <span className="text-[10px] text-slate-500 font-medium">Trạng thái phê duyệt:</span>
                                                     {activePlan.status === "Approved" ? (
-                                                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold text-[9px] uppercase tracking-wider">
+                                                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold text-[11px] uppercase tracking-wider">
                                                             Đã phê duyệt (Bởi {activePlan.approvedBy})
                                                         </span>
                                                     ) : activePlan.status === "Pending Approval" ? (
-                                                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-bold text-[9px] uppercase tracking-wider">
+                                                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-bold text-[11px] uppercase tracking-wider">
                                                             Chờ phê duyệt
                                                         </span>
                                                     ) : activePlan.status === "Needs Revision" ? (
-                                                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 font-bold text-[9px] uppercase tracking-wider">
+                                                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 font-bold text-[11px] uppercase tracking-wider">
                                                             Yêu cầu điều chỉnh
                                                         </span>
                                                     ) : (
-                                                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-500/10 text-slate-400 border border-slate-500/20 font-bold text-[9px] uppercase tracking-wider">
+                                                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-500/10 text-slate-400 border border-slate-500/20 font-bold text-[11px] uppercase tracking-wider">
                                                             Bản nháp (Draft)
                                                         </span>
                                                     )}
@@ -3071,12 +3071,12 @@ export function ApplicationFullABT() {
                                                                             <Trash2 className="w-3.5 h-3.5" />
                                                                         </button>
                                                                     )}
-                                                                    <div className="flex items-center gap-1 text-[9px] font-bold text-slate-400">
+                                                                    <div className="flex items-center gap-1 text-[11px] font-bold text-slate-400">
                                                                         <Activity className="w-3 h-3 text-primary" />
                                                                         <span className="truncate max-w-[85%]">{item.project_name}</span>
                                                                     </div>
                                                                     <strong className="text-white font-semibold leading-relaxed block">{item.task_name}</strong>
-                                                                    <div className="flex justify-between items-center text-[9px] text-slate-500 font-bold border-t border-white/5 pt-2 mt-1">
+                                                                    <div className="flex justify-between items-center text-[11px] text-slate-500 font-bold border-t border-white/5 pt-2 mt-1">
                                                                         <span className="text-primary">{item.time_slot.split(" ")[0]}</span>
                                                                         <span className="text-emerald-400 italic">Mục tiêu: {item.target_metric || "TBD"}</span>
                                                                     </div>
@@ -3274,7 +3274,7 @@ export function ApplicationFullABT() {
                                         <div className="overflow-x-auto">
                                             <table className="w-full text-left border-collapse text-xs">
                                                 <thead>
-                                                    <tr className="border-b border-white/10 text-slate-500 font-bold uppercase text-[9px] tracking-wider">
+                                                    <tr className="border-b border-white/10 text-slate-500 font-bold uppercase text-[11px] tracking-wider">
                                                         <th className="pb-3 pr-2">Mã thiết bị</th>
                                                         <th className="pb-3 pr-2">Tên thiết bị</th>
                                                         <th className="pb-3 pr-2">Model</th>
@@ -3294,7 +3294,7 @@ export function ApplicationFullABT() {
                                                             <td className="py-3 text-slate-400 pr-2">{item.location}</td>
                                                             <td className="py-3">
                                                                 <span className={cn(
-                                                                    "text-[8px] font-bold uppercase px-2 py-0.5 rounded border",
+                                                                    "text-[11px] font-bold uppercase px-2 py-0.5 rounded border",
                                                                     item.status === "Available" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-rose-500/10 text-rose-400 border-rose-500/20"
                                                                 )}>
                                                                     {item.status === "Available" ? "Trống" : "Đang dùng"}
@@ -3304,14 +3304,14 @@ export function ApplicationFullABT() {
                                                                 {/* Người đăng ký thiết bị cũng sửa được (nhập sai tên / serial); xóa chỉ Quản trị viên */}
                                                                 <button
                                                                     onClick={() => handleStartEditEquipment(item)}
-                                                                    className="text-[9px] font-bold text-primary hover:underline"
+                                                                    className="text-[11px] font-bold text-primary hover:underline"
                                                                 >
                                                                     ✎ Sửa
                                                                 </button>
                                                                 {isAdmin && (
                                                                     <button
                                                                         onClick={() => handleDeleteEquipment(item.id, item.name)}
-                                                                        className="text-[9px] font-bold text-rose-400 hover:underline"
+                                                                        className="text-[11px] font-bold text-rose-400 hover:underline"
                                                                     >
                                                                         Xóa
                                                                     </button>
@@ -3342,13 +3342,13 @@ export function ApplicationFullABT() {
                                                             <strong className="text-white font-bold">{b.eqName}</strong>
                                                             <button
                                                                 onClick={() => handleReleaseEquipment(b.id, b.eqName)}
-                                                                className="text-[9px] font-bold text-rose-400 hover:text-rose-300"
+                                                                className="text-[11px] font-bold text-rose-400 hover:text-rose-300"
                                                             >
                                                                 Giải Phóng
                                                             </button>
                                                         </div>
                                                         <p className="text-slate-400 font-medium">{b.purpose}</p>
-                                                        <div className="flex justify-between text-[9px] text-slate-500 font-bold border-t border-white/5 pt-2">
+                                                        <div className="flex justify-between text-[11px] text-slate-500 font-bold border-t border-white/5 pt-2">
                                                             <span>{b.user}</span>
                                                             <span>{b.date} ({b.slot.split(" ")[0]})</span>
                                                         </div>
@@ -3370,7 +3370,7 @@ export function ApplicationFullABT() {
                                     <div className="overflow-x-auto">
                                         <table className="w-full text-left border-collapse text-xs text-slate-300">
                                             <thead>
-                                                <tr className="border-b border-white/10 text-slate-500 font-bold uppercase text-[9px] tracking-wider">
+                                                <tr className="border-b border-white/10 text-slate-500 font-bold uppercase text-[11px] tracking-wider">
                                                      <th className="pb-3 pr-2">Mã danh mục</th>
                                                      <th className="pb-3 pr-2">Tên hóa chất / vật tư</th>
                                                      <th className="pb-3 pr-2">Phân loại</th>
@@ -3393,15 +3393,15 @@ export function ApplicationFullABT() {
                                                             <td className="py-3 text-slate-400 pr-2">{m.supplier}</td>
                                                             <td className="py-3 pr-2">
                                                                 <strong className="text-white">{m.qty} {m.unit}</strong>
-                                                                <span className="text-[9px] text-slate-500 ml-1">(min: {m.minQty})</span>
+                                                                <span className="text-[11px] text-slate-500 ml-1">(min: {m.minQty})</span>
                                                             </td>
                                                             <td className="py-3">
                                                                 {isLow ? (
-                                                                    <span className="inline-flex items-center gap-1 text-[8px] font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20 uppercase">
+                                                                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20 uppercase">
                                                                         Cảnh báo tồn
                                                                     </span>
                                                                 ) : (
-                                                                    <span className="inline-flex items-center gap-1 text-[8px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 uppercase">
+                                                                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 uppercase">
                                                                         An toàn
                                                                     </span>
                                                                 )}
@@ -3409,7 +3409,7 @@ export function ApplicationFullABT() {
                                                             <td className="py-3 text-right space-x-2 whitespace-nowrap">
                                                                 <button
                                                                     onClick={() => handleStartDirectExportMaterial(m)}
-                                                                    className="text-[9px] font-bold text-emerald-400 hover:underline"
+                                                                    className="text-[11px] font-bold text-emerald-400 hover:underline"
                                                                 >
                                                                     Xuất kho
                                                                 </button>
@@ -3417,13 +3417,13 @@ export function ApplicationFullABT() {
                                                                     <>
                                                                         <button
                                                                             onClick={() => handleStartEditMaterial(m)}
-                                                                            className="text-[9px] font-bold text-primary hover:underline"
+                                                                            className="text-[11px] font-bold text-primary hover:underline"
                                                                         >
                                                                             Sửa
                                                                         </button>
                                                                         <button
                                                                             onClick={() => handleDeleteMaterial(m.id, m.name)}
-                                                                            className="text-[9px] font-bold text-rose-400 hover:underline"
+                                                                            className="text-[11px] font-bold text-rose-400 hover:underline"
                                                                         >
                                                                             Xóa
                                                                         </button>
@@ -3525,7 +3525,7 @@ export function ApplicationFullABT() {
                                                             <td className="py-4 px-4 text-center font-bold text-white whitespace-nowrap">{s.qty} {s.unit}</td>
                                                             <td className="py-4 px-4 whitespace-nowrap">
                                                                 <span className={cn(
-                                                                    "px-2.5 py-0.5 rounded-full text-[9px] font-bold border",
+                                                                    "px-2.5 py-0.5 rounded-full text-[11px] font-bold border",
                                                                     s.status === "Đạt tiêu chuẩn" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : s.status === "Cần kiểm tra lại" ? "bg-amber-500/10 text-amber-400 border-amber-500/20" : "bg-rose-500/10 text-rose-400 border-rose-500/20"
                                                                 )}>
                                                                     {s.status}
@@ -3814,7 +3814,7 @@ export function ApplicationFullABT() {
 
                                                     {/* Status Badge */}
                                                     <div className="flex items-center gap-2 shrink-0">
-                                                        <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold border ${
+                                                        <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
                                                             isCompleted ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" :
                                                             isInProgress ? "bg-primary/10 text-primary border-primary/20" :
                                                             "bg-slate-800 text-slate-400 border-slate-700"
@@ -4108,12 +4108,12 @@ export function ApplicationFullABT() {
                                                         <div className="flex items-center gap-1.5">
                                                             <span className="text-xs font-black text-white">{iss.id}</span>
                                                             {(iss.isCustomerPortal || iss.id.startsWith("INC-")) && (
-                                                                <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-teal-950 text-teal-300 border border-teal-800">
+                                                                <span className="px-1.5 py-0.5 rounded text-[11px] font-bold bg-teal-950 text-teal-300 border border-teal-800">
                                                                     Portal Viện
                                                                 </span>
                                                             )}
                                                         </div>
-                                                        <span className={cn("px-2 py-0.5 rounded-full text-[9px] font-bold border", badgeColor)}>
+                                                        <span className={cn("px-2 py-0.5 rounded-full text-[11px] font-bold border", badgeColor)}>
                                                             {badgeText}
                                                         </span>
                                                     </div>
@@ -4253,7 +4253,7 @@ export function ApplicationFullABT() {
                                                                     </div>
                                                                     <span 
                                                                         className={cn(
-                                                                            "text-[9px] mt-2 font-bold tracking-tight whitespace-nowrap hidden sm:inline-block",
+                                                                            "text-[11px] mt-2 font-bold tracking-tight whitespace-nowrap hidden sm:inline-block",
                                                                             isCurrentlyViewed ? "text-primary underline decoration-2 underline-offset-4" :
                                                                             isActive ? "text-primary" : 
                                                                             isClickable ? "text-slate-300 hover:text-white" : "text-slate-500"
@@ -4655,7 +4655,7 @@ export function ApplicationFullABT() {
                                                                                             )}
                                                                                             <div className="min-w-0 flex-1">
                                                                                                 <p className="text-[11px] text-slate-200 truncate font-semibold" title={file.name}>{file.name}</p>
-                                                                                                <p className="text-[9px] text-slate-500 font-bold uppercase">{file.size ? `${(file.size / 1024).toFixed(1)} KB` : "N/A"}</p>
+                                                                                                <p className="text-[11px] text-slate-500 font-bold uppercase">{file.size ? `${(file.size / 1024).toFixed(1)} KB` : "N/A"}</p>
                                                                                             </div>
                                                                                         </div>
                                                                                         <button
@@ -4761,7 +4761,7 @@ export function ApplicationFullABT() {
                                                                                             )}
                                                                                             <div className="min-w-0 flex-1">
                                                                                                 <p className="text-[11px] text-slate-200 truncate font-semibold" title={file.name}>{file.name}</p>
-                                                                                                <p className="text-[9px] text-slate-500 font-bold uppercase">{file.size ? `${(file.size / 1024).toFixed(1)} KB` : "N/A"}</p>
+                                                                                                <p className="text-[11px] text-slate-500 font-bold uppercase">{file.size ? `${(file.size / 1024).toFixed(1)} KB` : "N/A"}</p>
                                                                                             </div>
                                                                                         </div>
                                                                                         <button
@@ -5155,7 +5155,7 @@ export function ApplicationFullABT() {
                                                                 <div className="overflow-x-auto rounded-2xl border border-white/5 bg-slate-950/20">
                                                                     <table className="w-full border-collapse text-left text-xs">
                                                                         <thead>
-                                                                            <tr className="bg-slate-950/60 border-b border-white/5 text-slate-500 font-bold uppercase text-[9px] tracking-wider">
+                                                                            <tr className="bg-slate-950/60 border-b border-white/5 text-slate-500 font-bold uppercase text-[11px] tracking-wider">
                                                                                 <th className="p-3">Nguyên nhân kỹ thuật</th>
                                                                                 <th className="p-3 w-[150px]">Trạng thái</th>
                                                                                 <th className="p-3">Lý do loại trừ / Kiểm chứng</th>
@@ -5303,7 +5303,7 @@ export function ApplicationFullABT() {
                                                                             <div className="p-4 rounded-2xl bg-slate-950/40/45 border border-white/5 space-y-4">
                                                                                 <h4 className="text-xs font-bold text-white uppercase tracking-wider text-primary flex items-center justify-between">
                                                                                     <span>Công việc kiểm chứng liên kết</span>
-                                                                                    <span className="text-[9px] bg-slate-900 border border-white/5 text-slate-400 px-2 py-0.5 rounded-full lowercase font-mono">ID: {activeIssue.experimentTaskId}</span>
+                                                                                    <span className="text-[11px] bg-slate-900 border border-white/5 text-slate-400 px-2 py-0.5 rounded-full lowercase font-mono">ID: {activeIssue.experimentTaskId}</span>
                                                                                 </h4>
 
                                                                                 {linkedTask ? (
@@ -5314,7 +5314,7 @@ export function ApplicationFullABT() {
                                                                                                 <p className="text-[10px] text-slate-400 mt-0.5">Phân loại: <span className="text-slate-300 font-medium">{linkedTask.category}</span></p>
                                                                                             </div>
                                                                                             <span className={cn(
-                                                                                                "px-2 py-0.5 rounded-full text-[9px] font-bold border",
+                                                                                                "px-2 py-0.5 rounded-full text-[11px] font-bold border",
                                                                                                 linkedTask.status === "Hoàn thành" ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" :
                                                                                                 linkedTask.status === "Đang thực hiện" ? "bg-primary/10 border-primary/20 text-primary" :
                                                                                                 "bg-slate-800 border-slate-700 text-slate-400"
@@ -5593,7 +5593,7 @@ export function ApplicationFullABT() {
                                                                                                         {file.name}
                                                                                                     </span>
                                                                                                 )}
-                                                                                                <p className="text-[9px] text-slate-500 font-bold uppercase">{file.size ? `${(file.size / 1024).toFixed(1)} KB` : "N/A"}</p>
+                                                                                                <p className="text-[11px] text-slate-500 font-bold uppercase">{file.size ? `${(file.size / 1024).toFixed(1)} KB` : "N/A"}</p>
                                                                                             </div>
                                                                                         </div>
                                                                                     );
@@ -5634,7 +5634,7 @@ export function ApplicationFullABT() {
                                                                                                         {file.name}
                                                                                                     </span>
                                                                                                 )}
-                                                                                                <p className="text-[9px] text-slate-500 font-bold uppercase">{file.size ? `${(file.size / 1024).toFixed(1)} KB` : "N/A"}</p>
+                                                                                                <p className="text-[11px] text-slate-500 font-bold uppercase">{file.size ? `${(file.size / 1024).toFixed(1)} KB` : "N/A"}</p>
                                                                                             </div>
                                                                                         </div>
                                                                                     );
@@ -5907,17 +5907,17 @@ export function ApplicationFullABT() {
                             
                             <div className="flex gap-2 flex-wrap mt-2">
                                 {activeTaskDetail.productCode && (
-                                    <div className="text-[9px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 w-fit">
+                                    <div className="text-[11px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 w-fit">
                                         Mã sản phẩm: {activeTaskDetail.productCode}
                                     </div>
                                 )}
                                 {activeTaskDetail.productLot && (
-                                    <div className="text-[9px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 w-fit">
+                                    <div className="text-[11px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 w-fit">
                                         Lô sản phẩm: {activeTaskDetail.productLot}
                                     </div>
                                 )}
                                 {activeTaskDetail.deviceInfo && (
-                                    <div className="text-[9px] font-bold text-violet-400 bg-violet-500/10 px-2 py-0.5 rounded border border-violet-500/20 w-fit">
+                                    <div className="text-[11px] font-bold text-violet-400 bg-violet-500/10 px-2 py-0.5 rounded border border-violet-500/20 w-fit">
                                         Thiết bị: {activeTaskDetail.deviceInfo}
                                     </div>
                                 )}
@@ -6052,7 +6052,7 @@ export function ApplicationFullABT() {
                                                                 {newTaskLogAttachment}
                                                             </p>
                                                             {newTaskLogFileSize && (
-                                                                <p className="text-[9px] text-slate-400 font-mono">{newTaskLogFileSize}</p>
+                                                                <p className="text-[11px] text-slate-400 font-mono">{newTaskLogFileSize}</p>
                                                             )}
                                                         </div>
                                                     </div>
@@ -6119,7 +6119,7 @@ export function ApplicationFullABT() {
                                             const logFileSize = isObj ? log.size : null;
                                             return (
                                                 <div key={logId} className="p-3 rounded-xl bg-white/5 border border-white/5 space-y-1 group">
-                                                    <div className="flex justify-between items-center text-[9px] text-slate-500 font-bold">
+                                                    <div className="flex justify-between items-center text-[11px] text-slate-500 font-bold">
                                                         <span>Ngày: {logDate}</span>
                                                         <div className="flex items-center gap-2">
                                                             {logAttachment && (
@@ -6133,7 +6133,7 @@ export function ApplicationFullABT() {
                                                                 >
                                                                     <Paperclip className="w-3 h-3 shrink-0" />
                                                                     <span className="truncate">{logAttachment}</span>
-                                                                    {logFileSize && <span className="text-[8px] text-slate-500">({logFileSize})</span>}
+                                                                    {logFileSize && <span className="text-[11px] text-slate-500">({logFileSize})</span>}
                                                                 </a>
                                                             )}
                                                             <button
@@ -6161,31 +6161,31 @@ export function ApplicationFullABT() {
                                         <div className="flex items-center gap-2">
                                             <span className="text-[10px] text-slate-500 font-bold uppercase">Trạng thái hồ sơ:</span>
                                             {activeTaskDetail.techStatus === "Report Approved" ? (
-                                                <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                                <span className="px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                                                     Đã duyệt Báo cáo (Hoàn tất)
                                                 </span>
                                             ) : activeTaskDetail.techStatus === "Pending Report" ? (
-                                                <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse">
+                                                <span className="px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse">
                                                     Chờ duyệt Báo cáo
                                                 </span>
                                             ) : activeTaskDetail.techStatus === "Needs Revision Report" ? (
-                                                <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                                                <span className="px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider bg-rose-500/10 text-rose-400 border border-rose-500/20">
                                                     Báo cáo cần hiệu chỉnh
                                                 </span>
                                             ) : activeTaskDetail.techStatus === "Protocol Approved" ? (
-                                                <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-sky-500/10 text-sky-400 border border-sky-500/20">
+                                                <span className="px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider bg-sky-500/10 text-sky-400 border border-sky-500/20">
                                                     Đề cương đã duyệt (Nhập kết quả)
                                                 </span>
                                             ) : activeTaskDetail.techStatus === "Pending Protocol" ? (
-                                                <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse">
+                                                <span className="px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse">
                                                     Chờ duyệt Đề cương
                                                 </span>
                                             ) : activeTaskDetail.techStatus === "Needs Revision Protocol" ? (
-                                                <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                                                <span className="px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider bg-rose-500/10 text-rose-400 border border-rose-500/20">
                                                     Đề cương cần hiệu chỉnh
                                                 </span>
                                             ) : (
-                                                <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-slate-500/10 text-slate-400 border border-slate-500/20">
+                                                <span className="px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider bg-slate-500/10 text-slate-400 border border-slate-500/20">
                                                     Đề cương: Nháp (Draft)
                                                 </span>
                                             )}
@@ -6392,7 +6392,7 @@ export function ApplicationFullABT() {
                                                         <select
                                                             id="invSelectMat"
                                                             disabled={isProtocolLocked}
-                                                            className="bg-slate-950 border border-white/10 rounded-lg px-2 py-1 text-[9px] text-slate-300 max-w-[150px] outline-none cursor-pointer focus:ring-1 focus:ring-primary/50 disabled:opacity-55"
+                                                            className="bg-slate-950 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-slate-300 max-w-[150px] outline-none cursor-pointer focus:ring-1 focus:ring-primary/50 disabled:opacity-55"
                                                             defaultValue=""
                                                             onChange={(e) => {
                                                                 const matId = e.target.value;
@@ -6975,7 +6975,7 @@ export function ApplicationFullABT() {
                             <div className="text-right space-y-1">
                                 <p className="text-slate-400">Tồn kho hiện tại: <strong className="text-white text-sm">{activeSampleDetail.qty} {activeSampleDetail.unit}</strong></p>
                                 <span className={cn(
-                                    "inline-block px-2.5 py-0.5 rounded-full text-[9px] font-bold border",
+                                    "inline-block px-2.5 py-0.5 rounded-full text-[11px] font-bold border",
                                     activeSampleDetail.status === "Đạt tiêu chuẩn" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-rose-500/10 text-rose-400 border-rose-500/20"
                                 )}>
                                     QC: {activeSampleDetail.status}
@@ -6986,19 +6986,19 @@ export function ApplicationFullABT() {
                         {/* Metadata grid */}
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4 rounded-2xl bg-white/5 border border-white/5">
                             <div>
-                                <p className="text-slate-500 font-bold uppercase text-[9px]">Gene Đích</p>
+                                <p className="text-slate-500 font-bold uppercase text-[11px]">Gene Đích</p>
                                 <p className="text-slate-200 font-medium mt-0.5">{activeSampleDetail.target || "N/A"}</p>
                             </div>
                             <div>
-                                <p className="text-slate-500 font-bold uppercase text-[9px]">Nồng Độ</p>
+                                <p className="text-slate-500 font-bold uppercase text-[11px]">Nồng Độ</p>
                                 <p className="text-slate-200 font-medium mt-0.5">{activeSampleDetail.concentration || "N/A"}</p>
                             </div>
                             <div>
-                                <p className="text-slate-500 font-bold uppercase text-[9px]">Nhiệt Độ Trữ</p>
+                                <p className="text-slate-500 font-bold uppercase text-[11px]">Nhiệt Độ Trữ</p>
                                 <p className="text-slate-200 font-medium mt-0.5">{activeSampleDetail.temp}</p>
                             </div>
                             <div>
-                                <p className="text-slate-500 font-bold uppercase text-[9px]">Vị Trí Tủ</p>
+                                <p className="text-slate-500 font-bold uppercase text-[11px]">Vị Trí Tủ</p>
                                 <p className="text-slate-200 font-medium mt-0.5">{activeSampleDetail.location}</p>
                             </div>
                         </div>
@@ -7014,14 +7014,14 @@ export function ApplicationFullABT() {
                                         <button
                                             type="button"
                                             onClick={() => setIsProliferateModalOpen(true)}
-                                            className="px-2.5 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-lg text-[9px] uppercase transition-colors"
+                                            className="px-2.5 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-lg text-[11px] uppercase transition-colors"
                                         >
                                             + Tăng sinh
                                         </button>
                                         <button
                                             type="button"
                                             onClick={() => setIsConsumeModalOpen(true)}
-                                            className="px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/10 font-bold rounded-lg text-[9px] uppercase transition-colors"
+                                            className="px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/10 font-bold rounded-lg text-[11px] uppercase transition-colors"
                                         >
                                             - Chạy Test
                                         </button>
@@ -7031,7 +7031,7 @@ export function ApplicationFullABT() {
                                 <div className="space-y-3 max-h-[220px] overflow-y-auto pr-2 custom-scrollbar">
                                     {activeSampleDetail.growthHistory && activeSampleDetail.growthHistory.map((hist: any) => (
                                         <div key={hist.id} className="p-3.5 rounded-xl bg-white/5 border border-white/5 space-y-1">
-                                            <div className="flex justify-between text-[9px] font-bold">
+                                            <div className="flex justify-between text-[11px] font-bold">
                                                 <span className={cn(
                                                     "px-1.5 py-0.5 rounded",
                                                     hist.action === "Tăng sinh" ? "bg-emerald-500/10 text-emerald-400" : hist.action === "Sử dụng" ? "bg-rose-500/10 text-rose-400" : "bg-slate-500/10 text-slate-400"
@@ -7059,8 +7059,8 @@ export function ApplicationFullABT() {
                                                     <p className="text-[10px] text-slate-500 mt-0.5">Bệnh nhân: {spec.patientId} | Vị trí: {spec.location}</p>
                                                 </div>
                                                 <div className="text-right space-y-0.5">
-                                                    <span className="text-[9px] font-bold text-slate-300">{spec.volume} ml</span>
-                                                    <p className="text-[8px] font-semibold text-emerald-400 uppercase tracking-wider">{spec.result}</p>
+                                                    <span className="text-[11px] font-bold text-slate-300">{spec.volume} ml</span>
+                                                    <p className="text-[11px] font-semibold text-emerald-400 uppercase tracking-wider">{spec.result}</p>
                                                 </div>
                                             </div>
                                         ))
@@ -7692,7 +7692,7 @@ export function ApplicationFullABT() {
                                                 <div className="flex items-center justify-between gap-2">
                                                     <span className="font-mono font-bold text-xs text-teal-300">{p.code}</span>
                                                     {p.category && (
-                                                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
+                                                        <span className="text-[11px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
                                                             {p.category}
                                                         </span>
                                                     )}
@@ -7882,7 +7882,7 @@ export function ApplicationFullABT() {
                                                 <div className="flex items-center justify-between gap-2">
                                                     <span className="font-bold text-xs text-slate-200">{c.name}</span>
                                                     {c.customer_code && (
-                                                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 font-mono">
+                                                        <span className="text-[11px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 font-mono">
                                                             {c.customer_code}
                                                         </span>
                                                     )}
@@ -8005,12 +8005,12 @@ function TaskCard({ task, onMove, onDelete, onOpenDetails }: TaskCardProps) {
     return (
         <div className="p-5 rounded-2xl bg-slate-900/60 border border-white/5 hover:border-white/10 transition-all shadow group relative">
             {(task.isFromSales || task.salesReqId || task.salesCustomerName) && (
-                <div className="mb-2 bg-purple-100 dark:bg-purple-500/15 border border-purple-300 dark:border-purple-500/30 text-purple-800 dark:text-purple-300 px-2.5 py-1 rounded-lg text-[9px] font-bold flex items-center justify-between shadow-sm">
+                <div className="mb-2 bg-purple-100 dark:bg-purple-500/15 border border-purple-300 dark:border-purple-500/30 text-purple-800 dark:text-purple-300 px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center justify-between shadow-sm">
                     <span className="flex items-center gap-1 truncate">
                         <Sparkles className="w-3 h-3 text-purple-600 dark:text-purple-400 shrink-0" />
                         Từ Sales: <strong className="text-purple-950 dark:text-white">{task.salesCustomerName || task.salesRepName}</strong>
                     </span>
-                    <span className="bg-purple-200 dark:bg-purple-900/80 px-1.5 py-0.5 rounded text-[8px] font-mono text-purple-900 dark:text-purple-200 uppercase tracking-wider font-bold">Phối hợp</span>
+                    <span className="bg-purple-200 dark:bg-purple-900/80 px-1.5 py-0.5 rounded text-[11px] font-mono text-purple-900 dark:text-purple-200 uppercase tracking-wider font-bold">Phối hợp</span>
                 </div>
             )}
             <div className="flex justify-between items-start gap-4">
@@ -8078,12 +8078,12 @@ function TaskCard({ task, onMove, onDelete, onOpenDetails }: TaskCardProps) {
             <p className="text-[10px] text-slate-500 mt-2 line-clamp-2 leading-relaxed">{task.desc}</p>
 
             {task.productLot && (
-                <div className="mt-2 text-[9px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 w-fit">
+                <div className="mt-2 text-[11px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 w-fit">
                     Lô sản phẩm: {task.productLot}
                 </div>
             )}
             {task.deviceInfo && (
-                <div className="mt-2 text-[9px] font-bold text-violet-400 bg-violet-500/10 px-2 py-0.5 rounded border border-violet-500/20 w-fit">
+                <div className="mt-2 text-[11px] font-bold text-violet-400 bg-violet-500/10 px-2 py-0.5 rounded border border-violet-500/20 w-fit">
                     Thiết bị: {task.deviceInfo}
                 </div>
             )}
@@ -8091,7 +8091,7 @@ function TaskCard({ task, onMove, onDelete, onOpenDetails }: TaskCardProps) {
             {/* Checklist progress bar */}
             {Array.isArray(task.checklist) && task.checklist.length > 0 && (
                 <div className="mt-3 space-y-1">
-                    <div className="flex justify-between text-[8px] font-bold text-slate-500">
+                    <div className="flex justify-between text-[11px] font-bold text-slate-500">
                         <span>Tiến độ checklist</span>
                         <span>
                             {task.checklist.filter((c: any) => c && c.done).length}/{task.checklist.length}
@@ -8106,12 +8106,12 @@ function TaskCard({ task, onMove, onDelete, onOpenDetails }: TaskCardProps) {
                 </div>
             )}
 
-            <div className="flex justify-between items-center mt-4 border-t border-white/5 pt-3 text-[9px] font-bold">
+            <div className="flex justify-between items-center mt-4 border-t border-white/5 pt-3 text-[11px] font-bold">
                 <div className="flex items-center gap-1.5 text-slate-400">
                     <User className="w-3 h-3 text-primary shrink-0" />
                     <span>{task.assignee}</span>
                 </div>
-                <span className={cn("px-2 py-0.5 rounded border uppercase text-[8px] tracking-wide", getPriorityColor(task.priority))}>
+                <span className={cn("px-2 py-0.5 rounded border uppercase text-[11px] tracking-wide", getPriorityColor(task.priority))}>
                     {task.priority === "Critical" ? "Khẩn cấp" : task.priority === "High" ? "Cao" : task.priority === "Medium" ? "Trung bình" : "Thấp"}
                 </span>
             </div>

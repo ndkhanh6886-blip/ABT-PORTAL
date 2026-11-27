@@ -1070,7 +1070,7 @@ export const HospitalBiddingManagement: React.FC = () => {
                                 </div>
                               )}
                               {tender.bankGuaranteeReturned !== undefined && (
-                                <div className={`font-mono text-[9px] ${tender.bankGuaranteeReturned ? "text-emerald-500" : "text-amber-500"}`}>
+                                <div className={`font-mono text-[11px] ${tender.bankGuaranteeReturned ? "text-emerald-500" : "text-amber-500"}`}>
                                   {tender.bankGuaranteeReturned ? "✓ Đã thu hồi BL" : "⚠ Chưa thu hồi BL"}
                                 </div>
                               )}
@@ -1210,7 +1210,7 @@ export const HospitalBiddingManagement: React.FC = () => {
                                   handleUpdateTenderStatus(tender.id, newSt);
                                 }
                               }}
-                              className="px-1.5 py-1 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-lg text-[9px] font-semibold text-slate-600 dark:text-slate-300 cursor-pointer"
+                              className="px-1.5 py-1 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-lg text-[11px] font-semibold text-slate-600 dark:text-slate-300 cursor-pointer"
                               title="Tùy chọn đổi trạng thái nhanh"
                             >
                               <option value="CHUAN_BI_HSDT">1. Soạn HSDT</option>

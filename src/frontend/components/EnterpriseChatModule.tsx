@@ -1659,7 +1659,7 @@ export const EnterpriseChatModule: React.FC = () => {
                 );
               })}
               {extraCount > 0 && (
-                <span className="w-4 h-4 rounded-full bg-slate-700 text-white text-[8px] font-bold flex items-center justify-center ring-1 ring-white dark:ring-slate-900 shrink-0">
+                <span className="min-w-[18px] h-[18px] px-0.5 rounded-full bg-slate-700 text-white text-[11px] font-bold flex items-center justify-center ring-1 ring-white dark:ring-slate-900 shrink-0">
                   +{extraCount}
                 </span>
               )}
@@ -2462,7 +2462,7 @@ export const EnterpriseChatModule: React.FC = () => {
                         )}
                       </div>
                       {isSplitActive ? (
-                        <span className="text-[9px] px-1.5 py-0.2 rounded-full font-bold bg-purple-600 text-white shrink-0">
+                        <span className="text-[11px] px-1.5 py-0.2 rounded-full font-bold bg-purple-600 text-white shrink-0">
                           Song song
                         </span>
                       ) : !isActive && unreadCount > 0 ? (
@@ -2739,7 +2739,7 @@ export const EnterpriseChatModule: React.FC = () => {
                       </h3>
                     )}
                     {splitChannel && (
-                      <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                      <span className="text-[11px] font-bold px-1.5 py-0.2 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
                         Khung 1
                       </span>
                     )}
@@ -2992,7 +2992,7 @@ export const EnterpriseChatModule: React.FC = () => {
                                 {formatVietnamTime(msg?.created_at)}
                               </span>
                               {msg.is_pinned && (
-                                <span className="flex items-center gap-0.5 text-[8px] font-bold text-amber-600 bg-amber-100 dark:bg-amber-950 px-1 rounded">
+                                <span className="flex items-center gap-0.5 text-[11px] font-bold text-amber-600 bg-amber-100 dark:bg-amber-950 px-1 rounded">
                                   <Pin className="w-2 h-2" /> Ghim
                                 </span>
                               )}
@@ -3130,7 +3130,7 @@ export const EnterpriseChatModule: React.FC = () => {
 
                           {/* Distinct Department / Role Badge for Group Chats */}
                           {!isDirectChat && (msg?.sender_dept || msg?.sender_role) && (
-                            <span className={`text-[9px] px-1.5 py-0.2 rounded-md font-semibold ${senderPalette.badge}`}>
+                            <span className={`text-[11px] px-1.5 py-0.2 rounded-md font-semibold ${senderPalette.badge}`}>
                               {msg.sender_dept || msg.sender_role}
                             </span>
                           )}
@@ -3140,7 +3140,7 @@ export const EnterpriseChatModule: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => handleOpenDirectMessage(msg.sender_name)}
-                              className="text-[9px] text-indigo-500 hover:text-indigo-700 hover:underline flex items-center gap-0.5 cursor-pointer font-medium"
+                              className="text-[11px] text-indigo-500 hover:text-indigo-700 hover:underline flex items-center gap-0.5 cursor-pointer font-medium"
                               title={`Nhắn tin riêng 1-1 với ${msg.sender_name}`}
                             >
                               💬 Chat 1-1
@@ -3155,7 +3155,7 @@ export const EnterpriseChatModule: React.FC = () => {
                           </span>
 
                           {msg.is_pinned && (
-                            <span className="flex items-center gap-0.5 text-[8px] font-bold text-amber-600 bg-amber-100 dark:bg-amber-950 px-1 rounded">
+                            <span className="flex items-center gap-0.5 text-[11px] font-bold text-amber-600 bg-amber-100 dark:bg-amber-950 px-1 rounded">
                               <Pin className="w-2 h-2" /> Ghim
                             </span>
                           )}
@@ -3377,7 +3377,7 @@ export const EnterpriseChatModule: React.FC = () => {
                               {att.name}
                             </div>
                             {att.size && (
-                              <div className="text-[9px] text-slate-400">
+                              <div className="text-[11px] text-slate-400">
                                 {Math.round(att.size / 1024)} KB
                               </div>
                             )}
@@ -3665,17 +3665,17 @@ export const EnterpriseChatModule: React.FC = () => {
                     <h4 className="font-extrabold text-xs text-slate-900 dark:text-white truncate">
                       {splitChannel.channel_type === "DIRECT" ? splitRecipientProfile?.name : `#${splitChannel.name}`}
                     </h4>
-                    <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-purple-600 text-white">
+                    <span className="text-[11px] font-bold px-1.5 py-0.2 rounded bg-purple-600 text-white">
                       Song song
                     </span>
                     {splitChannel.channel_type === "DIRECT" && splitRecipientProfile?.name ? (
-                      <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full ${
+                      <span className={`text-[11px] font-bold px-1.5 py-0.2 rounded-full ${
                         getUserPresence(splitRecipientProfile.name).badgeClass
                       }`}>
                         {getUserPresence(splitRecipientProfile.name).label}
                       </span>
                     ) : (
-                      <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                      <span className="text-[11px] font-bold px-1.5 py-0.2 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                         👥 {Array.isArray(splitChannel.members) ? splitChannel.members.length : 0} thành viên
                       </span>
                     )}
@@ -3743,7 +3743,7 @@ export const EnterpriseChatModule: React.FC = () => {
                   <React.Fragment key={msg.id || index}>
                     {isNewDay && dateLabel && (
                       <div className="flex items-center justify-center my-2 select-none">
-                        <span className="px-2.5 py-0.5 rounded-full text-[9px] font-semibold bg-slate-200/70 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-300/40 dark:border-slate-700/60 shadow-2xs">
+                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-200/70 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-300/40 dark:border-slate-700/60 shadow-2xs">
                           📅 {dateLabel}
                         </span>
                       </div>
@@ -3754,12 +3754,12 @@ export const EnterpriseChatModule: React.FC = () => {
                         highlightedMessageId === msg.id ? "ring-2 ring-purple-500 rounded-2xl bg-purple-50/20 p-1.5" : ""
                       }`}
                     >
-                      <div className="flex items-center gap-1.5 text-[9px] text-slate-400 mb-0.5 px-1">
+                      <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mb-0.5 px-1">
                         <span className={`font-bold ${isMe ? "text-purple-600 dark:text-purple-400" : isDirect ? "text-slate-700 dark:text-slate-200" : palette.text}`}>
                           {isMe ? `Bạn (${currentUserName})` : msg.sender_name}
                         </span>
                         {!isMe && !isDirect && (msg.sender_dept || msg.sender_role) && (
-                          <span className={`text-[8px] px-1 py-0.1 rounded font-semibold ${palette.badge}`}>
+                          <span className={`text-[11px] px-1 py-0.1 rounded font-semibold ${palette.badge}`}>
                             {msg.sender_dept || msg.sender_role}
                           </span>
                         )}
@@ -3871,7 +3871,7 @@ export const EnterpriseChatModule: React.FC = () => {
               {/* Attachments preview in split view */}
               {splitInputAttachments.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-50 dark:bg-slate-950/60 rounded-lg">
-                  <span className="text-[9px] font-bold text-slate-500 px-1">
+                  <span className="text-[11px] font-bold text-slate-500 px-1">
                     📎 {splitInputAttachments.length}/{MAX_CHAT_ATTACHMENTS_PER_MESSAGE}:
                   </span>
                   {splitInputAttachments.map((att, idx) => (
@@ -4003,11 +4003,11 @@ export const EnterpriseChatModule: React.FC = () => {
                           <span className="truncate font-semibold block leading-tight">
                             {isMe ? `${memName} (Bạn)` : memName}
                           </span>
-                          <span className={`text-[9px] font-bold px-1.5 rounded-full ${getUserPresence(memName).badgeClass}`}>
+                          <span className={`text-[11px] font-bold px-1.5 rounded-full ${getUserPresence(memName).badgeClass}`}>
                             {getUserPresence(memName).status === "online" ? "Online" : getUserPresence(memName).label}
                           </span>
                         </div>
-                        <span className="text-[9px] text-slate-400 block truncate">
+                        <span className="text-[11px] text-slate-400 block truncate">
                           {p?.department || "ABT"}
                         </span>
                       </div>
@@ -4618,7 +4618,7 @@ export const EnterpriseChatModule: React.FC = () => {
                       <div>
                         <span className="font-bold">{memName} {isMe && "(Bạn)"}</span>
                         {isCreator && (
-                          <span className="ml-1.5 text-[9px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-700 font-bold">
+                          <span className="ml-1.5 text-[11px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-700 font-bold">
                             Trưởng nhóm
                           </span>
                         )}

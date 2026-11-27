@@ -1156,7 +1156,7 @@ export function DeliverySlipListView({
                                           <b className={bq.status === "DELIVERED" ? "text-emerald-300" : "text-amber-300"}>
                                             {bq.qty}
                                           </b>
-                                          {lot && <span className="text-[9px] text-slate-500"> · {lot}</span>}
+                                          {lot && <span className="text-[11px] text-slate-500"> · {lot}</span>}
                                         </>
                                       ) : (
                                         <span className="text-slate-600">—</span>
@@ -1223,11 +1223,11 @@ export function DeliverySlipListView({
                               <span className="font-mono font-bold text-white shrink-0">{slip.id}</span>
                               <span className="font-mono text-slate-400 shrink-0">{fmtVN(date)}</span>
                               {isFuture && (
-                                <span className="text-[9px] px-1 rounded bg-sky-950 text-sky-300 border border-sky-700/60">
+                                <span className="text-[11px] px-1 rounded bg-sky-950 text-sky-300 border border-sky-700/60">
                                   Lịch giao
                                 </span>
                               )}
-                              <span className={`text-[9px] px-1.5 py-0.5 rounded-full border font-bold shrink-0 ${STATUS_META[st].cls}`}>
+                              <span className={`text-[11px] px-1.5 py-0.5 rounded-full border font-bold shrink-0 ${STATUS_META[st].cls}`}>
                                 {STATUS_META[st].label}
                               </span>
                               <span className="text-slate-400 truncate min-w-0 flex-1">
@@ -1423,7 +1423,7 @@ export function DeliverySlipListView({
                         <div className="font-mono text-[11px] text-slate-400 mt-0.5">
                           {fmtVN(date)}
                           {isFuture && (
-                            <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-700/60">
+                            <span className="ml-1.5 text-[11px] px-1.5 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-700/60">
                               Lịch giao
                             </span>
                           )}

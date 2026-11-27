@@ -1543,7 +1543,7 @@ export const ProcurementModule: React.FC = () => {
           openPRByCode(prc);
         }}
         title={`PR nguồn của dòng này – bấm để mở ${prc}`}
-        className="px-1 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[9px] font-mono font-bold hover:bg-indigo-100 hover:underline cursor-pointer whitespace-nowrap"
+        className="px-1 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[11px] font-mono font-bold hover:bg-indigo-100 hover:underline cursor-pointer whitespace-nowrap"
       >
         {prc}
       </button>
@@ -4813,7 +4813,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                     e.stopPropagation();
                                     handleEditPO(po);
                                   }}
-                                  className="px-1.5 py-0.5 rounded text-[9px] font-sans font-bold bg-amber-50 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 hover:bg-amber-100 cursor-pointer"
+                                  className="px-1.5 py-0.5 rounded text-[11px] font-sans font-bold bg-amber-50 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 hover:bg-amber-100 cursor-pointer"
                                   title="Đơn giá trên Phiếu Nhập Kho đang khác với Đơn giá PO. Bấm để mở PO đối chiếu / điều chỉnh nếu cần."
                                 >
                                   ⚠️ Lệch giá PNK • Đối chiếu
@@ -4977,7 +4977,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                               {stepIdx + 1}. {cfg.label}
                                             </span>
                                             {cfg.isImport && (
-                                              <span className="ml-1 text-[9px] px-1 rounded bg-cyan-100 dark:bg-cyan-950 text-cyan-700 dark:text-cyan-400 font-bold">
+                                              <span className="ml-1 text-[11px] px-1 rounded bg-cyan-100 dark:bg-cyan-950 text-cyan-700 dark:text-cyan-400 font-bold">
                                                 Nhập khẩu
                                               </span>
                                             )}
@@ -6090,14 +6090,14 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             Giá PNK: {formatCurrency(dbt.inboundReceivedValue)}
                           </div>
                         )}
-                        {dbt.unreceived > 0.5 && dbt.received > 0.5 && <div className="text-[9px] text-slate-400">chưa nhận {formatCurrency(dbt.unreceived)}</div>}
+                        {dbt.unreceived > 0.5 && dbt.received > 0.5 && <div className="text-[11px] text-slate-400">chưa nhận {formatCurrency(dbt.unreceived)}</div>}
                       </td>
                       <td className="py-3 px-2.5 font-mono font-bold text-right text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
                         {formatCurrency(paid)}
                       </td>
                       <td className="py-3 px-2.5 font-mono font-bold text-right text-rose-600 dark:text-rose-400 whitespace-nowrap">
                         {remaining > 0.5 ? formatCurrency(remaining) : <span className="text-slate-400 font-normal">—</span>}
-                        {dbt.prepaid > 0.5 && <div className="text-[9px] text-violet-600 font-normal">trả trước {formatCurrency(dbt.prepaid)}</div>}
+                        {dbt.prepaid > 0.5 && <div className="text-[11px] text-violet-600 font-normal">trả trước {formatCurrency(dbt.prepaid)}</div>}
                       </td>
                       <td className="py-3 px-2.5 text-center whitespace-nowrap">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${badge.cls}`}>
@@ -6105,7 +6105,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                         </span>
                         {dbt.hasInboundPriceDiff && (
                           <div className="mt-1">
-                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800" title="Đơn giá nhập kho (PNK) khác với đơn giá PO">
+                            <span className="px-1.5 py-0.5 rounded text-[11px] font-bold bg-amber-50 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800" title="Đơn giá nhập kho (PNK) khác với đơn giá PO">
                               ⚠️ Lệch giá PNK
                             </span>
                           </div>
@@ -6816,7 +6816,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 className="flex-1 min-w-0 px-2 py-1 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 text-[11px] text-slate-700 dark:text-slate-200 font-mono focus:border-orange-500 focus:outline-none"
                               />
                               {srcPR && (
-                                <span className="shrink-0 text-[9px] font-mono font-bold px-1 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800" title="Đề xuất mua (PR) nguồn của dòng này">
+                                <span className="shrink-0 text-[11px] font-mono font-bold px-1 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800" title="Đề xuất mua (PR) nguồn của dòng này">
                                   {srcPR}
                                 </span>
                               )}
@@ -6911,7 +6911,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               onChange={(e) => updatePOLine(idx, { quantity: Math.max(1, receivedQty, parseInt(e.target.value) || 1) })}
                               className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-center text-xs"
                             />
-                            {receivedQty > 0 && <div className="text-[9px] text-teal-600 text-center mt-0.5">đã nhập {receivedQty}</div>}
+                            {receivedQty > 0 && <div className="text-[11px] text-teal-600 text-center mt-0.5">đã nhập {receivedQty}</div>}
                           </td>
                           <td className="p-2">
                             <input
@@ -7733,7 +7733,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                   <span className="font-mono font-bold text-orange-600">{l.product_code}</span>
                                   {l.unit && <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-semibold">{l.unit}</span>}
                                   {!isSelected && (
-                                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-semibold">
+                                    <span className="text-[11px] px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-semibold">
                                       Chưa về đợt này
                                     </span>
                                   )}
@@ -8539,7 +8539,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 <div className="text-[10px] text-slate-400 mt-0.5">{p.specification}</div>
                               )}
                               {p.notes && (
-                                <div className="text-[9px] text-amber-500 italic mt-0.5">{p.notes}</div>
+                                <div className="text-[11px] text-amber-500 italic mt-0.5">{p.notes}</div>
                               )}
                             </td>
 
@@ -8586,7 +8586,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 <span>{history.length > 0 ? `${history.length} lần đổi giá` : "Xem lịch sử"}</span>
                               </button>
                               {p.last_updated_at && (
-                                <div className="text-[9px] text-slate-400 mt-1 font-mono">
+                                <div className="text-[11px] text-slate-400 mt-1 font-mono">
                                   {formatVNDate(p.last_updated_at)}
                                 </div>
                               )}
@@ -9898,7 +9898,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 <td className="p-2 border-r border-slate-200 dark:border-slate-700 font-medium">
                                   <div>{it.product_name}</div>
                                   {it.is_custom && (
-                                    <span className="inline-block mt-0.5 px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-400">
+                                    <span className="inline-block mt-0.5 px-1.5 py-0.2 rounded text-[11px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-400">
                                       Hàng mới mua lần đầu
                                     </span>
                                   )}
@@ -10350,7 +10350,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                     <td className="py-3 px-3 text-center" onClick={(e) => e.stopPropagation()}>
                                       {isAlreadyPo ? (
                                         <span
-                                          className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+                                          className="px-1.5 py-0.5 rounded text-[11px] font-mono font-bold bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
                                           title={`Đã lập PO: ${it.po_code || itemPOInfo.poCode}`}
                                         >
                                           ĐÃ LÊN PO

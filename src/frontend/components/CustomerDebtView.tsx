@@ -285,7 +285,7 @@ export function CustomerDebtView({
                                   {o.order_code}
                                   {o.payments.length > 0 && (
                                     <button type="button" onClick={(e) => { e.stopPropagation(); setHistoryOrder(historyOrder === o.order_code ? null : o.order_code); }}
-                                      className="block text-[9px] text-sky-400 hover:text-sky-300 underline cursor-pointer">
+                                      className="block text-[11px] text-sky-400 hover:text-sky-300 underline cursor-pointer">
                                       {o.payments.filter((p) => !p.voided).length} lần thu{o.payments.some((p) => p.voided) ? ` (+${o.payments.filter((p) => p.voided).length} đã hủy)` : ""}
                                     </button>
                                   )}
@@ -317,13 +317,13 @@ export function CustomerDebtView({
                                 <td className="p-1.5 text-right font-mono text-emerald-300">
                                   <div>{fmt(o.paid)}</div>
                                   {(o.prepaid || 0) > 0.5 && (
-                                    <div className="text-[9px] font-bold text-purple-300">💜 Cọc: {fmt(o.prepaid || 0)}</div>
+                                    <div className="text-[11px] font-bold text-purple-300">💜 Cọc: {fmt(o.prepaid || 0)}</div>
                                   )}
                                 </td>
                                 <td className="p-1.5 text-right font-mono font-bold text-amber-300">
                                   <div>{fmt(o.outstanding)}</div>
                                   {o.outstanding <= 0.5 && (o.total - o.paid) > 0.5 && (
-                                    <div className="text-[9px] font-normal text-slate-400" title="Giá trị SO còn lại chưa thu">
+                                    <div className="text-[11px] font-normal text-slate-400" title="Giá trị SO còn lại chưa thu">
                                       Còn SO: {fmt(o.total - o.paid)}
                                     </div>
                                   )}

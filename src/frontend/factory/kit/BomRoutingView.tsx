@@ -5484,7 +5484,7 @@ export function BomRoutingView({
                                       <div className="flex flex-wrap justify-center gap-2">
                                         {Array.from({ length: renderFirstCount }).map((_, idx) => (
                                           <div key={idx} className="flex flex-col items-center gap-0.5">
-                                            <span className="text-[9px] font-mono text-emerald-400/90">
+                                            <span className="text-[11px] font-mono text-emerald-400/90">
                                               Nhãn #{idx + 1}/{firstUnits}
                                             </span>
                                             <VisualLabelCanvas
@@ -5516,7 +5516,7 @@ export function BomRoutingView({
                                       <div className="flex flex-wrap justify-center gap-2">
                                         {Array.from({ length: renderExtCount }).map((_, idx) => (
                                           <div key={idx} className="flex flex-col items-center gap-0.5">
-                                            <span className="text-[9px] font-mono text-teal-400/90">
+                                            <span className="text-[11px] font-mono text-teal-400/90">
                                               Nhãn #{idx + 1}/{extUnits}
                                             </span>
                                             <VisualLabelCanvas

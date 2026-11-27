@@ -214,7 +214,7 @@ export function LotStockView({ productCode: initialProductCode = "" }: { product
                 <td className="p-2.5 text-slate-800 dark:text-slate-100 font-medium">{l.product_name}</td>
                 <td className="p-2.5 text-slate-600 dark:text-slate-300">{l.manufacturer || "—"}</td>
                 <td className="p-2.5 text-slate-600 dark:text-slate-300">{l.category || "—"}</td>
-                <td className="p-2.5 font-mono">{l.lot_number}{l.is_quarantined && <span className="ml-1 text-[9px] px-1 rounded bg-rose-100 text-rose-700 font-bold">Cách ly</span>}</td>
+                <td className="p-2.5 font-mono">{l.lot_number}{l.is_quarantined && <span className="ml-1 text-[11px] px-1 rounded bg-rose-100 text-rose-700 font-bold">Cách ly</span>}</td>
                 <td className="p-2.5 font-mono">{fmtVN(l.exp)}</td>
                 <td className={`p-2.5 text-center font-mono font-bold ${l.klass === "expired" ? "text-rose-600" : l.klass === "near" ? "text-amber-600" : "text-slate-600 dark:text-slate-300"}`}>{l.left ?? "—"}</td>
                 <td className="p-2.5 text-center"><span className={`px-2 py-0.5 rounded-full border text-[10px] font-bold ${CLASS_META[l.klass as ExpiryClass].cls}`}>{CLASS_META[l.klass as ExpiryClass].label}</span></td>

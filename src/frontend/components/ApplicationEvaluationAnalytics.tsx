@@ -476,7 +476,7 @@ export const ApplicationEvaluationAnalytics: React.FC<ApplicationEvaluationAnaly
                                 <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block leading-tight">
                                     Tuần {selectedWeek}
                                 </span>
-                                <span className="text-[9px] text-slate-400 dark:text-slate-500 block leading-tight">
+                                <span className="text-[11px] text-slate-400 dark:text-slate-500 block leading-tight">
                                     {getWeekDateRange(selectedWeek)}
                                 </span>
                             </div>

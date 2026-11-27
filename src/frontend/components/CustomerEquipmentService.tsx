@@ -1346,7 +1346,7 @@ export const CustomerEquipmentService: React.FC = () => {
                       return (
                         <div key={chk.key} className="flex items-start gap-1.5 text-slate-700 dark:text-slate-300">
                           <span
-                            className={`w-3.5 h-3.5 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 mt-0.5 ${
+                            className={`w-4 h-4 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 mt-0.5 ${
                               isDone ? "bg-emerald-500 text-white" : "bg-slate-300 dark:bg-slate-700 text-slate-600"
                             }`}
                           >
@@ -1462,7 +1462,7 @@ export const CustomerEquipmentService: React.FC = () => {
                         <td className="py-3 px-4">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="font-bold text-slate-900 dark:text-white">{dev.deviceName}</span>
-                            <span className={`px-1.5 py-0.2 rounded text-[9px] font-extrabold border ${catConfig.badgeColor}`}>
+                            <span className={`px-1.5 py-0.2 rounded text-[11px] font-extrabold border ${catConfig.badgeColor}`}>
                               {catConfig.name}
                             </span>
                           </div>
