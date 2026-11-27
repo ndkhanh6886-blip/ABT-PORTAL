@@ -452,7 +452,7 @@ export async function recordEventSparePart(tx: Tx, actor: AuthzActor, eventId: s
     await runTransition(tx, stockDocumentMachine, actor, { id: doc.id, action: "post", expectedVersion: doc.version }, { trusted: true });
     stockDocId = doc.id;
     stockDocCode = doc.code;
-    pickedLotCodes = plan.picks.map((p) => p.candidate.lot_code).filter(Boolean);
+    pickedLotCodes = plan.picks.map((p) => p.candidate.lot_code).filter((c): c is string => Boolean(c));
   }
 
   const currentParts: any[] = Array.isArray(ev.parts_json) ? [...ev.parts_json] : [];
