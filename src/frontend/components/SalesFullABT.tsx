@@ -2275,6 +2275,18 @@ export function SalesFullABT() {
                             } else if (dbDel === "DELIVERED" && (merged.status === "Partially Delivered" || merged.status === "Approved" || merged.status === "Ready")) {
                                 merged.status = "Delivered";
                             }
+                            // Nhãn "Chưa lưu vào CSDL" kẹt trên đơn đã có trong CSDL mà không thể lưu lại nữa (đã giao / đã xuất HĐ /
+                            // đã hủy, máy chủ khóa sửa): bỏ nhãn — đơn trong CSDL là bản chính (SO26-TS-1106)
+                            const dbInvSt = String(raw.invoice_status || "").toUpperCase();
+                            const dbLocked = ["DELIVERED", "PARTIALLY_DELIVERED", "CANCELLED"].includes(dbDel)
+                                || Boolean(String(raw.invoice_no || "").trim())
+                                || ["ISSUED", "INVOICED", "PARTIALLY_INVOICED"].includes(dbInvSt);
+                            if (merged.dbSyncError && dbLocked) {
+                                merged.dbSyncError = undefined;
+                                if (String(merged.creditBlockReason || "").startsWith("Đơn chưa được lưu vào CSDL")) {
+                                    merged.creditBlockReason = raw.is_credit_blocked ? (raw.credit_block_reason ?? "") : "";
+                                }
+                            }
                         }
                         orderMap.set(k, merged);
                     });
@@ -14157,11 +14169,23 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             }).then(async res => {
                 if (!res.ok) {
                     const err = await res.json().catch(() => ({}));
+                    if (res.status === 409 && err?.locked) {
+                        // Đơn CÓ trong CSDL nhưng đã giao / đã xuất HĐ nên bị khóa sửa: trả đơn về như trước khi sửa và bỏ nhãn
+                        // "Chưa lưu vào CSDL" (trước đây nhãn này kẹt mãi: chỉ gỡ khi lưu thành công, mà đơn khóa thì không lưu được)
+                        setFactoryOrders(prev => prev.map(o => o.id === editingFactoryOrderId ? {
+                            ...(targetOrdBeforeEdit || o),
+                            dbSyncError: undefined,
+                            creditBlockReason: String((targetOrdBeforeEdit || o).creditBlockReason || "").startsWith("Đơn chưa được lưu vào CSDL") ? undefined : (targetOrdBeforeEdit || o).creditBlockReason
+                        } : o));
+                        showToast(`${err.error || `Đơn ${editingFactoryOrderId} đã bị khóa sửa.`} Thay đổi vừa rồi KHÔNG được lưu; đơn giữ nguyên như trên máy chủ.`, "error");
+                        return;
+                    }
                     showToast(`Không lưu được thay đổi đơn ${editingFactoryOrderId} vào CSDL: ${err.error || res.status}`, "error");
                     if (res.status !== 409) markOrderNotSaved(editingFactoryOrderId as string, err.error || `Lỗi ${res.status}`);
                     return;
                 }
                 const json = await res.json().catch(() => ({}));
+                showToast(`Đã lưu thay đổi đơn ${editingFactoryOrderId} vào máy chủ.`, "success");
                 // Lưu lại thành công: bỏ cảnh báo "chưa lưu vào CSDL" (đơn chưa có trong CSDL được tạo ở lần lưu này)
                 setFactoryOrders(prev => prev.map(o => (o.id === editingFactoryOrderId && o.dbSyncError) ? {
                     ...o,
@@ -14186,7 +14210,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 showToast(`Không kết nối được máy chủ khi lưu đơn ${editingFactoryOrderId}.`, "error");
             });
 
-            showToast(`Đã cập nhật yêu cầu đặt hàng ${editingFactoryOrderId} thành công!`, "success");
+            // Kết quả lưu (thành công / bị từ chối) báo sau khi máy chủ trả lời — trước đây báo "thành công" ngay cả khi
+            // máy chủ từ chối (đơn đã giao), người dùng thấy cùng lúc 2 thông báo trái ngược
+            showToast(`Đang lưu thay đổi đơn ${editingFactoryOrderId}...`, "info");
             setIsFactoryOrderModalOpen(false);
             setEditingFactoryOrderId(null);
             resetFactoryOrderInvoiceAndExtraStates();
