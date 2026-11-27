@@ -2901,6 +2901,11 @@ export const UnifiedWorkspace: React.FC = () => {
   const [isPulseBarExpanded, setIsPulseBarExpanded] = useState<boolean>(false);
   const [isActivityNotifExpanded, setIsActivityNotifExpanded] = useState<boolean>(false);
   const [showStaffQuickChips, setShowStaffQuickChips] = useState<boolean>(false);
+  const [doneTimeRange, setDoneTimeRange] = useState<"TODAY" | "7D" | "30D" | "ALL">("7D");
+  const [doneCompactMode, setDoneCompactMode] = useState<boolean>(true);
+  const [doneColPage, setDoneColPage] = useState<number>(1);
+  const [todoColPage, setTodoColPage] = useState<number>(1);
+  const [inProgColPage, setInProgColPage] = useState<number>(1);
   const [scheduleScopeMode, setScheduleScopeMode] = useState<"person" | "dept">("person");
   const [scheduleWorkSearch, setScheduleWorkSearch] = useState<string>("");
   const [showTechWeeklyPlans, setShowTechWeeklyPlans] = useState<boolean>(true);
@@ -12244,8 +12249,94 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               })}
             </div>
           )}
-          {viewMode === "kanban" ? (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {viewMode === "kanban" ? (() => {
+            const parseTaskRefIsoDate = (t: any): string => {
+              const extractIso = (raw: any): string => {
+                if (!raw) return "";
+                const s = String(raw).trim();
+                const isoMatch = s.match(/(\d{4}-\d{2}-\d{2})/);
+                if (isoMatch) return isoMatch[1];
+                const vnMatch = s.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+                if (vnMatch) return `${vnMatch[3]}-${vnMatch[2]}-${vnMatch[1]}`;
+                return "";
+              };
+              if (t.completed_at) {
+                const d = extractIso(t.completed_at);
+                if (d) return d;
+              }
+              if (Array.isArray(t.logs) && t.logs.length > 0) {
+                for (let i = t.logs.length - 1; i >= 0; i--) {
+                  const l = t.logs[i];
+                  const d = extractIso(l?.time || l?.date || l?.created_at);
+                  if (d) return d;
+                }
+              }
+              return (
+                extractIso(t.updated_at) ||
+                extractIso(t.deadline) ||
+                extractIso(t.created_at) ||
+                ""
+              );
+            };
+
+            const daysDiffFromToday = (isoDate: string): number => {
+              if (!isoDate || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return 999;
+              const todayMs = new Date(`${currentTodayIso}T00:00:00`).getTime();
+              const targetMs = new Date(`${isoDate}T00:00:00`).getTime();
+              if (Number.isNaN(todayMs) || Number.isNaN(targetMs)) return 999;
+              return Math.floor((todayMs - targetMs) / 86400000);
+            };
+
+            const todoAll = filteredTasks.filter((t) => t.status === "TODO");
+            const inProgAll = filteredTasks.filter((t) => t.status === "IN_PROGRESS");
+            const doneAll = [...filteredTasks.filter((t) => t.status === "DONE")].sort((a, b) => {
+              const da = parseTaskRefIsoDate(a);
+              const db = parseTaskRefIsoDate(b);
+              if (da !== db) return db.localeCompare(da);
+              return Number(b.id || 0) - Number(a.id || 0);
+            });
+
+            const doneTodayList = doneAll.filter((t) => {
+              const d = daysDiffFromToday(parseTaskRefIsoDate(t));
+              return d <= 0;
+            });
+            const done7dList = doneAll.filter((t) => {
+              const d = daysDiffFromToday(parseTaskRefIsoDate(t));
+              return d <= 7;
+            });
+            const done30dList = doneAll.filter((t) => {
+              const d = daysDiffFromToday(parseTaskRefIsoDate(t));
+              return d <= 30;
+            });
+
+            const doneScopedList =
+              doneTimeRange === "TODAY"
+                ? doneTodayList
+                : doneTimeRange === "7D"
+                ? done7dList
+                : doneTimeRange === "30D"
+                ? done30dList
+                : doneAll;
+
+            const archivedDoneCount = Math.max(0, doneAll.length - doneScopedList.length);
+
+            const ACTIVE_COL_SIZE = 8;
+            const DONE_COL_SIZE = doneCompactMode ? 8 : 5;
+
+            const todoTotalPages = Math.max(1, Math.ceil(todoAll.length / ACTIVE_COL_SIZE));
+            const safeTodoPage = Math.min(todoColPage, todoTotalPages);
+            const todoPaged = todoAll.slice((safeTodoPage - 1) * ACTIVE_COL_SIZE, safeTodoPage * ACTIVE_COL_SIZE);
+
+            const inProgTotalPages = Math.max(1, Math.ceil(inProgAll.length / ACTIVE_COL_SIZE));
+            const safeInProgPage = Math.min(inProgColPage, inProgTotalPages);
+            const inProgPaged = inProgAll.slice((safeInProgPage - 1) * ACTIVE_COL_SIZE, safeInProgPage * ACTIVE_COL_SIZE);
+
+            const doneTotalPages = Math.max(1, Math.ceil(doneScopedList.length / DONE_COL_SIZE));
+            const safeDonePage = Math.min(doneColPage, doneTotalPages);
+            const donePaged = doneScopedList.slice((safeDonePage - 1) * DONE_COL_SIZE, safeDonePage * DONE_COL_SIZE);
+
+            return (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
               {/* Column 1: TODO */}
               <div className="bg-slate-100/70 dark:bg-slate-900/60 rounded-2xl p-3.5 border border-slate-200/80 dark:border-slate-800">
                 <div className="flex items-center justify-between pb-2.5 border-b border-slate-200 dark:border-slate-800 mb-3">
@@ -12257,7 +12348,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   </div>
                   <div className="flex items-center gap-1.5">
                     {(() => {
-                      const todoOverdue = filteredTasks.filter((t) => t.status === "TODO" && getTaskDeadlineAlert(t, currentTodayIso).isOverdue).length;
+                      const todoOverdue = todoAll.filter((t) => getTaskDeadlineAlert(t, currentTodayIso).isOverdue).length;
                       if (todoOverdue === 0) return null;
                       return (
                         <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-600 text-white animate-pulse">
@@ -12266,31 +12357,58 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       );
                     })()}
                     <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400">
-                      {filteredTasks.filter((t) => t.status === "TODO").length}
+                      {todoAll.length}
                     </span>
                   </div>
                 </div>
 
-                <div className="space-y-2.5 min-h-[300px]">
-                  {filteredTasks
-                    .filter((t) => t.status === "TODO")
-                    .map((task) => (
-                      <TaskCard
-                        key={task.id}
-                        task={task}
-                        onStatusChange={handleQuickStatusChange}
-                        onEdit={openEditTask}
-                        onScheduleHubItem={openScheduleForHubItem}
-                        onNavigateTab={navigateToTargetTab}
-                        isReadOnlyFollower={isTaskReadOnlyForMe(task)}
-                        followersList={parseTaskFollowersList(task.followers)}
-                        isFollowedByMe={taskHasFollower(task.followers, currentStaffName)}
-                      />
-                    ))}
-                  {filteredTasks.filter((t) => t.status === "TODO").length === 0 && (
+                <div className="space-y-2.5 min-h-[260px]">
+                  {todoPaged.map((task) => (
+                    <TaskCard
+                      key={task.id}
+                      task={task}
+                      onStatusChange={handleQuickStatusChange}
+                      onEdit={openEditTask}
+                      onScheduleHubItem={openScheduleForHubItem}
+                      onNavigateTab={navigateToTargetTab}
+                      isReadOnlyFollower={isTaskReadOnlyForMe(task)}
+                      followersList={parseTaskFollowersList(task.followers)}
+                      isFollowedByMe={taskHasFollower(task.followers, currentStaffName)}
+                    />
+                  ))}
+                  {todoAll.length === 0 && (
                     <div className="text-center py-12 text-xs text-slate-400 italic">Không có công việc nào</div>
                   )}
                 </div>
+
+                {todoTotalPages > 1 && (
+                  <div className="mt-3 pt-2.5 border-t border-slate-200/80 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-500">
+                    <span>
+                      Hiển thị {(safeTodoPage - 1) * ACTIVE_COL_SIZE + 1}–{Math.min(safeTodoPage * ACTIVE_COL_SIZE, todoAll.length)} / {todoAll.length}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        disabled={safeTodoPage <= 1}
+                        onClick={() => setTodoColPage((p) => Math.max(1, p - 1))}
+                        className="px-2 py-0.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold disabled:opacity-40 cursor-pointer"
+                      >
+                        ◀
+                      </button>
+                      <span className="font-mono font-bold px-1">
+                        {safeTodoPage}/{todoTotalPages}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={safeTodoPage >= todoTotalPages}
+                        onClick={() => setTodoColPage((p) => Math.min(todoTotalPages, p + 1))}
+                        className="px-2 py-0.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold disabled:opacity-40 cursor-pointer"
+                      >
+                        ▶
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Column 2: IN_PROGRESS */}
@@ -12304,7 +12422,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   </div>
                   <div className="flex items-center gap-1.5">
                     {(() => {
-                      const inProgOverdue = filteredTasks.filter((t) => t.status === "IN_PROGRESS" && getTaskDeadlineAlert(t, currentTodayIso).isOverdue).length;
+                      const inProgOverdue = inProgAll.filter((t) => getTaskDeadlineAlert(t, currentTodayIso).isOverdue).length;
                       if (inProgOverdue === 0) return null;
                       return (
                         <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-600 text-white animate-pulse">
@@ -12313,70 +12431,210 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       );
                     })()}
                     <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400">
-                      {filteredTasks.filter((t) => t.status === "IN_PROGRESS").length}
+                      {inProgAll.length}
                     </span>
                   </div>
                 </div>
 
-                <div className="space-y-2.5 min-h-[300px]">
-                  {filteredTasks
-                    .filter((t) => t.status === "IN_PROGRESS")
-                    .map((task) => (
-                      <TaskCard
-                        key={task.id}
-                        task={task}
-                        onStatusChange={handleQuickStatusChange}
-                        onEdit={openEditTask}
-                        onScheduleHubItem={openScheduleForHubItem}
-                        onNavigateTab={navigateToTargetTab}
-                        isReadOnlyFollower={isTaskReadOnlyForMe(task)}
-                        followersList={parseTaskFollowersList(task.followers)}
-                        isFollowedByMe={taskHasFollower(task.followers, currentStaffName)}
-                      />
-                    ))}
-                  {filteredTasks.filter((t) => t.status === "IN_PROGRESS").length === 0 && (
+                <div className="space-y-2.5 min-h-[260px]">
+                  {inProgPaged.map((task) => (
+                    <TaskCard
+                      key={task.id}
+                      task={task}
+                      onStatusChange={handleQuickStatusChange}
+                      onEdit={openEditTask}
+                      onScheduleHubItem={openScheduleForHubItem}
+                      onNavigateTab={navigateToTargetTab}
+                      isReadOnlyFollower={isTaskReadOnlyForMe(task)}
+                      followersList={parseTaskFollowersList(task.followers)}
+                      isFollowedByMe={taskHasFollower(task.followers, currentStaffName)}
+                    />
+                  ))}
+                  {inProgAll.length === 0 && (
                     <div className="text-center py-12 text-xs text-slate-400 italic">Không có công việc nào</div>
                   )}
                 </div>
+
+                {inProgTotalPages > 1 && (
+                  <div className="mt-3 pt-2.5 border-t border-slate-200/80 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-500">
+                    <span>
+                      Hiển thị {(safeInProgPage - 1) * ACTIVE_COL_SIZE + 1}–{Math.min(safeInProgPage * ACTIVE_COL_SIZE, inProgAll.length)} / {inProgAll.length}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        disabled={safeInProgPage <= 1}
+                        onClick={() => setInProgColPage((p) => Math.max(1, p - 1))}
+                        className="px-2 py-0.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold disabled:opacity-40 cursor-pointer"
+                      >
+                        ◀
+                      </button>
+                      <span className="font-mono font-bold px-1">
+                        {safeInProgPage}/{inProgTotalPages}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={safeInProgPage >= inProgTotalPages}
+                        onClick={() => setInProgColPage((p) => Math.min(inProgTotalPages, p + 1))}
+                        className="px-2 py-0.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold disabled:opacity-40 cursor-pointer"
+                      >
+                        ▶
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* Column 3: DONE */}
+              {/* Column 3: DONE (Có bộ lọc thời gian lưu trữ + Chế độ thẻ thu gọn + Phân trang trong cột) */}
               <div className="bg-slate-100/70 dark:bg-slate-900/60 rounded-2xl p-3.5 border border-slate-200/80 dark:border-slate-800">
-                <div className="flex items-center justify-between pb-2.5 border-b border-slate-200 dark:border-slate-800 mb-3">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                    <span className="text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                      Đã Hoàn Tất
-                    </span>
+                <div className="pb-2.5 border-b border-slate-200 dark:border-slate-800 mb-2.5 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                      <span className="text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                        Đã Hoàn Tất
+                      </span>
+                      <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400">
+                        {doneScopedList.length}
+                        {doneTimeRange !== "ALL" && doneAll.length !== doneScopedList.length ? ` / ${doneAll.length}` : ""}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDoneCompactMode((v) => !v);
+                        setDoneColPage(1);
+                      }}
+                      className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
+                        doneCompactMode
+                          ? "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
+                          : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                      }`}
+                      title="Chuyển đổi giữa chế độ Thẻ thu gọn 2 dòng và Thẻ đầy đủ chi tiết"
+                    >
+                      {doneCompactMode ? "📐 Thẻ gọn (Bấm xem đủ)" : "📋 Thẻ đầy đủ"}
+                    </button>
                   </div>
-                  <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400">
-                    {filteredTasks.filter((t) => t.status === "DONE").length}
-                  </span>
+
+                  {/* Quick Time-Range Filter Strip for Completed Tasks */}
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {([
+                      { id: "TODAY" as const, label: "Hôm nay", count: doneTodayList.length },
+                      { id: "7D" as const, label: "7 ngày qua", count: done7dList.length },
+                      { id: "30D" as const, label: "30 ngày", count: done30dList.length },
+                      { id: "ALL" as const, label: "📦 Tất cả", count: doneAll.length },
+                    ]).map(( tab ) => {
+                      const active = doneTimeRange === tab.id;
+                      return (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => {
+                            setDoneTimeRange(tab.id);
+                            setDoneColPage(1);
+                          }}
+                          className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer border ${
+                            active
+                              ? "bg-emerald-600 text-white border-emerald-600 shadow-2xs"
+                              : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-emerald-300"
+                          }`}
+                        >
+                          {tab.label} ({tab.count})
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
-                <div className="space-y-2.5 min-h-[300px]">
-                  {filteredTasks
-                    .filter((t) => t.status === "DONE")
-                    .map((task) => (
-                      <TaskCard
-                        key={task.id}
-                        task={task}
-                        onStatusChange={handleQuickStatusChange}
-                        onEdit={openEditTask}
-                        onScheduleHubItem={openScheduleForHubItem}
-                        onNavigateTab={navigateToTargetTab}
-                        isReadOnlyFollower={isTaskReadOnlyForMe(task)}
-                        followersList={parseTaskFollowersList(task.followers)}
-                        isFollowedByMe={taskHasFollower(task.followers, currentStaffName)}
-                      />
-                    ))}
-                  {filteredTasks.filter((t) => t.status === "DONE").length === 0 && (
-                    <div className="text-center py-12 text-xs text-slate-400 italic">Không có công việc nào</div>
+                <div className="space-y-2 min-h-[260px]">
+                  {donePaged.map((task) => (
+                    <TaskCard
+                      key={task.id}
+                      task={task}
+                      compactDone={doneCompactMode}
+                      onStatusChange={handleQuickStatusChange}
+                      onEdit={openEditTask}
+                      onScheduleHubItem={openScheduleForHubItem}
+                      onNavigateTab={navigateToTargetTab}
+                      isReadOnlyFollower={isTaskReadOnlyForMe(task)}
+                      followersList={parseTaskFollowersList(task.followers)}
+                      isFollowedByMe={taskHasFollower(task.followers, currentStaffName)}
+                    />
+                  ))}
+                  {doneScopedList.length === 0 && (
+                    <div className="text-center py-10 px-3 text-xs text-slate-400 space-y-2">
+                      <p className="italic">
+                        {doneAll.length > 0
+                          ? `Không có công việc hoàn tất trong khoảng thời gian này.`
+                          : "Không có công việc nào"}
+                      </p>
+                      {archivedDoneCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDoneTimeRange("ALL");
+                            setDoneColPage(1);
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 text-[11px] font-bold hover:bg-emerald-100 cursor-pointer"
+                        >
+                          📦 Xem {archivedDoneCount} công việc đã hoàn tất trong lịch sử
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
+
+                {(doneTotalPages > 1 || archivedDoneCount > 0) && (
+                  <div className="mt-3 pt-2.5 border-t border-slate-200/80 dark:border-slate-800 space-y-1.5 text-[11px] text-slate-500">
+                    {doneTotalPages > 1 && (
+                      <div className="flex items-center justify-between">
+                        <span>
+                          Hiển thị {(safeDonePage - 1) * DONE_COL_SIZE + 1}–{Math.min(safeDonePage * DONE_COL_SIZE, doneScopedList.length)} / {doneScopedList.length}
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            disabled={safeDonePage <= 1}
+                            onClick={() => setDoneColPage((p) => Math.max(1, p - 1))}
+                            className="px-2 py-0.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold disabled:opacity-40 cursor-pointer"
+                          >
+                            ◀
+                          </button>
+                          <span className="font-mono font-bold px-1">
+                            {safeDonePage}/{doneTotalPages}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={safeDonePage >= doneTotalPages}
+                            onClick={() => setDoneColPage((p) => Math.min(doneTotalPages, p + 1))}
+                            className="px-2 py-0.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold disabled:opacity-40 cursor-pointer"
+                          >
+                            ▶
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {archivedDoneCount > 0 && doneTimeRange !== "ALL" && (
+                      <div className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-white/80 dark:bg-slate-800/80 border border-slate-200/80 dark:border-slate-700 text-[10px]">
+                        <span>📦 Đã cất <b>{archivedDoneCount}</b> việc cũ vào lưu trữ</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDoneTimeRange("ALL");
+                            setDoneColPage(1);
+                          }}
+                          className="font-bold text-emerald-700 dark:text-emerald-400 hover:underline cursor-pointer"
+                        >
+                          Xem tất cả ({doneAll.length}) →
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
-          ) : (
+            );
+          })() : (
             /* Table View */
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs">
               <table className="w-full text-left text-xs">
@@ -24927,6 +25185,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 // Sub-component: Task Card in Kanban
 const TaskCard: React.FC<{
   task: any;
+  compactDone?: boolean;
   onStatusChange: (id: number, status: string) => void;
   onEdit: (task: any) => void;
   onScheduleHubItem?: (task: any) => void;
@@ -24934,8 +25193,75 @@ const TaskCard: React.FC<{
   isReadOnlyFollower?: boolean;
   followersList?: string[];
   isFollowedByMe?: boolean;
-}> = ({ task, onStatusChange, onEdit, onScheduleHubItem, onNavigateTab, isReadOnlyFollower, followersList = [], isFollowedByMe }) => {
+}> = ({ task, compactDone = false, onStatusChange, onEdit, onScheduleHubItem, onNavigateTab, isReadOnlyFollower, followersList = [], isFollowedByMe }) => {
+  const [isExpandedLocal, setIsExpandedLocal] = useState(false);
   const dlAlert = getTaskDeadlineAlert(task);
+
+  if (compactDone && !isExpandedLocal) {
+    const cleanA = cleanWorkspaceAssignee(task.assignee_name);
+    const parsedAssignee = cleanA ? parseAssigneeWithLead(cleanA) : null;
+    return (
+      <div
+        className="rounded-xl px-3 py-2.5 bg-white/95 dark:bg-slate-800/95 border border-emerald-200/80 dark:border-slate-700 hover:border-emerald-400 shadow-2xs transition-all space-y-1"
+      >
+        <div className="flex items-start justify-between gap-1.5">
+          <div
+            onClick={() => (task.isHubItem && task.hubTargetTab ? onNavigateTab?.(task.hubTargetTab) : onEdit(task))}
+            className="min-w-0 flex-1 cursor-pointer group"
+            title={task.result ? `${task.title}\n\nKết quả: ${task.result}` : task.title}
+          >
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 text-[9px] font-black shrink-0">
+                ✓
+              </span>
+              <span className="text-[10px] font-mono font-bold text-slate-400 shrink-0">
+                {task.task_code}
+              </span>
+              {task.result && (
+                <span className="px-1.5 py-0.2 rounded bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 text-[9px] font-bold border border-emerald-200/70 dark:border-emerald-800">
+                  📝 Có KQ
+                </span>
+              )}
+            </div>
+            <h4 className="text-xs font-bold text-slate-800 dark:text-slate-100 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 line-clamp-1 mt-0.5">
+              {task.title}
+            </h4>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsExpandedLocal(true)}
+              className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-emerald-50 hover:text-emerald-700 cursor-pointer"
+              title="Xổ xem đầy đủ kết quả & chi tiết thẻ này"
+            >
+              ▼
+            </button>
+            {!task.isHubItem && !isReadOnlyFollower && (
+              <button
+                type="button"
+                onClick={() => onStatusChange(task.id, "TODO")}
+                className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 hover:bg-slate-200 cursor-pointer"
+                title="Mở lại công việc này"
+              >
+                Mở lại
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-2 text-[10px] text-slate-500 pt-0.5">
+          <span className="truncate font-semibold text-slate-600 dark:text-slate-300">
+            {parsedAssignee ? `👤 ${parsedAssignee.lead}${parsedAssignee.members.length > 0 ? ` (+${parsedAssignee.members.length})` : ""}` : task.department}
+          </span>
+          {task.deadline && (
+            <span className="font-mono shrink-0 text-slate-400">
+              📅 {formatDayVN(task.deadline, true)}
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className={`rounded-xl p-3.5 shadow-xs hover:shadow-md transition-all space-y-2 border ${
@@ -25184,12 +25510,23 @@ const TaskCard: React.FC<{
               </button>
             )}
             {task.status === "DONE" && (
-              <button
-                onClick={() => onStatusChange(task.id, "TODO")}
-                className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 hover:bg-slate-200"
-              >
-                Mở lại
-              </button>
+              <div className="flex items-center gap-1">
+                {compactDone && isExpandedLocal && (
+                  <button
+                    type="button"
+                    onClick={() => setIsExpandedLocal(false)}
+                    className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 hover:bg-emerald-100 cursor-pointer"
+                  >
+                    ▲ Thu gọn thẻ
+                  </button>
+                )}
+                <button
+                  onClick={() => onStatusChange(task.id, "TODO")}
+                  className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 hover:bg-slate-200 cursor-pointer"
+                >
+                  Mở lại
+                </button>
+              </div>
             )}
           </>
         )}
