@@ -1001,41 +1001,65 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // 3. Đồng bộ trạng thái Task ngược về Kế hoạch chuyên đề (unified_thematic_projects trong app_storage)
-        const prjCodeMatch = effectiveTaskCode.match(/^TSK-(.+)-S(\d+)$/i);
+        // 3. Đồng bộ trạng thái, kết quả & file đính kèm của Task ngược về Dự án / Kế hoạch chuyên đề (unified_thematic_projects trong app_storage)
+        const prjCodeMatch = effectiveTaskCode.match(/^TSK-(.+)-S(\d+)(?:-T(\d+))?$/i);
         const prjIdCandidate = prjCodeMatch ? prjCodeMatch[1] : wfCode;
-        if (prjIdCandidate && status) {
+        if (prjIdCandidate && (status || text !== undefined || attachments !== undefined)) {
           try {
-            const stRes = await query("SELECT value FROM system_settings WHERE key = 'unified_thematic_projects' LIMIT 1");
-            if (stRes.rows.length > 0 && stRes.rows[0].value) {
-              const projects = typeof stRes.rows[0].value === "string" ? JSON.parse(stRes.rows[0].value) : stRes.rows[0].value;
-              if (Array.isArray(projects)) {
-                let changed = false;
-                const updatedProjects = projects.map((p: any) => {
-                  if (String(p.id).toUpperCase() !== String(prjIdCandidate).toUpperCase()) return p;
-                  const stages = Array.isArray(p.stages) ? [...p.stages] : [];
-                  if (prjCodeMatch) {
-                    const stgIdx = Math.max(0, Number(prjCodeMatch[2]) - 1);
-                    if (stages[stgIdx]) {
-                      const nextStgStatus = status === "DONE" ? "completed" : status === "IN_PROGRESS" ? "in_progress" : "pending";
-                      if (stages[stgIdx].status !== nextStgStatus) {
-                        stages[stgIdx] = { ...stages[stgIdx], status: nextStgStatus };
+            const stRes = await query("SELECT data FROM app_storage WHERE key = 'unified_thematic_projects' LIMIT 1");
+            const rawProjects = stRes.rows[0]?.data;
+            const projects = typeof rawProjects === "string" ? JSON.parse(rawProjects) : rawProjects;
+            if (Array.isArray(projects)) {
+              let changed = false;
+              const mappedSubStatus = status === "DONE" ? "completed" : status === "IN_PROGRESS" ? "in_progress" : "pending";
+              const safeAtts = Array.isArray(attachments) ? attachments : undefined;
+              const updatedProjects = projects.map((p: any) => {
+                if (String(p.id).toUpperCase() !== String(prjIdCandidate).toUpperCase()) return p;
+                const stages = Array.isArray(p.stages) ? [...p.stages] : [];
+                if (prjCodeMatch) {
+                  const stgIdx = Math.max(0, Number(prjCodeMatch[2]) - 1);
+                  const subTaskIdx = prjCodeMatch[3] ? Math.max(0, Number(prjCodeMatch[3]) - 1) : null;
+                  if (stages[stgIdx]) {
+                    const curStage = { ...stages[stgIdx] };
+                    const curTasks = Array.isArray(curStage.tasks) ? [...curStage.tasks] : [];
+                    if (subTaskIdx !== null && curTasks[subTaskIdx]) {
+                      const prevSub = curTasks[subTaskIdx];
+                      const nextSub = {
+                        ...prevSub,
+                        ...(status ? { status: mappedSubStatus } : {}),
+                        ...(text ? { result: text } : {}),
+                        ...(safeAtts ? { attachments: safeAtts } : {})
+                      };
+                      if (JSON.stringify(nextSub) !== JSON.stringify(prevSub)) {
+                        curTasks[subTaskIdx] = nextSub;
+                        curStage.tasks = curTasks;
                         changed = true;
                       }
+                      const allSubDone = curTasks.length > 0 && curTasks.every((t: any) => t.status === "completed");
+                      const anySubActive = curTasks.some((t: any) => t.status === "completed" || t.status === "in_progress");
+                      const derivedStageStatus = allSubDone ? "completed" : anySubActive ? "in_progress" : "pending";
+                      if (curStage.status !== derivedStageStatus) {
+                        curStage.status = derivedStageStatus;
+                        changed = true;
+                      }
+                    } else if (status && curStage.status !== mappedSubStatus) {
+                      curStage.status = mappedSubStatus;
+                      changed = true;
                     }
+                    stages[stgIdx] = curStage;
                   }
-                  const allDone = stages.length > 0 && stages.every((s: any) => s.status === "completed");
-                  const anyActive = stages.some((s: any) => s.status === "completed" || s.status === "in_progress");
-                  const nextPrjStatus = allDone ? "Completed" : (anyActive && p.status === "Planning" ? "Active" : p.status);
-                  if (nextPrjStatus !== p.status) changed = true;
-                  return { ...p, stages, status: nextPrjStatus };
-                });
-                if (changed) {
-                  await query(
-                    `UPDATE system_settings SET value = $1, updated_at = CURRENT_TIMESTAMP WHERE key = 'unified_thematic_projects'`,
-                    [JSON.stringify(updatedProjects)]
-                  );
                 }
+                const allDone = stages.length > 0 && stages.every((s: any) => s.status === "completed");
+                const anyActive = stages.some((s: any) => s.status === "completed" || s.status === "in_progress");
+                const nextPrjStatus = allDone ? "Completed" : (anyActive && p.status === "Planning" ? "Active" : p.status);
+                if (nextPrjStatus !== p.status) changed = true;
+                return { ...p, stages, status: nextPrjStatus };
+              });
+              if (changed) {
+                await query(
+                  `UPDATE app_storage SET data = $1::jsonb, version = COALESCE(version, 1) + 1, updated_at = CURRENT_TIMESTAMP WHERE key = 'unified_thematic_projects'`,
+                  [JSON.stringify(updatedProjects)]
+                );
               }
             }
           } catch {}

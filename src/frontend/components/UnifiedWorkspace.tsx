@@ -3816,9 +3816,13 @@ export const UnifiedWorkspace: React.FC = () => {
         assignee?: string;
         due?: string;
         status: "pending" | "in_progress" | "completed";
+        description?: string;
+        result?: string;
+        attachments?: Array<{ name: string; url: string; size?: number; type?: string; uploaded_at?: string }>;
       }>;
     }>
   });
+  const [expandedProjectSubTaskKey, setExpandedProjectSubTaskKey] = useState<string | null>(null);
   const [quickTaskStageKey, setQuickTaskStageKey] = useState<string | null>(null);
   const [quickStageTaskForm, setQuickStageTaskForm] = useState<{
     title: string;
@@ -4319,11 +4323,42 @@ export const UnifiedWorkspace: React.FC = () => {
             const stages = (prj.stages || []).map((stg: any, idx: number) => {
               const stageTaskCode = `TSK-${prjIdUpper}-S${idx + 1}`;
               const matchedTask = linked.find((t: any) => String(t.task_code || "").toUpperCase() === stageTaskCode);
-              if (matchedTask) {
-                const stgStatus = matchedTask.status === "DONE" ? "completed" : matchedTask.status === "IN_PROGRESS" ? "in_progress" : stg.status;
-                return { ...stg, status: stgStatus };
+              let nextTasks = Array.isArray(stg.tasks) ? [...stg.tasks] : [];
+              if (nextTasks.length > 0) {
+                nextTasks = nextTasks.map((subT: any, tIdx: number) => {
+                  const subCodeUpper = `TSK-${prjIdUpper}-S${idx + 1}-T${tIdx + 1}`;
+                  const matchedSubTask = linked.find((t: any) => String(t.task_code || "").toUpperCase() === subCodeUpper);
+                  if (!matchedSubTask) return subT;
+                  const subStatus =
+                    matchedSubTask.status === "DONE"
+                      ? "completed"
+                      : matchedSubTask.status === "IN_PROGRESS"
+                      ? "in_progress"
+                      : subT.status || "pending";
+                  const taskAtts = Array.isArray(matchedSubTask.attachments)
+                    ? matchedSubTask.attachments
+                    : typeof matchedSubTask.attachments === "string"
+                    ? (() => { try { return JSON.parse(matchedSubTask.attachments); } catch { return []; } })()
+                    : [];
+                  const existingAtts = Array.isArray(subT.attachments) ? subT.attachments : [];
+                  return {
+                    ...subT,
+                    status: subStatus,
+                    result: matchedSubTask.result || subT.result || "",
+                    attachments: taskAtts.length >= existingAtts.length ? taskAtts : existingAtts
+                  };
+                });
               }
-              return stg;
+              let stgStatus = stg.status;
+              if (nextTasks.length > 0) {
+                const allSubDone = nextTasks.every((t: any) => t.status === "completed");
+                const anySubActive = nextTasks.some((t: any) => t.status === "completed" || t.status === "in_progress");
+                if (allSubDone) stgStatus = "completed";
+                else if (anySubActive && stgStatus === "pending") stgStatus = "in_progress";
+              } else if (matchedTask) {
+                stgStatus = matchedTask.status === "DONE" ? "completed" : matchedTask.status === "IN_PROGRESS" ? "in_progress" : stg.status;
+              }
+              return { ...stg, status: stgStatus, ...(nextTasks.length > 0 ? { tasks: nextTasks } : {}) };
             });
             return {
               ...prj,
@@ -9409,6 +9444,8 @@ export const UnifiedWorkspace: React.FC = () => {
   // Open Edit Thematic Project Modal
   const openEditThematicModal = (prj: any) => {
     setEditingThematicId(prj.id);
+    setExpandedProjectSubTaskKey(null);
+    const prjIdUpper = String(prj.id || "").toUpperCase();
     const derivedDepts = Array.isArray(prj.participatingDepts) && prj.participatingDepts.length > 0
       ? prj.participatingDepts
       : Array.from(new Set([
@@ -9437,24 +9474,53 @@ export const UnifiedWorkspace: React.FC = () => {
         const sDept = s.dept || (prj.dept !== "Liên Phòng Ban" ? prj.dept : (derivedDepts[0] || "Kinh Doanh"));
         const sDepts = Array.isArray(s.depts) && s.depts.length > 0 ? s.depts : [sDept];
         const sDue = s.due || prj.endDate || todayVN();
+        const rawSubTasks = Array.isArray(s.tasks) && s.tasks.length > 0
+          ? s.tasks
+          : [
+              {
+                id: `stgtask-${prj.id}-${idx}-0`,
+                title: s.name || `Thực hiện giai đoạn ${idx + 1}`,
+                dept: sDepts[0] || sDept,
+                assignee: s.assignee || prj.lead || "",
+                due: sDue,
+                status: s.status || "pending"
+              }
+            ];
+        const hydratedTasks = rawSubTasks.map((stItem: any, tIdx: number) => {
+          const subCodeUpper = `TSK-${prjIdUpper}-S${idx + 1}-T${tIdx + 1}`;
+          const stageCodeUpper = `TSK-${prjIdUpper}-S${idx + 1}`;
+          const linkedTask =
+            tasks.find((t: any) => String(t.task_code || "").toUpperCase() === subCodeUpper) ||
+            (rawSubTasks.length === 1 ? tasks.find((t: any) => String(t.task_code || "").toUpperCase() === stageCodeUpper) : null);
+          const linkedAtts = linkedTask
+            ? Array.isArray(linkedTask.attachments)
+              ? linkedTask.attachments
+              : typeof linkedTask.attachments === "string"
+              ? (() => { try { return JSON.parse(linkedTask.attachments); } catch { return []; } })()
+              : []
+            : [];
+          const curAtts = Array.isArray(stItem.attachments) ? stItem.attachments : [];
+          const syncedStatus =
+            linkedTask?.status === "DONE"
+              ? "completed"
+              : linkedTask?.status === "IN_PROGRESS"
+              ? "in_progress"
+              : stItem.status || "pending";
+          return {
+            ...stItem,
+            status: syncedStatus,
+            description: stItem.description || "",
+            result: stItem.result || linkedTask?.result || "",
+            attachments: curAtts.length >= linkedAtts.length ? curAtts : linkedAtts
+          };
+        });
         return {
           ...s,
           dept: sDepts[0] || sDept,
           depts: sDepts,
           due: sDue,
           assignee: s.assignee || "",
-          tasks: Array.isArray(s.tasks) && s.tasks.length > 0
-            ? s.tasks
-            : [
-                {
-                  id: `stgtask-${prj.id}-${idx}-0`,
-                  title: s.name || `Thực hiện giai đoạn ${idx + 1}`,
-                  dept: sDepts[0] || sDept,
-                  assignee: s.assignee || prj.lead || "",
-                  due: sDue,
-                  status: s.status || "pending"
-                }
-              ]
+          tasks: hydratedTasks
         };
       })
     });
@@ -9611,6 +9677,11 @@ export const UnifiedWorkspace: React.FC = () => {
             existingByOldCode?.created_by_name ||
             existingTask?.created_by_name ||
             projectCreatorName;
+          const customSubDesc = String(stTask.description || "").trim();
+          const customSubResult = String(stTask.result || "").trim();
+          const customSubAtts = Array.isArray(stTask.attachments) && stTask.attachments.length > 0
+            ? stTask.attachments
+            : (existingTask?.attachments || existingByOldCode?.attachments || []);
           const payload = {
             id: existingTask?.id || null,
             task_code: subTaskCode,
@@ -9624,12 +9695,13 @@ export const UnifiedWorkspace: React.FC = () => {
             deadline: stTask.due || stg.due || prj.endDate || todayVN(),
             description: `Thuộc Dự án [${prjId}]: ${prj.name}
 Giai đoạn ${idx + 1}: ${stg.name}
-Công việc: ${stTask.title}${prj.customerOrRef ? `
+Công việc: ${stTask.title}${customSubDesc ? `
+Nội dung / Yêu cầu chi tiết: ${customSubDesc}` : ""}${prj.customerOrRef ? `
 Khách hàng / Mã liên kết: ${prj.customerOrRef}` : ""}
 Phòng ban tham gia: ${(prj.participatingDepts || [itemDept]).join(", ")}`,
             related_workflow_code: prjId,
-            result: existingTask?.result || existingByOldCode?.result || (stTask.status === "completed" ? "Đã hoàn thành công việc trong giai đoạn dự án" : ""),
-            attachments: existingTask?.attachments || existingByOldCode?.attachments || [],
+            result: customSubResult || existingTask?.result || existingByOldCode?.result || (stTask.status === "completed" ? "Đã hoàn thành công việc trong giai đoạn dự án" : ""),
+            attachments: customSubAtts,
             created_by_name: preservedCreatorName
           };
           try {
@@ -9859,6 +9931,101 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       console.warn("Error toggling stage task:", err);
     }
     showToast("Đã cập nhật trạng thái công việc & đồng bộ Bảng Công Việc!", "info");
+  };
+
+  // Mở cửa sổ Cập nhật Thông tin, Kết quả, Đính kèm File & Trao đổi trực tiếp cho 1 Công việc con trong Dự án
+  const handleOpenProjectSubTaskDetail = async (prj: any, stg: any, sIdx: number, stTask: any, tIdx: number) => {
+    const prjId = String(prj?.id || "").trim();
+    if (!prjId) return;
+    const subTaskCode = `TSK-${prjId}-S${sIdx + 1}-T${tIdx + 1}`;
+    const stageTaskCode = `TSK-${prjId}-S${sIdx + 1}`;
+    const stageTasksCount = Array.isArray(stg?.tasks) ? stg.tasks.length : 0;
+    let existingTask =
+      tasks.find((t: any) => String(t.task_code || "").toUpperCase() === subTaskCode.toUpperCase()) ||
+      (stageTasksCount <= 1 ? tasks.find((t: any) => String(t.task_code || "").toUpperCase() === stageTaskCode.toUpperCase()) : null);
+
+    if (!existingTask) {
+      await syncThematicProjectTasks(prj);
+      const res = await fetch("/api/workflows?action=overview").catch(() => null);
+      const data = res && res.ok ? await res.json().catch(() => null) : null;
+      const freshTasks: any[] = Array.isArray(data?.tasks) ? data.tasks : tasks;
+      if (Array.isArray(data?.tasks)) setTasks(freshTasks);
+      existingTask =
+        freshTasks.find((t: any) => String(t.task_code || "").toUpperCase() === subTaskCode.toUpperCase()) ||
+        (stageTasksCount <= 1 ? freshTasks.find((t: any) => String(t.task_code || "").toUpperCase() === stageTaskCode.toUpperCase()) : null);
+    }
+
+    if (existingTask) {
+      openEditTask(existingTask);
+      return;
+    }
+
+    const itemDept = stTask?.dept || stg?.dept || (prj.dept !== "Liên Phòng Ban" ? prj.dept : (prj.participatingDepts?.[0] || "Kinh Doanh"));
+    const prioMap: Record<string, string> = { "Cao": "HIGH", "Trung bình": "MEDIUM", "Bình thường": "LOW" };
+    const mappedStatus = stTask?.status === "completed" ? "DONE" : stTask?.status === "in_progress" ? "IN_PROGRESS" : "TODO";
+    setTaskForm({
+      id: null,
+      task_code: subTaskCode,
+      title: `[${prjId} • GĐ${sIdx + 1}] ${stTask?.title || stg?.name || ""} — ${prj.name}`,
+      department: itemDept,
+      task_category: prj.typeName || "Dự án liên phòng ban",
+      assignee_name: stTask?.assignee || stg?.assignee || prj.lead || currentStaffName,
+      customer_name: prj.customerOrRef || "",
+      priority: prioMap[prj.priority] || "HIGH",
+      status: mappedStatus,
+      deadline: stTask?.due || stg?.due || prj.endDate || todayVN(),
+      description: `Thuộc Dự án [${prjId}]: ${prj.name}\nGiai đoạn ${sIdx + 1}: ${stg?.name || ""}\nCông việc: ${stTask?.title || ""}${stTask?.description ? `\nNội dung chi tiết: ${stTask.description}` : ""}`,
+      related_workflow_code: prjId,
+      result: stTask?.result || "",
+      attachments: Array.isArray(stTask?.attachments) ? stTask.attachments : [],
+      followers: []
+    } as any);
+    setIsTaskModalOpen(true);
+  };
+
+  // Tải tệp đính kèm trực tiếp cho Công việc con ngay trong Modal Chỉnh sửa Dự án
+  const handleProjectSubTaskFileUpload = async (files: FileList | null, sIdx: number, tIdx: number) => {
+    if (!files || files.length === 0) return;
+    setIsUploading(true);
+    try {
+      const uploaded: Array<{ name: string; url: string; size?: number; type?: string; uploaded_at?: string }> = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const res = await uploadSingleFileSmart(file);
+        if (res.success && res.url) {
+          uploaded.push({
+            name: res.name || file.name,
+            url: res.url,
+            size: res.size || file.size,
+            type: res.type || file.type,
+            uploaded_at: nowVNDateTime()
+          });
+        } else {
+          showToast(res.error || `Lỗi tải lên tệp ${file.name}`, "error");
+        }
+      }
+      if (uploaded.length > 0) {
+        setLabProjectForm((prev) => {
+          const updatedStages = [...(prev.stages || [])];
+          const curStage = updatedStages[sIdx];
+          if (!curStage) return prev;
+          const nextTasks = [...(curStage.tasks || [])];
+          if (!nextTasks[tIdx]) return prev;
+          const curAtts = Array.isArray(nextTasks[tIdx].attachments) ? nextTasks[tIdx].attachments! : [];
+          nextTasks[tIdx] = {
+            ...nextTasks[tIdx],
+            attachments: [...curAtts, ...uploaded]
+          };
+          updatedStages[sIdx] = { ...curStage, tasks: nextTasks };
+          return { ...prev, stages: updatedStages };
+        });
+        showToast(`📎 Đã đính kèm ${uploaded.length} tệp vào công việc ${sIdx + 1}.${tIdx + 1}!`, "success");
+      }
+    } catch (err: any) {
+      showToast("Lỗi tải tệp: " + (err?.message || ""), "error");
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   // Quick-add a new sub-task directly into a Stage from the Project Card
@@ -15907,78 +16074,144 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                         {stageTasks.length > 0 && (
                                           <div className="pl-5 space-y-1 pt-1 border-t border-slate-200/60 dark:border-slate-700/60">
                                             {stageTasks.map((stTask: any, tIdx: number) => {
-                                              const isTaskDone = stTask.status === "completed";
-                                              const isTaskProg = stTask.status === "in_progress";
+                                              const prjIdUpper = String(prj.id || "").toUpperCase();
+                                              const subCodeUpper = `TSK-${prjIdUpper}-S${sIdx + 1}-T${tIdx + 1}`;
+                                              const stageCodeUpper = `TSK-${prjIdUpper}-S${sIdx + 1}`;
+                                              const linkedBoardTask =
+                                                tasks.find((t: any) => String(t.task_code || "").toUpperCase() === subCodeUpper) ||
+                                                (stageTasks.length === 1 ? tasks.find((t: any) => String(t.task_code || "").toUpperCase() === stageCodeUpper) : null);
+                                              const isTaskDone = stTask.status === "completed" || linkedBoardTask?.status === "DONE";
+                                              const isTaskProg = !isTaskDone && (stTask.status === "in_progress" || linkedBoardTask?.status === "IN_PROGRESS");
+                                              const subResultText = String(linkedBoardTask?.result || stTask.result || "").trim();
+                                              const boardAtts = linkedBoardTask
+                                                ? Array.isArray(linkedBoardTask.attachments)
+                                                  ? linkedBoardTask.attachments
+                                                  : typeof linkedBoardTask.attachments === "string"
+                                                  ? (() => { try { return JSON.parse(linkedBoardTask.attachments); } catch { return []; } })()
+                                                  : []
+                                                : [];
+                                              const localAtts = Array.isArray(stTask.attachments) ? stTask.attachments : [];
+                                              const subAtts = boardAtts.length >= localAtts.length ? boardAtts : localAtts;
                                               return (
                                                 <div
                                                   key={stTask.id || tIdx}
                                                   onClick={() => {
-                                                    if (!prj.isHubProject) handleToggleStageTask(prj.id, stg.id, stTask.id);
+                                                    if (!prj.isHubProject) handleOpenProjectSubTaskDetail(prj, stg, sIdx, stTask, tIdx);
                                                   }}
-                                                  className={`group/task flex items-center justify-between gap-2 p-1.5 rounded-lg border text-[11px] transition-all ${
+                                                  title="Bấm vào dòng công việc để cập nhật thông tin, báo cáo kết quả, đính kèm file hoặc trao đổi"
+                                                  className={`group/task p-1.5 rounded-lg border text-[11px] transition-all ${
                                                     prj.isHubProject ? "" : "cursor-pointer "
                                                   }${
                                                     isTaskDone
-                                                      ? "bg-white/60 dark:bg-slate-900/40 border-emerald-200/60 dark:border-emerald-900/40 text-slate-400"
+                                                      ? "bg-white/60 dark:bg-slate-900/40 border-emerald-200/60 dark:border-emerald-900/40 text-slate-500"
                                                       : "bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-800 text-slate-800 dark:text-slate-200 hover:border-purple-300"
                                                   }`}
                                                 >
-                                                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                                                    <span
-                                                      className={`w-3.5 h-3.5 rounded flex items-center justify-center shrink-0 border ${
-                                                        isTaskDone
-                                                          ? "bg-emerald-600 border-emerald-600 text-white"
-                                                          : isTaskProg
-                                                          ? "border-amber-400 bg-amber-50 dark:bg-amber-950/60"
-                                                          : "border-slate-300 dark:border-slate-600"
-                                                      }`}
-                                                    >
-                                                      {isTaskDone ? <Check className="w-2.5 h-2.5 stroke-[3]" /> : isTaskProg ? <span className="w-1.5 h-1.5 rounded-full bg-amber-500" /> : null}
-                                                    </span>
-                                                    <span className="font-mono text-[9px] text-slate-400 shrink-0">
-                                                      {sIdx + 1}.{tIdx + 1}
-                                                    </span>
-                                                    <span className={`font-medium truncate ${isTaskDone ? "line-through opacity-75" : ""}`} title={stTask.title}>
-                                                      {stTask.title}
-                                                    </span>
-                                                  </div>
-                                                  <div className="flex items-center gap-1 shrink-0">
-                                                    {stTask.dept && (
-                                                      <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300">
-                                                        {stTask.dept}
-                                                      </span>
-                                                    )}
-                                                    {stTask.assignee && (() => {
-                                                      const parsedSubAssignee = parseAssigneeWithLead(stTask.assignee);
-                                                      return (
-                                                        <span
-                                                          className="px-1.5 py-0.2 rounded text-[9px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
-                                                          title={`⭐ Chịu trách nhiệm chính: ${parsedSubAssignee.lead}${parsedSubAssignee.members.length > 0 ? `\n👥 Thành viên cùng tham gia: ${parsedSubAssignee.members.join(", ")}` : ""}`}
-                                                        >
-                                                          ⭐ {parsedSubAssignee.lead}
-                                                          {parsedSubAssignee.members.length > 0 ? ` (+${parsedSubAssignee.members.length} TV)` : ""}
-                                                        </span>
-                                                      );
-                                                    })()}
-                                                    {stTask.due && (
-                                                      <span className="text-[9px] font-mono text-slate-400">
-                                                        {String(stTask.due).slice(8, 10)}/{String(stTask.due).slice(5, 7)}
-                                                      </span>
-                                                    )}
-                                                    {!prj.isHubProject && (
+                                                  <div className="flex items-center justify-between gap-2">
+                                                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
                                                       <button
                                                         type="button"
                                                         onClick={(e) => {
                                                           e.stopPropagation();
-                                                          handleDeleteStageTask(prj.id, stg.id, stTask.id);
+                                                          if (!prj.isHubProject) handleToggleStageTask(prj.id, stg.id, stTask.id);
                                                         }}
-                                                        className="opacity-0 group-hover/task:opacity-100 p-0.5 text-slate-400 hover:text-rose-600 transition-opacity cursor-pointer"
-                                                        title="Xóa công việc này"
+                                                        title={isTaskDone ? "Bấm để mở lại trạng thái công việc" : "Bấm để đánh dấu hoàn thành nhanh"}
+                                                        className={`w-3.5 h-3.5 rounded flex items-center justify-center shrink-0 border cursor-pointer ${
+                                                          isTaskDone
+                                                            ? "bg-emerald-600 border-emerald-600 text-white"
+                                                            : isTaskProg
+                                                            ? "border-amber-400 bg-amber-50 dark:bg-amber-950/60"
+                                                            : "border-slate-300 dark:border-slate-600 hover:border-purple-500"
+                                                        }`}
                                                       >
-                                                        <X className="w-3 h-3" />
+                                                        {isTaskDone ? <Check className="w-2.5 h-2.5 stroke-[3]" /> : isTaskProg ? <span className="w-1.5 h-1.5 rounded-full bg-amber-500" /> : null}
                                                       </button>
-                                                    )}
+                                                      <span className="font-mono text-[9px] text-slate-400 shrink-0">
+                                                        {sIdx + 1}.{tIdx + 1}
+                                                      </span>
+                                                      <span className={`font-medium truncate ${isTaskDone ? "line-through opacity-75" : ""}`} title={stTask.title}>
+                                                        {stTask.title}
+                                                      </span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
+                                                      {subAtts.length > 0 && (
+                                                        <span
+                                                          className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[9px] font-bold bg-sky-50 dark:bg-sky-950/70 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800"
+                                                          title={`Đã đính kèm ${subAtts.length} tệp: ${subAtts.map((a: any) => a.name).join(", ")}`}
+                                                        >
+                                                          <Paperclip className="w-2.5 h-2.5" />
+                                                          <span>{subAtts.length}</span>
+                                                        </span>
+                                                      )}
+                                                      {stTask.dept && (
+                                                        <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300">
+                                                          {stTask.dept}
+                                                        </span>
+                                                      )}
+                                                      {stTask.assignee && (() => {
+                                                        const parsedSubAssignee = parseAssigneeWithLead(stTask.assignee);
+                                                        return (
+                                                          <span
+                                                            className="px-1.5 py-0.2 rounded text-[9px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
+                                                            title={`⭐ Chịu trách nhiệm chính: ${parsedSubAssignee.lead}${parsedSubAssignee.members.length > 0 ? `\n👥 Thành viên cùng tham gia: ${parsedSubAssignee.members.join(", ")}` : ""}`}
+                                                          >
+                                                            ⭐ {parsedSubAssignee.lead}
+                                                            {parsedSubAssignee.members.length > 0 ? ` (+${parsedSubAssignee.members.length} TV)` : ""}
+                                                          </span>
+                                                        );
+                                                      })()}
+                                                      {stTask.due && (
+                                                        <span className="text-[9px] font-mono text-slate-400">
+                                                          {String(stTask.due).slice(8, 10)}/{String(stTask.due).slice(5, 7)}
+                                                        </span>
+                                                      )}
+                                                      {!prj.isHubProject && (
+                                                        <button
+                                                          type="button"
+                                                          onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleOpenProjectSubTaskDetail(prj, stg, sIdx, stTask, tIdx);
+                                                          }}
+                                                          className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 cursor-pointer inline-flex items-center gap-0.5"
+                                                          title="Cập nhật thông tin, báo cáo kết quả, đính kèm file & trao đổi"
+                                                        >
+                                                          <Pencil className="w-2.5 h-2.5" />
+                                                          <span>Kết quả / File</span>
+                                                        </button>
+                                                      )}
+                                                      {!prj.isHubProject && (
+                                                        <button
+                                                          type="button"
+                                                          onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleDeleteStageTask(prj.id, stg.id, stTask.id);
+                                                          }}
+                                                          className="opacity-0 group-hover/task:opacity-100 p-0.5 text-slate-400 hover:text-rose-600 transition-opacity cursor-pointer"
+                                                          title="Xóa công việc này"
+                                                        >
+                                                          <X className="w-3 h-3" />
+                                                        </button>
+                                                      )}
+                                                    </div>
                                                   </div>
+                                                  {(subResultText || subAtts.length > 0) && (
+                                                    <div className="mt-1 pl-5 flex items-center justify-between gap-2 text-[10px] text-emerald-700 dark:text-emerald-300 bg-emerald-50/60 dark:bg-emerald-950/30 px-2 py-0.5 rounded border border-emerald-200/60 dark:border-emerald-900/50">
+                                                      <span className="truncate">
+                                                        {subResultText ? (
+                                                          <>
+                                                            <strong>Kết quả:</strong> {subResultText}
+                                                          </>
+                                                        ) : (
+                                                          <span>📎 Có {subAtts.length} tài liệu đính kèm</span>
+                                                        )}
+                                                      </span>
+                                                      {subAtts.length > 0 && (
+                                                        <span className="shrink-0 font-bold text-sky-700 dark:text-sky-300">
+                                                          📎 {subAtts.length} file
+                                                        </span>
+                                                      )}
+                                                    </div>
+                                                  )}
                                                 </div>
                                               );
                                             })}
@@ -23801,107 +24034,237 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
                       {stgTasks.map((taskItem, tIdx) => {
                         const taskSpecificDept = taskItem.dept || stgDepts[0] || stg.dept || "Kinh Doanh";
+                        const subKey = `${sIdx}-${tIdx}`;
+                        const isSubExpanded = expandedProjectSubTaskKey === subKey;
+                        const subAttList = Array.isArray(taskItem.attachments) ? taskItem.attachments : [];
+                        const hasSubExtra = Boolean(
+                          String(taskItem.description || "").trim() ||
+                          String(taskItem.result || "").trim() ||
+                          subAttList.length > 0
+                        );
                         return (
                         <div
                           key={taskItem.id || tIdx}
-                          className="flex flex-col sm:flex-row sm:items-center gap-1.5 p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800"
+                          className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 space-y-2"
                         >
-                          <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                            <span className="font-mono text-[10px] font-bold text-slate-400 shrink-0">
-                              {sIdx + 1}.{tIdx + 1}
-                            </span>
-                            <input
-                              type="text"
-                              value={taskItem.title}
-                              onChange={(e) => {
-                                const updated = [...labProjectForm.stages];
-                                const nextTasks = [...(updated[sIdx].tasks || [])];
-                                nextTasks[tIdx] = { ...nextTasks[tIdx], title: e.target.value };
-                                updated[sIdx] = { ...updated[sIdx], tasks: nextTasks };
-                                setLabProjectForm({ ...labProjectForm, stages: updated });
-                              }}
-                              placeholder={`Nhập nội dung công việc ${sIdx + 1}.${tIdx + 1}...`}
-                              className="flex-1 px-2 py-1 rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white text-[11px] font-medium min-w-[140px]"
-                            />
+                          <div className="flex flex-col sm:flex-row sm:items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                              <span className="font-mono text-[10px] font-bold text-slate-400 shrink-0">
+                                {sIdx + 1}.{tIdx + 1}
+                              </span>
+                              <input
+                                type="text"
+                                value={taskItem.title}
+                                onChange={(e) => {
+                                  const updated = [...labProjectForm.stages];
+                                  const nextTasks = [...(updated[sIdx].tasks || [])];
+                                  nextTasks[tIdx] = { ...nextTasks[tIdx], title: e.target.value };
+                                  updated[sIdx] = { ...updated[sIdx], tasks: nextTasks };
+                                  setLabProjectForm({ ...labProjectForm, stages: updated });
+                                }}
+                                placeholder={`Nhập nội dung công việc ${sIdx + 1}.${tIdx + 1}...`}
+                                className="flex-1 px-2 py-1 rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white text-[11px] font-medium min-w-[140px]"
+                              />
+                            </div>
+
+                            <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap shrink-0">
+                              <select
+                                value={taskSpecificDept}
+                                onChange={(e) => {
+                                  const updated = [...labProjectForm.stages];
+                                  const nextTasks = [...(updated[sIdx].tasks || [])];
+                                  nextTasks[tIdx] = { ...nextTasks[tIdx], dept: e.target.value };
+                                  updated[sIdx] = { ...updated[sIdx], tasks: nextTasks };
+                                  setLabProjectForm({ ...labProjectForm, stages: updated });
+                                }}
+                                title="Phòng ban / Ban chức năng cụ thể phụ trách công việc này"
+                                className="px-1.5 py-1 rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-[10px] font-bold cursor-pointer max-w-[180px]"
+                              >
+                                {allDepartmentsWithGroups.filter((d) => d.id !== "all").map((d: any) => (
+                                  <option key={d.id} value={d.id}>{d.isFunctionalGroup ? d.name : `🏢 ${d.name}`}</option>
+                                ))}
+                              </select>
+
+                              <MultiPersonnelWithLeadSelect
+                                compact
+                                value={taskItem.assignee || ""}
+                                onChange={(nextVal) => {
+                                  const updated = [...labProjectForm.stages];
+                                  const nextTasks = [...(updated[sIdx].tasks || [])];
+                                  nextTasks[tIdx] = { ...nextTasks[tIdx], assignee: nextVal };
+                                  updated[sIdx] = { ...updated[sIdx], tasks: nextTasks };
+                                  setLabProjectForm({ ...labProjectForm, stages: updated });
+                                }}
+                                personnelList={personnelList}
+                                filterDepartments={taskSpecificDept}
+                                functionalGroups={functionalGroups}
+                                placeholder="Người chính & TV..."
+                                popoverAlign="right"
+                              />
+
+                              <DateInputVN
+                                value={taskItem.due || stgDue}
+                                onChange={(e) => {
+                                  const updated = [...labProjectForm.stages];
+                                  const nextTasks = [...(updated[sIdx].tasks || [])];
+                                  nextTasks[tIdx] = { ...nextTasks[tIdx], due: e.target.value };
+                                  updated[sIdx] = { ...updated[sIdx], tasks: nextTasks };
+                                  setLabProjectForm({ ...labProjectForm, stages: updated });
+                                }}
+                                className="w-28 px-1.5 py-1 rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-[10px]"
+                              />
+
+                              <select
+                                value={taskItem.status || "pending"}
+                                onChange={(e) => {
+                                  const updated = [...labProjectForm.stages];
+                                  const nextTasks = [...(updated[sIdx].tasks || [])];
+                                  nextTasks[tIdx] = { ...nextTasks[tIdx], status: e.target.value as any };
+                                  updated[sIdx] = { ...updated[sIdx], tasks: nextTasks };
+                                  setLabProjectForm({ ...labProjectForm, stages: updated });
+                                }}
+                                className="px-1.5 py-1 rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-[10px] font-semibold"
+                              >
+                                <option value="pending">Chờ</option>
+                                <option value="in_progress">Đang làm</option>
+                                <option value="completed">Đã xong</option>
+                              </select>
+
+                              <button
+                                type="button"
+                                onClick={() => setExpandedProjectSubTaskKey(isSubExpanded ? null : subKey)}
+                                className={`px-2 py-1 rounded border text-[10px] font-bold transition-all cursor-pointer inline-flex items-center gap-1 ${
+                                  isSubExpanded || hasSubExtra
+                                    ? "bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700"
+                                    : "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-purple-300"
+                                }`}
+                                title="Cập nhật mô tả chi tiết, báo cáo kết quả thực hiện & đính kèm tệp cho công việc này"
+                              >
+                                <Paperclip className="w-3 h-3" />
+                                <span>
+                                  {subAttList.length > 0
+                                    ? `Kết quả & File (${subAttList.length})`
+                                    : String(taskItem.result || "").trim()
+                                    ? "✓ Đã có kết quả"
+                                    : "Kết quả / File"}
+                                </span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updated = [...labProjectForm.stages];
+                                  const nextTasks = (updated[sIdx].tasks || []).filter((_, i) => i !== tIdx);
+                                  updated[sIdx] = { ...updated[sIdx], tasks: nextTasks };
+                                  setLabProjectForm({ ...labProjectForm, stages: updated });
+                                }}
+                                className="p-1 text-slate-400 hover:text-rose-500 rounded cursor-pointer"
+                                title="Xóa công việc này"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
                           </div>
 
-                          <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap shrink-0">
-                            <select
-                              value={taskSpecificDept}
-                              onChange={(e) => {
-                                const updated = [...labProjectForm.stages];
-                                const nextTasks = [...(updated[sIdx].tasks || [])];
-                                nextTasks[tIdx] = { ...nextTasks[tIdx], dept: e.target.value };
-                                updated[sIdx] = { ...updated[sIdx], tasks: nextTasks };
-                                setLabProjectForm({ ...labProjectForm, stages: updated });
-                              }}
-                              title="Phòng ban / Ban chức năng cụ thể phụ trách công việc này"
-                              className="px-1.5 py-1 rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-[10px] font-bold cursor-pointer max-w-[180px]"
-                            >
-                              {allDepartmentsWithGroups.filter((d) => d.id !== "all").map((d: any) => (
-                                <option key={d.id} value={d.id}>{d.isFunctionalGroup ? d.name : `🏢 ${d.name}`}</option>
-                              ))}
-                            </select>
+                          {/* Khung mở rộng: Cập nhật Mô tả yêu cầu, Kết quả thực hiện & Đính kèm tệp trực tiếp cho công việc con */}
+                          {isSubExpanded && (
+                            <div className="p-2.5 rounded-xl bg-slate-50/90 dark:bg-slate-950/80 border border-emerald-200/80 dark:border-emerald-900/60 space-y-2 text-[11px]">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <div>
+                                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                                    📋 Mô tả / Yêu cầu chi tiết của công việc {sIdx + 1}.{tIdx + 1}:
+                                  </label>
+                                  <textarea
+                                    rows={2}
+                                    value={taskItem.description || ""}
+                                    onChange={(e) => {
+                                      const updated = [...labProjectForm.stages];
+                                      const nextTasks = [...(updated[sIdx].tasks || [])];
+                                      nextTasks[tIdx] = { ...nextTasks[tIdx], description: e.target.value };
+                                      updated[sIdx] = { ...updated[sIdx], tasks: nextTasks };
+                                      setLabProjectForm({ ...labProjectForm, stages: updated });
+                                    }}
+                                    placeholder="Ghi chú nội dung hướng dẫn, yêu cầu đầu ra cho người thực hiện..."
+                                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-[11px]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block font-bold text-emerald-700 dark:text-emerald-300 mb-1">
+                                    ✅ Kết quả thực hiện / Báo cáo nghiệm thu:
+                                  </label>
+                                  <textarea
+                                    rows={2}
+                                    value={taskItem.result || ""}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      const updated = [...labProjectForm.stages];
+                                      const nextTasks = [...(updated[sIdx].tasks || [])];
+                                      nextTasks[tIdx] = {
+                                        ...nextTasks[tIdx],
+                                        result: val,
+                                        status: val.trim() && nextTasks[tIdx].status === "pending" ? "in_progress" : nextTasks[tIdx].status
+                                      };
+                                      updated[sIdx] = { ...updated[sIdx], tasks: nextTasks };
+                                      setLabProjectForm({ ...labProjectForm, stages: updated });
+                                    }}
+                                    placeholder="Nhập kết quả đã hoàn thành, link tài liệu hoặc ghi chú nghiệm thu..."
+                                    className="w-full px-2.5 py-1.5 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-[11px]"
+                                  />
+                                </div>
+                              </div>
 
-                            <MultiPersonnelWithLeadSelect
-                              compact
-                              value={taskItem.assignee || ""}
-                              onChange={(nextVal) => {
-                                const updated = [...labProjectForm.stages];
-                                const nextTasks = [...(updated[sIdx].tasks || [])];
-                                nextTasks[tIdx] = { ...nextTasks[tIdx], assignee: nextVal };
-                                updated[sIdx] = { ...updated[sIdx], tasks: nextTasks };
-                                setLabProjectForm({ ...labProjectForm, stages: updated });
-                              }}
-                              personnelList={personnelList}
-                              filterDepartments={taskSpecificDept}
-                              functionalGroups={functionalGroups}
-                              placeholder="Người chính & TV..."
-                              popoverAlign="right"
-                            />
-
-                            <DateInputVN
-                              value={taskItem.due || stgDue}
-                              onChange={(e) => {
-                                const updated = [...labProjectForm.stages];
-                                const nextTasks = [...(updated[sIdx].tasks || [])];
-                                nextTasks[tIdx] = { ...nextTasks[tIdx], due: e.target.value };
-                                updated[sIdx] = { ...updated[sIdx], tasks: nextTasks };
-                                setLabProjectForm({ ...labProjectForm, stages: updated });
-                              }}
-                              className="w-28 px-1.5 py-1 rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-[10px]"
-                            />
-
-                            <select
-                              value={taskItem.status || "pending"}
-                              onChange={(e) => {
-                                const updated = [...labProjectForm.stages];
-                                const nextTasks = [...(updated[sIdx].tasks || [])];
-                                nextTasks[tIdx] = { ...nextTasks[tIdx], status: e.target.value as any };
-                                updated[sIdx] = { ...updated[sIdx], tasks: nextTasks };
-                                setLabProjectForm({ ...labProjectForm, stages: updated });
-                              }}
-                              className="px-1.5 py-1 rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-[10px] font-semibold"
-                            >
-                              <option value="pending">Chờ</option>
-                              <option value="in_progress">Đang làm</option>
-                              <option value="completed">Đã xong</option>
-                            </select>
-
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const updated = [...labProjectForm.stages];
-                                const nextTasks = (updated[sIdx].tasks || []).filter((_, i) => i !== tIdx);
-                                updated[sIdx] = { ...updated[sIdx], tasks: nextTasks };
-                                setLabProjectForm({ ...labProjectForm, stages: updated });
-                              }}
-                              className="p-1 text-slate-400 hover:text-rose-500 rounded cursor-pointer"
-                              title="Xóa công việc này"
-                            >
-                              <X className="w-3 h-3" />
-                            </button>
-                          </div>
+                              <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/70 dark:border-slate-800 flex-wrap">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <label className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-bold text-[10px] hover:bg-indigo-100 cursor-pointer">
+                                    <Paperclip className="w-3 h-3" />
+                                    <span>+ Đính kèm tệp / Minh chứng ({subAttList.length})</span>
+                                    <input
+                                      type="file"
+                                      multiple
+                                      accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.xml,.csv,.txt,.rtf,.zip,.rar,.7z,.tar,.gz"
+                                      onChange={(e) => handleProjectSubTaskFileUpload(e.target.files, sIdx, tIdx)}
+                                      className="hidden"
+                                    />
+                                  </label>
+                                  {subAttList.map((att: any, aIdx: number) => (
+                                    <span
+                                      key={aIdx}
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[10px] font-medium"
+                                    >
+                                      <button
+                                        type="button"
+                                        onClick={() => setPreviewDoc({ url: att.url, name: att.name, type: att.type })}
+                                        className="text-indigo-600 dark:text-indigo-400 hover:underline truncate max-w-[160px] cursor-pointer"
+                                        title={`Xem tệp: ${att.name}`}
+                                      >
+                                        📎 {att.name}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const updated = [...labProjectForm.stages];
+                                          const nextTasks = [...(updated[sIdx].tasks || [])];
+                                          nextTasks[tIdx] = {
+                                            ...nextTasks[tIdx],
+                                            attachments: subAttList.filter((_, i) => i !== aIdx)
+                                          };
+                                          updated[sIdx] = { ...updated[sIdx], tasks: nextTasks };
+                                          setLabProjectForm({ ...labProjectForm, stages: updated });
+                                        }}
+                                        className="text-rose-500 hover:text-rose-700 cursor-pointer"
+                                        title="Gỡ tệp này"
+                                      >
+                                        ✕
+                                      </button>
+                                    </span>
+                                  ))}
+                                </div>
+                                <span className="text-[10px] text-slate-400">
+                                  💡 Tự động đồng bộ 2 chiều với thẻ công việc trên Bảng Công Việc khi bấm Lưu dự án
+                                </span>
+                              </div>
+                            </div>
+                          )}
                         </div>
                         );
                       })}
