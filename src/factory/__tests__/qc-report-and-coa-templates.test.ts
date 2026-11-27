@@ -439,6 +439,30 @@ describe("QC Test Report (BM-QC-TR-01), COA (BM-QC-COA-01), Multilingual Export 
       oem_partner: "Đối tác HN",
     });
 
+    // 5c-ter. Clicking "Cấp COA" again with nothing new must not append a revision (was: one -R per click)
+    const reissue = (cf: Record<string, string>) =>
+      withTransaction((tx) =>
+        issueCoaFromQcTest(tx, reviewer, { test_id: oemTest.id, template_key: "OEM_HN", custom_fields: cf, ...signed }, { signerAuthenticated: true })
+      );
+    const coaCount = async () =>
+      (await getFactoryPool().query("SELECT count(*)::int AS n FROM kit.coa_certificate WHERE lot_id = $1", [oemLot.id])).rows[0].n;
+    const before = await coaCount(); // review may already have auto-issued v1, then OEM_HN appended -R2
+    expect((await reissue({ contract_no: "09/2026/HĐGC-HN", oem_partner: "Đối tác HN" })).already_issued).toBe(true);
+    expect((await reissue({ oem_partner: " Đối tác HN " })).already_issued).toBe(true);
+    expect(await coaCount()).toBe(before);
+
+    // A real change still appends a revision, audited under the same entity type as the issue
+    const amended = await reissue({ oem_partner: "Đối tác HN mới" });
+    expect(amended.already_issued).toBe(false);
+    expect(amended.coa.custom_fields).toMatchObject({ contract_no: "09/2026/HĐGC-HN", oem_partner: "Đối tác HN mới" });
+    expect(await coaCount()).toBe(before + 1);
+    const amendAudit = (
+      await getFactoryPool().query("SELECT entity_type FROM core.audit_log WHERE action = 'amend_coa_append_only' AND entity_id = $1", [
+        String(amended.coa.id),
+      ])
+    ).rows;
+    expect(amendAudit).toEqual([{ entity_type: "coa_certificate" }]);
+
     await expect(
       getFactoryPool().query("UPDATE kit.coa_certificate SET qc_summary = 'tampered' WHERE id = $1", [issued.coa.id])
     ).rejects.toThrow();
