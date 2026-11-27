@@ -82,7 +82,7 @@ export async function exportCustomerQuotationToExcel({
     const repPhone = quote.salesRepPhone || salesPersonnelContacts[quote.salesRepId]?.phone || companyConfig.phone || "0987 875 934";
     const repEmail = quote.salesRepEmail || salesPersonnelContacts[quote.salesRepId]?.email || repObj?.email || companyConfig.email || "sales@tbr.vn";
 
-    const compName = companyConfig.companyName || "CÔNG TY CỔ PHẦN CÔNG NGHỆ ABT";
+    const compName = companyConfig.companyName || "CÔNG TY TNHH GIẢI PHÁP Y SINH ABT";
     const compAddress = companyConfig.companyAddress || "51 Đường số 26, Phường An Lạc, Quận Bình Tân, TP. Hồ Chí Minh";
     const compPhone = companyConfig.companyPhone || "028.66 76 77 62";
     const compEmail = companyConfig.companyEmail || "sales@tbr.vn - tbrtop@gmail.com";

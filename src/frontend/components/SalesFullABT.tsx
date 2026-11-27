@@ -728,7 +728,28 @@ const CustomerAllocationSearchInput: React.FC<{
 const defaultStockCustomerName = () =>
     typeof window !== "undefined" && (window.location.port === "3006" || window.location.href.includes("3006"))
         ? "Công ty Cổ phần Công nghệ VIA"
-        : "Công ty Cổ phần Công nghệ ABT";
+        : "Công ty TNHH Giải pháp Y sinh ABT";
+
+const isInternalStockCustomerName = (rawName: any): boolean => {
+    const s = String(rawName || "").trim().toLowerCase();
+    if (!s) return false;
+    return (
+        s === defaultStockCustomerName().toLowerCase() ||
+        s === "công ty cổ phần công nghệ abt" ||
+        s === "công ty tnhh giải pháp y sinh abt" ||
+        s.includes("kho tổng abt") ||
+        s.includes("lưu kho nội bộ") ||
+        s.includes("kho lưu trữ")
+    );
+};
+
+const normalizeStockCustomerDisplay = (rawName: any): string => {
+    const s = String(rawName || "").trim();
+    if (!s || /^công ty cổ phần công nghệ abt$/i.test(s)) {
+        return defaultStockCustomerName();
+    }
+    return s;
+};
 
 /** Mã SO do máy chủ cấp (SO26-KH-1001, SO26-STOCK-1001, ...): không bao giờ được đổi mã phía trình duyệt. */
 /** "CÔNG TY TNHH GIẢI PHÁP Y SINH ABT- CHI NHÁNH LONG HẬU" -> "GIẢI PHÁP Y SINH ABT" (tên đầy đủ để ở tooltip). */
@@ -1701,7 +1722,7 @@ export function SalesFullABT() {
             let orderId = o?.order_code || (typeof o?.id === "string" && o.id.startsWith("SO") ? o.id : (o?.orderCode || o?.code || (o?.id ? String(o.id) : "")));
             const custName = (o.customerName || o.customer_name || "").trim();
             const hasQuote = Boolean(o.quoteId || o.quote_code);
-            const hasRealCustomer = Boolean(custName && !String(custName).includes("Kho Tổng ABT") && !String(custName).includes("Lưu Kho Nội Bộ") && custName !== defaultStockCustomerName());
+            const hasRealCustomer = Boolean(custName && !isInternalStockCustomerName(custName));
             const isStock = Boolean((o.isStockOrder === true || o.orderCategory === "STOCK" || o.is_stock_order === true || o.applied_price_policy === "STOCK" || String(o.notes || "").includes("STOCK")) && !hasQuote && !hasRealCustomer);
 
             const isWronglyNamedStock = Boolean(orderId.includes("STOCK") && !isStock);
@@ -13839,7 +13860,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return;
         }
 
-        const isStock = isStockOrder || factoryOrderCustomerName === defaultStockCustomer || factoryOrderCustomerName.includes("KHO LƯU TRỮ");
+        const isStock = isStockOrder || isInternalStockCustomerName(factoryOrderCustomerName);
         const repId = isStock 
             ? "NV-TBR-007" 
             : (loggedInStaff?.employee_id || salesPersonnel[0]?.employee_id || "NV-TBR-018");
@@ -13943,7 +13964,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             (c.customer_code && String(c.customer_code).trim().toLowerCase() === factoryOrderCustomerName.trim().toLowerCase())
         );
         const realCustomerCode = matchedCust?.customer_code || matchedCust?.code || (isStockOrder ? "STOCK" : "KH-01");
-        const realCustomerName = matchedCust?.name || factoryOrderCustomerName.trim() || (isStockOrder ? defaultStockCustomer : "Khách hàng");
+        const realCustomerName = matchedCust?.name || (isStock ? normalizeStockCustomerDisplay(factoryOrderCustomerName) : factoryOrderCustomerName.trim()) || (isStockOrder ? defaultStockCustomer : "Khách hàng");
         const resolvedContactPerson = factoryOrderContactPerson.trim() || matchedCust?.contact_person || "";
         const resolvedContactPhone = factoryOrderContactPhone.trim() || matchedCust?.phone || "";
         const resolvedDeliveryAddress = factoryOrderDeliveryAddress.trim() || matchedCust?.delivery_address || matchedCust?.address || "";
@@ -14556,7 +14577,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             };
         });
 
-        const isStockTargetReq = (targetReq.isStockOrder === true || targetReq.orderCategory === "STOCK" || String(targetReq.id || "").includes("STOCK") || String(targetReq.customerName || "").includes("KHO LƯU TRỮ") || targetReq.customerName === defaultStockCustomer);
+        const isStockTargetReq = (targetReq.isStockOrder === true || targetReq.orderCategory === "STOCK" || String(targetReq.id || "").includes("STOCK") || isInternalStockCustomerName(targetReq.customerName));
         const loggedInCreatorName = loggedInStaff?.full_name || user?.name || "";
         let reqNameSync = loggedInCreatorName || (isStockTargetReq ? "Bộ Phận Kho Vận" : (targetReq.salesRepName || "Phòng Kinh Doanh"));
         const reqDeptSync = loggedInStaff?.department || (isStockTargetReq ? "Kho Vận" : "Kinh Doanh");
@@ -14931,7 +14952,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
     const defaultStockCustomer = typeof window !== "undefined" && (window.location.port === "3006" || window.location.href.includes("3006"))
         ? "Công ty Cổ phần Công nghệ VIA"
-        : "Công ty Cổ phần Công nghệ ABT";
+        : "Công ty TNHH Giải pháp Y sinh ABT";
 
     const checkIsPureStock = (o: any): boolean => {
         if (!o) return false;
@@ -14939,7 +14960,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         if (o.quoteId || o.quote_code) return false;
         // Nếu tên khách hàng không phải kho nội bộ / công ty chủ quản thì là đơn bán cho khách hàng
         const cName = String(o.customerName || "").trim();
-        if (cName && !cName.includes("Kho") && cName !== defaultStockCustomer && !cName.includes("TBR") && !cName.includes("VIA")) {
+        if (cName && !cName.includes("Kho") && !isInternalStockCustomerName(cName) && !cName.includes("TBR") && !cName.includes("VIA")) {
             return false;
         }
         return Boolean(o.isStockOrder || o.orderCategory === "STOCK" || (o.id && String(o.id).includes("STOCK")));
@@ -26037,7 +26058,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             {isStockOrder ? (
                                                                                 <div className="flex items-center gap-2 flex-wrap">
                                                                                     <span className="text-sm font-bold text-cyan-300">
-                                                                                        {req.customerName || defaultStockCustomer}
+                                                                                        {normalizeStockCustomerDisplay(req.customerName)}
                                                                                     </span>
                                                                                     <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold bg-cyan-950/90 text-cyan-300 border border-cyan-500/50 shadow-sm">
                                                                                         🏢 Lưu kho nội bộ / Gối đầu
@@ -32354,7 +32375,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             {isStockOrder ? (
                                 <div className="w-full bg-slate-950 border border-cyan-700/60 rounded-lg px-3 py-2 text-xs text-cyan-200 font-bold flex items-center justify-between">
                                     <span className="flex items-center gap-1.5 truncate">
-                                        🏢 {factoryOrderCustomerName || defaultStockCustomer}
+                                        🏢 {normalizeStockCustomerDisplay(factoryOrderCustomerName)}
                                     </span>
                                     <span className="text-[11px] px-2 py-0.5 rounded bg-cyan-900/60 text-cyan-300 font-mono border border-cyan-600/40 shrink-0">
                                         KHO LƯU TRỮ

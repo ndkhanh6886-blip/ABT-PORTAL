@@ -625,7 +625,7 @@ Gõ "menu" hoặc "help" bất kỳ lúc nào để xem danh sách lệnh hỗ t
       recipientId: senderId,
       messageType: "TEXT",
       text: 
-`👋 Xin chào! Hệ thống nhận diện tin nhắn từ tài khoản Zalo của bạn tới trang Zalo OA Công ty Cổ phần Công nghệ ABT.
+`👋 Xin chào! Hệ thống nhận diện tin nhắn từ tài khoản Zalo của bạn tới trang Zalo OA Công ty TNHH Giải pháp Y sinh ABT.
 
 ⚠️ Hiện tại tài khoản Zalo này CHƯA ĐƯỢC LIÊN KẾT với hồ sơ nhân sự trên hệ thống ABT Portal.
 
@@ -662,7 +662,7 @@ Vui lòng liên hệ Quản trị viên hệ thống để cập nhật số đi
   let config = {
     director_discount_threshold: 10.0,
     director_zalo_id: "zalo_dir_bld_01",
-    oa_name: "Công ty cổ phần Công nghệ ABT"
+    oa_name: "Công ty TNHH Giải pháp Y sinh ABT"
   };
   try {
     const cfgRes = await query("SELECT * FROM zalo_config LIMIT 1");
@@ -671,7 +671,7 @@ Vui lòng liên hệ Quản trị viên hệ thống để cập nhật số đi
         ...config,
         director_discount_threshold: parseFloat(cfgRes.rows[0].director_discount_threshold) || 10.0,
         director_zalo_id: cfgRes.rows[0].director_zalo_id || "zalo_dir_bld_01",
-        oa_name: cfgRes.rows[0].oa_name || "Công ty cổ phần Công nghệ ABT"
+        oa_name: cfgRes.rows[0].oa_name || "Công ty TNHH Giải pháp Y sinh ABT"
       };
     }
   } catch (err) {
@@ -1635,7 +1635,7 @@ HĐ ${q.quote_code}: Đại diện: Bác sĩ Nguyễn Văn A - Giám Đốc, ĐC
         typeof q.items === "string" ? q.items : JSON.stringify(q.items)
       ]);
 
-      const companyTitle = isTBR ? "CÔNG TY CỔ PHẦN CÔNG NGHỆ ABT" : "CÔNG TY TNHH XÉT NGHIỆM VIA";
+      const companyTitle = isTBR ? "CÔNG TY TNHH GIẢI PHÁP Y SINH ABT" : "CÔNG TY TNHH XÉT NGHIỆM VIA";
       const contractPdfUrl = signedDocumentUrl("contract", contractCode);
 
       return {
