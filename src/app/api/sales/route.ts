@@ -14,6 +14,7 @@ import { todayVN, toVNDateString, parseVNDateToISO } from "@/backend/services/da
 import { mergeCatalogFields } from "@/backend/services/catalogStore";
 import { notifyZaloProactiveEvent } from "@/backend/services/zaloEngine";
 import { forgetDeletedOrder } from "@/backend/services/deletedOrders";
+import { reconcileStockOrdersAndPRs } from "@/backend/services/prRows";
 
 const DEFAULT_CREDIT_LIMIT = 100000000;
 const DEFAULT_CREDIT_TERM_DAYS = 30;
@@ -852,6 +853,7 @@ export async function GET(req: NextRequest) {
     const action = searchParams.get("action") || "overview";
 
     if (action === "overview") {
+      await reconcileStockOrdersAndPRs((authUser as any).full_name || (authUser as any).username).catch(() => {});
       const [customers, orders, quotations, products, targets, tasks, plans, daily, reservations, openPOs, contractsRes, rmaRes, recallsRes, slipsRes, prRes] = await Promise.all([
         query("SELECT * FROM sales_customers ORDER BY id DESC"),
         query("SELECT * FROM sales_orders ORDER BY id DESC"),
@@ -1976,12 +1978,16 @@ export async function POST(req: NextRequest) {
       // NVKD (quyền tạo / sửa đơn Kinh doanh) được tạo đơn STOCK, nhưng chỉ cho chính công ty (lưu kho gối đầu) — không dùng
       // cờ STOCK để bỏ qua kiểm tra công nợ / duyệt giá 0đ của đơn khách hàng. Trước đây chỉ Trưởng/Phó phòng KD hoặc
       // Quản trị viên được tạo: đơn của NVKD bị máy chủ từ chối, chỉ nằm trên màn hình (SO26-STOCK-1101..1106).
-      const isInternalStockCustomer = /c[ôo]ng ngh[ệe] (tbr|via|abt)|kho l[ưu]u tr[ữu]|d[ựu] ph[òo]ng/i.test(String(customer_name || ""));
+      const isInternalStockCustomer = /c[ôo]ng ngh[ệe] (tbr|via|abt)|gi[ảa]i ph[áa]p y sinh abt|kho l[ưu]u tr[ữu]|l[ưu]u kho n[ộo]i b[ộo]|d[ựu] ph[òo]ng|^stock$/i.test(String(customer_name || "").trim());
       const canCreateStockOrder =
         isAdminUser(authUser) ||
         canApproveSalesOrders(authUser) ||
         ((hasPermission(authUser, "sales.create") || hasPermission(authUser, "sales.edit")) && isInternalStockCustomer);
       let isStockOrder = stockRequested && canCreateStockOrder;
+      const incomingRepName = String(sales_rep_name || "").trim();
+      const effectiveRepName =
+        (incomingRepName && incomingRepName !== "Bộ Phận Kho Vận" ? incomingRepName : "") ||
+        String((authUser as any).full_name || (authUser as any).username || "Phòng Kinh Doanh").trim();
       const itemsArr = Array.isArray(items) ? items : [];
       const hasZeroPrice = itemsArr.some(itemHasZeroPrice);
       const itemsError = validateOrderItems(itemsArr);
@@ -2092,8 +2098,12 @@ export async function POST(req: NextRequest) {
 
         if (has("customer_name")) set("customer_name", customer_name);
         if (has("customer_id") || has("customer_name")) set("customer_id", resolvedCustomerId ?? existing.customer_id);
-        if (has("sales_rep_name")) set("sales_rep_name", sales_rep_name);
-        if (has("sales_rep_id") && body.sales_rep_id) set("sales_rep_id", String(body.sales_rep_id));
+        if (has("sales_rep_name")) {
+          const existingRep = String(existing.sales_rep_name || "").trim();
+          const keepExistingRealRep = existingRep && existingRep !== "Bộ Phận Kho Vận" && existingRep !== "Phòng Kinh Doanh";
+          set("sales_rep_name", (incomingRepName === "Bộ Phận Kho Vận" && keepExistingRealRep) ? existingRep : effectiveRepName);
+        }
+        if (has("sales_rep_id") && body.sales_rep_id && body.sales_rep_id !== "NV-TBR-007") set("sales_rep_id", String(body.sales_rep_id));
         if (has("order_date") && order_date) set("order_date", order_date);
         if (has("items")) set("items", JSON.stringify(itemsArr), "::jsonb");
         if (has("items")) set("total_amount", computedTotal);
@@ -2252,7 +2262,7 @@ export async function POST(req: NextRequest) {
         : await generateDocumentCode({
             docType: "SO",
             customerName: customer_name,
-            salesRepName: sales_rep_name,
+            salesRepName: effectiveRepName,
             tagMode: isStockOrder ? "STOCK" : "CUSTOMER"
           });
       const activeNewItemsForInv = itemsArr.filter((it: any) => it && it.status !== "CANCELLED");
@@ -2272,7 +2282,7 @@ export async function POST(req: NextRequest) {
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)
         RETURNING id`,
         [
-          code, resolvedCustomerId, customer_name, sales_rep_name, order_date || todayVN(),
+          code, resolvedCustomerId, customer_name, effectiveRepName, order_date || todayVN(),
           JSON.stringify(itemsArr), computedTotal, body.delivery_status || "PENDING",
           (canSetFinanceStatus && body.payment_status) || "UNPAID",
           initialInvoiceStatus, body.notes,

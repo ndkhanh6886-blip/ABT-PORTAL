@@ -737,6 +737,8 @@ const isInternalStockCustomerName = (rawName: any): boolean => {
         s === defaultStockCustomerName().toLowerCase() ||
         s === "công ty cổ phần công nghệ abt" ||
         s === "công ty tnhh giải pháp y sinh abt" ||
+        s.includes("giải pháp y sinh abt") ||
+        s.includes("công nghệ abt") ||
         s.includes("kho tổng abt") ||
         s.includes("lưu kho nội bộ") ||
         s.includes("kho lưu trữ")
@@ -1723,7 +1725,7 @@ export function SalesFullABT() {
             const custName = (o.customerName || o.customer_name || "").trim();
             const hasQuote = Boolean(o.quoteId || o.quote_code);
             const hasRealCustomer = Boolean(custName && !isInternalStockCustomerName(custName));
-            const isStock = Boolean((o.isStockOrder === true || o.orderCategory === "STOCK" || o.is_stock_order === true || o.applied_price_policy === "STOCK" || String(o.notes || "").includes("STOCK")) && !hasQuote && !hasRealCustomer);
+            const isStock = Boolean((o.isStockOrder === true || o.orderCategory === "STOCK" || o.is_stock_order === true || o.applied_price_policy === "STOCK" || /^SO\d{2}-STOCK-/i.test(orderId) || String(o.notes || "").includes("STOCK")) && !hasRealCustomer && (!hasQuote || /^SO\d{2}-STOCK-/i.test(orderId)));
 
             const isWronglyNamedStock = Boolean(orderId.includes("STOCK") && !isStock);
             let isDuplicateCode = Boolean(orderId && allocatedCodes.has(orderId));
@@ -1794,21 +1796,26 @@ export function SalesFullABT() {
             let repName = (o.salesRepName || o.sales_rep_name || o.sales_rep || o.salesRep || "").trim();
             let repId = o.salesRepId || o.sales_rep_id || "";
 
-            if (isStock) {
-                repName = "Bộ Phận Kho Vận";
-                repId = "NV-TBR-007";
-            } else {
-                if (repName.toLowerCase().includes("nguyễn đăng khánh") || repName.toLowerCase().includes("ndkhanh")) {
-                    repName = "Phòng Kinh Doanh";
-                    repId = "NV-TBR-018";
-                }
-                if (!repId && repName) {
-                    const matched = (salesPersonnel || []).find((p: any) => 
-                        (p.full_name && p.full_name.toLowerCase().trim() === repName.toLowerCase()) ||
-                        (p.employee_id && p.employee_id.toLowerCase() === repName.toLowerCase()) ||
-                        (p.employee_code && p.employee_code.toLowerCase() === repName.toLowerCase())
-                    );
-                    if (matched) repId = matched.employee_id || matched.employee_code;
+            if (repName === "Bộ Phận Kho Vận" || !repName) {
+                const fallbackCreator = String(
+                    o.createdBy || o.created_by || loggedInStaff?.full_name || (user as any)?.full_name || user?.name || ""
+                ).trim();
+                repName = (fallbackCreator && fallbackCreator !== "Bộ Phận Kho Vận") ? fallbackCreator : "Phòng Kinh Doanh";
+                if (repId === "NV-TBR-007") repId = "";
+            }
+            if (repName.toLowerCase().includes("nguyễn đăng khánh") || repName.toLowerCase().includes("ndkhanh")) {
+                repName = "Phòng Kinh Doanh";
+                repId = "NV-TBR-018";
+            }
+            if ((!repId || repId === "NV-TBR-007") && repName) {
+                const matched = (salesPersonnel || []).find((p: any) => 
+                    (p.full_name && p.full_name.toLowerCase().trim() === repName.toLowerCase()) ||
+                    (p.employee_id && p.employee_id.toLowerCase() === repName.toLowerCase()) ||
+                    (p.employee_code && p.employee_code.toLowerCase() === repName.toLowerCase())
+                );
+                if (matched) repId = matched.employee_id || matched.employee_code;
+                else if (loggedInStaff?.full_name && loggedInStaff.full_name.toLowerCase().trim() === repName.toLowerCase()) {
+                    repId = loggedInStaff.employee_id || repId;
                 }
             }
 
@@ -2212,6 +2219,14 @@ export function SalesFullABT() {
                             const dbOwned: Record<string, any> = {
                                 order_code: o.order_code,
                                 customerName: o.customerName || undefined,
+                                salesRepName: (raw0.sales_rep_name && raw0.sales_rep_name !== "Bộ Phận Kho Vận" && raw0.sales_rep_name !== "Phòng Kinh Doanh")
+                                    ? raw0.sales_rep_name
+                                    : ((o.salesRepName && o.salesRepName !== "Bộ Phận Kho Vận" && o.salesRepName !== "Phòng Kinh Doanh") ? o.salesRepName : undefined),
+                                salesRepId: (raw0.sales_rep_id && raw0.sales_rep_id !== "NV-TBR-007")
+                                    ? raw0.sales_rep_id
+                                    : ((o.salesRepId && o.salesRepId !== "NV-TBR-007") ? o.salesRepId : undefined),
+                                isStockOrder: o.isStockOrder ? true : undefined,
+                                orderCategory: o.isStockOrder ? "STOCK" : undefined,
                                 totalAmount: o.totalAmount !== undefined ? Number(o.totalAmount) : undefined,
                                 items: Array.isArray(o.items) && o.items.length > 0 ? o.items : undefined,
                                 date: o.date || undefined,
@@ -2327,19 +2342,24 @@ export function SalesFullABT() {
                 }
                 if (prRows.length > 0) {
                     for (const [k, ord] of orderMap) {
-                        if (!k.startsWith("SO") || ord.prCode) continue;
+                        if (!k.startsWith("SO")) continue;
                         const alive = prRows.filter((r: any) => !isDroppedPR(r));
                         // PR của đơn = PR có nội dung nhắc tới đơn này. Không nhận theo mã suy từ SO: PR26-TB-1105 do bộ
                         // đếm cấp có thể là PR của Cung ứng, trùng số với SO26-TB-1105.
                         const mentionsOrder = (r: any) => `${r.title || ""} ${r.description || ""}`.includes(k);
                         const expected = k.replace(/^SO/, "PR");
-                        const pr = alive.filter((r: any) => (r.workflow_code === expected || String(r.workflow_code || "").startsWith(`${expected}-R`)) && mentionsOrder(r)).pop() ||
+                        const pr = (ord.prCode && alive.find((r: any) => r.workflow_code === ord.prCode)) ||
+                            alive.filter((r: any) => (r.workflow_code === expected || String(r.workflow_code || "").startsWith(`${expected}-R`)) && mentionsOrder(r)).pop() ||
                             alive.find((r: any) => String(r.title || "").includes(k));
                         if (pr) {
                             const linkedPo = ord.procureOrderCode || ord.mfgOrderCode;
+                            const prRequester = String(pr.requester_name || "").trim();
+                            const hasRealPrRequester = Boolean(prRequester && prRequester !== "Bộ Phận Kho Vận" && prRequester !== "Phòng Kinh Doanh");
+                            const needsRepUpgrade = !ord.salesRepName || ord.salesRepName === "Bộ Phận Kho Vận" || ord.salesRepName === "Phòng Kinh Doanh";
                             orderMap.set(k, {
                                 ...ord,
-                                prCode: pr.workflow_code,
+                                ...(needsRepUpgrade && hasRealPrRequester ? { salesRepName: prRequester } : {}),
+                                prCode: ord.prCode || pr.workflow_code,
                                 procureStatus: linkedPo && ord.procureStatus && !["STOCK_DELIVERY", "PENDING", "NONE"].includes(ord.procureStatus)
                                     ? ord.procureStatus
                                     : "PR_PENDING",
@@ -13861,14 +13881,17 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }
 
         const isStock = isStockOrder || isInternalStockCustomerName(factoryOrderCustomerName);
-        const repId = isStock 
-            ? "NV-TBR-007" 
-            : (loggedInStaff?.employee_id || salesPersonnel[0]?.employee_id || "NV-TBR-018");
-        let repName = isStock 
-            ? "Bộ Phận Kho Vận" 
-            : (loggedInStaff?.full_name || salesPersonnel[0]?.full_name || "Phòng Kinh Doanh");
+        const existingOrdForRep = editingFactoryOrderId ? factoryOrders.find(o => o.id === editingFactoryOrderId) : null;
+        const existingRealRepName = (existingOrdForRep?.salesRepName && existingOrdForRep.salesRepName !== "Bộ Phận Kho Vận" && existingOrdForRep.salesRepName !== "Phòng Kinh Doanh")
+            ? String(existingOrdForRep.salesRepName).trim()
+            : "";
+        const existingRealRepId = (existingOrdForRep?.salesRepId && existingOrdForRep.salesRepId !== "NV-TBR-007")
+            ? String(existingOrdForRep.salesRepId).trim()
+            : "";
+        const repId = existingRealRepId || loggedInStaff?.employee_id || (user as any)?.employee_code || salesPersonnel[0]?.employee_id || "NV-TBR-018";
+        let repName = existingRealRepName || loggedInStaff?.full_name || (user as any)?.full_name || user?.name || salesPersonnel[0]?.full_name || "Phòng Kinh Doanh";
         if (repName.toLowerCase().includes("nguyễn đăng khánh") || repName.toLowerCase().includes("ndkhanh")) {
-            repName = isStock ? "Bộ Phận Kho Vận" : "Phòng Kinh Doanh";
+            repName = "Phòng Kinh Doanh";
         }
 
         const linkedQuoteObj = factoryOrderQuoteId ? quotations.find(q => String(q.id).trim().toLowerCase() === String(factoryOrderQuoteId).trim().toLowerCase()) : null;
@@ -14054,6 +14077,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         ...order,
                         customerName: realCustomerName,
                         customerCode: realCustomerCode,
+                        salesRepName: repName,
+                        salesRepId: repId,
                         contactPerson: resolvedContactPerson,
                         contactPhone: resolvedContactPhone,
                         deliveryAddress: resolvedDeliveryAddress,
@@ -14578,11 +14603,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         });
 
         const isStockTargetReq = (targetReq.isStockOrder === true || targetReq.orderCategory === "STOCK" || String(targetReq.id || "").includes("STOCK") || isInternalStockCustomerName(targetReq.customerName));
-        const loggedInCreatorName = loggedInStaff?.full_name || user?.name || "";
-        let reqNameSync = loggedInCreatorName || (isStockTargetReq ? "Bộ Phận Kho Vận" : (targetReq.salesRepName || "Phòng Kinh Doanh"));
-        const reqDeptSync = loggedInStaff?.department || (isStockTargetReq ? "Kho Vận" : "Kinh Doanh");
-        const soOwnerNote = (targetReq.salesRepName && targetReq.salesRepName !== reqNameSync)
-            ? ` (Đơn SO của NVKD: ${targetReq.salesRepName})`
+        const loggedInCreatorName = loggedInStaff?.full_name || (user as any)?.full_name || user?.name || "";
+        const targetOrderRep = (targetReq.salesRepName && targetReq.salesRepName !== "Bộ Phận Kho Vận") ? targetReq.salesRepName : "";
+        let reqNameSync = loggedInCreatorName || targetOrderRep || "Phòng Kinh Doanh";
+        const reqDeptSync = loggedInStaff?.department || "Kinh Doanh";
+        void isStockTargetReq;
+        const soOwnerNote = (targetOrderRep && targetOrderRep !== reqNameSync)
+            ? ` (Đơn SO của NVKD: ${targetOrderRep})`
             : "";
 
         fetch("/api/procurement?action=create_pr", {
@@ -14956,14 +14983,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
     const checkIsPureStock = (o: any): boolean => {
         if (!o) return false;
-        // Nếu có gắn báo giá, đây là đơn bán thương mại cho khách hàng theo báo giá
-        if (o.quoteId || o.quote_code) return false;
+        const ordId = String(o.id || o.order_code || "").trim();
+        const isExplicitStockCode = /^SO\d{2}-STOCK-/i.test(ordId);
+        // Nếu có gắn báo giá (và không phải mã SO26-STOCK-...), đây là đơn bán thương mại cho khách hàng theo báo giá
+        if ((o.quoteId || o.quote_code) && !isExplicitStockCode) return false;
         // Nếu tên khách hàng không phải kho nội bộ / công ty chủ quản thì là đơn bán cho khách hàng
         const cName = String(o.customerName || "").trim();
         if (cName && !cName.includes("Kho") && !isInternalStockCustomerName(cName) && !cName.includes("TBR") && !cName.includes("VIA")) {
             return false;
         }
-        return Boolean(o.isStockOrder || o.orderCategory === "STOCK" || (o.id && String(o.id).includes("STOCK")));
+        return Boolean(o.isStockOrder || o.orderCategory === "STOCK" || isExplicitStockCode || (o.id && String(o.id).includes("STOCK")));
     };
 
     // Tính số lượng hàng của đơn đang được đặt mua riêng qua PR/PO (chưa nhập kho) để KHÔNG chiếm giữ tồn kho sẵn có của các đơn khác
@@ -16212,13 +16241,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             singleProcureTargetOrder?.customerName === defaultStockCustomer;
 
         // Slide 8: Ghi nhận đúng tên tài khoản đang đăng nhập lập PR thay vì mặc định lấy NVKD của đơn hàng
-        const loggedInCreator = loggedInStaff?.full_name || user?.name || "";
-        const targetRepNameProcure = loggedInCreator || (isStockTargetOrd 
-            ? "Bộ Phận Kho Vận" 
-            : (singleProcureTargetOrder.salesRepName || "Phòng Kinh Doanh"));
-        const targetRepDeptProcure = loggedInStaff?.department || (isStockTargetOrd ? "Kho Vận" : "Kinh Doanh");
-        const soOwnerSuffix = (singleProcureTargetOrder.salesRepName && singleProcureTargetOrder.salesRepName !== targetRepNameProcure)
-            ? ` [Đơn SO của NVKD: ${singleProcureTargetOrder.salesRepName}]`
+        const loggedInCreator = loggedInStaff?.full_name || (user as any)?.full_name || user?.name || "";
+        const targetOrderRealRep = (singleProcureTargetOrder.salesRepName && singleProcureTargetOrder.salesRepName !== "Bộ Phận Kho Vận")
+            ? singleProcureTargetOrder.salesRepName
+            : "";
+        const targetRepNameProcure = loggedInCreator || targetOrderRealRep || "Phòng Kinh Doanh";
+        const targetRepDeptProcure = loggedInStaff?.department || "Kinh Doanh";
+        void isStockTargetOrd;
+        const soOwnerSuffix = (targetOrderRealRep && targetOrderRealRep !== targetRepNameProcure)
+            ? ` [Đơn SO của NVKD: ${targetOrderRealRep}]`
             : "";
 
         try {

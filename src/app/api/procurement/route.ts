@@ -33,7 +33,7 @@ import { generateDocumentCode } from "@/backend/services/codeGenerator";
 import { ensureProduct, addStock, reserveStock, appendCommercialCatalogEntry, sortByProductCode } from "@/backend/services/inventoryLedger";
 import { syncCatalogSuppliersAndProducts, markSupplierDeleted, unmarkSupplierDeleted, invalidateSupplierCatalogCache } from "@/backend/services/supplierCatalogSync";
 import { reconcileHistoricalPOsWithInbound, markPOReconcileDirty, attachInboundPriceComparisonToPOs } from "@/backend/services/poReceipt";
-import { PR_ROW_SQL } from "@/backend/services/prRows";
+import { PR_ROW_SQL, reconcileStockOrdersAndPRs } from "@/backend/services/prRows";
 import {
   ensureDefaultInternalSuppliers,
   syncPoWithFactoryIfInternal,
@@ -258,6 +258,11 @@ export async function GET(req: NextRequest) {
       } catch (e: any) {
         console.warn("[reconcileHistoricalPOsWithInbound] warning:", e?.message || e);
       }
+      try {
+        await reconcileStockOrdersAndPRs(authUser.full_name || authUser.username);
+      } catch (e: any) {
+        console.warn("[reconcileStockOrdersAndPRs] warning:", e?.message || e);
+      }
 
       const safeQuery = async (sql: string, params?: any[]) => {
         try {
@@ -426,16 +431,11 @@ export async function GET(req: NextRequest) {
       const restockAlerts = allowCost ? enrichedRestockRows : stripCostFields(enrichedRestockRows);
       const allSupplierProducts = allowCost ? allSupplierProductsRaw : stripCostFields(allSupplierProductsRaw);
       const purchaseRequests = prRes.rows.map((pr: any) => {
-        const isStock = Boolean(
-          (pr.workflow_code && pr.workflow_code.includes("STOCK")) ||
-          (pr.title && (pr.title.includes("STOCK") || pr.title.includes("LƯU TRỮ") || pr.title.includes("DỰ PHÒNG"))) ||
-          pr.customer_name === "STOCK"
-        );
-        if (!pr.requester_name) {
+        if (!pr.requester_name || pr.requester_name === "Bộ Phận Kho Vận") {
           return {
             ...pr,
-            requester_name: isStock ? "Bộ Phận Kho Vận" : "Phòng Kinh Doanh",
-            requester_dept: isStock ? "Kho Vận" : (pr.requester_dept || "Kinh Doanh")
+            requester_name: "Phòng Kinh Doanh",
+            requester_dept: pr.requester_dept && pr.requester_dept !== "Kho Vận" ? pr.requester_dept : "Kinh Doanh"
           };
         }
         return pr;
@@ -2079,11 +2079,13 @@ export async function POST(req: NextRequest) {
       const isStockOrder = is_stock || customer_name === "STOCK" || String(customer_name || "").includes("Kho") || String(customer_name || "").includes("Lưu Kho") || String(workflow_code || "").includes("STOCK") || String(title || "").includes("STOCK");
       
       const actualLoggedUser = me.full_name || me.username || "";
+      const incomingRequester = String(requester_name || "").trim();
+      const incomingDept = String(requester_dept || "").trim();
       const cleanRequesterName = String(
-        requester_name || actualLoggedUser || (isStockOrder ? "Bộ Phận Kho Vận" : "Phòng Kinh Doanh")
+        (incomingRequester && incomingRequester !== "Bộ Phận Kho Vận" ? incomingRequester : "") || actualLoggedUser || "Phòng Kinh Doanh"
       ).trim();
       const cleanRequesterDept = String(
-        requester_dept || me.department || (isStockOrder ? "Kho Vận" : "Kinh Doanh")
+        (incomingDept && incomingDept !== "Kho Vận" ? incomingDept : "") || me.department || "Kinh Doanh"
       ).trim();
 
       const clientCode = workflow_code && typeof workflow_code === "string" && /^PR\d{2}-/.test(workflow_code.trim())

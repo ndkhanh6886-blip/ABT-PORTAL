@@ -937,8 +937,17 @@ export const ProcurementModule: React.FC = () => {
         fetchData({ silent: true });
       }
     };
+    const onTabActivated = (e: any) => {
+      if (e?.detail?.tab === "procurement") {
+        fetchData({ silent: true });
+      }
+    };
     window.addEventListener("tbr:api-revalidated", onRevalidated);
-    return () => window.removeEventListener("tbr:api-revalidated", onRevalidated);
+    window.addEventListener("tbr:tab-activated", onTabActivated);
+    return () => {
+      window.removeEventListener("tbr:api-revalidated", onRevalidated);
+      window.removeEventListener("tbr:tab-activated", onTabActivated);
+    };
   }, []);
 
   const supplierFileInputRef = useRef<HTMLInputElement>(null);

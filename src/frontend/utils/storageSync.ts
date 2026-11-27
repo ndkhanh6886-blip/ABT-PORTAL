@@ -570,6 +570,19 @@ export function installStorageSync() {
       init = { ...(init || {}), headers };
     }
     const res = await f(input as any, init);
+    if (method !== "GET" && res.ok) {
+      const isHeartbeat = url.pathname === "/api/auth" && typeof init?.body === "string" && init.body.includes('"heartbeat"');
+      if (!isHeartbeat && url.pathname !== "/api/auth") {
+        markCacheMutated(url.pathname);
+        if (url.pathname === "/api/procurement") {
+          window.dispatchEvent(
+            new CustomEvent("tbr:api-revalidated", {
+              detail: { url: url.pathname + url.search, pathname: "/api/procurement", search: url.search },
+            })
+          );
+        }
+      }
+    }
     if (url.pathname === "/api/storage" && res.status === 409) await handleStaleEpoch(res);
     if (res.status === 401 && url.pathname !== "/api/auth") {
       window.dispatchEvent(new Event("tbr:unauthorized"));

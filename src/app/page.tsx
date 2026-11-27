@@ -66,6 +66,9 @@ export default function Home() {
     setVisitedTabs(prev => (prev[nextTab] ? prev : { ...prev, [nextTab]: true }));
     if (typeof window !== "undefined") {
       try {
+        window.dispatchEvent(new CustomEvent("tbr:tab-activated", { detail: { tab: nextTab } }));
+      } catch {}
+      try {
         const url = new URL(window.location.href);
         const prevTab = url.searchParams.get("tab");
         url.searchParams.set("tab", nextTab);
