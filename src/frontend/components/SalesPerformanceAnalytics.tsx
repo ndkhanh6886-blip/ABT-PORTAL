@@ -2018,7 +2018,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                           <div className="space-y-1 pt-1">
                             {/* Target bar */}
                             <div className="flex items-center gap-2">
-                              <span className="text-[9px] text-amber-400/80 font-mono w-14 shrink-0">Chỉ tiêu:</span>
+                              <span className="text-[11px] text-amber-400/80 font-mono w-16 shrink-0">Chỉ tiêu:</span>
                               <div className="flex-1 bg-slate-900 h-2 rounded-full overflow-hidden">
                                 <div
                                   className="h-full bg-amber-400/80 rounded-full transition-all duration-500"
@@ -2028,7 +2028,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                             </div>
                             {/* Actual bar */}
                             <div className="flex items-center gap-2">
-                              <span className="text-[9px] text-indigo-400 font-mono w-14 shrink-0">Thực đạt:</span>
+                              <span className="text-[11px] text-indigo-400 font-mono w-16 shrink-0">Thực đạt:</span>
                               <div className="flex-1 bg-slate-900 h-2 rounded-full overflow-hidden">
                                 <div
                                   className={cn(
@@ -2127,7 +2127,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                                     )}
                                   </div>
                                   {rep.otherTarget && (
-                                    <span className="text-[9px] text-amber-400/90 font-mono">
+                                    <span className="text-[11px] text-amber-400/90 font-mono">
                                       Kỳ {rep.otherTarget.month}: {fmtCurrency(rep.otherTarget.targetAmount)}
                                     </span>
                                   )}
@@ -2141,12 +2141,12 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                             {/* Post-VAT Revenue */}
                             <td className="p-3 text-right font-mono font-bold text-indigo-400">
                               <div>{fmtCurrency(rep.postVat)}</div>
-                              <div className="text-[9px] text-slate-500 font-normal">{rep.orderCount} đơn hàng</div>
+                              <div className="text-[11px] text-slate-500 font-normal">{rep.orderCount} đơn hàng</div>
                             </td>
                             {/* Collected */}
                             <td className="p-3 text-right font-mono">
                               <div className="text-emerald-400 font-semibold">{fmtCurrency(rep.collected)}</div>
-                              <div className="text-[9px] text-slate-500">Thu hồi: {rep.collectionRate}%</div>
+                              <div className="text-[11px] text-slate-500">Thu hồi: {rep.collectionRate}%</div>
                             </td>
                             {/* Gap */}
                             <td className="p-3 text-right font-mono font-bold">
@@ -2302,15 +2302,15 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                         return (
                           <div key={item.id} className="flex flex-col items-center group min-w-[55px] flex-1 px-1">
                             {/* Hover Tooltip */}
-                            <div className="text-[9px] font-mono text-center hidden group-hover:block transition-all mb-2 whitespace-nowrap bg-slate-950 p-2 rounded-xl border border-slate-800 shadow-2xl z-20">
+                            <div className="text-[11px] font-mono text-center hidden group-hover:block transition-all mb-2 whitespace-nowrap bg-slate-950 p-2 rounded-xl border border-slate-800 shadow-2xl z-20">
                               <div className="text-white font-bold mb-0.5">{item.label}</div>
                               <div className="text-indigo-400 font-bold">
                                 {formatMetricDisplay(val)}
                               </div>
-                              <div className="text-slate-400 text-[8px]">
+                              <div className="text-slate-400 text-[11px]">
                                 Đã thu: {fmtCurrency(item.collected)} • Nợ: {fmtCurrency(item.debt)}
                               </div>
-                              <div className="text-emerald-400 text-[8px] font-bold">
+                              <div className="text-emerald-400 text-[11px] font-bold">
                                 Tỷ lệ thu hồi: {item.debt_rate}%
                               </div>
                             </div>
@@ -2331,7 +2331,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                             <span className="text-[10px] text-slate-300 mt-2 font-bold text-center block truncate max-w-[70px]">
                               {item.label.split(" ").slice(-2).join(" ")}
                             </span>
-                            <span className="text-[9px] font-mono text-slate-500">
+                            <span className="text-[11px] font-mono text-slate-500">
                               {activeMetric === "debt_rate" ? `${val}%` : formatMetricDisplay(val)}
                             </span>
                           </div>
@@ -2440,11 +2440,11 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                             </svg>
                             {/* Donut Center Hole */}
                             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center">
-                              <span className="text-[9px] uppercase font-bold text-slate-500 tracking-wider">Tổng {activeMetric.toUpperCase()}</span>
+                              <span className="text-[11px] uppercase font-bold text-slate-500 tracking-wider">Tổng {activeMetric.toUpperCase()}</span>
                               <span className="text-sm font-black font-mono text-white mt-0.5">
                                 {formatMetricDisplay(totalVal)}
                               </span>
-                              <span className="text-[9px] text-indigo-400 font-bold font-mono">100% Thị phần</span>
+                              <span className="text-[11px] text-indigo-400 font-bold font-mono">100% Thị phần</span>
                             </div>
                           </div>
                         );
@@ -2692,14 +2692,14 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                           </span>
                           <div>
                             <span className="text-xs font-bold text-white block">{rank.name}</span>
-                            <span className="text-[9px] text-slate-400 font-mono">
+                            <span className="text-[11px] text-slate-400 font-mono">
                               Mục tiêu: <span className="text-amber-400 font-semibold">{fmtCurrency(rank.target)}</span> • KPI: <strong className={rank.completion >= 100 ? "text-emerald-400 font-bold" : "text-purple-400"}>{rank.completion}%</strong>
                             </span>
                           </div>
                         </div>
                         <div className="text-right font-mono">
                           <span className="text-xs font-bold text-emerald-400 block">{fmtCurrency(rank.total)}</span>
-                          <span className="text-[9px] text-slate-400">
+                          <span className="text-[11px] text-slate-400">
                             {rank.total >= rank.target && rank.target > 0 ? (
                               <span className="text-emerald-400 font-bold">Về đích</span>
                             ) : (

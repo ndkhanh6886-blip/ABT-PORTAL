@@ -1812,7 +1812,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                               <div className="font-mono font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
                                 <span>{u?.username || "Chưa có tên"}</span>
                                 {u.id === 1 && (
-                                  <span className="text-[9px] px-1.5 py-0.2 bg-amber-500/20 text-amber-500 border border-amber-500/30 rounded-md font-bold font-sans">
+                                  <span className="text-[11px] px-1.5 py-0.2 bg-amber-500/20 text-amber-500 border border-amber-500/30 rounded-md font-bold font-sans">
                                     Root Admin
                                   </span>
                                 )}
@@ -1876,7 +1876,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                               <button
                                 type="button"
                                 onClick={() => handleOpenPermissionsModal(u)}
-                                className="px-1.5 py-0.5 rounded-md text-[9px] font-mono font-bold bg-violet-100 dark:bg-violet-950/70 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800 hover:bg-violet-200 cursor-pointer"
+                                className="px-1.5 py-0.5 rounded-md text-[11px] font-mono font-bold bg-violet-100 dark:bg-violet-950/70 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800 hover:bg-violet-200 cursor-pointer"
                                 title="Vai trò chuyên môn tại Khối Kỹ thuật / Nhà máy (21 CFR Part 11) — Bấm để mở Phân quyền chi tiết cá nhân"
                               >
                                 {u.factory_roles.join(", ")}
@@ -1884,7 +1884,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                             )}
                             {u.permissions && Object.keys(u.permissions).length > 0 && (
                               <span
-                                className="px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"
+                                className="px-1.5 py-0.5 rounded-md text-[11px] font-bold bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"
                                 title="Đã được tùy biến phân quyền riêng theo cá nhân"
                               >
                                 Tùy Biến
@@ -2276,7 +2276,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                           <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
                             <span className={`w-1.5 h-1.5 rounded-full ${linkedUser.is_active !== false ? "bg-emerald-500" : "bg-rose-500"}`} />
                             <span className="font-mono font-bold text-slate-900 dark:text-white text-[11px]">@{linkedUser.username}</span>
-                            <span className="text-[9px] px-1 py-0.2 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400 rounded-md font-mono">
+                            <span className="text-[11px] px-1 py-0.2 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400 rounded-md font-mono">
                               {linkedUser.role}
                             </span>
                           </div>
@@ -2461,7 +2461,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                                       <span className="font-bold text-xs text-slate-900 dark:text-white">
                                         {pos.title}
                                       </span>
-                                      <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded-md border ${levelColor}`}>
+                                      <span className={`text-[11px] font-bold px-1.5 py-0.2 rounded-md border ${levelColor}`}>
                                         {pos.level}
                                       </span>
                                       <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
@@ -2715,7 +2715,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                                   <div>
                                     <div className="font-bold text-xs text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                                       <span>{vPos.title}</span>
-                                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 font-mono">
+                                      <span className="text-[11px] px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 font-mono">
                                         {vPos.level}
                                       </span>
                                     </div>
@@ -2823,7 +2823,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                                       <span className="font-bold text-xs text-slate-900 dark:text-white">
                                         {pos.title}
                                       </span>
-                                      <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded-md border ${levelColor}`}>
+                                      <span className={`text-[11px] font-bold px-1.5 py-0.2 rounded-md border ${levelColor}`}>
                                         {pos.level}
                                       </span>
                                       <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
@@ -2984,19 +2984,19 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                         <div className="grid grid-cols-4 gap-2 text-center text-xs">
                           <div className="p-2 rounded-lg bg-orange-950/60 border border-orange-800/60">
                             <div className="text-orange-400 font-bold font-mono">{directorCount}</div>
-                            <div className="text-[9px] text-slate-400">Director</div>
+                            <div className="text-[11px] text-slate-400">Director</div>
                           </div>
                           <div className="p-2 rounded-lg bg-indigo-950/60 border border-indigo-800/60">
                             <div className="text-indigo-400 font-bold font-mono">{managerCount}</div>
-                            <div className="text-[9px] text-slate-400">Manager</div>
+                            <div className="text-[11px] text-slate-400">Manager</div>
                           </div>
                           <div className="p-2 rounded-lg bg-blue-950/60 border border-blue-800/60">
                             <div className="text-blue-400 font-bold font-mono">{specialistCount}</div>
-                            <div className="text-[9px] text-slate-400">Specialist</div>
+                            <div className="text-[11px] text-slate-400">Specialist</div>
                           </div>
                           <div className="p-2 rounded-lg bg-slate-800/60 border border-slate-700/60">
                             <div className="text-slate-300 font-bold font-mono">{staffCount}</div>
-                            <div className="text-[9px] text-slate-400">Staff</div>
+                            <div className="text-[11px] text-slate-400">Staff</div>
                           </div>
                         </div>
                       </div>
@@ -4573,7 +4573,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                                     {deptMod.shortName}
                                   </span>
                                   {isOwnDept && (
-                                    <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                                    <span className="text-[11px] font-bold px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
                                       Trực thuộc
                                     </span>
                                   )}
@@ -4603,7 +4603,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                           <span className={`font-bold flex items-center gap-1 ${isAccessible ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400"}`}>
                             <span>{isAccessible ? "✓ ĐƯỢC PHÉP VÀO" : "✕ ĐANG KHÓA TAB"}</span>
                           </span>
-                          <span className="text-slate-400 font-mono text-[9px]">
+                          <span className="text-slate-400 font-mono text-[11px]">
                             {deptMod.key}
                           </span>
                         </div>
@@ -4751,7 +4751,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                                 <span className={`text-xs font-bold ${isGranted ? "text-slate-900 dark:text-white" : "text-slate-600 dark:text-slate-400"}`}>
                                   {p.label}
                                 </span>
-                                <span className="text-[9px] font-mono text-slate-400 shrink-0">
+                                <span className="text-[11px] font-mono text-slate-400 shrink-0">
                                   {p.key}
                                 </span>
                               </div>

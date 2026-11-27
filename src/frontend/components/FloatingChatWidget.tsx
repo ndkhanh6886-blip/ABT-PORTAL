@@ -614,11 +614,11 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
                         <span className="truncate">{getChannelDisplayName(c)}</span>
                         <div className="flex items-center gap-1 shrink-0">
                           {chUnread > 0 && !isActive && (
-                            <span className="min-w-[16px] h-4 px-1 rounded-full bg-rose-600 text-white text-[9px] font-extrabold flex items-center justify-center">
+                            <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white text-[11px] font-extrabold flex items-center justify-center">
                               {chUnread > 99 ? "99+" : chUnread}
                             </span>
                           )}
-                          {c.channel_type === "DIRECT" && <span className="text-[9px] opacity-75">1-1</span>}
+                          {c.channel_type === "DIRECT" && <span className="text-[11px] opacity-75">1-1</span>}
                         </div>
                       </button>
                     );
@@ -642,7 +642,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
                         className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-left text-[11px] font-medium cursor-pointer transition-colors ${cardColors[idx % cardColors.length]}`}
                       >
                         <span className="truncate">{p.full_name}</span>
-                        <span className="text-[9px] text-slate-500">{p.department}</span>
+                        <span className="text-[11px] text-slate-500">{p.department}</span>
                       </button>
                     );
                   })}
@@ -678,7 +678,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
                       >
                         <span className="truncate">{getChannelDisplayName(c)}</span>
                         {chUnread > 0 && activeChannelId !== c.id && (
-                          <span className="min-w-[15px] h-3.5 px-1 rounded-full bg-rose-600 text-white text-[9px] font-extrabold flex items-center justify-center shrink-0">
+                          <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white text-[11px] font-extrabold flex items-center justify-center shrink-0">
                             {chUnread}
                           </span>
                         )}
@@ -741,7 +741,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
                     <React.Fragment key={m.id || idx}>
                       {isNewDay && dateLabel && (
                         <div className="flex items-center justify-center my-2 select-none">
-                          <span className="px-2 py-0.5 rounded-full text-[9px] font-semibold bg-slate-200/70 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-300/40 dark:border-slate-700/60 shadow-2xs">
+                          <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-200/70 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-300/40 dark:border-slate-700/60 shadow-2xs">
                             📅 {dateLabel}
                           </span>
                         </div>
@@ -760,7 +760,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
                             {formatVietnamTime(m.created_at)}
                           </span>
                           {m.is_pinned && (
-                            <span className="text-[9px] font-bold text-amber-600 bg-amber-100 dark:bg-amber-950/60 px-1 rounded">
+                            <span className="text-[11px] font-bold text-amber-600 bg-amber-100 dark:bg-amber-950/60 px-1 rounded">
                               📌 Đã ghim
                             </span>
                           )}
@@ -768,7 +768,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
                             <button
                               type="button"
                               onClick={() => handleTogglePin(m.id)}
-                              className="opacity-0 group-hover:opacity-100 transition-opacity text-[9px] font-semibold text-slate-400 hover:text-amber-600 px-1 cursor-pointer"
+                              className="opacity-0 group-hover:opacity-100 transition-opacity text-[11px] font-semibold text-slate-400 hover:text-amber-600 px-1 cursor-pointer"
                               title={m.is_pinned ? "Bỏ ghim tin nhắn" : "Ghim tin nhắn"}
                             >
                               📌 {m.is_pinned ? "Bỏ ghim" : "Ghim"}

@@ -1589,7 +1589,7 @@ export const LegalModule: React.FC = () => {
                             <Eye className="w-3.5 h-3.5" />
                             <span>Xem Giấy Phép</span>
                             {lic.attachments && lic.attachments.length > 0 && (
-                              <span className="ml-0.5 px-1 bg-emerald-200 dark:bg-emerald-800 rounded text-[9px]">
+                              <span className="ml-0.5 px-1 bg-emerald-200 dark:bg-emerald-800 rounded text-[11px]">
                                 {lic.attachments.length}
                               </span>
                             )}
@@ -2111,14 +2111,14 @@ export const LegalModule: React.FC = () => {
                         className="flex items-center justify-between p-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs shadow-2xs"
                       >
                         <div className="flex items-center gap-2 min-w-0">
-                          <div className="w-6 h-6 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-bold text-[9px] flex items-center justify-center shrink-0">
+                          <div className="w-8 h-7 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-bold text-[11px] flex items-center justify-center shrink-0">
                             FILE
                           </div>
                           <div className="min-w-0">
                             <div className="font-bold text-slate-800 dark:text-slate-200 truncate text-[11px]">
                               {file.name}
                             </div>
-                            <div className="text-[9px] text-slate-400">{file.size}</div>
+                            <div className="text-[11px] text-slate-400">{file.size}</div>
                           </div>
                         </div>
                         <button
@@ -2292,14 +2292,14 @@ export const LegalModule: React.FC = () => {
                         className="flex items-center justify-between p-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs"
                       >
                         <div className="flex items-center gap-2 min-w-0">
-                          <div className="w-6 h-6 rounded bg-teal-100 dark:bg-teal-950 text-teal-700 dark:text-teal-300 font-bold text-[9px] flex items-center justify-center shrink-0">
+                          <div className="w-8 h-7 rounded bg-teal-100 dark:bg-teal-950 text-teal-700 dark:text-teal-300 font-bold text-[11px] flex items-center justify-center shrink-0">
                             DOC
                           </div>
                           <div className="min-w-0">
                             <div className="font-bold text-slate-800 dark:text-slate-200 truncate text-[11px]">
                               {file.name}
                             </div>
-                            <div className="text-[9px] text-slate-400">{file.size}</div>
+                            <div className="text-[11px] text-slate-400">{file.size}</div>
                           </div>
                         </div>
                         <button
@@ -2541,14 +2541,14 @@ export const LegalModule: React.FC = () => {
                         className="flex items-center justify-between p-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs"
                       >
                         <div className="flex items-center gap-2 min-w-0">
-                          <div className="w-6 h-6 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-bold text-[9px] flex items-center justify-center shrink-0">
+                          <div className="w-8 h-7 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-bold text-[11px] flex items-center justify-center shrink-0">
                             FILE
                           </div>
                           <div className="min-w-0">
                             <div className="font-bold text-slate-800 dark:text-slate-200 truncate text-[11px]">
                               {file.name}
                             </div>
-                            <div className="text-[9px] text-slate-400">{file.size}</div>
+                            <div className="text-[11px] text-slate-400">{file.size}</div>
                           </div>
                         </div>
                         <button
@@ -2920,14 +2920,14 @@ export const LegalModule: React.FC = () => {
                         className="flex items-center justify-between p-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs"
                       >
                         <div className="flex items-center gap-2 min-w-0">
-                          <div className="w-6 h-6 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-bold text-[9px] flex items-center justify-center shrink-0">
+                          <div className="w-8 h-7 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-bold text-[11px] flex items-center justify-center shrink-0">
                             LIC
                           </div>
                           <div className="min-w-0">
                             <div className="font-bold text-slate-800 dark:text-slate-200 truncate text-[11px]">
                               {file.name}
                             </div>
-                            <div className="text-[9px] text-slate-400">{file.size}</div>
+                            <div className="text-[11px] text-slate-400">{file.size}</div>
                           </div>
                         </div>
                         <button
@@ -3200,7 +3200,7 @@ export const LegalModule: React.FC = () => {
                                 <span className="text-[7.5px] font-black uppercase text-center leading-tight">
                                   {companyConfig.companyName ? companyConfig.companyName.toUpperCase() : "CÔNG TY CP CÔNG NGHỆ ABT"}
                                 </span>
-                                <span className="text-[9px] font-black my-0.5">★ ★ ★</span>
+                                <span className="text-[11px] font-black my-0.5">★ ★ ★</span>
                                 <span className="text-[8.5px] font-bold text-center">ĐÃ KÝ SỐ</span>
                               </div>
                             </div>
