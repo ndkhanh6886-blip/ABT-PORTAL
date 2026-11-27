@@ -62,7 +62,73 @@ interface PrDraftLine {
   notes: string;
 }
 
-const DEFAULT_UOM_SUGGESTIONS = ["Hộp", "Lọ", "Tube", "Bộ", "Cái", "mL", "L", "g", "kg", "pcs", "Test", "Rxn"];
+const DEFAULT_UOM_GROUPS: Array<{ group: string; items: Array<{ code: string; label: string }> }> = [
+  {
+    group: "📦 Đóng gói & Vật chứa Lab",
+    items: [
+      { code: "Hộp", label: "Hộp" },
+      { code: "Lọ", label: "Lọ (Vial)" },
+      { code: "Chai", label: "Chai (Bottle)" },
+      { code: "Tube", label: "Tube (Ống)" },
+      { code: "Ống", label: "Ống" },
+      { code: "Bộ", label: "Bộ (Set)" },
+      { code: "Kit", label: "Kit" },
+      { code: "Gói", label: "Gói (Pack)" },
+      { code: "Túi", label: "Túi (Bag)" },
+      { code: "Bịch", label: "Bịch" },
+      { code: "Thùng", label: "Thùng (Carton)" },
+      { code: "Đĩa", label: "Đĩa (Plate)" },
+      { code: "Well", label: "Giếng (Well)" },
+      { code: "Cột", label: "Cột (Column)" },
+    ],
+  },
+  {
+    group: "💧 Thể tích (Chất lỏng / Dung dịch)",
+    items: [
+      { code: "mL", label: "mL (Mililít)" },
+      { code: "µL", label: "µL (Microlít)" },
+      { code: "L", label: "L (Lít)" },
+    ],
+  },
+  {
+    group: "⚖️ Khối lượng (Hóa chất rắn / Bột)",
+    items: [
+      { code: "g", label: "g (Gam)" },
+      { code: "mg", label: "mg (Miligam)" },
+      { code: "µg", label: "µg (Microgam)" },
+      { code: "kg", label: "kg (Kilôgam)" },
+    ],
+  },
+  {
+    group: "🧬 Sinh học phân tử & Hoạt độ",
+    items: [
+      { code: "Rxn", label: "Rxn (Phản ứng)" },
+      { code: "Test", label: "Test (Xét nghiệm)" },
+      { code: "nmol", label: "nmol (Nanomol)" },
+      { code: "µmol", label: "µmol (Micromol)" },
+      { code: "pmol", label: "pmol (Picomol)" },
+      { code: "OD", label: "OD (Mật độ quang)" },
+      { code: "U", label: "U (Unit Enzyme)" },
+      { code: "kU", label: "kU (1000 Unit)" },
+    ],
+  },
+  {
+    group: "⚙️ Thiết bị, Linh kiện & Vật tư",
+    items: [
+      { code: "Cái", label: "Cái" },
+      { code: "Chiếc", label: "Chiếc" },
+      { code: "pcs", label: "pcs (Pieces)" },
+      { code: "Cuộn", label: "Cuộn (Roll)" },
+      { code: "Tấm", label: "Tấm (Sheet)" },
+      { code: "Cây", label: "Cây" },
+      { code: "m", label: "m (Mét)" },
+      { code: "cm", label: "cm" },
+      { code: "mm", label: "mm" },
+    ],
+  },
+];
+
+const DEFAULT_UOM_SUGGESTIONS = DEFAULT_UOM_GROUPS.flatMap((g) => g.items.map((i) => i.code));
 
 function createEmptyPrLine(mode: "CATALOG" | "NEW" = "CATALOG"): PrDraftLine {
   return {
@@ -1597,14 +1663,47 @@ export function DeptMaterialActionBar({
                           />
                         </td>
                         <td className="py-2 px-2.5">
-                          <input
-                            className={`${inputClass} text-center`}
-                            list={`pr-uom-list-${moduleKey}`}
-                            placeholder="ĐVT"
-                            value={l.uom}
-                            onChange={(e) => updatePrLine(idx, { uom: e.target.value })}
+                          <select
+                            className={`${inputClass} font-semibold`}
+                            value={
+                              mergedUomOptions.includes(l.uom) || !l.uom
+                                ? l.uom || "Hộp"
+                                : l.uom
+                            }
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === "__CUSTOM_UOM__") {
+                                const custom = window.prompt("Nhập Đơn vị tính (ĐVT) khác:", l.uom || "");
+                                if (custom && custom.trim()) {
+                                  updatePrLine(idx, { uom: custom.trim() });
+                                }
+                                return;
+                              }
+                              updatePrLine(idx, { uom: val });
+                            }}
                             required
-                          />
+                          >
+                            {l.uom && !DEFAULT_UOM_SUGGESTIONS.includes(l.uom) && (
+                              <option value={l.uom}>{l.uom}</option>
+                            )}
+                            {DEFAULT_UOM_GROUPS.map((grp) => (
+                              <optgroup key={grp.group} label={grp.group}>
+                                {grp.items.map((it) => (
+                                  <option key={it.code} value={it.code}>
+                                    {it.label}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            ))}
+                            {(uoms.data ?? [])
+                              .filter((u) => !DEFAULT_UOM_SUGGESTIONS.includes(u.code))
+                              .map((u) => (
+                                <option key={u.code} value={u.code}>
+                                  {u.code}
+                                </option>
+                              ))}
+                            <option value="__CUSTOM_UOM__">✍️ + Gõ ĐVT khác...</option>
+                          </select>
                         </td>
                         <td className="py-2 px-2.5">
                           <input

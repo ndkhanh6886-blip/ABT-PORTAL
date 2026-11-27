@@ -60,6 +60,73 @@ interface Line {
   notes: string;
 }
 
+const PR_UOM_GROUPS: Array<{ group: string; items: Array<{ code: string; label: string }> }> = [
+  {
+    group: "📦 Đóng gói & Vật chứa Lab",
+    items: [
+      { code: "Hộp", label: "Hộp" },
+      { code: "Lọ", label: "Lọ (Vial)" },
+      { code: "Chai", label: "Chai (Bottle)" },
+      { code: "Tube", label: "Tube (Ống)" },
+      { code: "Ống", label: "Ống" },
+      { code: "Bộ", label: "Bộ (Set)" },
+      { code: "Kit", label: "Kit" },
+      { code: "Gói", label: "Gói (Pack)" },
+      { code: "Túi", label: "Túi (Bag)" },
+      { code: "Bịch", label: "Bịch" },
+      { code: "Thùng", label: "Thùng (Carton)" },
+      { code: "Đĩa", label: "Đĩa (Plate)" },
+      { code: "Well", label: "Giếng (Well)" },
+      { code: "Cột", label: "Cột (Column)" },
+    ],
+  },
+  {
+    group: "💧 Thể tích (Chất lỏng / Dung dịch)",
+    items: [
+      { code: "mL", label: "mL (Mililít)" },
+      { code: "µL", label: "µL (Microlít)" },
+      { code: "L", label: "L (Lít)" },
+    ],
+  },
+  {
+    group: "⚖️ Khối lượng (Hóa chất rắn / Bột)",
+    items: [
+      { code: "g", label: "g (Gam)" },
+      { code: "mg", label: "mg (Miligam)" },
+      { code: "µg", label: "µg (Microgam)" },
+      { code: "kg", label: "kg (Kilôgam)" },
+    ],
+  },
+  {
+    group: "🧬 Sinh học phân tử & Hoạt độ",
+    items: [
+      { code: "Rxn", label: "Rxn (Phản ứng)" },
+      { code: "Test", label: "Test (Xét nghiệm)" },
+      { code: "nmol", label: "nmol (Nanomol)" },
+      { code: "µmol", label: "µmol (Micromol)" },
+      { code: "pmol", label: "pmol (Picomol)" },
+      { code: "OD", label: "OD (Mật độ quang)" },
+      { code: "U", label: "U (Unit Enzyme)" },
+      { code: "kU", label: "kU (1000 Unit)" },
+    ],
+  },
+  {
+    group: "⚙️ Thiết bị, Linh kiện & Vật tư",
+    items: [
+      { code: "Cái", label: "Cái" },
+      { code: "Chiếc", label: "Chiếc" },
+      { code: "pcs", label: "pcs (Pieces)" },
+      { code: "Cuộn", label: "Cuộn (Roll)" },
+      { code: "Tấm", label: "Tấm (Sheet)" },
+      { code: "Cây", label: "Cây" },
+      { code: "m", label: "m (Mét)" },
+      { code: "cm", label: "cm" },
+      { code: "mm", label: "mm" },
+    ],
+  },
+];
+const ALL_PR_UOM_CODES = PR_UOM_GROUPS.flatMap((g) => g.items.map((i) => i.code));
+
 function emptyLine(mode: "CATALOG" | "NEW" = "CATALOG"): Line {
   return {
     mode,
@@ -296,12 +363,44 @@ function NewRequestForm({ onDone }: { onDone: () => void }) {
                   )}
                 </td>
                 <td className="py-2 pr-2 w-24"><input className={inputClass} inputMode="decimal" value={l.qty} onChange={(e) => setL(i, { qty: e.target.value })} required /></td>
-                <td className="py-2 pr-2 w-28">
-                  <input className={inputClass} list="pr-req-uoms" value={l.uom} onChange={(e) => setL(i, { uom: e.target.value })} required />
-                  <datalist id="pr-req-uoms">
-                    {(uoms.data ?? []).map((u) => <option key={u.code} value={u.code} />)}
-                    <option value="Hộp" /><option value="Lọ" /><option value="Tube" /><option value="Bộ" /><option value="Cái" /><option value="mL" /><option value="g" />
-                  </datalist>
+                <td className="py-2 pr-2 w-32">
+                  <select
+                    className={`${inputClass} font-semibold`}
+                    value={l.uom || "Hộp"}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === "__CUSTOM_UOM__") {
+                        const custom = window.prompt("Nhập Đơn vị tính (ĐVT) khác:", l.uom || "");
+                        if (custom && custom.trim()) {
+                          setL(i, { uom: custom.trim() });
+                        }
+                        return;
+                      }
+                      setL(i, { uom: val });
+                    }}
+                    required
+                  >
+                    {l.uom && !ALL_PR_UOM_CODES.includes(l.uom) && (
+                      <option value={l.uom}>{l.uom}</option>
+                    )}
+                    {PR_UOM_GROUPS.map((grp) => (
+                      <optgroup key={grp.group} label={grp.group}>
+                        {grp.items.map((it) => (
+                          <option key={it.code} value={it.code}>
+                            {it.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                    {(uoms.data ?? [])
+                      .filter((u) => !ALL_PR_UOM_CODES.includes(u.code))
+                      .map((u) => (
+                        <option key={u.code} value={u.code}>
+                          {u.code}
+                        </option>
+                      ))}
+                    <option value="__CUSTOM_UOM__">✍️ + Gõ ĐVT khác...</option>
+                  </select>
                 </td>
                 <td className="py-2 pr-2 w-36"><input className={inputClass} inputMode="numeric" value={l.est_price} onChange={(e) => setL(i, { est_price: e.target.value.replace(/\D/g, "") })} /></td>
                 <td className="py-2 pr-2 w-40"><input className={inputClass} placeholder="Quy cách, hãng..." value={l.notes} onChange={(e) => setL(i, { notes: e.target.value })} /></td>
