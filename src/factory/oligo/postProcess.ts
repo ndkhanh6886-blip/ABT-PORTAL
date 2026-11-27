@@ -9,7 +9,15 @@ import { createQcTest, registerQcSubject } from "../qms/qcTests";
 import { pyRound } from "./analyzer";
 import { ensureLegacyOligoDataSeeded } from "./legacySync";
 import { recomputeOrdersOf, visibleOligoUnits } from "./orders";
-import { freezeWorkflowById, stepLogs, workflowFor } from "./postSop";
+import {
+  consolidateAmpliconFragmentsAfterAssembly,
+  extractAmpliconGroupPrefix,
+  freezeWorkflowById,
+  isAmpliconAssemblyStepName,
+  isAmpliconPostAssemblyStepName,
+  stepLogs,
+  workflowFor,
+} from "./postSop";
 import { sequenceMachine } from "./sequences";
 
 import { todayVN } from "@/backend/services/dates";
@@ -110,8 +118,23 @@ const DERIVED = ["od_total", "nmol", "ug", "resuspend_volume_ul", "od_per_tube",
 /** Saves steps and measurements while the sequence is in post-processing; OD, nmol, µg and volumes are always computed here. */
 export async function savePostProcess(tx: Tx, actor: AuthzActor, seqId: string, input: unknown) {
   const data = parseInput(saveSchema, input);
-  const s = await lockSequence(tx, seqId);
+  let s = await lockSequence(tx, seqId);
   await authorize(tx, actor, "oligo.post.manage", s.org_unit_id);
+
+  // If this sequence is an Amplicon fragment and OD is being saved on it, automatically merge the fragments into the 1 parent Amplicon first!
+  if (
+    (s.relation === "FRAGMENT" || (s.order_id && extractAmpliconGroupPrefix(s.name))) &&
+    data.a260 != null &&
+    Number(data.a260) > 0
+  ) {
+    const merged = await consolidateAmpliconFragmentsAfterAssembly(tx, actor, s.id);
+    if (merged) {
+      seqId = merged.parentSeq.id;
+      s = await lockSequence(tx, seqId);
+      data.version = Number(merged.parentPost.version);
+    }
+  }
+
   const cur = await liveRecord(tx, seqId, true);
   if (!cur || s.status !== "POST_PROCESSING" || cur.status !== "OPEN") throw invalid("Chỉ sửa hậu tổng hợp khi trình tự đang ở bước hậu tổng hợp (chưa gửi QC).");
   if (cur.version !== data.version) throw conflict("Hồ sơ hậu tổng hợp vừa được người khác sửa. Tải lại rồi nhập lại.", "STALE_VERSION");
@@ -354,11 +377,59 @@ export async function listPostQueue(tx: Tx, actor: AuthzActor, status?: string) 
   if (units !== "ALL" && !units.length) return [];
   const statuses = status ? [status] : QUEUE_STATUSES;
 
+  // Self-heal any Amplicon fragment groups in POST_PROCESSING that have already logged an Assembly ('Lắp ráp') step
+  // or are currently at a post-assembly step, so only the 1 parent Amplicon sequence appears in the queue!
+  try {
+    await tx.query("SAVEPOINT sp_amplicon_post_merge_check");
+    const openFrags = (
+      await tx.query(
+        `SELECT s.id, s.name, s.order_id, s.parent_sequence_id, s.relation,
+                pp.id AS post_id, pp.workflow_id, pp.workflow_revision, pp.workflow_steps,
+                COALESCE((SELECT count(*)::int FROM oligo.ps_step_log l WHERE l.post_process_id = pp.id), 0) AS logged_count,
+                EXISTS (
+                  SELECT 1 FROM oligo.ps_step_log l
+                   WHERE l.post_process_id = pp.id
+                     AND (l.step_name ~* 'lắp\\s*ráp|assembly' OR (l.step_name ~* '\\bpcr\\b' AND l.step_name !~* 'tách\\s*chiết|tinh\\s*sạch|đo\\s*od'))
+                ) AS has_assembly_log
+           FROM oligo.oligo_sequence s
+           JOIN oligo.post_process pp ON pp.sequence_id = s.id AND pp.status = 'OPEN'
+          WHERE s.status = 'POST_PROCESSING'
+            AND (s.relation = 'FRAGMENT' OR s.name ~* '[-_\\s]+(\\d{1,2}[FR]|[FR]\\d{1,2})$')`
+      )
+    ).rows;
+    const processedGroups = new Set<string>();
+    for (const f of openFrags) {
+      const grpKey = f.parent_sequence_id
+        ? `parent:${f.parent_sequence_id}`
+        : `prefix:${f.order_id}:${extractAmpliconGroupPrefix(f.name).toLowerCase()}`;
+      if (processedGroups.has(grpKey)) continue;
+      const wfSteps: any[] = Array.isArray(f.workflow_steps) ? f.workflow_steps : [];
+      const curStep = wfSteps[Number(f.logged_count ?? 0)] ?? null;
+      const shouldMerge =
+        Boolean(f.has_assembly_log) ||
+        (curStep && isAmpliconPostAssemblyStepName(curStep.name, curStep.category)) ||
+        wfSteps.slice(0, Number(f.logged_count ?? 0)).some((st: any) => isAmpliconAssemblyStepName(st?.name, st?.category));
+      if (shouldMerge) {
+        processedGroups.add(grpKey);
+        await consolidateAmpliconFragmentsAfterAssembly(tx, actor, f.id, {
+          workflowId: f.workflow_id,
+          workflowRevision: f.workflow_revision,
+          workflowSteps: wfSteps.length > 0 ? wfSteps : null,
+          copyLogsFromPostId: f.post_id,
+        });
+      }
+    }
+    await tx.query("RELEASE SAVEPOINT sp_amplicon_post_merge_check");
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_amplicon_post_merge_check").catch(() => {});
+  }
+
   return (
     await tx.query(
       `SELECT s.id, s.code, s.name, s.status, s.version, s.scale_code, s.purification, s.format, s.base_count, s.mw::float AS mw,
               s.product_type, s.modifications,
-              s.raw_sequence, s.normalized_sequence, s.relation,
+              s.raw_sequence, s.normalized_sequence, s.relation, s.parent_sequence_id,
+              (SELECT count(*)::int FROM oligo.oligo_sequence cf WHERE cf.parent_sequence_id = s.id AND cf.relation = 'FRAGMENT' AND cf.status <> 'CANCELLED') AS fragment_count,
               s.nmol_per_od::float AS nmol_per_od, s.ug_per_od::float AS ug_per_od,
               o.code AS order_code, o.due_date,
               pp.id AS post_id, pp.version AS post_version, pp.status AS post_status,
@@ -391,7 +462,19 @@ export async function listPostQueue(tx: Tx, actor: AuthzActor, status?: string) 
             LIMIT 1
          ) last_log ON true
          LEFT JOIN LATERAL (SELECT code, status, overall_result FROM qms.qc_test WHERE entity_type = 'OLIGO_SEQUENCE' AND entity_id = s.id ORDER BY created_at DESC LIMIT 1) qt ON true
-        WHERE s.status = ANY($1::text[]) AND ($2::uuid[] IS NULL OR s.org_unit_id = ANY($2::uuid[]))
+        WHERE s.status = ANY($1::text[])
+          AND ($2::uuid[] IS NULL OR s.org_unit_id = ANY($2::uuid[]))
+          AND NOT (
+            s.relation = 'FRAGMENT'
+            AND (
+              s.status = 'COMPLETED'
+              OR EXISTS (
+                SELECT 1 FROM oligo.oligo_sequence p
+                 WHERE p.id = s.parent_sequence_id
+                   AND p.status NOT IN ('SPLIT', 'PENDING')
+              )
+            )
+          )
         ORDER BY o.due_date NULLS LAST, s.code LIMIT 500`,
       [statuses, units === "ALL" ? null : units]
     )
@@ -496,7 +579,7 @@ registerQcSubject("OLIGO_SEQUENCE", {
 });
 
 const batchPostSchema = z.object({
-  action: z.enum(["batch_start", "batch_measure", "batch_submit_qc", "batch_confirm_qc", "batch_assign_workflow", "batch_rerun"]),
+  action: z.enum(["batch_start", "batch_measure", "batch_submit_qc", "batch_confirm_qc", "batch_assign_workflow", "batch_rerun", "batch_assemble_amplicon"]),
   sequence_ids: z.array(z.string().uuid()).min(1, "chọn ít nhất 1 trình tự").max(200),
   workflow_id: z.string().trim().max(100).optional().nullable(),
   rerun_mode: z.enum(["REWIND_STEP", "RESET_POST", "RESYNTHESIZE"]).optional().default("RESET_POST"),
@@ -619,6 +702,20 @@ export async function batchPostProcessAction(tx: Tx, actor: AuthzActor, input: u
     return { action: d.action, count: processed.length, codes: processed };
   }
 
+  if (d.action === "batch_assemble_amplicon") {
+    const mergedParents = new Set<string>();
+    for (const seqId of ids) {
+      const s = await lockSequence(tx, seqId);
+      await authorize(tx, actor, "oligo.post.manage", s.org_unit_id);
+      const merged = await consolidateAmpliconFragmentsAfterAssembly(tx, actor, s.id);
+      if (merged && !mergedParents.has(merged.parentSeq.id)) {
+        mergedParents.add(merged.parentSeq.id);
+        processed.push(merged.parentSeq.code);
+      }
+    }
+    return { action: d.action, count: processed.length, codes: processed };
+  }
+
   if (d.action === "batch_measure") {
     const missingA260 = ids.filter((id) => {
       const val = d.per_sequence_a260?.[id] ?? d.a260;
@@ -631,22 +728,40 @@ export async function batchPostProcessAction(tx: Tx, actor: AuthzActor, input: u
         "A260_REQUIRED"
       );
     }
+    const measuredAmpliconParents = new Set<string>();
     for (const seqId of ids) {
       let s = await lockSequence(tx, seqId);
+      let targetSeqId = seqId;
+      const pickedA260 = Number(d.per_sequence_a260?.[seqId] ?? d.a260!);
+
+      // If any selected sequence is an Amplicon fragment, consolidate all sibling fragments into the 1 parent Amplicon first
+      // so OD is measured and saved ONCE on the 1 parent Amplicon sequence!
+      if (s.relation === "FRAGMENT" || (s.order_id && extractAmpliconGroupPrefix(s.name))) {
+        const merged = await consolidateAmpliconFragmentsAfterAssembly(tx, actor, s.id);
+        if (merged) {
+          if (measuredAmpliconParents.has(merged.parentSeq.id)) {
+            continue;
+          }
+          measuredAmpliconParents.add(merged.parentSeq.id);
+          targetSeqId = merged.parentSeq.id;
+          s = await lockSequence(tx, targetSeqId);
+        }
+      }
+
       if (s.status === "SYNTHESIZED") {
-        await startPostProcess(tx, actor, seqId);
-        s = await lockSequence(tx, seqId);
+        await startPostProcess(tx, actor, targetSeqId);
+        s = await lockSequence(tx, targetSeqId);
       }
       if (s.status !== "POST_PROCESSING") continue;
-      let rec = await liveRecord(tx, seqId, true);
+      let rec = await liveRecord(tx, targetSeqId, true);
       if (!rec || rec.status !== "OPEN") continue;
 
-      await savePostProcess(tx, actor, seqId, {
+      await savePostProcess(tx, actor, targetSeqId, {
         version: rec.version,
         cleavage_done: true,
         deprotection_done: true,
         purification_done: true,
-        a260: Number(d.per_sequence_a260?.[seqId] ?? d.a260!),
+        a260: pickedA260,
         dilution_factor: d.dilution_factor,
         path_cm: d.path_cm,
         stock_volume_ul: d.stock_volume_ul,
@@ -654,11 +769,11 @@ export async function batchPostProcessAction(tx: Tx, actor: AuthzActor, input: u
         tube_count: d.tube_count,
       });
 
-      rec = await liveRecord(tx, seqId, true);
+      rec = await liveRecord(tx, targetSeqId, true);
       await ensureSopStepsCompletedForBatch(tx, actor, rec);
 
       if (d.auto_submit_qc) {
-        await confirmOligoPostQc(tx, actor, seqId, { result: "PASS", notes: d.reason });
+        await confirmOligoPostQc(tx, actor, targetSeqId, { result: "PASS", notes: d.reason });
       }
       processed.push(s.code);
     }

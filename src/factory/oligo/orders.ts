@@ -363,6 +363,7 @@ export async function recomputeOrderStatus(tx: Tx, actor: AuthzActor, orderId: s
          LEFT JOIN oligo.oligo_pool p ON p.id = s.pool_id AND s.status = 'POOLED'
          LEFT JOIN oligo.oligo_sequence m ON m.id = p.master_sequence_id
         WHERE s.order_id = $1 AND s.status NOT IN ('CANCELLED', 'SPLIT')
+          AND COALESCE(s.relation, '') <> 'FRAGMENT'
           AND NOT (s.status = 'FAILED' AND EXISTS (SELECT 1 FROM oligo.oligo_sequence r WHERE r.parent_sequence_id = s.id AND r.relation = 'RESYNTH'))`,
       [orderId]
     )
@@ -507,23 +508,23 @@ export async function listOligoOrders(tx: Tx, actor: AuthzActor, status?: string
       `SELECT o.id, o.code, o.customer_label, o.due_date, o.initial_due_date, o.due_date_change_count, o.notes, o.status, o.created_at,
               o.pricing_type, o.price_percentage::float AS price_percentage, o.vat_rate::float AS vat_rate, o.total_price::float AS total_price,
               o.internal_order_id, io.code AS internal_order_code, io.kd_po_code, io.requested_date, io.committed_date, io.notes AS internal_order_notes,
-              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT')) AS sequence_count,
-              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT') AND s.product_type IN ('PRIMER', 'PROBE')) AS primer_probe_count,
-              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT') AND s.product_type IN ('AMPLICON_LINEAR', 'AMPLICON_PLASMID')) AS amplicon_count,
-              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status = 'COMPLETED') AS ready_count,
-              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status = 'DELIVERED') AS delivered_count,
+              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT') AND COALESCE(s.relation, '') <> 'FRAGMENT') AS sequence_count,
+              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT') AND COALESCE(s.relation, '') <> 'FRAGMENT' AND s.product_type IN ('PRIMER', 'PROBE')) AS primer_probe_count,
+              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT') AND COALESCE(s.relation, '') <> 'FRAGMENT' AND s.product_type IN ('AMPLICON_LINEAR', 'AMPLICON_PLASMID')) AS amplicon_count,
+              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status = 'COMPLETED' AND COALESCE(s.relation, '') <> 'FRAGMENT') AS ready_count,
+              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status = 'DELIVERED' AND COALESCE(s.relation, '') <> 'FRAGMENT') AS delivered_count,
               (SELECT string_agg(
                  coalesce(s.code, '') || ' ' || coalesce(s.name, '') || ' ' || coalesce(s.raw_sequence, '') || ' ' || coalesce(s.scale_code, '') || ' ' || coalesce(s.purification, ''),
                  ' · '
                )
                  FROM oligo.oligo_sequence s
-                WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT')) AS sequence_search_text,
+                WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT') AND COALESCE(s.relation, '') <> 'FRAGMENT') AS sequence_search_text,
               (SELECT coalesce(array_agg(DISTINCT s.purification), '{}'::text[])
                  FROM oligo.oligo_sequence s
-                WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT')) AS purifications,
+                WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT') AND COALESCE(s.relation, '') <> 'FRAGMENT') AS purifications,
               (SELECT coalesce(array_agg(DISTINCT s.scale_code), '{}'::text[])
                  FROM oligo.oligo_sequence s
-                WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT')) AS scales
+                WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT') AND COALESCE(s.relation, '') <> 'FRAGMENT') AS scales
          FROM oligo.oligo_order o LEFT JOIN intake.internal_order io ON io.id = o.internal_order_id
         WHERE ($1::uuid[] IS NULL OR o.org_unit_id = ANY($1::uuid[])) AND ($2::text IS NULL OR o.status = $2)
         ORDER BY o.created_at DESC LIMIT 300`,

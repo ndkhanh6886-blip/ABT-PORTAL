@@ -179,6 +179,7 @@ async function deliverable(tx: Tx, orderId: string) {
          LEFT JOIN oligo.post_process mpp ON mpp.sequence_id = m.id AND mpp.status = 'SUBMITTED'
          LEFT JOIN oligo.pool_aliquot pa ON pa.master_post_process_id = mpp.id AND pa.sequence_id = s.id
         WHERE s.order_id = $1 AND (s.status = 'COMPLETED' OR (s.status = 'POOLED' AND m.status = 'COMPLETED'))
+          AND COALESCE(s.relation, '') <> 'FRAGMENT'
           AND NOT EXISTS (SELECT 1 FROM oligo.delivery_item di WHERE di.sequence_id = s.id)
         ORDER BY s.line_no, s.code`,
       [orderId]

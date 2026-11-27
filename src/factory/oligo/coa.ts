@@ -97,6 +97,7 @@ export async function orderCoa(tx: Tx, actor: AuthzActor, orderId: string) {
          FROM oligo.oligo_sequence s
          LEFT JOIN oligo.oligo_pool p ON p.id = s.pool_id AND s.status = 'POOLED' LEFT JOIN oligo.oligo_sequence m ON m.id = p.master_sequence_id
         WHERE s.order_id = $1 AND s.status NOT IN ('CANCELLED', 'SPLIT')
+          AND COALESCE(s.relation, '') <> 'FRAGMENT'
           AND NOT (s.status = 'FAILED' AND EXISTS (SELECT 1 FROM oligo.oligo_sequence r WHERE r.parent_sequence_id = s.id AND r.relation = 'RESYNTH'))
         ORDER BY s.line_no NULLS LAST, s.code`,
       [orderId]

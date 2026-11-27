@@ -42,7 +42,7 @@ function exportCsv(o: OrderDetail) {
   const head = ["Mã", "Tên", "Trình tự 5'-3'", "Số base", "Loại", "Thang", "Tinh sạch", "Dạng", "MW (Da)", "Tm (°C)", "GC %", "ε260 (L/mol·cm)", "nmol/OD", "µg/OD", "Modification"];
   const q = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
   const rows = o.sequences
-    .filter((s) => s.status !== "CANCELLED")
+    .filter((s) => s.status !== "CANCELLED" && s.relation !== "FRAGMENT")
     .map((s) => [s.code, s.name, s.normalized_sequence, s.base_count, s.molecule_type, s.scale_code, s.purification, s.format, s.mw, s.tm, s.gc_percent, s.ext_coeff_260, s.nmol_per_od, s.ug_per_od, s.modifications.join(" ")].map(q).join(","));
   const blob = new Blob(["﻿" + [head.map(q).join(","), ...rows].join("\r\n")], { type: "text/csv;charset=utf-8" });
   const a = document.createElement("a");
@@ -62,7 +62,7 @@ function exportOligoInvoiceCsv(
   grandTotalVnd: number
 ) {
   const q = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  const activeSeqs = o.sequences.filter((s) => s.status !== "CANCELLED" && s.status !== "SPLIT");
+  const activeSeqs = o.sequences.filter((s) => s.status !== "CANCELLED" && s.relation !== "FRAGMENT");
   const csvLines: string[] = [
     [q("BẢNG KÊ YÊU CẦU XUẤT HÓA ĐƠN GTGT (VAT) — ĐƠN HÀNG TỔNG HỢP OLIGO")].join(","),
     [q("Mã đơn Oligo"), q(o.code), q("PO Kinh doanh"), q(o.kd_po_code || "—"), q("Đơn nội bộ"), q(o.internal_order_code || "—")].join(","),
@@ -120,7 +120,7 @@ function printOligoInvoiceSchedule(
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
-  const activeSeqs = o.sequences.filter((s) => s.status !== "CANCELLED" && s.status !== "SPLIT");
+  const activeSeqs = o.sequences.filter((s) => s.status !== "CANCELLED" && s.relation !== "FRAGMENT");
   const pricingModeLabel =
     o.pricing_type === "percentage"
       ? `Giá Dealer (${o.price_percentage ?? 100}%)`
@@ -1223,7 +1223,7 @@ export function OligoOrderPanel({
   // Tổng hợp các hạng mục hóa đơn VAT từ tất cả trình tự trong đơn
   const aggregatedInvoiceLines = React.useMemo(() => {
     const map = new Map<string, PriceLine>();
-    for (const s of (o?.sequences ?? []).filter((x) => x.status !== "CANCELLED" && x.status !== "SPLIT")) {
+    for (const s of (o?.sequences ?? []).filter((x) => x.status !== "CANCELLED" && x.relation !== "FRAGMENT")) {
       for (const l of s.price_lines_json ?? []) {
         const key = `${l.code}::${l.unit_price}`;
         const prev = map.get(key);
@@ -1239,7 +1239,7 @@ export function OligoOrderPanel({
   }, [o?.sequences]);
 
   const subtotalVnd = (o?.sequences ?? [])
-    .filter((x) => x.status !== "CANCELLED" && x.status !== "SPLIT")
+    .filter((x) => x.status !== "CANCELLED" && x.relation !== "FRAGMENT")
     .reduce((acc, s) => acc + Number(s.price ?? 0), 0);
   const vatRate = Number(o?.vat_rate ?? 8);
   const vatAmountVnd = Math.round((subtotalVnd * vatRate) / 100);
@@ -1252,7 +1252,7 @@ export function OligoOrderPanel({
     s.oligo_role === "TEMPLATE" ||
     s.oligo_role === "POSITIVE_CONTROL";
 
-  const activeSeqs = (o?.sequences ?? []).filter((s) => s.status !== "CANCELLED" && s.status !== "SPLIT");
+  const activeSeqs = (o?.sequences ?? []).filter((s) => s.status !== "CANCELLED" && s.relation !== "FRAGMENT");
   const primerProbeSeqs = activeSeqs.filter((s) => !isAmpliconSeq(s));
   const ampliconSeqs = activeSeqs.filter((s) => isAmpliconSeq(s));
 
@@ -1639,7 +1639,7 @@ export function OligoOrderPanel({
                 "Thao tác",
               ]}
             >
-              {o.sequences.map((s) => {
+              {o.sequences.filter((s) => s.relation !== "FRAGMENT").map((s) => {
                 const isEditingThis = editingSeqId === s.id;
                 return (
                   <tr key={s.id} className={`align-top ${s.status === "CANCELLED" ? "opacity-50" : ""}`}>

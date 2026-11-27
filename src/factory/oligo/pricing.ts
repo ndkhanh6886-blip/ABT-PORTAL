@@ -4,6 +4,14 @@ import { writeAudit } from "../core/audit";
 import { authorize, authorizeAnywhere, registerPermissions, type AuthzActor } from "../core/authz";
 import { invalid } from "../core/errors";
 import { parseInput } from "../core/records";
+import {
+  baseTokenText,
+  isFluorescentDye,
+  MOD_CATEGORY_MAP,
+  normalizeModCode,
+  parseOligoSequence,
+  tokenizeOligoSequence,
+} from "@/shared/oligoSequence";
 
 registerPermissions([
   { code: "oligo.pricing.manage", description: "Cấu hình bảng giá tổng hợp Oligo, phụ phí biến đổi, tinh sạch và danh mục mã hàng hóa đơn" },
@@ -204,7 +212,8 @@ export const DEFAULT_PRICE_CONFIG: PriceConfig = {
     "1000nmol": 100000,
   },
   purification_default_by_length: [
-    { max_len: 35, method: "Desalt" },
+    // ≤ 34 nt (PRI-01/PRI-02) mặc định Desalt; 35-60 nt (PRI-03) mặc định Cartridge (OPC)
+    { max_len: 34, method: "Desalt" },
     { max_len: 60, method: "OPC" },
     { max_len: 120, method: "HPLC" },
   ],
@@ -249,6 +258,8 @@ export const DEFAULT_PRICE_CONFIG: PriceConfig = {
     dye: { default_purification: "HPLC", enforce_hplc: true },
     quencher: { default_purification: "HPLC", enforce_hplc: true },
     modified: { default_purification: "HPLC", enforce_hplc: false },
+    // Primer Biotin / NH2: Desalt hoặc Cartridge không tính phí tinh sạch; PAGE / HPLC tính phí
+    biotin_nh2: { default_purification: "OPC", enforce_hplc: false },
     LNA: { default_purification: "Desalt", enforce_hplc: false },
     "2-OMe": { default_purification: "Desalt", enforce_hplc: false },
   },
@@ -263,67 +274,6 @@ export const LENGTH_BAND_LABELS: Record<string, string> = {
   "61-120": "61-120 nt",
 };
 
-const FLUORESCENT_DYE_CODES = new Set([
-  "FAM", "HEX", "TET", "JOE", "VIC", "ROX", "TXR", "TAMRA",
-  "CY3", "CY5", "CY5.5", "CY7",
-  "AF488", "AF568", "AF647", "ALEXA488", "ALEXA568", "ALEXA594", "ALEXA647",
-  "FITC", "NED", "SUN", "YAKIMA", "QUASAR570", "QUASAR670", "CFR610",
-  "ATTO488", "ATTO550", "ATTO647N",
-]);
-
-const NON_FLUORESCENT_MOD_CODES = new Set([
-  "BIOTIN", "NH2", "AMINO", "PHOS", "THIOL", "SH", "INVDT",
-  "SPACER", "C3", "C6", "C12", "5MC", "DIG", "ALK", "AZIDE", "DBCO",
-]);
-
-const MOD_CATEGORY_MAP: Record<string, string> = {
-  FAM: "dye", HEX: "dye", CY5: "dye", CY3: "dye", TAMRA: "dye", AF488: "dye", ALEXA594: "dye",
-  JOE: "dye", VIC: "dye", ROX: "dye", TXR: "dye", "CY5.5": "dye", CY7: "dye", TET: "dye",
-  AF568: "dye", AF647: "dye",
-  BHQ0: "quencher", BHQ1: "quencher", BHQ2: "quencher", BHQ3: "quencher", MGB: "quencher", DABCYL: "quencher",
-  BIOTIN: "modified", NH2: "modified", PHOS: "modified", THIOL: "modified", INVDT: "modified",
-  SPACER: "modified", C3: "modified", C6: "modified", "5MC": "modified",
-  "+A": "LNA", "+C": "LNA", "+G": "LNA", "+T": "LNA", "+U": "LNA",
-  MA: "2-OMe", MC: "2-OMe", MG: "2-OMe", MT: "2-OMe", MU: "2-OMe",
-};
-
-const MOD_ALIASES: Record<string, string> = {
-  "5TEXRD-XN": "TXR", "3TEXRD-XN": "TXR", "TEXRD-XN": "TXR", TEXASRED: "TXR", "TEXAS RED": "TXR", "TEXAS-RED": "TXR", TEXARED: "TXR",
-  "5TXR": "TXR", "3TXR": "TXR", "5-TXR": "TXR", "3-TXR": "TXR",
-  "3BHQ_2": "BHQ2", "5BHQ_2": "BHQ2", BHQ_2: "BHQ2", "3BHQ2": "BHQ2", "5BHQ2": "BHQ2", "3-BHQ2": "BHQ2", "5-BHQ2": "BHQ2", "BHQ-2": "BHQ2",
-  "3BHQ_1": "BHQ1", "5BHQ_1": "BHQ1", BHQ_1: "BHQ1", "3BHQ1": "BHQ1", "5BHQ1": "BHQ1", "3-BHQ1": "BHQ1", "5-BHQ1": "BHQ1", "BHQ-1": "BHQ1",
-  "3BHQ_3": "BHQ3", "5BHQ_3": "BHQ3", BHQ_3: "BHQ3", "3BHQ3": "BHQ3", "5BHQ3": "BHQ3", "3-BHQ3": "BHQ3", "5-BHQ3": "BHQ3", "BHQ-3": "BHQ3",
-  "5FAM": "FAM", "3FAM": "FAM", "6-FAM": "FAM", "5-FAM": "FAM", "56-FAM": "FAM", "36-FAM": "FAM", "6FAM": "FAM", "5(6)-FAM": "FAM",
-  "5HEX": "HEX", "3HEX": "HEX", "5-HEX": "HEX", "6-HEX": "HEX", "6HEX": "HEX", "56-HEX": "HEX",
-  "5TET": "TET", "3TET": "TET", "5-TET": "TET",
-  "5CY5": "CY5", "3CY5": "CY5", "5-CY5": "CY5", "3-CY5": "CY5",
-  "5CY3": "CY3", "3CY3": "CY3", "5-CY3": "CY3", "3-CY3": "CY3",
-  "5CY5.5": "CY5.5", "3CY5.5": "CY5.5", "5-CY5.5": "CY5.5", "3-CY5.5": "CY5.5",
-  "5CY7": "CY7", "3CY7": "CY7", "5-CY7": "CY7", "3-CY7": "CY7",
-  "5TAMRA": "TAMRA", "3TAMRA": "TAMRA", "5-TAMRA": "TAMRA", "3-TAMRA": "TAMRA",
-  "3MGB": "MGB", "5MGB": "MGB", "3-MGB": "MGB", "5-MGB": "MGB", MGBNFQ: "MGB", "MGB-NFQ": "MGB", MGB_NFQ: "MGB",
-  "5BIOTIN": "BIOTIN", "3BIOTIN": "BIOTIN", "5-BIOTIN": "BIOTIN", "3-BIOTIN": "BIOTIN", "BIOTIN-TEG": "BIOTIN", BIOTINTEG: "BIOTIN",
-  "5AMINO": "NH2", "3AMINO": "NH2", "5-AMINO": "NH2", "3-AMINO": "NH2", "AMINO-C6": "NH2", AMINOC6: "NH2", "5-NH2": "NH2", "3-NH2": "NH2", "5NH2": "NH2", "3NH2": "NH2",
-  "5PHOS": "PHOS", "3PHOS": "PHOS", "5-PHOS": "PHOS", "3-PHOS": "PHOS", PHOSPHORYLATION: "PHOS",
-  "5THIOL": "THIOL", "3THIOL": "THIOL", "5-THIOL": "THIOL", "3-THIOL": "THIOL", "THIOL-C6": "THIOL", THIOLC6: "THIOL",
-  "3INVDT": "INVDT", "3-INVDT": "INVDT", "INVERTED-DT": "INVDT",
-  "5MEDC": "5MC", "5-ME-DC": "5MC", "5-MEDC": "5MC", "5METHYLDC": "5MC",
-};
-
-export function normalizeModCode(raw: string): string {
-  const up = raw.trim().toUpperCase();
-  if (!up) return "";
-  if (MOD_ALIASES[up]) return MOD_ALIASES[up];
-  if (MOD_CATEGORY_MAP[up]) return up;
-  for (const prefix of ["5-", "3-", "5", "3"]) {
-    if (up.startsWith(prefix) && up.length > prefix.length) {
-      const sub = up.slice(prefix.length);
-      if (MOD_ALIASES[sub]) return MOD_ALIASES[sub];
-      if (MOD_CATEGORY_MAP[sub]) return sub;
-    }
-  }
-  return up;
-}
 
 export function normalizeScale(scaleStr: string): string {
   if (!scaleStr) return "100nmol";
@@ -391,65 +341,29 @@ export function itemCodeFor(key: string, config?: Partial<PriceConfig> | null): 
   return code && String(code).trim() ? String(code).trim() : defaultItemCode(key);
 }
 
-export function isFluorescentDye(modCode: string): boolean {
-  if (!modCode) return false;
-  const up = normalizeModCode(modCode);
-  if (NON_FLUORESCENT_MOD_CODES.has(up)) return false;
-  if (FLUORESCENT_DYE_CODES.has(up) || /^(AF|ALEXA|CY|QUASAR|ATTO|CFR)/.test(up)) return true;
-  if (MOD_CATEGORY_MAP[up] === "dye") return true;
-  return false;
-}
+export { isFluorescentDye, normalizeModCode };
 
 /**
- * Chuẩn hóa chuỗi trình tự từ các kiểu viết tắt (5'-FAM-ATGC-3'-BHQ1, /56-FAM/ATGC/3BHQ_1/, v.v.)
- * về dạng chuẩn /MOD/ATGC/MOD/ tương thích 100% với OligoFlow cũ.
+ * Chuẩn hóa chuỗi trình tự từ các kiểu viết tắt (5'-FAM-ATGC-3'-BHQ1, /56-FAM/ATGC/3BHQ_1/, [FAM]ATGC[BHQ1], v.v.)
+ * về dạng chuẩn /MOD/ATGC/MOD/ (base biến đổi: +A, mA, fA, 5mC) tương thích analyzer.
+ * Cụm không nhận diện được giữ nguyên (tách bằng "-") để analyzer báo lỗi đúng chỗ.
  */
 export function normalizeLegacySequence(sequenceStr: string): string {
   if (!sequenceStr) return "";
-  let s = sequenceStr
-    .replace(/\u00a0/g, " ")
-    .replace(/[\u2018\u2019\u2032`´]/g, "'")
-    .replace(/[\u2013\u2014]/g, "-")
-    .trim();
-
-  s = s.replace(/^(?:\(?5'?\)?|\[?5'?\]?|\/5'?\/|5-prime|5prime)\s*(?:[-:>]+|\s*-+\s*)*\s*/i, "").trim();
-  s = s.replace(/\s*(?:[-:<]+|\s*-+\s*)*(?:\(?3'?\)?|\[?3'?\]?|\/3'?\/|3-prime|3prime)$/i, "").trim();
-  s = s.replace(/\/[53]'?\//gi, "");
-
-  // Chuẩn hóa 5' dyes đầu chuỗi nếu viết bằng dấu gạch ngang
-  s = s.replace(/^\s*(?:5|6|56|5,6|5\(6\))?[-_]?FAM[-_/\s]+/i, "/FAM/");
-  s = s.replace(/^\s*(?:5|6|56)?[-_]?HEX[-_/\s]+/i, "/HEX/");
-  s = s.replace(/^\s*(?:5|6)?[-_]?TET[-_/\s]+/i, "/TET/");
-  s = s.replace(/^\s*(?:TEXARED|TEXAS[-_ ]?RED|5?[-_]?TXR)[-_/\s]+/i, "/TXR/");
-  s = s.replace(/^\s*(?:5?[-_]?CY5|CY5)[-_/\s]+/i, "/CY5/");
-  s = s.replace(/^\s*(?:5?[-_]?CY3|CY3)[-_/\s]+/i, "/CY3/");
-  s = s.replace(/^\s*(?:5?[-_]?ROX|ROX)[-_/\s]+/i, "/ROX/");
-  s = s.replace(/^\s*(?:5?[-_]?VIC|VIC)[-_/\s]+/i, "/VIC/");
-  s = s.replace(/^\s*(?:5?[-_]?JOE|JOE)[-_/\s]+/i, "/JOE/");
-  s = s.replace(/^\s*(?:5?[-_]?BIOTIN(?:-TEG)?)[-_/\s]+/i, "/BIOTIN/");
-  s = s.replace(/^\s*(?:5?[-_]?AMINO(?:-C6)?|5?[-_]?NH2)[-_/\s]+/i, "/NH2/");
-
-  // Chuẩn hóa 3' quenchers cuối chuỗi
-  s = s.replace(/[-_/\s]+(?:3[-_]?)?BHQ[-_ ]?([0123])\s*$/i, "/BHQ$1/");
-  s = s.replace(/[-_/\s]+(?:3[-_]?)?MGB(?:[-_ ]?NFQ)?\s*$/i, "/MGB/");
-  s = s.replace(/[-_/\s]+(?:3[-_]?)?TAMRA\s*$/i, "/TAMRA/");
-  s = s.replace(/[-_/\s]+(?:3[-_]?)?INVDT\s*$/i, "/INVDT/");
-
-  // Chuyển đổi ký hiệu [MOD] của OligoFlow cũ (ví dụ [FAM]ATGC[BHQ1]) sang /MOD/
-  s = s.replace(/\[([^\[\]]+)\]/g, (_m, inner) => {
-    const t = String(inner).trim();
-    if (/^[53]'?$/i.test(t)) return "";
-    const norm = normalizeModCode(t);
-    return norm ? `/${norm}/` : "";
-  });
-
-  // Chuẩn hóa các token bên trong dấu /.../
-  s = s.replace(/\/([^/]+)\//g, (_m, inner) => {
-    const norm = normalizeModCode(String(inner));
-    return norm ? `/${norm}/` : "";
-  });
-
-  return s.replace(/\s+/g, "");
+  let out = "";
+  let prevUnknown = false;
+  for (const t of tokenizeOligoSequence(sequenceStr)) {
+    if (t.kind === "mod" && !t.known && !t.tagged) {
+      out += out && !out.endsWith("/") ? `-${t.raw}` : t.raw;
+      prevUnknown = true;
+      continue;
+    }
+    // nhóm đánh dấu chưa có trong danh mục chuẩn nhưng khách viết trong /…/: giữ nguyên tên gốc cho analyzer tra danh mục
+    const text = t.kind === "base" ? baseTokenText(t.code) : `/${t.known ? t.code : t.raw}/`;
+    out += prevUnknown && t.kind === "base" ? `-${text}` : text;
+    prevUnknown = false;
+  }
+  return out;
 }
 
 export function extractSequenceModsAndBases(sequenceStr: string): {
@@ -459,84 +373,31 @@ export function extractSequenceModsAndBases(sequenceStr: string): {
   modsInternal: string[];
   bases: string[];
 } {
-  const seqNorm = normalizeLegacySequence(sequenceStr);
-  const mods5Prime: string[] = [];
-  const mods3Prime: string[] = [];
-  const modsInternal: string[] = [];
-
-  const regex = /\/([^/]+)\//g;
-  let m: RegExpExecArray | null;
-  while ((m = regex.exec(seqNorm)) !== null) {
-    const cleanMod = normalizeModCode(m[1]);
-    if (!cleanMod) continue;
-    if (m.index === 0) {
-      mods5Prime.push(cleanMod);
-    } else if (m.index + m[0].length === seqNorm.length) {
-      mods3Prime.push(cleanMod);
-    } else {
-      modsInternal.push(cleanMod);
-    }
-  }
-
-  const seqNoSlashes = seqNorm.replace(/\/[^/]+\//g, "");
-  const bases: string[] = [];
-  let i = 0;
-  while (i < seqNoSlashes.length) {
-    const ch = seqNoSlashes[i];
-    if (ch === "+" && i + 1 < seqNoSlashes.length) {
-      bases.push(`+${seqNoSlashes[i + 1].toUpperCase()}`);
-      i += 2;
-      continue;
-    }
-    if ((ch === "m" || ch === "M") && i + 1 < seqNoSlashes.length && "ACGTU".includes(seqNoSlashes[i + 1].toUpperCase())) {
-      // Lưu ý: chữ 'M' đơn lẻ cũng là mã IUPAC (A/C), nhưng trong OligoFlow 'mA', 'mC', 'mG', 'mT', 'mU' hoặc 'MA' khi đi kèm
-      if (ch === "m") {
-        bases.push(`M${seqNoSlashes[i + 1].toUpperCase()}`);
-        i += 2;
-        continue;
-      }
-    }
-    if ((ch === "f" || ch === "F") && i + 1 < seqNoSlashes.length && "ACGTU".includes(seqNoSlashes[i + 1].toUpperCase())) {
-      bases.push(`F${seqNoSlashes[i + 1].toUpperCase()}`);
-      i += 2;
-      continue;
-    }
-    if (seqNoSlashes.slice(i, i + 2).toLowerCase() === "5m" && i + 2 < seqNoSlashes.length && "ACGTU".includes(seqNoSlashes[i + 2].toUpperCase())) {
-      bases.push(`5M${seqNoSlashes[i + 2].toUpperCase()}`);
-      i += 3;
-      continue;
-    }
-    const up = ch.toUpperCase();
-    if ("ACGTRYSWKMBDHVNUTI".includes(up)) {
-      bases.push(up);
-    }
-    i += 1;
-  }
-
-  return { seqNorm, mods5Prime, mods3Prime, modsInternal, bases };
+  const p = parseOligoSequence(sequenceStr);
+  const seqNorm = p.tokens.map((t) => (t.kind === "base" ? baseTokenText(t.code) : `/${t.code}/`)).join("");
+  return { seqNorm, mods5Prime: p.mods5Prime, mods3Prime: p.mods3Prime, modsInternal: p.modsInternal, bases: p.bases };
 }
 
 /**
  * Quy tắc tính giá ABT:
- * - Probe đánh dấu huỳnh quang (đánh dấu kép 5'/3' có huỳnh quang hoặc cặp Probe trong dual_modification_pricing)
- *   và Primer đánh dấu huỳnh quang đầu 5' (5'-FAM, 5'-HEX, 5'-Cy3, 5'-Cy5, 5'-ROX, 5'-TXR, 5'-VIC, 5'-TAMRA...):
- *   KHÔNG tính tiền trình tự (base chuẩn = 0 đ, giá trọn gói theo mã Probe / 5' Dye; chỉ cộng phụ phí nếu có base biến đổi LNA / 2'-OMe).
- * - Còn lại Primer đánh dấu Biotin, NH2 (hoặc Phosphate, Thiol...) ở đầu 5' và Primer thường:
- *   ĐỀU tính tiền trình tự (số lượng base * đơn giá base chuẩn) + tiền biến đổi 5'.
+ * - Mọi oligo có thuốc nhuộm huỳnh quang ở bất kỳ vị trí nào (5', 3' hay internal), và cặp Probe có giá riêng
+ *   trong dual_modification_pricing: KHÔNG tính tiền trình tự (base chuẩn = 0 đ; chỉ tính giá trọn gói Probe / phí nhãn,
+ *   và phụ phí base biến đổi LNA / 2'-OMe / Inosine nếu có).
+ * - Còn lại Primer đánh dấu Biotin, NH2 (hoặc Phosphate, Thiol...) và Primer thường:
+ *   ĐỀU tính tiền trình tự (số lượng base * đơn giá base chuẩn) + tiền biến đổi.
  */
 export function sequenceSkipsStandardBasePrice(sequenceStr: string, config: PriceConfig = DEFAULT_PRICE_CONFIG): boolean {
   if (!sequenceStr) return false;
   const { mods5Prime, mods3Prime, modsInternal } = extractSequenceModsAndBases(sequenceStr);
   if (!mods5Prime.length && !mods3Prime.length && !modsInternal.length) return false;
 
-  if (mods5Prime.some((m) => isFluorescentDye(m))) return true;
-
-  const hasAnyDye = [...mods5Prime, ...mods3Prime, ...modsInternal].some((m) => isFluorescentDye(m));
+  // Có thuốc nhuộm huỳnh quang ở bất kỳ vị trí nào (5', 3' hay internal) → không tính tiền base thường.
+  if ([...mods5Prime, ...mods3Prime, ...modsInternal].some((m) => isFluorescentDye(m))) return true;
+  // Cặp đánh dấu kép có giá trọn gói riêng trong bảng giá cũng đã gồm tiền trình tự.
   if (mods5Prime.length > 0 && mods3Prime.length > 0) {
     const pairKey = `${mods5Prime[0].toUpperCase()}/${mods3Prime[0].toUpperCase()}`;
-    if (hasAnyDye || pairKey in (config.dual_modification_pricing ?? {})) return true;
+    if (pairKey in (config.dual_modification_pricing ?? {})) return true;
   }
-  if (hasAnyDye && mods3Prime.length > 0) return true;
   return false;
 }
 
@@ -711,19 +572,23 @@ export function calculateSequencePriceLines(
     hplc: 4,
   };
   let purifNorm = (purification || "Desalt").trim();
-  if (["DST", "DESALT", "KHỬ MUỐI", "KHU MUOI"].includes(purifNorm.toUpperCase())) {
+  if (["DST", "DESALT", "KHỬ MUỐI", "KHU MUOI", "LOẠI MUỐI", "LOAI MUOI"].includes(purifNorm.toUpperCase())) {
     purifNorm = "Desalt";
   } else if (purifNorm.toUpperCase() === "HPLC") {
     purifNorm = "HPLC";
-  } else if (purifNorm.toUpperCase() === "OPC") {
+  } else if (["OPC", "CARTRIDGE"].includes(purifNorm.toUpperCase())) {
+    // Cartridge (PUR-01) là tên thương mại của OPC trong bảng mã Kinh doanh
     purifNorm = "OPC";
   } else if (purifNorm.toUpperCase() === "PAGE") {
     purifNorm = "PAGE";
   }
 
-  let lengthDefaultMethod = "Desalt";
-  for (const rule of config.purification_default_by_length ?? []) {
-    if (seqLength <= rule.max_len) {
+  // Mặc định theo chiều dài: xét quy tắc theo max_len tăng dần (cấu hình lưu có thể không theo thứ tự);
+  // trình tự dài hơn mọi max_len dùng cấp của quy tắc dài nhất (không rơi về Desalt).
+  const lengthRules = [...(config.purification_default_by_length ?? [])].sort((a, b) => Number(a.max_len) - Number(b.max_len));
+  let lengthDefaultMethod = lengthRules.length ? lengthRules[lengthRules.length - 1].method : "Desalt";
+  for (const rule of lengthRules) {
+    if (seqLength <= Number(rule.max_len)) {
       lengthDefaultMethod = rule.method;
       break;
     }
@@ -738,7 +603,9 @@ export function calculateSequencePriceLines(
     const rule =
       config.modification_purification_rules?.[cat] ??
       config.modification_purification_rules?.[cat.toLowerCase()] ??
-      config.modification_purification_rules?.[cat.toUpperCase()];
+      config.modification_purification_rules?.[cat.toUpperCase()] ??
+      // nhóm mới thêm trong code (vd. biotin_nh2) chưa có trong cấu hình đã lưu → dùng quy tắc mặc định của code
+      DEFAULT_PRICE_CONFIG.modification_purification_rules[cat];
     if (rule) {
       const rank = purifRanks[rule.default_purification.toLowerCase()] ?? 1;
       if (rank > maxModRank) {
@@ -849,7 +716,12 @@ export function orderSequenceLines(params: {
       return lines.map((ln) => ({ ...ln, unit_price: cu, amount: cu * ln.qty }));
     }
     const stdLines = lines.filter((ln) => ln.key.startsWith("std|"));
-    const stdPrice = stdLines[0]?.unit_price ?? 0;
+    if (!stdLines.length) {
+      // Oligo đánh dấu huỳnh quang: base thường không tính tiền nên đơn giá base thỏa thuận không áp dụng;
+      // giữ nguyên giá trọn gói / phí nhóm đánh dấu và base biến đổi (tránh cộng đơn giá thỏa thuận chồng lên base biến đổi).
+      return lines;
+    }
+    const stdPrice = stdLines[0].unit_price;
     const baseLines = lines.filter((ln) => ln.key.startsWith("std|") || ln.key.startsWith("modbase|") || ln.key.startsWith("fb|modbase|"));
     const nBases = baseLines.reduce((s, ln) => s + ln.qty, 0);
     const out: PriceLine[] = [];
@@ -1167,7 +1039,7 @@ export async function recomputeOrderTotalPrice(tx: Tx, orderId: string): Promise
     await tx.query(
       `SELECT coalesce(sum(price), 0)::float AS sub_total
          FROM oligo.oligo_sequence
-        WHERE order_id = $1 AND status NOT IN ('CANCELLED', 'SPLIT')`,
+        WHERE order_id = $1 AND status <> 'CANCELLED' AND COALESCE(relation, '') <> 'FRAGMENT'`,
       [orderId]
     )
   ).rows[0];
@@ -1218,7 +1090,7 @@ export async function recalculateOrderPricing(
     await tx.query(
       `SELECT id, raw_sequence, normalized_sequence, scale_code, purification, format, product_type
          FROM oligo.oligo_sequence
-        WHERE order_id = $1 AND status NOT IN ('CANCELLED', 'SPLIT')`,
+        WHERE order_id = $1 AND status <> 'CANCELLED' AND COALESCE(relation, '') <> 'FRAGMENT'`,
       [orderId]
     )
   ).rows;

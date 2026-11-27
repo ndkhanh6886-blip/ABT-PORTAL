@@ -27,6 +27,8 @@ interface Row {
   raw_sequence?: string | null;
   normalized_sequence?: string | null;
   relation?: string | null;
+  parent_sequence_id?: string | null;
+  fragment_count?: number | null;
   nmol_per_od?: number | null;
   ug_per_od?: number | null;
   order_code: string | null;
@@ -1127,6 +1129,23 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                {(list.data ?? []).some(
+                  (r) =>
+                    picked.includes(r.id) &&
+                    (r.relation === "FRAGMENT" || /[-_\s]+(\d{1,2}[FRfr]|[FRfr]\d{1,2})$/.test(String(r.name || "")))
+                ) && (
+                  <Button
+                    disabled={batchAct.isPending}
+                    onClick={() =>
+                      batchAct.mutate({
+                        action: "batch_assemble_amplicon",
+                        sequence_ids: picked,
+                      })
+                    }
+                  >
+                    🧬 Gộp mảnh sau lắp ráp → 1 trình tự Amplicon
+                  </Button>
+                )}
                 {sharedBatchStep && sharedBatchStep.kind === "STANDARD" && (
                   <Button
                     onClick={() => setShowBatchStepModal(true)}
@@ -1217,6 +1236,16 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
                       {r.relation === "POOL_MASTER" && (
                         <span className="mt-0.5 inline-flex items-center rounded-md bg-purple-100 dark:bg-purple-950/60 px-1.5 py-0.5 text-[10px] font-bold text-purple-800 dark:text-purple-300 border border-purple-300 dark:border-purple-800">
                           🧬 Mẻ Gộp: {r.scale_code}
+                        </span>
+                      )}
+                      {String(r.product_type || "").startsWith("AMPLICON") && Number(r.fragment_count ?? 0) > 0 && (
+                        <span className="mt-0.5 inline-flex items-center rounded-md bg-emerald-100 dark:bg-emerald-950/60 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                          🧬 Amplicon gộp sau lắp ráp ({r.fragment_count} mảnh primer)
+                        </span>
+                      )}
+                      {r.relation === "FRAGMENT" && (
+                        <span className="mt-0.5 inline-flex items-center rounded-md bg-amber-100 dark:bg-amber-950/60 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+                          🧩 Mảnh Primer lắp ráp Amplicon
                         </span>
                       )}
                       <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">

@@ -743,6 +743,27 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
           { key: "visual_state", label: "Trạng thái cảm quan", type: "TEXT", required: false },
         ],
       },
+      {
+        category: "PCR",
+        name: "Lắp ráp PCR (PCR Assembly)",
+        kind: "STANDARD",
+        target_hours: 2.0,
+        fields: [
+          { key: "anneal_temp_c", label: "Nhiệt độ gắn mồi (°C)", type: "NUMBER", unit: "°C", required: true },
+          { key: "pcr_cycles", label: "Số chu kỳ lắp ráp", type: "NUMBER", required: true },
+          { key: "polymerase_note", label: "Enzyme / Master Mix", type: "TEXT", required: false },
+        ],
+      },
+      {
+        category: "Tách chiết",
+        name: "Tách chiết - Tinh sạch sản phẩm PCR",
+        kind: "STANDARD",
+        target_hours: 1.0,
+        fields: [
+          { key: "purif_kit_lot", label: "Kit tinh sạch sản phẩm PCR", type: "TEXT", required: true },
+          { key: "elution_vol_ul", label: "Thể tích thu hồi (µL)", type: "NUMBER", unit: "µL", required: true },
+        ],
+      },
     ];
 
     const deletedMethodNames = force
@@ -820,6 +841,18 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
           { methodName: "Đông khô (Lyophilization)", label: "Đông khô (Lyophilization)" },
         ],
       },
+      {
+        name: "Quy trình Lắp ráp & Tinh sạch Amplicon",
+        description: "Quy trình cho Amplicon phân mảnh: sau bước Lắp ráp PCR, các mảnh primer tự động gộp lại thành 1 trình tự Amplicon duy nhất để tách chiết, đo 1 OD và trả COA.",
+        purification: "",
+        steps: [
+          { methodName: "AMA (65°C, 10 phút)", label: "Cắt & Giải bảo vệ các mảnh Primer" },
+          { methodName: "Lắp ráp PCR (PCR Assembly)", label: "PCR - Lắp ráp các mảnh Primer thành Amplicon" },
+          { methodName: "Tách chiết - Tinh sạch sản phẩm PCR", label: "Tách chiết - Tinh sạch sản phẩm PCR" },
+          { methodName: "Đo quang phổ Nanodrop", label: "Đo OD Amplicon (1 trình tự Amplicon)" },
+          { methodName: "Đông khô (Lyophilization)", label: "Đông khô (Lyophilization)" },
+        ],
+      },
     ];
 
     const deletedWorkflowNames = force
@@ -842,10 +875,12 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
         await tx.query("SELECT id, purifications, status FROM oligo.ps_workflow WHERE lower(name) = lower($1) LIMIT 1", [wf.name])
       ).rows[0];
       if (!ex) {
-        const clash = (
-          await tx.query("SELECT id FROM oligo.ps_workflow WHERE $1 = ANY(purifications) LIMIT 1", [wf.purification])
-        ).rows[0];
-        const purifs = clash ? [] : [wf.purification];
+        const clash = wf.purification
+          ? (
+              await tx.query("SELECT id FROM oligo.ps_workflow WHERE $1 = ANY(purifications) LIMIT 1", [wf.purification])
+            ).rows[0]
+          : true;
+        const purifs = clash || !wf.purification ? [] : [wf.purification];
         const steps = wf.steps
           .map((s) => {
             const mid = methodIdByName.get(s.methodName);
@@ -860,7 +895,7 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
           );
           counts.workflows += 1;
         }
-      } else if (ex.status === "ACTIVE" && (!Array.isArray(ex.purifications) || ex.purifications.length === 0)) {
+      } else if (wf.purification && ex.status === "ACTIVE" && (!Array.isArray(ex.purifications) || ex.purifications.length === 0)) {
         const clash = (
           await tx.query("SELECT id FROM oligo.ps_workflow WHERE $1 = ANY(purifications) LIMIT 1", [wf.purification])
         ).rows[0];

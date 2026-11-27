@@ -53,6 +53,7 @@ export const sequenceMachine = defineMachine<SeqStatus, OligoSequence>({
     { action: "fail", from: ["SYNTHESIZING", "POST_PROCESSING", "QC"], to: "FAILED", permission: "oligo.batch.manage", reasonRequired: true },
     // post-synthesis (oligo/postProcess.ts) and the QA/QC review hook
     { action: "start_post", from: "SYNTHESIZED", to: "POST_PROCESSING", permission: "oligo.post.manage" },
+    { action: "assemble", from: ["SPLIT", "SYNTHESIZED"], to: "POST_PROCESSING", permission: "oligo.post.manage" },
     { action: "send_qc", from: "POST_PROCESSING", to: "QC", permission: "oligo.post.manage" },
     { action: "qc_cancelled", from: "QC", to: "POST_PROCESSING", permission: "qms.qc.lead", reasonRequired: true },
     { action: "qc_passed", from: "QC", to: "COMPLETED", permission: "qms.qc.review" },

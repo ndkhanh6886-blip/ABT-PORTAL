@@ -13,6 +13,12 @@ import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import { getItem, toBaseQty } from "../master/service";
 import { autoReleaseNonQcPreparations, confirmPreparationQc } from "../prep/service";
 import { ensureLegacyOligoDataSeeded } from "./legacySync";
+import { analyze } from "./analyzer";
+import { loadCatalog } from "./catalog";
+import { insertSequence, recomputeOrdersOf } from "./orders";
+import { recomputeOrderTotalPrice } from "./pricing";
+import { sequenceMachine } from "./sequences";
+import { todayVN } from "@/backend/services/dates";
 
 registerPermissions([
   { code: "oligo.sop.manage", description: "Cấu hình phương pháp và quy trình SOP sau tổng hợp Oligo" },
@@ -464,6 +470,261 @@ const logSchema = z.object({
   values: z.record(z.union([z.string(), z.number(), z.null()])).default({}),
 });
 
+export function extractAmpliconGroupPrefix(seqName: string | null | undefined): string {
+  if (!seqName) return "";
+  const m = String(seqName).trim().match(/^(.*?)(?:[-_\s]+)(?:\d{1,2}[FRfr]|[FRfr]\d{1,2})$/);
+  return m && m[1] ? m[1].trim() : "";
+}
+
+export function isAmpliconAssemblyStepName(stepName?: string | null, category?: string | null): boolean {
+  const s = `${category ?? ""} ${stepName ?? ""}`.trim().toLowerCase();
+  if (/lắp\s*ráp|assembly/i.test(s)) return true;
+  if (/\bpcr\b/i.test(s) && !/tách\s*chiết|tinh\s*sạch|đo\s*od|purification/i.test(s)) return true;
+  return false;
+}
+
+export function isAmpliconPostAssemblyStepName(stepName?: string | null, category?: string | null): boolean {
+  const s = `${category ?? ""} ${stepName ?? ""}`.trim().toLowerCase();
+  return /tách\s*chiết|tinh\s*sạch\s*sản\s*phẩm\s*pcr|điện\s*di|sửa\s*lỗi|cloning|ligation|nối\s*vector|biến\s*nạp|khuẩn\s*lạc|colony|miniprep|plasmid|sequencing|giải\s*trình\s*tự/i.test(
+    s
+  );
+}
+
+/**
+ * Consolidates all primer fragments (`relation = 'FRAGMENT'` or sharing `(order_id, extractAmpliconGroupPrefix(name))`)
+ * of an Amplicon into 1 single parent Amplicon sequence (`oligo.oligo_sequence`) and 1 single `oligo.post_process` record
+ * once the Assembly (`Lắp ráp`) step completes.
+ * From that point onward, only the 1 parent Amplicon sequence is managed for PCR purification, OD measurement (1 OD input),
+ * QC, tube labeling, COA, and delivery.
+ */
+export async function consolidateAmpliconFragmentsAfterAssembly(
+  tx: Tx,
+  actor: AuthzActor,
+  seedSeqId: string,
+  opts?: { workflowId?: string | null; workflowRevision?: number | null; workflowSteps?: FrozenStep[] | null; copyLogsFromPostId?: string | null }
+): Promise<{ parentSeq: any; parentPost: any; fragmentCount: number } | null> {
+  const seed = (await tx.query("SELECT * FROM oligo.oligo_sequence WHERE id = $1 FOR UPDATE", [seedSeqId])).rows[0];
+  if (!seed || seed.status === "CANCELLED") return null;
+
+  // If seed is ALREADY a parent Amplicon with FRAGMENT children, use it as parent
+  let parentSeq: any = null;
+  let fragments: any[] = [];
+
+  if (seed.parent_sequence_id && seed.relation === "FRAGMENT") {
+    parentSeq = (await tx.query("SELECT * FROM oligo.oligo_sequence WHERE id = $1 FOR UPDATE", [seed.parent_sequence_id])).rows[0] ?? null;
+    if (parentSeq) {
+      fragments = (
+        await tx.query(
+          "SELECT * FROM oligo.oligo_sequence WHERE parent_sequence_id = $1 AND relation = 'FRAGMENT' AND status <> 'CANCELLED' ORDER BY line_no NULLS LAST, code FOR UPDATE",
+          [parentSeq.id]
+        )
+      ).rows;
+    }
+  } else if (String(seed.product_type || "").startsWith("AMPLICON") && !seed.parent_sequence_id) {
+    const childFrags = (
+      await tx.query(
+        "SELECT * FROM oligo.oligo_sequence WHERE parent_sequence_id = $1 AND relation = 'FRAGMENT' AND status <> 'CANCELLED' ORDER BY line_no NULLS LAST, code FOR UPDATE",
+        [seed.id]
+      )
+    ).rows;
+    if (childFrags.length > 0) {
+      parentSeq = seed;
+      fragments = childFrags;
+    }
+  }
+
+  // Fallback for orders where 10 primer fragments (-1F .. -10R / _F1 .. _R5) were imported directly without a parent Amplicon row
+  if (!parentSeq && seed.order_id && seed.relation !== "POOL_MASTER") {
+    const prefix = extractAmpliconGroupPrefix(seed.name);
+    if (prefix) {
+      const orderSeqs = (
+        await tx.query(
+          "SELECT * FROM oligo.oligo_sequence WHERE order_id = $1 AND status <> 'CANCELLED' ORDER BY line_no NULLS LAST, code FOR UPDATE",
+          [seed.order_id]
+        )
+      ).rows;
+      const matchedFrags = orderSeqs.filter(
+        (r: any) =>
+          r.relation !== "POOL_MASTER" &&
+          !String(r.product_type || "").startsWith("AMPLICON") &&
+          extractAmpliconGroupPrefix(r.name).toLowerCase() === prefix.toLowerCase()
+      );
+      if (matchedFrags.length >= 2) {
+        fragments = matchedFrags;
+        parentSeq =
+          orderSeqs.find(
+            (r: any) =>
+              !r.parent_sequence_id &&
+              !matchedFrags.some((f: any) => f.id === r.id) &&
+              String(r.name || "").trim().toLowerCase() === prefix.toLowerCase()
+          ) ?? null;
+
+        if (!parentSeq) {
+          const catalog = await loadCatalog(tx);
+          const combinedRaw = matchedFrags.map((f: any) => String(f.normalized_sequence || f.raw_sequence || "").trim()).join("");
+          const a = analyze(combinedRaw || seed.normalized_sequence || seed.raw_sequence, catalog);
+          parentSeq = await insertSequence(tx, actor, {
+            order_id: seed.order_id,
+            org_unit_id: seed.org_unit_id,
+            line_no: matchedFrags[0].line_no,
+            name: prefix,
+            raw: combinedRaw || seed.raw_sequence,
+            a,
+            scale_code: matchedFrags[0].scale_code,
+            purification: matchedFrags[0].purification,
+            format: matchedFrags[0].format,
+            oligo_role: "TEMPLATE",
+            target_pathogen: matchedFrags[0].target_pathogen ?? null,
+          });
+          const sumFragPrice = matchedFrags.reduce((acc: number, f: any) => acc + Number(f.price ?? 0), 0);
+          const combinedLines = matchedFrags.flatMap((f: any) => (Array.isArray(f.price_lines_json) ? f.price_lines_json : []));
+          if (sumFragPrice > 0) {
+            await tx.query(
+              "UPDATE oligo.oligo_sequence SET product_type = 'AMPLICON_LINEAR', unit_price = $2, price = $2, price_lines_json = $3::jsonb WHERE id = $1",
+              [parentSeq.id, sumFragPrice, JSON.stringify(combinedLines)]
+            );
+          } else {
+            await tx.query("UPDATE oligo.oligo_sequence SET product_type = 'AMPLICON_LINEAR' WHERE id = $1", [parentSeq.id]);
+          }
+          parentSeq = (await tx.query("SELECT * FROM oligo.oligo_sequence WHERE id = $1 FOR UPDATE", [parentSeq.id])).rows[0];
+        }
+      }
+    }
+  }
+
+  if (!parentSeq || fragments.length === 0) return null;
+
+  // Transition parent Amplicon to POST_PROCESSING if it is in SPLIT, PENDING, or SYNTHESIZED
+  if (parentSeq.status === "SPLIT" || parentSeq.status === "SYNTHESIZED") {
+    await runTransition(
+      tx,
+      sequenceMachine,
+      actor,
+      { id: parentSeq.id, action: "assemble", expectedVersion: parentSeq.version, reason: `Gộp ${fragments.length} mảnh primer sau bước lắp ráp thành 1 trình tự Amplicon` },
+      { trusted: true }
+    );
+    parentSeq = (await tx.query("SELECT * FROM oligo.oligo_sequence WHERE id = $1 FOR UPDATE", [parentSeq.id])).rows[0];
+  } else if (parentSeq.status === "PENDING") {
+    await tx.query("UPDATE oligo.oligo_sequence SET status = 'POST_PROCESSING', version = version + 1, updated_at = now() WHERE id = $1", [parentSeq.id]);
+    parentSeq = (await tx.query("SELECT * FROM oligo.oligo_sequence WHERE id = $1 FOR UPDATE", [parentSeq.id])).rows[0];
+  }
+
+  // Link all fragments to parentSeq with relation = 'FRAGMENT', zero their duplicate prices, and mark them COMPLETED
+  const fragIds = fragments.map((f: any) => String(f.id));
+  await tx.query(
+    `UPDATE oligo.oligo_sequence
+        SET parent_sequence_id = $2,
+            relation = 'FRAGMENT',
+            unit_price = 0,
+            price = 0,
+            price_lines_json = '[]'::jsonb,
+            status = 'COMPLETED',
+            version = version + 1,
+            updated_at = now()
+      WHERE id = ANY($1::uuid[])`,
+    [fragIds, parentSeq.id]
+  );
+
+  // Close all open post_process records of the child fragments so they no longer appear in the post-processing queue
+  const childPosts = (
+    await tx.query(
+      "SELECT * FROM oligo.post_process WHERE sequence_id = ANY($1::uuid[]) AND status <> 'VOID' ORDER BY updated_at DESC FOR UPDATE",
+      [fragIds]
+    )
+  ).rows;
+  const sourcePost =
+    (opts?.copyLogsFromPostId ? childPosts.find((p: any) => p.id === opts.copyLogsFromPostId) : null) ??
+    childPosts[0] ??
+    null;
+
+  if (childPosts.length > 0) {
+    await tx.query(
+      "UPDATE oligo.post_process SET status = 'SUBMITTED', submitted_at = COALESCE(submitted_at, now()), submitted_by = COALESCE(submitted_by, $2), version = version + 1, updated_at = now() WHERE id = ANY($1::uuid[])",
+      [childPosts.map((p: any) => p.id), actor.userId]
+    );
+  }
+
+  // Ensure the single post_process record exists on parentSeq
+  let parentPost = (
+    await tx.query("SELECT * FROM oligo.post_process WHERE sequence_id = $1 AND status <> 'VOID' FOR UPDATE", [parentSeq.id])
+  ).rows[0];
+
+  const wfId = opts?.workflowId !== undefined ? opts.workflowId : (sourcePost?.workflow_id ?? null);
+  const wfRev = opts?.workflowRevision !== undefined ? opts.workflowRevision : (sourcePost?.workflow_revision ?? null);
+  const wfSteps = opts?.workflowSteps !== undefined ? opts.workflowSteps : (sourcePost?.workflow_steps ?? null);
+
+  if (!parentPost) {
+    const defaultWf = wfSteps ? null : await workflowFor(tx, parentSeq.purification);
+    parentPost = (
+      await tx.query(
+        `INSERT INTO oligo.post_process
+           (sequence_id, batch_id, purification, format, synthesis_scale_code, mfg_date, notes, workflow_id, workflow_revision, workflow_steps, created_by, updated_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $11)
+         RETURNING *`,
+        [
+          parentSeq.id,
+          sourcePost?.batch_id ?? null,
+          parentSeq.purification,
+          parentSeq.format,
+          parentSeq.scale_code,
+          sourcePost?.mfg_date ?? todayVN(),
+          `Gộp từ ${fragments.length} mảnh primer sau lắp ráp (${fragments.map((f: any) => f.name).join(", ")})`,
+          wfId ?? defaultWf?.id ?? null,
+          wfRev ?? defaultWf?.revision ?? null,
+          wfSteps ? JSON.stringify(wfSteps) : defaultWf ? JSON.stringify(defaultWf.steps) : null,
+          actor.userId,
+        ]
+      )
+    ).rows[0];
+  } else if (wfSteps && (!parentPost.workflow_steps || parentPost.workflow_id !== wfId)) {
+    parentPost = (
+      await tx.query(
+        `UPDATE oligo.post_process
+            SET workflow_id = $2, workflow_revision = $3, workflow_steps = $4::jsonb, status = 'OPEN', version = version + 1, updated_at = now()
+          WHERE id = $1
+          RETURNING *`,
+        [parentPost.id, wfId, wfRev, JSON.stringify(wfSteps)]
+      )
+    ).rows[0];
+  }
+
+  // Copy logged pre-assembly and assembly steps from the leader fragment's post_process to parentPost
+  if (sourcePost && parentPost) {
+    const sourceLogs = (
+      await tx.query("SELECT * FROM oligo.ps_step_log WHERE post_process_id = $1 ORDER BY step_no ASC", [sourcePost.id])
+    ).rows;
+    const existingParentStepNos = new Set(
+      (await tx.query("SELECT step_no FROM oligo.ps_step_log WHERE post_process_id = $1", [parentPost.id])).rows.map((r: any) =>
+        Number(r.step_no)
+      )
+    );
+    for (const lg of sourceLogs) {
+      if (existingParentStepNos.has(Number(lg.step_no))) continue;
+      await tx.query(
+        `INSERT INTO oligo.ps_step_log (post_process_id, step_no, method_id, step_name, values, stock_document_id, performed_by, performed_at)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)`,
+        [parentPost.id, lg.step_no, lg.method_id, lg.step_name, JSON.stringify(lg.values ?? {}), lg.stock_document_id, lg.performed_by, lg.performed_at]
+      );
+    }
+  }
+
+  if (parentSeq.order_id) {
+    await recomputeOrderTotalPrice(tx, parentSeq.order_id);
+  }
+  await recomputeOrdersOf(tx, actor, [parentSeq.id]);
+  await writeAudit(tx, actor, {
+    entityType: "oligo_sequence",
+    entityId: parentSeq.id,
+    action: "assemble_amplicon",
+    changes: {
+      status: ["SPLIT", parentSeq.status],
+      merged_fragments: [null, fragments.map((f: any) => f.code).join(", ")],
+    },
+  });
+
+  return { parentSeq, parentPost, fragmentCount: fragments.length };
+}
+
 /** Checks a step's values against its fields; returns clean values (numbers as numbers). */
 async function cleanValues(tx: Tx, step: FrozenStep, values: Record<string, unknown>) {
   const out: Record<string, string | number | null> = {};
@@ -500,16 +761,30 @@ async function cleanValues(tx: Tx, step: FrozenStep, values: Record<string, unkn
 export async function logStep(tx: Tx, actor: AuthzActor, input: unknown) {
   const data = parseInput(logSchema, input);
   const ids = [...new Set(data.sequence_ids)].sort();
-  const done = [];
+  const done: string[] = [];
+  const mergedAmpliconGroups = new Set<string>();
+
   for (const seqId of ids) {
     const s = (
       await tx.query(
-        "SELECT id, code, org_unit_id, status, molecule_type, raw_sequence FROM oligo.oligo_sequence WHERE id = $1 FOR UPDATE",
+        "SELECT id, code, name, order_id, org_unit_id, status, molecule_type, product_type, raw_sequence, parent_sequence_id, relation FROM oligo.oligo_sequence WHERE id = $1 FOR UPDATE",
         [seqId]
       )
     ).rows[0];
     if (!s) throw notFound("trình tự");
     await authorize(tx, actor, "oligo.post.manage", s.org_unit_id);
+
+    // If a previous sibling fragment in this batch already triggered the post-assembly merge into the parent Amplicon, skip the remaining child fragments!
+    const grpKey =
+      s.parent_sequence_id && s.relation === "FRAGMENT"
+        ? `parent:${s.parent_sequence_id}`
+        : s.order_id && extractAmpliconGroupPrefix(s.name)
+          ? `prefix:${s.order_id}:${extractAmpliconGroupPrefix(s.name).toLowerCase()}`
+          : "";
+    if (grpKey && mergedAmpliconGroups.has(grpKey)) {
+      continue;
+    }
+
     const rec = (await tx.query("SELECT * FROM oligo.post_process WHERE sequence_id = $1 AND status <> 'VOID' FOR UPDATE", [seqId])).rows[0];
     if (!rec || s.status !== "POST_PROCESSING" || rec.status !== "OPEN") throw invalid(`${s.code}: không ở bước hậu tổng hợp đang mở.`);
     if (!rec.workflow_steps) throw invalid(`${s.code}: hồ sơ không theo quy trình SOP.`);
@@ -539,6 +814,31 @@ export async function logStep(tx: Tx, actor: AuthzActor, input: unknown) {
       await tx.query("UPDATE oligo.post_process SET cleavage_done = true, deprotection_done = true, purification_done = true, version = version + 1, updated_at = now() WHERE id = $1", [rec.id]);
     }
     await writeAudit(tx, actor, { entityType: "oligo_post_process", entityId: rec.id, action: "log_step", changes: { [`step ${step.step_no}`]: [null, step.name], values: [null, JSON.stringify(values)] } });
+
+    // Check if this sequence is an Amplicon fragment that just completed the Assembly ('Lắp ráp') step
+    // or whose next step is a post-assembly step (Tách chiết, Đo OD, Điện di, Cloning):
+    // if so, automatically merge all sibling fragments into the 1 parent Amplicon sequence!
+    const nextStep = steps[data.step_no] ?? null;
+    const isFrag = s.relation === "FRAGMENT" || Boolean(s.order_id && extractAmpliconGroupPrefix(s.name));
+    if (
+      isFrag &&
+      (isAmpliconAssemblyStepName(step.name, step.category) ||
+        isAmpliconPostAssemblyStepName(step.name, step.category) ||
+        (nextStep && (isAmpliconPostAssemblyStepName(nextStep.name, nextStep.category) || nextStep.kind === "QUANTIFICATION")))
+    ) {
+      const merged = await consolidateAmpliconFragmentsAfterAssembly(tx, actor, s.id, {
+        workflowId: rec.workflow_id,
+        workflowRevision: rec.workflow_revision,
+        workflowSteps: steps,
+        copyLogsFromPostId: rec.id,
+      });
+      if (merged) {
+        if (grpKey) mergedAmpliconGroups.add(grpKey);
+        done.push(merged.parentSeq.code);
+        continue;
+      }
+    }
+
     done.push(s.code);
   }
   return { logged: done };

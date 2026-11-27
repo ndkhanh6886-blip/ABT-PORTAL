@@ -8,6 +8,7 @@ import { runTransition } from "../core/stateMachine";
 import { analyze, SequenceError } from "./analyzer";
 import { loadCatalog } from "./catalog";
 import { insertSequence, recomputeOrderStatus, visibleOligoUnits } from "./orders";
+import { recomputeOrderTotalPrice } from "./pricing";
 import { sequenceMachine } from "./sequences";
 import { ensureLegacyOligoDataSeeded } from "./legacySync";
 
@@ -169,8 +170,10 @@ export async function saveFragments(tx: Tx, actor: AuthzActor, seqId: string, in
       order_id: s.order_id, org_unit_id: s.org_unit_id, line_no: s.line_no, name: f.name, raw: f.sequence, a,
       scale_code: s.scale_code, purification: s.purification, format: s.format, parent_sequence_id: seqId, relation: "FRAGMENT",
     });
+    await tx.query("UPDATE oligo.oligo_sequence SET unit_price = 0, price = 0, price_lines_json = '[]'::jsonb WHERE id = $1", [c.id]);
     created.push(c.code);
   }
+  if (s.order_id) await recomputeOrderTotalPrice(tx, s.order_id);
   await writeAudit(tx, actor, { entityType: "oligo_sequence", entityId: seqId, action: "fragment", changes: { fragments: [null, created.join(", ")], design: [null, JSON.stringify(d.design)] } });
   if (s.order_id) await recomputeOrderStatus(tx, actor, s.order_id);
   return { fragments: created };
