@@ -9268,7 +9268,18 @@ export const UnifiedWorkspace: React.FC = () => {
       }
     }
 
-    setScheduleForm((prev) => ({ ...prev, title: "", linkedTaskCodes: [], autoCreateTask: false, attachments: [] }));
+    setScheduleForm((prev) => ({
+      ...prev,
+      title: "",
+      linkedTaskCodes: [],
+      autoCreateTask:
+        prev.eventType !== "MEETING" &&
+        prev.eventType !== "RESOURCE" &&
+        Boolean(prev.actor) &&
+        Boolean(currentStaffName) &&
+        !sameStaffName(prev.actor, currentStaffName),
+      attachments: []
+    }));
   };
 
   // Handle Delete Schedule Item
@@ -22101,11 +22112,18 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         const nextActor = currentActorStillInDept
                           ? scheduleForm.actor
                           : (matchingStaff[0]?.full_name || "");
+                        const isOtherStaff =
+                          !isMeetingMode &&
+                          !isResourceMode &&
+                          Boolean(nextActor) &&
+                          Boolean(currentStaffName) &&
+                          !sameStaffName(nextActor, currentStaffName);
                         setScheduleForm({
                           ...scheduleForm,
                           category: nextCategory,
                           actor: nextActor,
-                          linkedTaskCodes: currentActorStillInDept ? scheduleForm.linkedTaskCodes : []
+                          linkedTaskCodes: currentActorStillInDept ? scheduleForm.linkedTaskCodes : [],
+                          autoCreateTask: !editingScheduleId && isOtherStaff ? true : scheduleForm.autoCreateTask
                         });
                       }}
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
@@ -22141,14 +22159,13 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   scheduleForm.actor &&
                   currentStaffName &&
                   !sameStaffName(scheduleForm.actor, currentStaffName) && (
-                    <div className="px-3 py-2 rounded-xl bg-amber-50/90 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/70 text-[11px] text-amber-900 dark:text-amber-200 flex items-start justify-between gap-2 flex-wrap">
+                    <div className="px-3 py-2 rounded-xl bg-emerald-50/90 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/70 text-[11px] text-emerald-900 dark:text-emerald-200 flex items-start justify-between gap-2 flex-wrap">
                       <div className="flex items-start gap-1.5">
-                        <span className="shrink-0">💡</span>
+                        <span className="shrink-0">⚡</span>
                         <span>
-                          <strong>Quy trình chuẩn:</strong> Lịch làm việc tuần do từng cá nhân tự lập sau khi nhận việc; nếu bạn đang{" "}
-                          <strong>giao việc cho {scheduleForm.actor}</strong>, hệ thống đã tự động bật tích chọn{" "}
+                          <strong>Tạo lịch &amp; Giao việc trực tiếp cho {scheduleForm.actor}:</strong> Hệ thống đã tự động bật{" "}
                           <strong className="text-emerald-700 dark:text-emerald-300">&ldquo;⚡ Đồng thời tạo luôn Nhiệm vụ (Task) mới trong Bảng Công Việc&rdquo;</strong>{" "}
-                          ở bên dưới để công việc hiển thị chính thức trên Bảng Công Việc của nhân sự.
+                          để mỗi lịch bạn lưu sẽ đồng thời giao thành Nhiệm vụ chính thức trên <strong>Bảng Công Việc</strong> và hiển thị trên <strong>Lịch Công Tác Tuần</strong> của nhân sự.
                         </span>
                       </div>
                     </div>
