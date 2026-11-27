@@ -140,29 +140,35 @@ export function Table({ head, children }: { head: React.ReactNode[]; children: R
   );
 }
 
-const STATUS_STYLE: Record<string, string> = {
-  RELEASED: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900",
-  EFFECTIVE: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900",
-  COMPLETED: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900",
-  DONE: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900",
-  PASSED: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900",
-  QUARANTINE: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900",
-  DRAFT: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900",
-  PENDING: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900",
-  AWAITING_CHECK: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900",
-  WAITING_QC: "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-900",
-  PENDING_QC: "bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-900",
-  CONFIRMED: "bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-900",
-  IN_PROGRESS: "bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-900",
-  IN_REVIEW: "bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-900",
-  PENDING_RELEASE: "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-300 dark:border-indigo-900",
-  ON_HOLD: "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-900",
-  REJECTED: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900",
-  FAILED: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900",
-  EXPIRED: "bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700",
-  OBSOLETE: "bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700",
-  CANCELLED: "bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700",
-  SKIPPED: "bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700",
+/**
+ * Semantic tone of each status. Colours live in globals.css (`.status-badge.tone-*`), not in Tailwind classes:
+ * the `orange-*`/`indigo-*` scales are remapped to the brand blue there, which made "Tạm giữ" and
+ * "Chờ QA duyệt xuất xưởng" look the same as "Đang thực hiện".
+ */
+export type StatusTone = "success" | "info" | "pending" | "review" | "hold" | "danger" | "neutral";
+export const STATUS_TONE: Record<string, StatusTone> = {
+  RELEASED: "success",
+  EFFECTIVE: "success",
+  COMPLETED: "success",
+  DONE: "success",
+  PASSED: "success",
+  CONFIRMED: "info",
+  IN_PROGRESS: "info",
+  DRAFT: "pending",
+  PENDING: "pending",
+  AWAITING_CHECK: "pending",
+  WAITING_QC: "review",
+  PENDING_QC: "review",
+  IN_REVIEW: "review",
+  PENDING_RELEASE: "review",
+  QUARANTINE: "hold",
+  ON_HOLD: "hold",
+  REJECTED: "danger",
+  FAILED: "danger",
+  EXPIRED: "neutral",
+  OBSOLETE: "neutral",
+  CANCELLED: "neutral",
+  SKIPPED: "neutral",
 };
 export const LOT_STATUS_LABEL: Record<string, string> = {
   QUARANTINE: "Biệt trữ",
@@ -189,13 +195,10 @@ export const LOT_STATUS_LABEL: Record<string, string> = {
   CANCELLED: "Đã hủy",
 };
 
-export function StatusBadge({ status, label }: { status: string; label?: string }) {
+export function StatusBadge({ status, label, tone }: { status: string; label?: string; tone?: StatusTone }) {
   const vnLabel = label ?? LOT_STATUS_LABEL[status] ?? status;
   return (
-    <span
-      title={`Trạng thái: ${vnLabel} (Mã gốc: ${status})`}
-      className={`inline-block whitespace-nowrap px-2 py-0.5 rounded-full border text-[11px] font-bold ${STATUS_STYLE[status] ?? STATUS_STYLE.EXPIRED}`}
-    >
+    <span title={`Trạng thái: ${vnLabel} (Mã gốc: ${status})`} className={`status-badge tone-${tone ?? STATUS_TONE[status] ?? "neutral"}`}>
       {vnLabel}
     </span>
   );
