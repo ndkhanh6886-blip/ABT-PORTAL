@@ -28,6 +28,7 @@ import {
   listAllAccessorySets,
   type AccessoryItem,
 } from "../../frontend/utils/extractionAccessories";
+import { isNonQpcrKitCode } from "../../frontend/utils/packagingForm";
 import {
   buildIfuFilesMapFromRow,
   ensureKitBomRoutingAndIfuSchema,
@@ -338,7 +339,8 @@ export async function explodeKitBom(
   const isPcrKit =
     prod.item_type !== "SEMI_FINISHED" &&
     (bom as any).bom_type !== "semi_finished" &&
-    String((bom as any).bom_category || "PCR Kit") === "PCR Kit";
+    String((bom as any).bom_category || "PCR Kit") === "PCR Kit" &&
+    !isNonQpcrKitCode(prod.code);
 
   const supplyForm = isPcrKit
     ? String(parsedFromLot.supplyForm || (order as any).supply_form || (bom as any).supply_form || "")
@@ -2137,7 +2139,8 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
   const isPcrKit =
     product.item_type !== "SEMI_FINISHED" &&
     String(bom.bom_type || "finished_good") !== "semi_finished" &&
-    String(bom.bom_category || "PCR Kit") === "PCR Kit";
+    String(bom.bom_category || "PCR Kit") === "PCR Kit" &&
+    !isNonQpcrKitCode(product.code);
 
   const resolvedSupplyForm = isPcrKit
     ? parsedTypedLot.supplyForm ||
@@ -3728,7 +3731,7 @@ export async function verifyStepQcGate(
       entityType: "kit_production_step",
       entityId: stepId,
       link: "/?tab=factory-kit",
-      sourceKey: `kit_ipc_req_${stepId}_${Date.now()}`,
+      sourceKey: `kit_ipc_req_${stepId}_v${step.version}`,
     });
     return upd;
   }
@@ -3797,7 +3800,7 @@ export async function verifyStepQcGate(
       entityType: "kit_production_step",
       entityId: stepId,
       link: "/?tab=factory-kit",
-      sourceKey: `kit_ipc_pass_${stepId}_${Date.now()}`,
+      sourceKey: `kit_ipc_pass_${stepId}_v${updatedStep.version}`,
     });
     return updatedStep;
   }
@@ -3845,7 +3848,7 @@ export async function verifyStepQcGate(
     entityType: "kit_production_step",
     entityId: stepId,
     link: "/?tab=factory-kit",
-    sourceKey: `kit_ipc_rej_${stepId}_${Date.now()}`,
+    sourceKey: `kit_ipc_rej_${stepId}_v${updatedStep.version}`,
   });
   return updatedStep;
 }

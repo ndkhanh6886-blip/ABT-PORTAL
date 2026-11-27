@@ -44,6 +44,7 @@ import {
   type KitLabelDesignBundle,
   type LabelSampleData,
 } from "./KitLabelStudio";
+import { isNonQpcrKitCode } from "@/frontend/utils/packagingForm";
 
 function classifyBomLineForPackaging(l: any): {
   kind: "PRIMARY_CONTAINER" | "OUTER_BOX_OR_ACCESSORY" | "FILLABLE_SOLUTION";
@@ -3310,7 +3311,10 @@ export function BomRoutingView({
                   const isSemi =
                     (bomDetail.bom.bom_type || (bomDetail.bom.product_type === "SEMI_FINISHED" ? "semi_finished" : "finished_good")) ===
                     "semi_finished";
-                  const isPcrCat = !isSemi && (bomDetail.bom.bom_category ?? "PCR Kit") === "PCR Kit";
+                  const isPcrCat =
+                    !isSemi &&
+                    (bomDetail.bom.bom_category ?? "PCR Kit") === "PCR Kit" &&
+                    !isNonQpcrKitCode(bomDetail.bom.product_code);
                   const matchingPoLines = (options.po_lines ?? []).filter(
                     (p) => p.item_id === bomDetail.bom.product_item_id || p.item_code === bomDetail.bom.product_code
                   );
@@ -5148,7 +5152,10 @@ export function BomRoutingView({
                 {/* Thẻ 3: Thiết kế Mẫu Nhãn sản phẩm (Label Artwork) & Hướng dẫn sử dụng đính kèm (IFU) */}
                 {(() => {
                   const isSemi = (bomDetail.bom.bom_type || (bomDetail.bom.product_type === "SEMI_FINISHED" ? "semi_finished" : "finished_good")) === "semi_finished";
-                  const isPcrKit = !isSemi && (bomDetail.bom.bom_category || "PCR Kit") === "PCR Kit";
+                  const isPcrKit =
+                    !isSemi &&
+                    (bomDetail.bom.bom_category || "PCR Kit") === "PCR Kit" &&
+                    !isNonQpcrKitCode(bomDetail.bom.product_code);
                   const hasPackaging = (bomDetail.packaging || []).length > 0;
                   const hasSavedCustomLabel = Boolean(
                     bomDetail.bom.label_design_json &&

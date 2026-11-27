@@ -43,12 +43,33 @@ export interface KitSpec {
 const PCR_KIT_CODE = /^(SQ|MQ|SP|MP)[A-Z]?-/;
 
 /**
+ * Các mã có tiền tố SQH-... nhưng KHÔNG phải Kit qPCR (VD: kit định tính bằng thuốc thử sinh hóa / so màu / lai RDB / kit khác),
+ * không áp dụng quy cách chia sẵn / IC / loại tube của Kit qPCR.
+ */
+export const NON_QPCR_KIT_CODES = new Set<string>([
+  "SQH-139",
+  "SQH-018",
+  "SQH-137",
+]);
+
+export function isNonQpcrKitCode(rawCode: any): boolean {
+  const full = String(rawCode ?? "").trim().toUpperCase();
+  if (!full) return false;
+  if (NON_QPCR_KIT_CODES.has(full)) return true;
+  const base = full.split(".")[0];
+  return NON_QPCR_KIT_CODES.has(base);
+}
+
+/**
  * Kit PCR (có quy cách chia sẵn / IC / loại tube), nhận biết theo MÃ HÀNG (Bảng mã đang để Kit PCR và Kit tách chiết
- * chung một nhóm) và chỉ hàng của nhà cung cấp / hãng ABT. Kit tách chiết (HI-, HE-, HM-...), kit hãng khác và hóa chất khác
- * không phân quy cách dù có khai báo phụ kiện.
+ * chung một nhóm) và chỉ hàng của nhà cung cấp / hãng ABT. Kit tách chiết (HI-, HE-, HM-...), các mã ngoại lệ không phải
+ * kit qPCR (SQH-139, SQH-018, SQH-137...), kit hãng khác và hóa chất khác không phân quy cách dù có khai báo phụ kiện.
  */
 export function isPcrKitProduct(p: { code?: any; [k: string]: any } | null | undefined): boolean {
   const code = String(p?.code ?? p?.product_code ?? "").trim().toUpperCase();
+  if (isNonQpcrKitCode(code)) return false;
+  const nameText = String(p?.name ?? p?.product_name ?? "").toLowerCase();
+  if (/thuốc\s*thử\s*urease/i.test(nameText)) return false;
   const cat = String(p?.bom_category ?? p?.category ?? "").trim().toLowerCase();
   if (!PCR_KIT_CODE.test(code) && cat !== "pcr kit") return false;
   // Chỉ kit PCR của ABT / Phòng Sản xuất Kit (hoặc chưa điền hãng nhưng đúng mã chuẩn SQ-/MQ-/SP-/MP-) mới phân quy cách

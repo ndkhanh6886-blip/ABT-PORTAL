@@ -27,7 +27,7 @@ import {
   STEP_CATEGORY_LABELS,
 } from "./shared";
 import { accessorySetsForProduct, findAccessorySet, isExtractionAccessoryProduct } from "@/frontend/utils/extractionAccessories";
-import { kitSpecOf, kitSpecToFactorySupplyAndTube, kitSpecLabel, hasKitSpec, hasPackagingSpec } from "@/frontend/utils/packagingForm";
+import { kitSpecOf, kitSpecToFactorySupplyAndTube, kitSpecLabel, hasKitSpec, hasPackagingSpec, isNonQpcrKitCode } from "@/frontend/utils/packagingForm";
 import { ProductionPlanView } from "./ProductionPlanView";
 
 import { todayVN } from "@/backend/services/dates";
@@ -1405,7 +1405,8 @@ export function OrdersEbrView({
                   const isPcrKit =
                     selectedProd?.item_type !== "SEMI_FINISHED" &&
                     activeBom?.bom_type !== "semi_finished" &&
-                    (activeBom?.bom_category || "PCR Kit") === "PCR Kit";
+                    (activeBom?.bom_category || "PCR Kit") === "PCR Kit" &&
+                    !isNonQpcrKitCode(selectedProd?.code);
 
                   if (!isPcrKit) {
                     const yymm = (orderForm.mfg_date || vnToday()).replace(/\D/g, "").slice(2, 6) || "2611";

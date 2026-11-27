@@ -9,6 +9,8 @@ import {
   demoSpecOfLot,
   hasKitSpec,
   isDemoLot,
+  isNonQpcrKitCode,
+  isPcrKitProduct,
   kitSpecMismatches,
   kitSpecOf,
   lotMatchesKitSpec,
@@ -122,5 +124,16 @@ describe("Mã phụ kit tách chiết máy", () => {
     expect(lotMatchesKitSpec("B2611001.C.IC.T02", stdSoSpec)).toBe(true);
     expect(lotMatchesKitSpec("B2611001.C.IC.T02.DM25", stdSoSpec)).toBe(false);
     expect(kitSpecMismatches("B2611001.C.IC.T02.DM25", stdSoSpec)[0]).toMatch(/Hàng Demo/);
+  });
+
+  it("loại trừ SQH-139, SQH-018, SQH-137 khỏi diện phải chọn quy cách Kit qPCR", () => {
+    expect(isNonQpcrKitCode("SQH-139")).toBe(true);
+    expect(isNonQpcrKitCode("SQH-018")).toBe(true);
+    expect(isNonQpcrKitCode("SQH-137")).toBe(true);
+    expect(isNonQpcrKitCode("SQH-139.A")).toBe(true);
+    expect(isPcrKitProduct({ code: "SQH-139", category: "PCR Kit", brand: "ABT" })).toBe(false);
+    expect(isPcrKitProduct({ code: "SQH-018", category: "PCR Kit", brand: "ABT" })).toBe(false);
+    expect(isPcrKitProduct({ code: "SQH-137", category: "PCR Kit", brand: "ABT" })).toBe(false);
+    expect(isPcrKitProduct({ code: "SQH-001", category: "PCR Kit", brand: "ABT" })).toBe(true);
   });
 });

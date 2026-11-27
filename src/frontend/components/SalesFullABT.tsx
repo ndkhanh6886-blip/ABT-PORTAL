@@ -33024,6 +33024,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             const autoBaseQty = nextUnit.toLowerCase() === "base" && seqDetails && seqDetails.baseCount > 0
                                                                                 ? seqDetails.baseCount
                                                                                 : (it.quantity || 1);
+                                                                            const isNextPcr = isPcrKitProduct(p);
+                                                                            const cleanedNotes = !isNextPcr
+                                                                                ? String((it as any).notes || "").replace(/^\s*\[Dạng:[^\]]*\]\s*/iu, "")
+                                                                                : (it as any).notes;
                                                                             return {
                                                                                 ...it,
                                                                                 productCode: p.code,
@@ -33032,7 +33036,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                 quantity: autoBaseQty,
                                                                                 specification: it.specification && it.productCode === p.code ? it.specification : (p.specification || ""),
                                                                                 unitPrice: Boolean((it as any).isGift || (it as any).is_gift) ? 0 : resolveSoProductPrice(p, factoryOrderCustomerName, isStockOrder, p.code),
-                                                                                isGift: Boolean((it as any).isGift || (it as any).is_gift)
+                                                                                isGift: Boolean((it as any).isGift || (it as any).is_gift),
+                                                                                ...(isNextPcr ? {} : { packagingForm: undefined, icForm: undefined, tubeType: undefined, notes: cleanedNotes })
                                                                             };
                                                                         }));
                                                                         setProductSearchQueries(prev => {
