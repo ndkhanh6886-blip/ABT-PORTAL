@@ -2912,6 +2912,15 @@ export const UnifiedWorkspace: React.FC = () => {
   const warnNoTemplatePermission = () =>
     showToast("Bạn chưa có quyền tạo / sửa quy trình mẫu. Nhờ Quản trị viên cấp quyền \"Quản lý quy trình phối hợp mẫu\" (Cấu hình → Phân quyền) hoặc gửi nội dung quy trình để Quản trị viên tạo.", "warning");
 
+  // Core Data Lists
+  const [tasks, setTasks] = useState<any[]>([]);
+  const [workflows, setWorkflows] = useState<any[]>([]);
+  const [dailyLogs, setDailyLogs] = useState<any[]>([]);
+  const [personnelList, setPersonnelList] = useState<any[]>([]);
+  const [customerList, setCustomerList] = useState<any[]>(DEFAULT_CUSTOMERS_LIST);
+  const [supplierList, setSupplierList] = useState<any[]>(DEFAULT_KNOWN_SUPPLIERS);
+  const [productList, setProductList] = useState<any[]>(DEFAULT_PRODUCTS_LIST);
+
   // Role-Based Access Control strictly according to the logged-in user:
   // - Ban Giám Đốc (admin / director): Full company-wide access (all blocks)
   // - Trưởng Phòng (head / manager): Department-wide access
@@ -2936,9 +2945,9 @@ export const UnifiedWorkspace: React.FC = () => {
       userRole.includes("phó phòng") ||
       userRole.includes("quản đốc") ||
       userRole.includes("chủ nhiệm") ||
-      isPersonDeptHeadOrDeputy(currentStaffName, rawUserDept)
+      isPersonDeptHeadOrDeputy(currentStaffName, rawUserDept, personnelList)
     );
-  }, [isDirector, userRole, currentStaffName, rawUserDept]);
+  }, [isDirector, userRole, currentStaffName, rawUserDept, personnelList]);
 
   // Tạo / sửa / xóa quy trình mẫu: Ban Giám Đốc, Trưởng/Phó phòng hoặc người được cấp quyền "Quản lý quy trình phối hợp mẫu"
   const canManageTemplates = Boolean(
@@ -3111,15 +3120,6 @@ export const UnifiedWorkspace: React.FC = () => {
   useEffect(() => {
     setSelectedAssignee("all");
   }, [effectiveSelectedDept]);
-
-  // Core Data Lists
-  const [tasks, setTasks] = useState<any[]>([]);
-  const [workflows, setWorkflows] = useState<any[]>([]);
-  const [dailyLogs, setDailyLogs] = useState<any[]>([]);
-  const [personnelList, setPersonnelList] = useState<any[]>([]);
-  const [customerList, setCustomerList] = useState<any[]>(DEFAULT_CUSTOMERS_LIST);
-  const [supplierList, setSupplierList] = useState<any[]>(DEFAULT_KNOWN_SUPPLIERS);
-  const [productList, setProductList] = useState<any[]>(DEFAULT_PRODUCTS_LIST);
 
   // Task Filters & Search
   const [searchQuery, setSearchQuery] = useState("");
@@ -3360,6 +3360,7 @@ export const UnifiedWorkspace: React.FC = () => {
   >([]);
   const [sendingMeetingRemindId, setSendingMeetingRemindId] = useState<number | string | null>(null);
   const [weeklySchedule, setWeeklySchedule] = useState<any[]>([]);
+  const [weeklyScheduleLoaded, setWeeklyScheduleLoaded] = useState<boolean>(false);
   // Lịch tuần theo NGÀY THẬT: tuần đang xem (0 = tuần này), lịch đang sửa
   const [weekOffset, setWeekOffset] = useState(0);
   const [currentTodayIso, setCurrentTodayIso] = useState<string>(() => todayVN());
@@ -3703,6 +3704,12 @@ export const UnifiedWorkspace: React.FC = () => {
       const defaultRes =
         (preselectedResourceId && companyResources.find((r) => r.id === preselectedResourceId)) ||
         (isMeeting || isResourceBooking ? companyResources[0] : undefined);
+      const isSchedulingForOtherStaff =
+        !isMeeting &&
+        !isResourceBooking &&
+        Boolean(defaultActor) &&
+        Boolean(currentStaffName) &&
+        !sameStaffName(defaultActor, currentStaffName);
       setScheduleForm({
         day: viewedWeek.all7Days.find(d => d.date === pick)?.name || "Thứ 2",
         date: pick,
@@ -3720,7 +3727,7 @@ export const UnifiedWorkspace: React.FC = () => {
         resourceId: defaultRes ? defaultRes.id : "",
         resourceName: defaultRes ? defaultRes.name : "",
         linkedTaskCodes: [],
-        autoCreateTask: false,
+        autoCreateTask: isSchedulingForOtherStaff,
         eventType: defaultEventType,
         meetingAgenda: "",
         meetingLink: "",
@@ -4275,6 +4282,7 @@ export const UnifiedWorkspace: React.FC = () => {
           }
           const cleanedSched = dedupeWeeklySchedules(rawSched);
           setWeeklySchedule(cleanedSched);
+          setWeeklyScheduleLoaded(true);
           // Lưu lại khi đã khử trùng HOẶC đã sửa ngày kết thúc của thẻ bị kéo dài (số thẻ có thể không đổi)
           if (cleanedSched.length !== rawSched.length || JSON.stringify(cleanedSched) !== JSON.stringify(rawSched)) {
             if (typeof window !== "undefined") {
@@ -4290,6 +4298,7 @@ export const UnifiedWorkspace: React.FC = () => {
           console.warn("Could not load weekly schedule:", err);
           const local = typeof window !== "undefined" ? localStorage.getItem("unified_weekly_schedule") : null;
           if (local) setWeeklySchedule(dedupeWeeklySchedules(JSON.parse(local)));
+          setWeeklyScheduleLoaded(true);
         }
 
         // Load persistent thematic projects & sync stage progress with linked company_tasks
@@ -5305,8 +5314,9 @@ export const UnifiedWorkspace: React.FC = () => {
         ...String(s.actor || "").split(/[,;\n]+/).map((a: string) => a.trim()).filter(Boolean),
         ...(Array.isArray(s.coActors) ? s.coActors.map((a: any) => String(a || "").trim()).filter(Boolean) : [])
       ];
+      const isCreatedByMe = Boolean(s.createdBy && sameStaffName(s.createdBy, currentStaffName));
       if (rolePerspective === "staff") {
-        if (s.isPublic) return true;
+        if (s.isPublic || isCreatedByMe) return true;
         return actorsList.some((a) => sameStaffName(a, currentStaffName));
       }
       if (filterDept !== "all") {
@@ -5314,7 +5324,8 @@ export const UnifiedWorkspace: React.FC = () => {
         const matchDeptStaff = actorsList.some((a) =>
           departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, a))
         );
-        if (!matchScheduleDept && !matchDeptStaff) return false;
+        const matchActorMine = actorsList.some((a) => sameStaffName(a, currentStaffName));
+        if (!matchScheduleDept && !matchDeptStaff && !isCreatedByMe && !matchActorMine) return false;
       }
       if (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__") {
         if (actorsList.some((a) => sameStaffName(a, selectedAssignee))) return true;
@@ -9118,6 +9129,8 @@ export const UnifiedWorkspace: React.FC = () => {
       title: entry.title,
       actor: combinedActorDisplay,
       coActors: coActorsList,
+      createdBy: currentStaffName,
+      createdByDept: userDept,
       location: matchedCompanyResource ? matchedCompanyResource.name : entry.location,
       resourceId: matchedCompanyResource ? matchedCompanyResource.id : (scheduleForm.resourceId || ""),
       resourceName: matchedCompanyResource ? matchedCompanyResource.name : (scheduleForm.resourceName || ""),
@@ -9233,10 +9246,18 @@ export const UnifiedWorkspace: React.FC = () => {
           ].filter((n) => n && !sameStaffName(n, currentStaffName))
         )
       );
+      const notifyTitleSample =
+        entriesToCreate[0]?.title || scheduleForm.title || "Công việc trong tuần";
+      const notifyTimeSample =
+        entriesToCreate.length > 1
+          ? `${entriesToCreate.length} khung giờ`
+          : (entriesToCreate[0]?.time || scheduleForm.time || "08:00 - 17:30");
+      const notifyLocSample =
+        entriesToCreate[0]?.location || scheduleForm.location || "Công ty";
       if (notifyRecipients.length > 0) {
         notifyActivity({
           title: "Lịch Công Tác / Điều Phối Tuần Mới",
-          message: `${currentStaffName} đã lên lịch "${scheduleForm.title}" vào ${rangeSummary} (${scheduleForm.time}) tại ${scheduleForm.location || "Công ty"}.`,
+          message: `${currentStaffName} đã lên lịch "${notifyTitleSample}"${entriesToCreate.length > 1 ? ` (+${entriesToCreate.length - 1} mục khác)` : ""} vào ${rangeSummary} (${notifyTimeSample}) tại ${notifyLocSample}.`,
           type: "info",
           category: "plan",
           sender: { name: currentStaffName },
@@ -10119,12 +10140,12 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
     [dedupeWeeklySchedules]
   );
 
-  // Đồng bộ tự động mỗi khi danh sách proposals được tải về hoặc cập nhật
+  // Đồng bộ tự động mỗi khi danh sách proposals được tải về hoặc cập nhật (chỉ chạy SAU KHI đã tải xong unified_weekly_schedule từ máy chủ để tránh ghi đè mảng rỗng lúc khởi tạo)
   useEffect(() => {
-    if (proposals && proposals.length > 0) {
+    if (weeklyScheduleLoaded && proposals && proposals.length > 0) {
       syncApprovedBusinessTripsToWeeklySchedule(proposals);
     }
-  }, [proposals, syncApprovedBusinessTripsToWeeklySchedule]);
+  }, [weeklyScheduleLoaded, proposals, syncApprovedBusinessTripsToWeeklySchedule]);
 
   const handleViewWeeklyScheduleFromProposal = useCallback(
     (prop: ProposalItem) => {
@@ -22027,11 +22048,18 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             detectedDept && SCHEDULE_VALID_CATEGORIES.includes(detectedDept)
                               ? detectedDept
                               : scheduleForm.category;
+                          const isOtherStaff =
+                            !isMeetingMode &&
+                            !isResourceMode &&
+                            Boolean(nextActor) &&
+                            Boolean(currentStaffName) &&
+                            !sameStaffName(nextActor, currentStaffName);
                           setScheduleForm({
                             ...scheduleForm,
                             actor: nextActor,
                             category: nextCat,
-                            linkedTaskCodes: []
+                            linkedTaskCodes: [],
+                            autoCreateTask: !editingScheduleId && isOtherStaff ? true : scheduleForm.autoCreateTask
                           });
                         }}
                         className="w-full px-3 py-2 rounded-xl border border-indigo-300 dark:border-indigo-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
@@ -22106,6 +22134,25 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     </select>
                   </div>
                 </div>
+
+                {!isMeetingMode &&
+                  !isResourceMode &&
+                  !editingScheduleId &&
+                  scheduleForm.actor &&
+                  currentStaffName &&
+                  !sameStaffName(scheduleForm.actor, currentStaffName) && (
+                    <div className="px-3 py-2 rounded-xl bg-amber-50/90 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/70 text-[11px] text-amber-900 dark:text-amber-200 flex items-start justify-between gap-2 flex-wrap">
+                      <div className="flex items-start gap-1.5">
+                        <span className="shrink-0">💡</span>
+                        <span>
+                          <strong>Quy trình chuẩn:</strong> Lịch làm việc tuần do từng cá nhân tự lập sau khi nhận việc; nếu bạn đang{" "}
+                          <strong>giao việc cho {scheduleForm.actor}</strong>, hệ thống đã tự động bật tích chọn{" "}
+                          <strong className="text-emerald-700 dark:text-emerald-300">&ldquo;⚡ Đồng thời tạo luôn Nhiệm vụ (Task) mới trong Bảng Công Việc&rdquo;</strong>{" "}
+                          ở bên dưới để công việc hiển thị chính thức trên Bảng Công Việc của nhân sự.
+                        </span>
+                      </div>
+                    </div>
+                  )}
 
                 <label className="flex items-start gap-2 p-2.5 rounded-xl bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-900/60 cursor-pointer select-none">
                   <input
