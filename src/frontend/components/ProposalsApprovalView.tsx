@@ -398,7 +398,24 @@ export const DEFAULT_PROPOSAL_TEMPLATES: ProposalTemplate[] = [
     hasLineItems: false,
     slaTotalHours: 8,
     fields: [
-      { key: "leaveType", label: "Loại hình nghỉ", type: "select", options: ["Nghỉ phép năm (Có hưởng lương)", "Xin đi trễ / về sớm (Cộng dồn quy đổi ngày phép)", "Nghỉ việc riêng (Không hưởng lương)", "Nghỉ ốm / Khám chữa bệnh (BHXH)", "Nghỉ chế độ Kết hôn / Hiếu hỷ", "Nghỉ Thai sản", "Làm việc từ xa (WFH)"], required: true },
+      {
+        key: "leaveType",
+        label: "Loại hình nghỉ",
+        type: "select",
+        options: [
+          "Nghỉ phép năm (Có hưởng lương)",
+          "Xin đi trễ / về sớm (Cộng dồn quy đổi ngày phép)",
+          "Chế độ Nuôi con nhỏ dưới 12 tháng (Về sớm / Đi trễ 60 phút/ngày - Hưởng 100% lương, không trừ phép)",
+          "Chế độ Lao động nữ kỳ hành kinh (Về sớm / Nghỉ 30 phút/ngày - Hưởng 100% lương, không trừ phép)",
+          "Nghỉ Khám thai định kỳ / Chế độ Nam nghỉ khi vợ sinh con (BHXH - Không trừ phép)",
+          "Nghỉ Thai sản (Hưởng chế độ BHXH - Không trừ phép)",
+          "Nghỉ ốm / Con ốm dưới 7 tuổi / Khám chữa bệnh (BHXH - Không trừ phép)",
+          "Nghỉ chế độ Kết hôn / Hiếu hỷ (Hưởng nguyên lương - Không trừ phép)",
+          "Nghỉ việc riêng (Không hưởng lương)",
+          "Làm việc từ xa (WFH)"
+        ],
+        required: true
+      },
       { key: "fromDate", label: "Nghỉ từ ngày", type: "date", required: true },
       { key: "toDate", label: "Đến hết ngày", type: "date", required: true },
       { key: "totalDays", label: "Tổng số ngày nghỉ", type: "number", placeholder: "VD: 1 hoặc 0.5", required: true },
@@ -1889,13 +1906,34 @@ export function ProposalsApprovalView({
     });
     let nextFields = tmpl.fields || [];
     if (tmpl.id === "tmpl_leave_request" || tmpl.codePrefix === "DXNP") {
-      const lateEarlyOpt = "Xin đi trễ / về sớm (Cộng dồn quy đổi ngày phép)";
+      const canonicalLeaveOptions = [
+        "Nghỉ phép năm (Có hưởng lương)",
+        "Xin đi trễ / về sớm (Cộng dồn quy đổi ngày phép)",
+        "Chế độ Nuôi con nhỏ dưới 12 tháng (Về sớm / Đi trễ 60 phút/ngày - Hưởng 100% lương, không trừ phép)",
+        "Chế độ Lao động nữ kỳ hành kinh (Về sớm / Nghỉ 30 phút/ngày - Hưởng 100% lương, không trừ phép)",
+        "Nghỉ Khám thai định kỳ / Chế độ Nam nghỉ khi vợ sinh con (BHXH - Không trừ phép)",
+        "Nghỉ Thai sản (Hưởng chế độ BHXH - Không trừ phép)",
+        "Nghỉ ốm / Con ốm dưới 7 tuổi / Khám chữa bệnh (BHXH - Không trừ phép)",
+        "Nghỉ chế độ Kết hôn / Hiếu hỷ (Hưởng nguyên lương - Không trừ phép)",
+        "Nghỉ việc riêng (Không hưởng lương)",
+        "Làm việc từ xa (WFH)"
+      ];
       nextFields = nextFields.map((f) => {
-        if (f.key === "leaveType" && Array.isArray(f.options) && !f.options.includes(lateEarlyOpt)) {
-          changed = true;
-          const opts = [...f.options];
-          opts.splice(1, 0, lateEarlyOpt);
-          return { ...f, options: opts };
+        if (f.key === "leaveType" && Array.isArray(f.options)) {
+          const missingAny = canonicalLeaveOptions.some((opt) => !f.options!.includes(opt));
+          if (missingAny) {
+            changed = true;
+            const customExtras = f.options.filter(
+              (o) =>
+                !canonicalLeaveOptions.includes(o) &&
+                ![
+                  "Nghỉ ốm / Khám chữa bệnh (BHXH)",
+                  "Nghỉ chế độ Kết hôn / Hiếu hỷ",
+                  "Nghỉ Thai sản"
+                ].includes(o)
+            );
+            return { ...f, options: [...canonicalLeaveOptions, ...customExtras] };
+          }
         }
         return f;
       });
@@ -2570,13 +2608,47 @@ export function ProposalsApprovalView({
     });
   };
 
+  const isPolicyRegimeLeaveType = (lt: string): boolean => {
+    const s = String(lt || "").toLowerCase();
+    return (
+      s.includes("con nhỏ") ||
+      s.includes("hành kinh") ||
+      s.includes("thai sản") ||
+      s.includes("khám thai") ||
+      s.includes("vợ sinh") ||
+      s.includes("bhxh") ||
+      s.includes("nghỉ ốm") ||
+      s.includes("con ốm") ||
+      s.includes("hiếu") ||
+      s.includes("hỷ") ||
+      s.includes("kết hôn") ||
+      s.includes("không trừ phép")
+    );
+  };
+
+  const getRegimeDailyFactor = (lt: string): number | null => {
+    const s = String(lt || "").toLowerCase();
+    if (s.includes("con nhỏ")) return 0.125; // 60 phút / 480 phút = 0.125 ngày công/ngày
+    if (s.includes("hành kinh")) return 0.0625; // 30 phút / 480 phút = 0.0625 ngày công/ngày
+    return null;
+  };
+
   const renderLeaveDatesEditor = () => {
     const fv = formState.formValues || {};
     const datesMode = isDatesMode(fv);
+    const curLeaveType = String(fv.leaveType || "");
+    const isPolicyRegime = isPolicyRegimeLeaveType(curLeaveType);
+    const isNursingChildRegime = curLeaveType.toLowerCase().includes("con nhỏ");
+    const isMenstrualRegime = curLeaveType.toLowerCase().includes("hành kinh");
+    const isMaternityOrPrenatalRegime =
+      curLeaveType.toLowerCase().includes("thai sản") ||
+      curLeaveType.toLowerCase().includes("khám thai") ||
+      curLeaveType.toLowerCase().includes("vợ sinh");
     const isLateEarlyMode =
-      fv.leaveMode === "LATE_EARLY" ||
-      String(fv.leaveType || "").toLowerCase().includes("đi trễ") ||
-      String(fv.leaveType || "").toLowerCase().includes("về sớm");
+      !isPolicyRegime &&
+      (fv.leaveMode === "LATE_EARLY" ||
+        curLeaveType.toLowerCase().includes("đi trễ") ||
+        curLeaveType.toLowerCase().includes("về sớm"));
     const days = parseLeaveDays(fv) || [];
     const lateEarlyKind = String(fv.lateEarlyKind || "Đi trễ");
     const lateEarlyMins = Number(fv.lateEarlyMinutes) > 0 ? Number(fv.lateEarlyMinutes) : Math.max(15, Math.round((Number(fv.totalDays) || 0.125) * 480));
@@ -2590,10 +2662,175 @@ export function ProposalsApprovalView({
       <div className="space-y-2.5 p-3 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/60 dark:bg-indigo-950/30">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">Kiểu đăng ký:</span>
-          <button type="button" className={chip(!datesMode && !isLateEarlyMode)} onClick={() => switchLeaveMode("RANGE")}>Khoảng ngày liên tục</button>
+          <button type="button" className={chip(!datesMode && !isLateEarlyMode && !isPolicyRegime)} onClick={() => switchLeaveMode("RANGE")}>Khoảng ngày liên tục</button>
           <button type="button" className={chip(datesMode && !isLateEarlyMode)} onClick={() => switchLeaveMode("DATES")}>Các ngày cụ thể (vd T6, T7 hằng tuần)</button>
-          <button type="button" className={chip(isLateEarlyMode)} onClick={() => switchLeaveMode("LATE_EARLY")}>⏰ Xin đi trễ / về sớm (Tính phút/giờ cộng dồn trừ phép)</button>
+          <button type="button" className={chip(isLateEarlyMode)} onClick={() => switchLeaveMode("LATE_EARLY")}>⏰ Xin đi trễ / về sớm (Trừ phép năm)</button>
+          <button
+            type="button"
+            className={chip(isNursingChildRegime)}
+            onClick={() => {
+              const fd = String(fv.fromDate || todayVN()).slice(0, 10);
+              const td = String(fv.toDate || fd).slice(0, 10);
+              const spanDays = td >= fd ? Math.max(1, Math.round((new Date(td).getTime() - new Date(fd).getTime()) / 86400000) + 1) : 1;
+              setFormState((prev) => {
+                const nextFV: Record<string, any> = {
+                  ...prev.formValues,
+                  leaveType: "Chế độ Nuôi con nhỏ dưới 12 tháng (Về sớm / Đi trễ 60 phút/ngày - Hưởng 100% lương, không trừ phép)",
+                  fromDate: fd,
+                  toDate: td,
+                  totalDays: String(Math.round(spanDays * 0.125 * 10000) / 10000)
+                };
+                delete nextFV.leaveMode;
+                delete nextFV.lateEarlyMinutes;
+                return { ...prev, formValues: nextFV };
+              });
+            }}
+          >
+            👶 Về sớm nuôi con nhỏ &lt;12 tháng (60p/ngày • Không trừ phép)
+          </button>
+          <button
+            type="button"
+            className={chip(isMenstrualRegime)}
+            onClick={() => {
+              const fd = String(fv.fromDate || todayVN()).slice(0, 10);
+              setFormState((prev) => {
+                const nextFV: Record<string, any> = {
+                  ...prev.formValues,
+                  leaveType: "Chế độ Lao động nữ kỳ hành kinh (Về sớm / Nghỉ 30 phút/ngày - Hưởng 100% lương, không trừ phép)",
+                  fromDate: fd,
+                  toDate: fd,
+                  totalDays: "0.0625"
+                };
+                delete nextFV.leaveMode;
+                delete nextFV.lateEarlyMinutes;
+                return { ...prev, formValues: nextFV };
+              });
+            }}
+          >
+            🌸 Về sớm kỳ hành kinh (30p/ngày • Không trừ phép)
+          </button>
         </div>
+
+        {(isNursingChildRegime || isMenstrualRegime || isMaternityOrPrenatalRegime) && (
+          <div className="p-3 rounded-xl bg-purple-50/90 dark:bg-purple-950/40 border border-purple-300 dark:border-purple-700 space-y-2 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="font-extrabold text-purple-900 dark:text-purple-200">
+                {isNursingChildRegime
+                  ? "👶 Chế độ Nuôi con nhỏ dưới 12 tháng tuổi (Khoản 4 Điều 137 Bộ luật Lao động)"
+                  : isMenstrualRegime
+                  ? "🌸 Chế độ Lao động nữ trong kỳ hành kinh (Khoản 4 Điều 137 Bộ luật Lao động)"
+                  : "🤰 Chế độ Thai sản / Khám thai / Nam nghỉ khi vợ sinh con (Luật BHXH)"}
+              </div>
+              <span className="px-2 py-0.5 rounded-lg bg-emerald-600 text-white font-black text-[10px]">
+                ✓ KHÔNG TRỪ QUỸ PHÉP NĂM
+              </span>
+            </div>
+            <p className="text-[11px] text-purple-800 dark:text-purple-300">
+              {isNursingChildRegime
+                ? "Lao động nữ nuôi con dưới 12 tháng tuổi được nghỉ 60 phút mỗi ngày làm việc (đi trễ / về sớm / nghỉ giữa giờ 1 tiếng/ngày, quy đổi 0.125 ngày công/ngày) và vẫn hưởng đủ 100% tiền lương theo hợp đồng lao động, không trừ phép năm."
+                : isMenstrualRegime
+                ? "Lao động nữ trong kỳ hành kinh được nghỉ 30 phút mỗi ngày (quy đổi 0.0625 ngày công/ngày, tối thiểu 3 ngày/tháng) và hưởng đủ 100% tiền lương theo hợp đồng lao động, không trừ phép năm."
+                : "Thời gian nghỉ thai sản, khám thai định kỳ hoặc nam nghỉ khi vợ sinh con được tính vào cột Chế độ / BHXH, không trừ vào Quỹ phép năm của nhân viên."}
+            </p>
+            {isNursingChildRegime && (
+              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                <span className="text-[10px] font-bold text-purple-700 dark:text-purple-300">Chọn nhanh số ngày áp dụng (60 phút = 0.125 ngày công/ngày):</span>
+                {[
+                  { label: "1 ngày (60 phút = 0.125 công)", workDays: 1 },
+                  { label: "1 tuần / 6 ngày (6 giờ = 0.75 công)", workDays: 6 },
+                  { label: "Cả tháng / 26 ngày công (26 giờ = 3.25 công)", workDays: 26 }
+                ].map((preset) => (
+                  <button
+                    key={preset.workDays}
+                    type="button"
+                    onClick={() => {
+                      const dVal = Math.round(preset.workDays * 0.125 * 10000) / 10000;
+                      setFormState((prev) => ({
+                        ...prev,
+                        formValues: {
+                          ...prev.formValues,
+                          totalDays: String(dVal)
+                        }
+                      }));
+                    }}
+                    className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-white dark:bg-slate-800 text-purple-800 dark:text-purple-200 border border-purple-300 dark:border-purple-700 hover:bg-purple-100 cursor-pointer"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {isMenstrualRegime && (
+              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                <span className="text-[10px] font-bold text-purple-700 dark:text-purple-300">Chọn nhanh thời lượng chế độ (30 phút = 0.0625 ngày công/ngày):</span>
+                {[
+                  { label: "1 ngày (30 phút = 0.0625 công)", daysCount: 1 },
+                  { label: "2 ngày (60 phút = 0.125 công)", daysCount: 2 },
+                  { label: "3 ngày tiêu chuẩn/tháng (90 phút = 0.1875 công)", daysCount: 3 }
+                ].map((preset) => (
+                  <button
+                    key={preset.daysCount}
+                    type="button"
+                    onClick={() => {
+                      const fd = String(fv.fromDate || todayVN()).slice(0, 10);
+                      const dEnd = new Date(`${fd}T00:00:00`);
+                      dEnd.setDate(dEnd.getDate() + (preset.daysCount - 1));
+                      const td = dEnd.toISOString().slice(0, 10);
+                      const dVal = Math.round(preset.daysCount * 0.0625 * 10000) / 10000;
+                      setFormState((prev) => ({
+                        ...prev,
+                        formValues: {
+                          ...prev.formValues,
+                          fromDate: fd,
+                          toDate: td,
+                          totalDays: String(dVal)
+                        }
+                      }));
+                    }}
+                    className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-white dark:bg-slate-800 text-purple-800 dark:text-purple-200 border border-purple-300 dark:border-purple-700 hover:bg-purple-100 cursor-pointer"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {isMaternityOrPrenatalRegime && (
+              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                <span className="text-[10px] font-bold text-purple-700 dark:text-purple-300">Chọn nhanh định mức Luật BHXH:</span>
+                {[
+                  { label: "Khám thai định kỳ (1 ngày)", daysCount: 1 },
+                  { label: "Nam nghỉ vợ sinh thường (5 ngày)", daysCount: 5 },
+                  { label: "Nam nghỉ vợ sinh mổ (7 ngày)", daysCount: 7 },
+                  { label: "Nam nghỉ vợ sinh đôi (10 ngày)", daysCount: 10 },
+                  { label: "Nghỉ Thai sản 6 tháng (180 ngày)", daysCount: 180 }
+                ].map((preset) => (
+                  <button
+                    key={preset.daysCount}
+                    type="button"
+                    onClick={() => {
+                      const fd = String(fv.fromDate || todayVN()).slice(0, 10);
+                      const dEnd = new Date(`${fd}T00:00:00`);
+                      dEnd.setDate(dEnd.getDate() + (preset.daysCount - 1));
+                      const td = dEnd.toISOString().slice(0, 10);
+                      setFormState((prev) => ({
+                        ...prev,
+                        formValues: {
+                          ...prev.formValues,
+                          fromDate: fd,
+                          toDate: td,
+                          totalDays: String(preset.daysCount)
+                        }
+                      }));
+                    }}
+                    className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-white dark:bg-slate-800 text-purple-800 dark:text-purple-200 border border-purple-300 dark:border-purple-700 hover:bg-purple-100 cursor-pointer"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {isLateEarlyMode && (
           <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700/80 space-y-2.5 text-xs">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -4103,10 +4340,12 @@ export function ProposalsApprovalView({
       }
 
       const ltLower = leaveType.toLowerCase();
+      const isPolicyRegime = isPolicyRegimeLeaveType(leaveType);
       const isLateEarly =
-        fv.leaveMode === "LATE_EARLY" ||
-        ltLower.includes("đi trễ") ||
-        ltLower.includes("về sớm");
+        !isPolicyRegime &&
+        (fv.leaveMode === "LATE_EARLY" ||
+          ltLower.includes("đi trễ") ||
+          ltLower.includes("về sớm"));
 
       if (isLateEarly) {
         const mins = Number(fv.lateEarlyMinutes) > 0 ? Number(fv.lateEarlyMinutes) : Math.round(days * 480);
@@ -4120,7 +4359,7 @@ export function ProposalsApprovalView({
       } else if (ltLower.includes("không hưởng lương") || ltLower.includes("việc riêng")) {
         existing.rawUnpaidLeaveDays = round3(existing.rawUnpaidLeaveDays + days);
         existing.totalAbsentDays = round3(existing.totalAbsentDays + days);
-      } else if (ltLower.includes("bhxh") || ltLower.includes("ốm") || ltLower.includes("hiếu") || ltLower.includes("hỷ") || ltLower.includes("thai sản")) {
+      } else if (isPolicyRegime) {
         existing.socialOrPolicyDays = round3(existing.socialOrPolicyDays + days);
         existing.totalAbsentDays = round3(existing.totalAbsentDays + days);
       } else {
@@ -4998,15 +5237,18 @@ export function ProposalsApprovalView({
               <select
                 value={leaveTypeFilter}
                 onChange={(e) => setLeaveTypeFilter(e.target.value)}
-                className="text-xs px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 font-bold"
+                className="text-xs px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 font-bold max-w-[260px]"
               >
                 <option value="all">🏖️ Mọi loại hình nghỉ</option>
                 <option value="Nghỉ phép năm (Có hưởng lương)">Nghỉ phép năm (Có hưởng lương)</option>
-                <option value="Xin đi trễ / về sớm (Cộng dồn quy đổi ngày phép)">⏰ Xin đi trễ / về sớm (Cộng dồn quy đổi ngày phép)</option>
+                <option value="Xin đi trễ / về sớm (Cộng dồn quy đổi ngày phép)">⏰ Xin đi trễ / về sớm (Trừ phép năm)</option>
+                <option value="Chế độ Nuôi con nhỏ dưới 12 tháng (Về sớm / Đi trễ 60 phút/ngày - Hưởng 100% lương, không trừ phép)">👶 Chế độ Nuôi con nhỏ &lt;12 tháng (60p/ngày - Không trừ phép)</option>
+                <option value="Chế độ Lao động nữ kỳ hành kinh (Về sớm / Nghỉ 30 phút/ngày - Hưởng 100% lương, không trừ phép)">🌸 Chế độ Nữ kỳ hành kinh (30p/ngày - Không trừ phép)</option>
+                <option value="Nghỉ Khám thai định kỳ / Chế độ Nam nghỉ khi vợ sinh con (BHXH - Không trừ phép)">🤰 Khám thai / Nam nghỉ vợ sinh con (BHXH)</option>
+                <option value="Nghỉ Thai sản (Hưởng chế độ BHXH - Không trừ phép)">👶 Nghỉ Thai sản (BHXH)</option>
+                <option value="Nghỉ ốm / Con ốm dưới 7 tuổi / Khám chữa bệnh (BHXH - Không trừ phép)">🏥 Nghỉ ốm / Con ốm / Khám chữa bệnh (BHXH)</option>
+                <option value="Nghỉ chế độ Kết hôn / Hiếu hỷ (Hưởng nguyên lương - Không trừ phép)">💒 Nghỉ chế độ Kết hôn / Hiếu hỷ</option>
                 <option value="Nghỉ việc riêng (Không hưởng lương)">Nghỉ việc riêng (Không hưởng lương)</option>
-                <option value="Nghỉ ốm / Khám chữa bệnh (BHXH)">Nghỉ ốm / Khám chữa bệnh (BHXH)</option>
-                <option value="Nghỉ chế độ Kết hôn / Hiếu hỷ">Nghỉ chế độ Kết hôn / Hiếu hỷ</option>
-                <option value="Nghỉ Thai sản">Nghỉ Thai sản</option>
                 <option value="Làm việc từ xa (WFH)">Làm việc từ xa (WFH)</option>
               </select>
 
@@ -6353,6 +6595,7 @@ export function ProposalsApprovalView({
                               const nextVal = e.target.value;
                               if (
                                 field.key === "leaveType" &&
+                                !isPolicyRegimeLeaveType(nextVal) &&
                                 (nextVal.toLowerCase().includes("đi trễ") || nextVal.toLowerCase().includes("về sớm"))
                               ) {
                                 switchLeaveMode("LATE_EARLY");
@@ -6360,12 +6603,22 @@ export function ProposalsApprovalView({
                               }
                               setFormState((prev) => {
                                 const nextFV = { ...prev.formValues, [field.key]: nextVal };
-                                if (field.key === "leaveType" && prev.formValues?.leaveMode === "LATE_EARLY") {
-                                  delete nextFV.leaveMode;
-                                  delete nextFV.lateEarlyMinutes;
-                                  delete nextFV.lateEarlyKind;
-                                  delete nextFV.lateEarlyTimeSlot;
-                                  nextFV.totalDays = "1";
+                                if (field.key === "leaveType") {
+                                  if (prev.formValues?.leaveMode === "LATE_EARLY") {
+                                    delete nextFV.leaveMode;
+                                    delete nextFV.lateEarlyMinutes;
+                                    delete nextFV.lateEarlyKind;
+                                    delete nextFV.lateEarlyTimeSlot;
+                                  }
+                                  const regimeFactor = getRegimeDailyFactor(nextVal);
+                                  const fd = String(nextFV.fromDate || todayVN()).slice(0, 10);
+                                  const td = String(nextFV.toDate || fd).slice(0, 10);
+                                  const spanDays = td >= fd ? Math.max(1, Math.round((new Date(td).getTime() - new Date(fd).getTime()) / 86400000) + 1) : 1;
+                                  if (regimeFactor !== null) {
+                                    nextFV.totalDays = String(Math.round(spanDays * regimeFactor * 10000) / 10000);
+                                  } else if (prev.formValues?.leaveMode === "LATE_EARLY" || getRegimeDailyFactor(String(prev.formValues?.leaveType || "")) !== null) {
+                                    nextFV.totalDays = String(spanDays);
+                                  }
                                 }
                                 return { ...prev, formValues: nextFV };
                               });
@@ -6390,12 +6643,13 @@ export function ProposalsApprovalView({
                                   if (field.key === "fromDate" || field.key === "toDate") {
                                     const fd = field.key === "fromDate" ? newVal : nextFV.fromDate;
                                     const td = field.key === "toDate" ? newVal : nextFV.toDate;
+                                    const factor = getRegimeDailyFactor(String(nextFV.leaveType || "")) ?? 1;
                                     if (fd && td && td >= fd) {
                                       const diff = Math.round((new Date(td).getTime() - new Date(fd).getTime()) / 86400000) + 1;
-                                      nextFV.totalDays = String(Math.max(1, diff));
+                                      nextFV.totalDays = String(Math.round(Math.max(1, diff) * factor * 10000) / 10000);
                                     } else if (field.key === "fromDate" && (!td || td < newVal)) {
                                       nextFV.toDate = newVal;
-                                      nextFV.totalDays = "1";
+                                      nextFV.totalDays = String(factor);
                                     }
                                   }
                                   return { ...prev, formValues: nextFV };
