@@ -64,8 +64,8 @@ function buildAutoVietnameseTooltip(text: string): string | undefined {
     const regex = new RegExp(`\\b${k}\\b`, "i");
     if (regex.test(text)) matched.push(desc);
   }
-  if (matched.length > 0) return matched.join(" · ");
-  return text.trim() || undefined;
+  // Chỉ giải thích thuật ngữ viết tắt; không lặp lại nhãn nút thành tooltip
+  return matched.length > 0 ? matched.join(" · ") : undefined;
 }
 
 export function Button({
@@ -83,11 +83,13 @@ export function Button({
         : variant === "secondary"
           ? "border border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/40 text-sky-800 dark:text-sky-200 hover:bg-sky-100 dark:hover:bg-sky-900/60 disabled:opacity-50"
           : "border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-50";
-  const computedTitle = title || buildAutoVietnameseTooltip(extractTextFromNode(children));
+  const text = extractTextFromNode(children).trim();
+  const computedTitle = title || buildAutoVietnameseTooltip(text);
   return (
     <button
       {...props}
       title={computedTitle}
+      aria-label={props["aria-label"] ?? (!text && title ? title : undefined)}
       className={`px-2.5 py-1 rounded-lg text-xs font-semibold leading-tight inline-flex items-center justify-center gap-1 whitespace-nowrap transition-colors cursor-pointer disabled:cursor-not-allowed ${styles} ${className}`}
     >
       {children}

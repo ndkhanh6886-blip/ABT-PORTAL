@@ -141,7 +141,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
             </div>
 
             {/* Desktop Primary Navigation Tabs (Hỗ trợ Ctrl+Click / Chuột phải -> Mở trong tab mới) */}
-            <nav className="hidden lg:flex items-center gap-1 pl-3 border-l border-slate-200 dark:border-slate-800 overflow-x-auto no-scrollbar min-w-0 flex-1 py-1">
+            <nav aria-label="Phân hệ chính" className="hidden lg:flex items-center gap-1 pl-3 border-l border-slate-200 dark:border-slate-800 overflow-x-auto no-scrollbar min-w-0 flex-1 py-1">
               <a
                 href="/?tab=workspace"
                 onClick={(e) => {
@@ -150,7 +150,6 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                     setActiveTab("workspace");
                   }
                 }}
-                title="Giữ Ctrl + Click hoặc Chuột phải -> Mở trong tab mới"
                 className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
                   activeTab === "workspace"
                     ? "bg-indigo-600 text-white shadow-xs shadow-indigo-500/20"
@@ -170,7 +169,6 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                       setActiveTab(firstBusinessTab);
                     }
                   }}
-                  title="Giữ Ctrl + Click hoặc Chuột phải -> Mở trong tab mới để mở song song nhiều tab"
                   className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
                     isBusinessTab
                       ? "bg-orange-600 text-white shadow-xs shadow-orange-500/20"
@@ -212,7 +210,6 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                       setActiveTab(firstTechnicalTab);
                     }
                   }}
-                  title="Giữ Ctrl + Click hoặc Chuột phải -> Mở trong tab mới"
                   className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
                     isTechnicalTab
                       ? "bg-sky-700 text-white shadow-xs shadow-sky-500/20"
@@ -233,7 +230,6 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                       setActiveTab("legal");
                     }
                   }}
-                  title="Giữ Ctrl + Click hoặc Chuột phải -> Mở trong tab mới"
                   className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
                     activeTab === "legal"
                       ? "bg-emerald-600 text-white shadow-xs shadow-emerald-500/20"
@@ -254,7 +250,6 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                       setActiveTab("chat");
                     }
                   }}
-                  title="Giữ Ctrl + Click hoặc Chuột phải -> Mở trong tab mới"
                   className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all relative whitespace-nowrap shrink-0 cursor-pointer ${
                     activeTab === "chat"
                       ? "bg-indigo-600 text-white shadow-xs shadow-indigo-500/20"
@@ -282,7 +277,6 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                       setActiveTab("zalo");
                     }
                   }}
-                  title="Giữ Ctrl + Click hoặc Chuột phải -> Mở trong tab mới"
                   className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all relative whitespace-nowrap shrink-0 cursor-pointer ${
                     activeTab === "zalo"
                       ? "bg-blue-600 text-white shadow-xs shadow-blue-500/20"
@@ -303,7 +297,6 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                       setActiveTab(can("settings.view") ? "settings" : "factory-settings");
                     }
                   }}
-                  title="Giữ Ctrl + Click hoặc Chuột phải -> Mở trong tab mới"
                   className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
                     isSettingsTab
                       ? "bg-orange-600 text-white shadow-xs shadow-orange-500/20"
@@ -327,6 +320,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
               onClick={() => setIsMobileMoreOpen(prev => !prev)}
               className="lg:hidden flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-orange-50 dark:bg-orange-950/60 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-800 text-xs font-bold cursor-pointer active:scale-95 transition-all"
               title="Mở danh mục tất cả các phân hệ"
+              aria-expanded={isMobileMoreOpen}
             >
               {isMobileMoreOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
               <span className="text-[11px]">Menu</span>
@@ -338,6 +332,8 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                 onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
                 className="flex items-center gap-2 p-1 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-all text-left cursor-pointer group"
                 title="Tài khoản & Cài đặt cá nhân"
+                aria-haspopup="true"
+                aria-expanded={isUserMenuOpen}
               >
                 <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-orange-100 dark:bg-orange-950 text-orange-700 dark:text-orange-400 font-bold flex items-center justify-center text-xs border border-orange-200 dark:border-orange-800 shrink-0">
                   {activeUser?.name ? activeUser.name.slice(0, 2).toUpperCase() : (activeUser?.full_name ? activeUser.full_name.slice(0, 2).toUpperCase() : "AD")}
@@ -502,6 +498,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
 
         <button
           onClick={() => setIsMobileMoreOpen(prev => !prev)}
+          aria-expanded={isMobileMoreOpen}
           className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-2xl transition-all cursor-pointer ${
             isMobileMoreOpen || ["factory-settings", "legal", "chat", "zalo", "settings"].includes(activeTab)
               ? "text-orange-600 dark:text-orange-400 font-extrabold"
@@ -534,7 +531,9 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">Chọn phân hệ làm việc trên ABT Portal</p>
               </div>
               <button
+                type="button"
                 onClick={() => setIsMobileMoreOpen(false)}
+                aria-label="Đóng danh mục phân hệ"
                 className="p-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-white cursor-pointer"
               >
                 <X className="w-4 h-4" />

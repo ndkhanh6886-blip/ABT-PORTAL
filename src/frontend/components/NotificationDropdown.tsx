@@ -277,6 +277,9 @@ export const NotificationDropdown: React.FC = () => {
                         : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
                 }`}
                 title="Thông báo hoạt động nhân viên"
+                aria-label={unreadCount > 0 ? `Thông báo, ${unreadCount} chưa đọc` : "Thông báo"}
+                aria-haspopup="true"
+                aria-expanded={isOpen}
             >
                 <Bell className="w-5 h-5" />
                 {unreadCount > 0 && (
