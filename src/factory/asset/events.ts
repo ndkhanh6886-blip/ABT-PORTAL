@@ -8,8 +8,11 @@ import { readAttachment, saveAttachment } from "../core/files";
 import { notifyUsers, usersWithPermission } from "../core/notifications";
 import { nextNumber } from "../core/numbering";
 import { parseInput } from "../core/records";
-import { defineMachine, listAllowedActions, type GuardContext } from "../core/stateMachine";
-import { ensureDepartmentEquipmentSeed, syncOverdueCalibrationAssets } from "./service";
+import { defineMachine, listAllowedActions, runTransition, type GuardContext } from "../core/stateMachine";
+import { ensureAssetExtraColumnsSchema, ensureDepartmentEquipmentSeed, syncOverdueCalibrationAssets } from "./service";
+import { allocate, findCandidates } from "../inv/allocation";
+import { createStockDocument, stockDocumentMachine } from "../inv/documents";
+import { getItem, toBaseQty } from "../master/service";
 
 type EventStatus = "PLANNED" | "DONE" | "CANCELLED";
 export interface AssetEvent {
@@ -27,6 +30,7 @@ const doneSchema = z.object({
   done_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "nhập ngày thực hiện"),
   performed_by: z.string().trim().min(1, "nhập người / đơn vị thực hiện").max(200),
   result: z.string().trim().min(3, "nhập kết quả / linh kiện thay thế").max(4000),
+  spare_parts: z.string().trim().max(2000).optional().nullable(),
   passed: z.boolean().optional().nullable(),
   next_due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
   cost_vnd: z.coerce.number().min(0).optional().nullable(),
@@ -147,7 +151,15 @@ async function applyToAsset(tx: Tx, actor: AuthzActor, ev: AssetEvent & Record<s
 
 const completePatch = ({ payload }: GuardContext<AssetEvent>) => {
   const d = doneSchema.parse(payload);
-  return { done_date: d.done_date, performed_by: d.performed_by, result: d.result, passed: d.passed ?? null, next_due: d.next_due ?? null, cost_vnd: d.cost_vnd ?? null };
+  return {
+    done_date: d.done_date,
+    performed_by: d.performed_by,
+    result: d.result,
+    spare_parts: d.spare_parts?.trim() || null,
+    passed: d.passed ?? null,
+    next_due: d.next_due ?? null,
+    cost_vnd: d.cost_vnd ?? null,
+  };
 };
 const resultGuard = {
   code: "RESULT",
@@ -299,16 +311,29 @@ const listSchema = z.object({
 
 /** Events of the instruments across departments, plus instruments whose calibration falls due within 30 days. */
 export async function listEvents(tx: Tx, actor: AuthzActor, query: unknown) {
+  await ensureAssetExtraColumnsSchema(tx);
   await ensureDepartmentEquipmentSeed(tx);
   await syncOverdueCalibrationAssets(tx);
   const q = parseInput(listSchema, query);
   const rows = (
     await tx.query(
       `SELECT e.*, e.cost_vnd::float AS cost_vnd,
+              COALESCE(e.parts_json, '[]'::jsonb) AS parts_json,
               a.code AS asset_code, a.name AS asset_name, a.asset_type, a.model AS asset_model, a.serial_no AS asset_serial,
               a.status AS asset_status, a.owner_org_unit_id,
               o.code AS owner_code, o.name AS owner_name,
-              (SELECT count(*)::int FROM core.attachment f WHERE f.entity_type = 'asset_event' AND f.entity_id = e.id::text AND f.voided_at IS NULL) AS files
+              (SELECT count(*)::int FROM core.attachment f WHERE f.entity_type = 'asset_event' AND f.entity_id = e.id::text AND f.voided_at IS NULL) AS files,
+              COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                  'id', f.id,
+                  'file_name', f.file_name,
+                  'mime_type', f.mime_type,
+                  'size_bytes', f.size_bytes,
+                  'uploaded_at', f.uploaded_at
+                ) ORDER BY f.uploaded_at)
+                FROM core.attachment f
+                WHERE f.entity_type = 'asset_event' AND f.entity_id = e.id::text AND f.voided_at IS NULL
+              ), '[]'::jsonb) AS attachments
          FROM asset.event e
          JOIN asset.asset a ON a.id = e.asset_id
          JOIN core.org_unit o ON o.id = a.owner_org_unit_id
@@ -350,8 +375,133 @@ async function canSee(tx: Tx, actor: AuthzActor, unit: string) {
 async function eventFor(tx: Tx, actor: AuthzActor, id: string, permission: string) {
   const e = (await tx.query("SELECT e.*, a.owner_org_unit_id FROM asset.event e JOIN asset.asset a ON a.id = e.asset_id WHERE e.id = $1", [id])).rows[0];
   if (!e) throw notFound("phiếu thiết bị");
-  if (permission === "view" ? !(await canSee(tx, actor, e.owner_org_unit_id)) : !(await hasFactoryPermission(tx, actor, permission, e.owner_org_unit_id))) throw notFound("phiếu thiết bị");
+  const allowed =
+    permission === "view"
+      ? await canSee(tx, actor, e.owner_org_unit_id)
+      : (await hasFactoryPermission(tx, actor, permission, e.owner_org_unit_id)) || (await isTechDept(tx, actor));
+  if (!allowed) throw notFound("phiếu thiết bị");
   return e;
+}
+
+const issueEventPartSchema = z.object({
+  warehouse_id: z.string().uuid().optional().nullable(),
+  item_id: z.string().uuid().optional().nullable(),
+  part_name: z.string().trim().min(1, "Nhập tên phụ tùng / linh kiện thay thế").max(300),
+  part_code: z.string().trim().max(100).optional().nullable(),
+  serial_or_lot: z.string().trim().max(120).optional().nullable(),
+  qty: z.coerce.number().positive("Số lượng > 0").default(1),
+  uom: z.string().trim().max(40).default("pcs"),
+  unit_cost_vnd: z.coerce.number().min(0).default(0),
+  deduct_warehouse: z.boolean().default(false),
+  notes: z.string().trim().max(500).optional().nullable(),
+});
+
+/**
+ * Records a replaced spare part on an internal lab equipment maintenance/repair event (`asset.event`).
+ * If `deduct_warehouse = true` and `warehouse_id` + `item_id` are provided, automatically creates and posts
+ * an inventory `ISSUE` stock document (FEFO/FIFO) and appends the part entry to `parts_json` + `spare_parts`.
+ */
+export async function recordEventSparePart(tx: Tx, actor: AuthzActor, eventId: string, input: unknown) {
+  await ensureAssetExtraColumnsSchema(tx);
+  const d = parseInput(issueEventPartSchema, input);
+  const ev = await eventFor(tx, actor, eventId, "asset.operate");
+  if (ev.status === "CANCELLED") throw invalid("Không thể ghi nhận phụ tùng cho phiếu đã hủy.");
+
+  let stockDocCode: string | null = null;
+  let stockDocId: string | null = null;
+  let pickedLotCodes: string[] = [];
+  let partCode = d.part_code?.trim() || null;
+  let partName = d.part_name.trim();
+  let uom = d.uom.trim() || "pcs";
+
+  if (d.deduct_warehouse && d.warehouse_id && d.item_id) {
+    const item = await getItem(tx, d.item_id);
+    partCode = item.code;
+    partName = item.name;
+    uom = item.base_uom;
+    const needBase = Math.round((await toBaseQty(tx, item, d.qty, d.uom || item.base_uom)) * 1e6) / 1e6;
+    const cands = await findCandidates(tx, item.id, [d.warehouse_id], { lock: true });
+    const plan = allocate(cands, needBase);
+    if (plan.shortfall > 1e-9) {
+      throw invalid(
+        `Không đủ tồn kho khả dụng cho phụ tùng ${item.code} (${item.name}): cần ${needBase} ${item.base_uom}, thiếu ${plan.shortfall}.`,
+        undefined,
+        "INSUFFICIENT_STOCK"
+      );
+    }
+    const doc = await createStockDocument(
+      tx,
+      actor,
+      {
+        doc_type: "ISSUE",
+        reason_code: "PRODUCTION",
+        warehouse_id: d.warehouse_id,
+        source_entity_type: "ASSET_EVENT",
+        source_entity_id: ev.id,
+        notes: `Xuất phụ tùng sửa chữa/bảo trì máy theo phiếu ${ev.code}`,
+        lines: plan.picks.map((p) => ({
+          item_id: item.id,
+          lot_id: p.candidate.lot_id,
+          from_location_id: p.candidate.location_id,
+          qty: p.qty,
+          uom: item.base_uom,
+        })),
+      },
+      { trusted: true }
+    );
+    await runTransition(tx, stockDocumentMachine, actor, { id: doc.id, action: "post", expectedVersion: doc.version }, { trusted: true });
+    stockDocId = doc.id;
+    stockDocCode = doc.code;
+    pickedLotCodes = plan.picks.map((p) => p.candidate.lot_code).filter(Boolean);
+  }
+
+  const currentParts: any[] = Array.isArray(ev.parts_json) ? [...ev.parts_json] : [];
+  const lineCost = Math.round(Number(d.qty) * Number(d.unit_cost_vnd || 0));
+  const entry = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    part_code: partCode,
+    part_name: partName,
+    serial_or_lot: d.serial_or_lot?.trim() || (pickedLotCodes.length ? pickedLotCodes.join(", ") : null),
+    qty: Number(d.qty),
+    uom,
+    unit_cost_vnd: Number(d.unit_cost_vnd || 0),
+    line_cost_vnd: lineCost,
+    stock_document_id: stockDocId,
+    stock_document_code: stockDocCode,
+    notes: d.notes?.trim() || null,
+    added_at: new Date().toISOString(),
+  };
+  currentParts.push(entry);
+
+  const summaryStr = currentParts
+    .map((p) => `${p.part_code ? `[${p.part_code}] ` : ""}${p.part_name} (SL: ${p.qty} ${p.uom}${p.serial_or_lot ? ` · Lot/SN: ${p.serial_or_lot}` : ""}${p.stock_document_code ? ` · PXK: ${p.stock_document_code}` : ""})`)
+    .join("; ");
+
+  const nextCost = Number(ev.cost_vnd || 0) + lineCost;
+
+  const updated = (
+    await tx.query(
+      `UPDATE asset.event
+          SET parts_json = $2::jsonb,
+              spare_parts = $3,
+              cost_vnd = CASE WHEN $4::numeric > 0 THEN COALESCE(cost_vnd, 0) + $4::numeric ELSE cost_vnd END,
+              updated_at = now(),
+              updated_by = $5
+        WHERE id = $1
+        RETURNING *, cost_vnd::float AS cost_vnd`,
+      [eventId, JSON.stringify(currentParts), summaryStr, lineCost, actor.userId]
+    )
+  ).rows[0];
+
+  await writeAudit(tx, actor, {
+    entityType: "asset_event",
+    entityId: eventId,
+    action: "add_spare_part",
+    changes: { spare_part: [null, `${partName} (${d.qty} ${uom})`] },
+    reason: stockDocCode ? `Phiếu xuất kho ${stockDocCode}` : "Ghi nhận phụ tùng thay thế",
+  });
+
+  return { event: updated, part: entry, TotalCostVnd: nextCost };
 }
 
 /** Hand-over record, invoice, service report … attached to an event (PDF, Office or image; checked by content). */

@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useState } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, Paperclip, BookOpen, Printer, Plus, Wrench } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, fmtDate, useFactoryMe } from "../api";
+import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
+import { api, escHtml, fmtDate, fmtVnd, useFactoryMe } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { EQUIPMENT_CATEGORY_PRESETS, WORK_CENTER_PRESETS } from "../kit/shared";
 
@@ -49,6 +50,106 @@ function daysUntil(dateStr: string | null | undefined): number | null {
   return Math.round((target - now) / 86_400_000);
 }
 
+export function calcAssetDepreciation(asset: {
+  purchase_date?: string | null;
+  purchase_cost_vnd?: number | null;
+  depreciation_months?: number | null;
+}) {
+  const cost = Number(asset.purchase_cost_vnd || 0);
+  const months = Number(asset.depreciation_months || 0);
+  if (cost <= 0 || months <= 0) {
+    return null;
+  }
+  const monthlyDepreciation = Math.round(cost / months);
+  let elapsedMonths = 0;
+  if (asset.purchase_date) {
+    const start = new Date(String(asset.purchase_date).slice(0, 10) + "T00:00:00Z");
+    const now = new Date(today() + "T00:00:00Z");
+    if (!isNaN(start.getTime()) && now >= start) {
+      elapsedMonths = Math.max(
+        0,
+        (now.getUTCFullYear() - start.getUTCFullYear()) * 12 +
+          (now.getUTCMonth() - start.getUTCMonth()) +
+          (now.getUTCDate() >= start.getUTCDate() ? 1 : 0)
+      );
+    }
+  }
+  const cappedElapsed = Math.min(months, elapsedMonths);
+  const accumulated = cappedElapsed >= months ? cost : Math.min(cost, cappedElapsed * monthlyDepreciation);
+  const remaining = Math.max(0, cost - accumulated);
+  const pct = Math.min(100, Math.round((accumulated / cost) * 100));
+  return {
+    cost,
+    months,
+    monthlyDepreciation,
+    elapsedMonths: cappedElapsed,
+    accumulated,
+    remaining,
+    pct,
+  };
+}
+
+function EventAttachmentsBar({ eventId, initialFiles }: { eventId: string; initialFiles?: any[] }) {
+  const qc = useQueryClient();
+  const filesQuery = useQuery({
+    queryKey: ["factory", "asset-event-files", eventId],
+    queryFn: () => api<{ id: string; file_name: string; mime_type?: string }[]>(`/api/factory/assets/events/${eventId}/files`),
+    initialData: Array.isArray(initialFiles) && initialFiles.length > 0 ? initialFiles : undefined,
+  });
+  const uploadMut = useMutation({
+    mutationFn: async (file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`/api/factory/assets/events/${eventId}/files`, {
+        method: "POST",
+        body: fd,
+        credentials: "same-origin",
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `Lỗi tải file (${res.status})`);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["factory", "asset-event-files", eventId] });
+      qc.invalidateQueries({ queryKey: ["factory", "asset-events"] });
+    },
+  });
+  const files = filesQuery.data ?? initialFiles ?? [];
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 mt-1 text-[11px]">
+      {files.map((f: any) => {
+        const isImg = String(f.mime_type || f.file_name || "").toLowerCase().match(/\.(png|jpg|jpeg|gif|webp)$|^image\//);
+        return (
+          <a
+            key={f.id}
+            href={`/api/factory/assets/events/${eventId}/files/${f.id}`}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-50 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300 font-semibold hover:underline"
+          >
+            <span>{isImg ? "🖼️" : "📄"}</span>
+            <span>{f.file_name}</span>
+          </a>
+        );
+      })}
+      <label className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-dashed border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-sky-500 hover:text-sky-700 cursor-pointer font-semibold">
+        <Paperclip className="w-3 h-3" />
+        <span>{uploadMut.isPending ? "Đang tải..." : "+ Đính kèm ảnh / biên bản"}</span>
+        <input
+          type="file"
+          className="hidden"
+          accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) uploadMut.mutate(f);
+            e.target.value = "";
+          }}
+        />
+      </label>
+      {uploadMut.error != null && <ErrorNote error={uploadMut.error} />}
+    </div>
+  );
+}
+
 export interface DepartmentEquipmentViewProps {
   /** Department code e.g. 'P-RD', 'P-KIT', 'P-QA', 'P-OLIGO', or undefined for all departments (Engineering Hub) */
   deptCode?: string;
@@ -68,6 +169,7 @@ export function DepartmentEquipmentView({
   const [filterDept, setFilterDept] = useState<string>(deptCode ?? "");
   const [showAddAsset, setShowAddAsset] = useState(false);
   const [editingAsset, setEditingAsset] = useState<any | null>(null);
+  const [logbookAsset, setLogbookAsset] = useState<any | null>(null);
   const [editAssetForm, setEditAssetForm] = useState({
     code: "",
     name: "",
@@ -78,6 +180,11 @@ export function DepartmentEquipmentView({
     model: "",
     serial_no: "",
     next_calibration_due: "",
+    purchase_date: "",
+    purchase_cost_vnd: "",
+    depreciation_months: "60",
+    warranty_expiry: "",
+    supplier_name: "",
     status: "IN_SERVICE",
     reason: "Cập nhật thông số thiết bị",
   });
@@ -120,6 +227,11 @@ export function DepartmentEquipmentView({
     serial_no: "",
     calibration_interval_days: "365",
     next_calibration_due: "",
+    purchase_date: "",
+    purchase_cost_vnd: "",
+    depreciation_months: "60",
+    warranty_expiry: "",
+    supplier_name: "",
   });
 
   const [reqForm, setReqForm] = useState({
@@ -134,14 +246,47 @@ export function DepartmentEquipmentView({
     done_date: today(),
     performed_by: "Kỹ sư Phòng Kỹ thuật – Thiết bị",
     result: "Đã bảo trì, kiểm tra thông số kỹ thuật và hiệu chuẩn đạt yêu cầu ISO 13485",
+    spare_parts: "",
     passed: "true",
     next_due: "",
     cost_vnd: "0",
   });
 
+  const [partIssueForm, setPartIssueForm] = useState({
+    deduct_warehouse: false,
+    warehouse_id: "",
+    item_id: "",
+    part_name: "",
+    serial_or_lot: "",
+    qty: "1",
+    uom: "pcs",
+    unit_cost_vnd: "0",
+  });
+
+  const deviceOptsQuery = useQuery({
+    queryKey: ["factory", "device", "options-for-asset-maint"],
+    queryFn: () =>
+      api<{ warehouses: { id: string; code: string; name: string }[]; items: { id: string; code: string; name: string; base_uom: string }[] }>(
+        "/api/factory/device/options"
+      ),
+    enabled: Boolean(completeEvent),
+  });
+
+  const logbookEventsQuery = useQuery({
+    queryKey: ["factory", "asset-logbook-events", logbookAsset?.id],
+    queryFn: () =>
+      api<{ events: any[]; calibration_due: any[] }>(
+        `/api/factory/assets/events?asset_id=${encodeURIComponent(logbookAsset.id)}`
+      ),
+    enabled: Boolean(logbookAsset?.id),
+  });
+
   const refreshAll = () => {
     qc.invalidateQueries({ queryKey: ["factory", "assets"] });
     qc.invalidateQueries({ queryKey: ["factory", "asset-events"] });
+    if (logbookAsset?.id) {
+      qc.invalidateQueries({ queryKey: ["factory", "asset-logbook-events", logbookAsset.id] });
+    }
   };
 
   const createAssetMut = useMutation({
@@ -160,11 +305,25 @@ export function DepartmentEquipmentView({
           serial_no: newAssetForm.serial_no || null,
           calibration_interval_days: Number(newAssetForm.calibration_interval_days || 365),
           next_calibration_due: newAssetForm.next_calibration_due || null,
+          purchase_date: newAssetForm.purchase_date || null,
+          purchase_cost_vnd: newAssetForm.purchase_cost_vnd ? Number(newAssetForm.purchase_cost_vnd) : null,
+          depreciation_months: newAssetForm.depreciation_months ? Number(newAssetForm.depreciation_months) : null,
+          warranty_expiry: newAssetForm.warranty_expiry || null,
+          supplier_name: newAssetForm.supplier_name.trim() || null,
         },
       }),
     onSuccess: () => {
       setShowAddAsset(false);
-      setNewAssetForm((p) => ({ ...p, name: "", model: "", serial_no: "", equipment_category: "", location: "" }));
+      setNewAssetForm((p) => ({
+        ...p,
+        name: "",
+        model: "",
+        serial_no: "",
+        equipment_category: "",
+        location: "",
+        purchase_cost_vnd: "",
+        supplier_name: "",
+      }));
       refreshAll();
     },
   });
@@ -183,6 +342,11 @@ export function DepartmentEquipmentView({
           model: editAssetForm.model.trim() || null,
           serial_no: editAssetForm.serial_no.trim() || null,
           next_calibration_due: editAssetForm.next_calibration_due || null,
+          purchase_date: editAssetForm.purchase_date || null,
+          purchase_cost_vnd: editAssetForm.purchase_cost_vnd !== "" ? Number(editAssetForm.purchase_cost_vnd) : null,
+          depreciation_months: editAssetForm.depreciation_months !== "" ? Number(editAssetForm.depreciation_months) : null,
+          warranty_expiry: editAssetForm.warranty_expiry || null,
+          supplier_name: editAssetForm.supplier_name.trim() || null,
           status: editAssetForm.status,
           reason: editAssetForm.reason.trim() || "Cập nhật thông tin thiết bị",
         },
@@ -239,6 +403,7 @@ export function DepartmentEquipmentView({
             done_date: doneForm.done_date,
             performed_by: doneForm.performed_by,
             result: doneForm.result,
+            spare_parts: doneForm.spare_parts.trim() || null,
             passed: doneForm.passed === "true",
             next_due: doneForm.next_due || null,
             cost_vnd: doneForm.cost_vnd ? Number(doneForm.cost_vnd) : 0,
@@ -250,6 +415,95 @@ export function DepartmentEquipmentView({
       refreshAll();
     },
   });
+
+  const addSparePartMut = useMutation({
+    mutationFn: (eventId: string) =>
+      api<{ event: any; part: any }>(`/api/factory/assets/events/${eventId}/actions`, {
+        method: "POST",
+        idempotent: true,
+        json: {
+          action: "add_spare_part",
+          payload: {
+            deduct_warehouse: partIssueForm.deduct_warehouse,
+            warehouse_id: partIssueForm.deduct_warehouse ? partIssueForm.warehouse_id || null : null,
+            item_id: partIssueForm.deduct_warehouse ? partIssueForm.item_id || null : null,
+            part_name: partIssueForm.part_name.trim() || "Linh kiện thay thế",
+            serial_or_lot: partIssueForm.serial_or_lot.trim() || null,
+            qty: Number(partIssueForm.qty || 1),
+            uom: partIssueForm.uom.trim() || "pcs",
+            unit_cost_vnd: Number(partIssueForm.unit_cost_vnd || 0),
+          },
+        },
+      }),
+    onSuccess: (res) => {
+      const summary = res?.event?.spare_parts || "";
+      const nextCost = res?.event?.cost_vnd;
+      setDoneForm((prev) => ({
+        ...prev,
+        spare_parts: summary || prev.spare_parts,
+        cost_vnd: nextCost != null ? String(nextCost) : prev.cost_vnd,
+      }));
+      setPartIssueForm((prev) => ({ ...prev, part_name: "", serial_or_lot: "", qty: "1", unit_cost_vnd: "0" }));
+      refreshAll();
+    },
+  });
+
+  function openAssetLogbookPrintWindow(asset: any, historyEvents: any[]) {
+    const win = window.open("", "_blank", "width=980,height=760");
+    if (!win) return;
+    const depr = calcAssetDepreciation(asset);
+    const totalMaintCost = historyEvents
+      .filter((e) => e.status === "DONE")
+      .reduce((acc, e) => acc + Number(e.cost_vnd || 0), 0);
+
+    const rowsHtml = historyEvents
+      .map(
+        (ev, idx) => `<tr>
+          <td>${idx + 1}</td>
+          <td><b>${escHtml(ev.code)}</b></td>
+          <td>${escHtml(EVENT_KIND_LABELS[ev.kind] ?? ev.kind)}${ev.out_of_service ? " (Báo hỏng)" : ""}</td>
+          <td>KH: ${escHtml(fmtDate(ev.planned_date))}${ev.done_date ? `<br/><b>Xong: ${escHtml(fmtDate(ev.done_date))}</b>` : ""}</td>
+          <td>${escHtml(ev.performed_by || ev.assignee || "—")}</td>
+          <td>
+            <div><b>Yêu cầu:</b> ${escHtml(ev.description || "—")}</div>
+            ${ev.result ? `<div><b>Kết quả:</b> ${escHtml(ev.result)}</div>` : ""}
+            ${ev.spare_parts ? `<div><b>Phụ tùng thay thế:</b> ${escHtml(ev.spare_parts)}</div>` : ""}
+          </td>
+          <td style="text-align:right">${ev.cost_vnd ? escHtml(fmtVnd(Number(ev.cost_vnd))) : "0 ₫"}</td>
+          <td>${ev.status === "DONE" ? (ev.passed === false ? "KHÔNG ĐẠT" : "HOÀN THÀNH") : escHtml(ev.status)}</td>
+        </tr>`
+      )
+      .join("");
+
+    writeSafePrintDocument(
+      win,
+      `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Sổ Lý Lịch Thiết Bị — ${escHtml(asset.code)}</title>
+        <style>body{font-family:Arial,sans-serif;padding:24px;color:#0f172a}table{width:100%;border-collapse:collapse;margin-top:12px;font-size:12px}th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:left}th{background:#f1f5f9}.meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12.5px;background:#f8fafc;border:1px solid #cbd5e1;padding:12px;border-radius:8px;margin-top:10px}</style>
+      </head><body>
+        <h2 style="margin:0;color:#0284c7">CÔNG TY TNHH Y SINH ABT — SỔ LÝ LỊCH &amp; THEO DÕI KHẤU HAO THIẾT BỊ (ISO 13485 EQUIPMENT LOGBOOK)</h2>
+        <div class="meta-grid">
+          <div><b>Mã thiết bị:</b> ${escHtml(asset.code)} · <b>Tên máy:</b> ${escHtml(asset.name)}</div>
+          <div><b>Phòng quản lý:</b> ${escHtml(asset.owner_name)} ${asset.location ? `(${escHtml(asset.location)})` : ""}</div>
+          <div><b>Hãng / Model / Serial:</b> ${escHtml([asset.manufacturer, asset.model, asset.serial_no].filter(Boolean).join(" / ") || "—")}</div>
+          <div><b>Hạn hiệu chuẩn kế tiếp:</b> ${escHtml(fmtDate(asset.next_calibration_due))} · <b>Trạng thái:</b> ${escHtml(ASSET_STATUS_BADGE[asset.status]?.[1] ?? asset.status)}</div>
+          <div><b>Ngày mua / NCC:</b> ${escHtml(fmtDate(asset.purchase_date))} ${asset.supplier_name ? `· NCC: ${escHtml(asset.supplier_name)}` : ""} · <b>Hạn BH hãng:</b> ${escHtml(fmtDate(asset.warranty_expiry))}</div>
+          <div><b>Nguyên giá &amp; Khấu hao:</b> ${
+            depr
+              ? `Nguyên giá: <b>${escHtml(fmtVnd(depr.cost))}</b> (${depr.months} tháng · ${escHtml(fmtVnd(depr.monthlyDepreciation))}/tháng) · Đã KH: <b>${escHtml(fmtVnd(depr.accumulated))} (${depr.pct}%)</b> · Còn lại: <b>${escHtml(fmtVnd(depr.remaining))}</b>`
+              : "Chưa khai báo nguyên giá khấu hao"
+          }</div>
+        </div>
+        <h4 style="margin:16px 0 4px">NHẬT KÝ BẢO TRÌ, HIỆU CHUẨN, SỬA CHỮA &amp; THAY THẾ PHỤ TÙNG (Tổng chi phí lũy kế: ${escHtml(fmtVnd(totalMaintCost))})</h4>
+        <table><thead><tr><th>#</th><th>Mã phiếu</th><th>Loại</th><th>Thời gian</th><th>Người thực hiện</th><th>Nội dung xử lý &amp; Phụ tùng thay thế</th><th>Chi phí</th><th>Kết quả</th></tr></thead>
+        <tbody>${rowsHtml || '<tr><td colspan="8" style="text-align:center">Chưa phát sinh phiếu bảo trì / sửa chữa</td></tr>'}</tbody></table>
+        <div style="display:flex;justify-content:space-between;margin-top:36px;font-size:13px">
+          <div><b>Phụ trách Thiết bị Phòng sử dụng</b><br/><br/><br/>(Ký, ghi rõ họ tên)</div>
+          <div><b>Phòng Kỹ thuật – Thiết bị</b><br/><br/><br/>(Ký, ghi rõ họ tên)</div>
+          <div><b>QA/QC Kiểm soát hồ sơ</b><br/><br/><br/>(Ký, ghi rõ họ tên)</div>
+        </div>
+      </body></html>`
+    );
+  }
 
   const assets = assetsQuery.data ?? [];
   const events = eventsQuery.data?.events ?? [];
@@ -506,6 +760,17 @@ export function DepartmentEquipmentView({
                           ↳ KQ Kỹ thuật ({ev.performed_by}): {ev.result}
                         </div>
                       )}
+                      {ev.spare_parts && (
+                        <div className="text-indigo-700 dark:text-indigo-300 font-semibold mt-0.5">
+                          🔩 Phụ tùng thay thế: {ev.spare_parts}
+                        </div>
+                      )}
+                      {Number(ev.cost_vnd) > 0 && (
+                        <div className="text-amber-700 dark:text-amber-400 font-mono font-bold mt-0.5">
+                          💰 Chi phí: {fmtVnd(Number(ev.cost_vnd))}
+                        </div>
+                      )}
+                      <EventAttachmentsBar eventId={ev.id} initialFiles={ev.attachments} />
                     </td>
                     <td className="py-2 pr-3">
                       <StatusBadge status={st[0]} label={st[1]} />
@@ -515,7 +780,20 @@ export function DepartmentEquipmentView({
                         <Button
                           variant={isCompletingRow ? "primary" : "secondary"}
                           onClick={() => {
-                            setCompleteEvent(isCompletingRow ? null : ev);
+                            if (isCompletingRow) {
+                              setCompleteEvent(null);
+                            } else {
+                              setCompleteEvent(ev);
+                              setDoneForm({
+                                done_date: today(),
+                                performed_by: ev.assignee || "Kỹ sư Phòng Kỹ thuật – Thiết bị",
+                                result: ev.result || "Đã bảo trì, kiểm tra thông số kỹ thuật và hiệu chuẩn đạt yêu cầu ISO 13485",
+                                spare_parts: ev.spare_parts || "",
+                                passed: "true",
+                                next_due: "",
+                                cost_vnd: ev.cost_vnd ? String(ev.cost_vnd) : "0",
+                              });
+                            }
                           }}
                         >
                           {isCompletingRow ? "Đóng nghiệm thu" : "🛠️ Kỹ thuật Xử lý & Nghiệm thu"}
@@ -526,66 +804,219 @@ export function DepartmentEquipmentView({
                   {isCompletingRow && (
                     <tr>
                       <td colSpan={8} className="py-2 pr-3">
-                        <form
-                          onSubmit={(e) => {
-                            e.preventDefault();
-                            completeMut.mutate();
-                          }}
-                          className="p-3 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/20 space-y-2.5"
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
-                              🛠️ Nghiệm thu &amp; Hoàn thành Bảo trì / Hiệu chuẩn phiếu {ev.code} — Máy {ev.asset_code} ({ev.owner_name})
-                            </span>
-                            <Button type="button" variant="ghost" onClick={() => setCompleteEvent(null)}>
-                              Đóng
-                            </Button>
-                          </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2 items-end">
-                            <Field label="Ngày hoàn thành *">
-                              <input
-                                type="date"
-                                max={today()}
-                                className={inputClass}
-                                value={doneForm.done_date}
-                                onChange={(e) => setDoneForm({ ...doneForm, done_date: e.target.value })}
-                                required
-                              />
-                            </Field>
-                            <Field label="Kỹ sư / Đơn vị thực hiện *">
-                              <input
-                                className={inputClass}
-                                value={doneForm.performed_by}
-                                onChange={(e) => setDoneForm({ ...doneForm, performed_by: e.target.value })}
-                                required
-                              />
-                            </Field>
-                            <div className="sm:col-span-2">
-                              <Field label="Kết quả xử lý / Biên bản hiệu chuẩn / Linh kiện đã thay *">
+                        <div className="p-3 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/20 space-y-3">
+                          <form
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              completeMut.mutate();
+                            }}
+                            className="space-y-2.5"
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
+                                🛠️ Nghiệm thu &amp; Hoàn thành Bảo trì / Hiệu chuẩn / Sửa chữa phiếu {ev.code} — Máy {ev.asset_code} ({ev.owner_name})
+                              </span>
+                              <Button type="button" variant="ghost" onClick={() => setCompleteEvent(null)}>
+                                Đóng
+                              </Button>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2 items-end">
+                              <Field label="Ngày hoàn thành *">
                                 <input
+                                  type="date"
+                                  max={today()}
                                   className={inputClass}
-                                  value={doneForm.result}
-                                  onChange={(e) => setDoneForm({ ...doneForm, result: e.target.value })}
+                                  value={doneForm.done_date}
+                                  onChange={(e) => setDoneForm({ ...doneForm, done_date: e.target.value })}
                                   required
                                 />
                               </Field>
+                              <Field label="Kỹ sư / Đơn vị thực hiện *">
+                                <input
+                                  className={inputClass}
+                                  value={doneForm.performed_by}
+                                  onChange={(e) => setDoneForm({ ...doneForm, performed_by: e.target.value })}
+                                  required
+                                />
+                              </Field>
+                              <div className="sm:col-span-2">
+                                <Field label="Nội dung sửa chữa / Kết quả hiệu chuẩn *">
+                                  <input
+                                    className={inputClass}
+                                    value={doneForm.result}
+                                    onChange={(e) => setDoneForm({ ...doneForm, result: e.target.value })}
+                                    required
+                                  />
+                                </Field>
+                              </div>
+                              <Field label="Phụ tùng / Linh kiện đã thay">
+                                <input
+                                  className={inputClass}
+                                  placeholder="VD: Thay bóng đèn nguồn / Gioăng bơm..."
+                                  value={doneForm.spare_parts}
+                                  onChange={(e) => setDoneForm({ ...doneForm, spare_parts: e.target.value })}
+                                />
+                              </Field>
+                              <Field label="Tổng chi phí (VNĐ)">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  className={inputClass}
+                                  value={doneForm.cost_vnd}
+                                  onChange={(e) => setDoneForm({ ...doneForm, cost_vnd: e.target.value })}
+                                />
+                              </Field>
+                              <Field label="Kết luận Đạt / Không đạt">
+                                <select
+                                  className={inputClass}
+                                  value={doneForm.passed}
+                                  onChange={(e) => setDoneForm({ ...doneForm, passed: e.target.value })}
+                                >
+                                  <option value="true">✅ ĐẠT (Mở khóa máy IN_SERVICE)</option>
+                                  <option value="false">❌ KHÔNG ĐẠT (Giữ khóa máy)</option>
+                                </select>
+                              </Field>
+                              <Field label="Hạn hiệu chuẩn tiếp (nếu có)">
+                                <input
+                                  type="date"
+                                  className={inputClass}
+                                  value={doneForm.next_due}
+                                  onChange={(e) => setDoneForm({ ...doneForm, next_due: e.target.value })}
+                                />
+                              </Field>
+                              <div className="sm:col-span-2">
+                                <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                                  📎 Đính kèm Hình ảnh sửa chữa / Biên bản hiệu chuẩn / Hóa đơn:
+                                </div>
+                                <EventAttachmentsBar eventId={ev.id} initialFiles={ev.attachments} />
+                              </div>
+                              <div className="sm:col-span-2 flex justify-end">
+                                <Button type="submit" disabled={completeMut.isPending}>
+                                  ✓ Xác nhận Hoàn thành &amp; Lưu Hồ sơ
+                                </Button>
+                              </div>
                             </div>
-                            <Field label="Kết luận Đạt / Không đạt">
-                              <select
-                                className={inputClass}
-                                value={doneForm.passed}
-                                onChange={(e) => setDoneForm({ ...doneForm, passed: e.target.value })}
+                            <ErrorNote error={completeMut.error} />
+                          </form>
+
+                          {/* Xuất kho hoặc ghi nhận chi tiết từng phụ tùng thay thế */}
+                          <div className="pt-2 border-t border-emerald-200 dark:border-emerald-800/70 space-y-2">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="text-[11px] font-bold text-slate-700 dark:text-slate-200">
+                                🔩 Thêm Phụ tùng / Linh kiện thay thế vào phiếu {ev.code} (Hỗ trợ tự động trừ tồn Kho hoặc ghi nhận mua ngoài):
+                              </span>
+                              <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-sky-800 dark:text-sky-300 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={partIssueForm.deduct_warehouse}
+                                  onChange={(e) =>
+                                    setPartIssueForm({
+                                      ...partIssueForm,
+                                      deduct_warehouse: e.target.checked,
+                                      warehouse_id:
+                                        partIssueForm.warehouse_id || deviceOptsQuery.data?.warehouses?.[0]?.id || "",
+                                    })
+                                  }
+                                />
+                                📦 Xuất trừ tồn trực tiếp từ Kho linh kiện (FEFO/FIFO)
+                              </label>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2 items-end">
+                              {partIssueForm.deduct_warehouse ? (
+                                <>
+                                  <Field label="Kho xuất linh kiện *">
+                                    <select
+                                      className={inputClass}
+                                      value={partIssueForm.warehouse_id}
+                                      onChange={(e) => setPartIssueForm({ ...partIssueForm, warehouse_id: e.target.value })}
+                                    >
+                                      <option value="">-- Chọn kho --</option>
+                                      {(deviceOptsQuery.data?.warehouses ?? []).map((w) => (
+                                        <option key={w.id} value={w.id}>
+                                          {w.code} — {w.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </Field>
+                                  <div className="sm:col-span-2">
+                                    <Field label="Mã linh kiện trong kho *">
+                                      <select
+                                        className={inputClass}
+                                        value={partIssueForm.item_id}
+                                        onChange={(e) => {
+                                          const it = (deviceOptsQuery.data?.items ?? []).find((x) => x.id === e.target.value);
+                                          setPartIssueForm({
+                                            ...partIssueForm,
+                                            item_id: e.target.value,
+                                            part_name: it ? `${it.code} — ${it.name}` : partIssueForm.part_name,
+                                            uom: it?.base_uom || "pcs",
+                                          });
+                                        }}
+                                      >
+                                        <option value="">-- Chọn linh kiện --</option>
+                                        {(deviceOptsQuery.data?.items ?? []).map((it) => (
+                                          <option key={it.id} value={it.id}>
+                                            {it.code} — {it.name} ({it.base_uom})
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </Field>
+                                  </div>
+                                </>
+                              ) : (
+                                <div className="sm:col-span-2">
+                                  <Field label="Tên phụ tùng / linh kiện thay thế *">
+                                    <input
+                                      className={inputClass}
+                                      placeholder="VD: Cảm biến nhiệt Pt100 / Quạt tản nhiệt / Seal bơm..."
+                                      value={partIssueForm.part_name}
+                                      onChange={(e) => setPartIssueForm({ ...partIssueForm, part_name: e.target.value })}
+                                    />
+                                  </Field>
+                                </div>
+                              )}
+                              <Field label="Số Lot / Serial linh kiện">
+                                <input
+                                  className={inputClass}
+                                  placeholder="VD: SN-PART-01"
+                                  value={partIssueForm.serial_or_lot}
+                                  onChange={(e) => setPartIssueForm({ ...partIssueForm, serial_or_lot: e.target.value })}
+                                />
+                              </Field>
+                              <Field label="Số lượng">
+                                <input
+                                  type="number"
+                                  min={1}
+                                  step="any"
+                                  className={inputClass}
+                                  value={partIssueForm.qty}
+                                  onChange={(e) => setPartIssueForm({ ...partIssueForm, qty: e.target.value })}
+                                />
+                              </Field>
+                              <Field label="Đơn giá (VNĐ)">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  className={inputClass}
+                                  value={partIssueForm.unit_cost_vnd}
+                                  onChange={(e) => setPartIssueForm({ ...partIssueForm, unit_cost_vnd: e.target.value })}
+                                />
+                              </Field>
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                disabled={
+                                  addSparePartMut.isPending ||
+                                  (partIssueForm.deduct_warehouse ? !partIssueForm.item_id : !partIssueForm.part_name.trim())
+                                }
+                                onClick={() => addSparePartMut.mutate(ev.id)}
                               >
-                                <option value="true">✅ ĐẠT (Mở khóa máy IN_SERVICE)</option>
-                                <option value="false">❌ KHÔNG ĐẠT (Giữ khóa máy)</option>
-                              </select>
-                            </Field>
-                            <Button type="submit" disabled={completeMut.isPending}>
-                              ✓ Xác nhận Hoàn thành
-                            </Button>
+                                + Ghi nhận phụ tùng
+                              </Button>
+                            </div>
+                            <ErrorNote error={addSparePartMut.error} />
                           </div>
-                          <ErrorNote error={completeMut.error} />
-                        </form>
+                        </div>
                       </td>
                     </tr>
                   )}
@@ -692,6 +1123,52 @@ export function DepartmentEquipmentView({
                     className={inputClass}
                     value={newAssetForm.next_calibration_due}
                     onChange={(e) => setNewAssetForm({ ...newAssetForm, next_calibration_due: e.target.value })}
+                  />
+                </div>
+              </Field>
+              <Field label="Ngày mua / Đưa vào SD">
+                <input
+                  type="date"
+                  className={inputClass}
+                  value={newAssetForm.purchase_date}
+                  onChange={(e) => setNewAssetForm({ ...newAssetForm, purchase_date: e.target.value })}
+                />
+              </Field>
+              <Field label="Nguyên giá mua (VNĐ)">
+                <input
+                  type="number"
+                  min={0}
+                  className={inputClass}
+                  placeholder="VD: 450000000"
+                  value={newAssetForm.purchase_cost_vnd}
+                  onChange={(e) => setNewAssetForm({ ...newAssetForm, purchase_cost_vnd: e.target.value })}
+                />
+              </Field>
+              <Field label="Thời gian khấu hao (tháng)">
+                <input
+                  type="number"
+                  min={1}
+                  max={600}
+                  className={inputClass}
+                  placeholder="VD: 60"
+                  value={newAssetForm.depreciation_months}
+                  onChange={(e) => setNewAssetForm({ ...newAssetForm, depreciation_months: e.target.value })}
+                />
+              </Field>
+              <Field label="Hạn bảo hành hãng & NCC">
+                <div className="flex gap-1">
+                  <input
+                    type="date"
+                    className={inputClass}
+                    title="Hạn bảo hành của hãng"
+                    value={newAssetForm.warranty_expiry}
+                    onChange={(e) => setNewAssetForm({ ...newAssetForm, warranty_expiry: e.target.value })}
+                  />
+                  <input
+                    className={inputClass}
+                    placeholder="Nhà cung cấp"
+                    value={newAssetForm.supplier_name}
+                    onChange={(e) => setNewAssetForm({ ...newAssetForm, supplier_name: e.target.value })}
                   />
                 </div>
               </Field>
@@ -832,18 +1309,21 @@ export function DepartmentEquipmentView({
                     "Phòng quản lý & Vị trí",
                     "Số Serial",
                     "Bảo trì gần nhất & Hạn HC kế tiếp",
+                    "Nguyên giá & Khấu hao / Chi phí BT",
                     "Trạng thái",
-                    "Đề xuất Bảo trì / Hiệu chuẩn / Báo hỏng",
+                    "Sổ lý lịch & Đề xuất Bảo trì / Báo hỏng",
                   ]}
                 >
                   {pagedAssets.map((a: any) => {
                     const st = ASSET_STATUS_BADGE[a.status] ?? ["QUARANTINE", a.status];
                     const days = daysUntil(a.next_calibration_due);
+                    const depr = calcAssetDepreciation(a);
                     const isEditingRow = canManageAsset && editingAsset?.id === a.id;
                     const isRequestingRow = requestAsset?.id === a.id;
+                    const isLogbookRow = logbookAsset?.id === a.id;
                     return (
                       <React.Fragment key={a.id}>
-                        <tr className={isEditingRow || isRequestingRow ? "bg-sky-50/80 dark:bg-sky-950/30 font-semibold" : ""}>
+                        <tr className={isEditingRow || isRequestingRow || isLogbookRow ? "bg-sky-50/80 dark:bg-sky-950/30 font-semibold" : ""}>
                           <td className="py-2 pr-3 font-mono text-xs font-bold text-sky-700 dark:text-sky-400">
                             <div>{a.code}</div>
                             {a.equipment_category && (
@@ -894,17 +1374,44 @@ export function DepartmentEquipmentView({
                               "—"
                             )}
                           </td>
+                          <td className="py-2 pr-3 text-xs">
+                            {depr ? (
+                              <div className="space-y-0.5">
+                                <div className="font-mono font-semibold text-slate-800 dark:text-slate-200">
+                                  NG: {fmtVnd(depr.cost)} <span className="text-[10px] text-slate-500">({depr.months}th)</span>
+                                </div>
+                                <div className="text-[11px] font-mono text-emerald-700 dark:text-emerald-400">
+                                  Còn lại: <b>{fmtVnd(depr.remaining)}</b> ({100 - depr.pct}%)
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-[11px] text-slate-400">Chưa nhập nguyên giá</span>
+                            )}
+                            {Number(a.total_maintenance_cost_vnd) > 0 && (
+                              <div className="text-[10.5px] font-mono text-amber-700 dark:text-amber-400 mt-0.5">
+                                🔧 Phí BT lũy kế: {fmtVnd(Number(a.total_maintenance_cost_vnd))}
+                              </div>
+                            )}
+                          </td>
                           <td className="py-2 pr-3">
                             <StatusBadge status={st[0]} label={st[1]} />
                           </td>
                           <td className="py-2 text-right whitespace-nowrap">
                             <div className="inline-flex items-center justify-end gap-1 whitespace-nowrap">
+                              <Button
+                                variant={isLogbookRow ? "primary" : "ghost"}
+                                className="!px-2 !py-0.5 !text-[11px]"
+                                title="Xem Sổ lý lịch máy 360° (Lịch sử bảo trì, sửa chữa, phụ tùng thay thế, hình ảnh & khấu hao)"
+                                onClick={() => setLogbookAsset(isLogbookRow ? null : a)}
+                              >
+                                📖 Lý lịch ({Number(a.completed_event_count || 0) + Number(a.open_event_count || 0)})
+                              </Button>
                               {canManageAsset && (
                                 <>
                                   <Button
                                     variant={isEditingRow ? "primary" : "ghost"}
                                     className="!px-2 !py-0.5 !text-[11px]"
-                                    title="Sửa thông tin thiết bị"
+                                    title="Sửa thông tin thiết bị & cấu hình khấu hao"
                                     onClick={() => {
                                       if (isEditingRow) {
                                         setEditingAsset(null);
@@ -923,8 +1430,13 @@ export function DepartmentEquipmentView({
                                         model: a.model || "",
                                         serial_no: a.serial_no || "",
                                         next_calibration_due: a.next_calibration_due ? String(a.next_calibration_due).slice(0, 10) : "",
+                                        purchase_date: a.purchase_date ? String(a.purchase_date).slice(0, 10) : "",
+                                        purchase_cost_vnd: a.purchase_cost_vnd != null ? String(a.purchase_cost_vnd) : "",
+                                        depreciation_months: a.depreciation_months != null ? String(a.depreciation_months) : "60",
+                                        warranty_expiry: a.warranty_expiry ? String(a.warranty_expiry).slice(0, 10) : "",
+                                        supplier_name: a.supplier_name || "",
                                         status: a.status || "IN_SERVICE",
-                                        reason: "Cập nhật thông số thiết bị",
+                                        reason: "Cập nhật thông số & khấu hao thiết bị",
                                       });
                                     }}
                                   >
@@ -996,7 +1508,7 @@ export function DepartmentEquipmentView({
                         </tr>
                         {isEditingRow && (
                           <tr>
-                            <td colSpan={7} className="py-2 pr-3">
+                            <td colSpan={8} className="py-2 pr-3">
                               <form
                                 onSubmit={(e) => {
                                   e.preventDefault();
@@ -1006,7 +1518,7 @@ export function DepartmentEquipmentView({
                               >
                                 <div className="flex items-center justify-between">
                                   <span className="text-xs font-bold text-amber-900 dark:text-amber-200">
-                                    ✏️ Sửa thông tin thiết bị: <span className="font-mono">{a.code}</span> — {a.name}
+                                    ✏️ Sửa thông tin &amp; Khấu hao thiết bị: <span className="font-mono">{a.code}</span> — {a.name}
                                   </span>
                                   <Button type="button" variant="ghost" onClick={() => setEditingAsset(null)}>
                                     Đóng
@@ -1089,6 +1601,48 @@ export function DepartmentEquipmentView({
                                       onChange={(e) => setEditAssetForm({ ...editAssetForm, next_calibration_due: e.target.value })}
                                     />
                                   </Field>
+                                  <Field label="Ngày mua / Đưa vào SD">
+                                    <input
+                                      type="date"
+                                      className={inputClass}
+                                      value={editAssetForm.purchase_date}
+                                      onChange={(e) => setEditAssetForm({ ...editAssetForm, purchase_date: e.target.value })}
+                                    />
+                                  </Field>
+                                  <Field label="Nguyên giá mua (VNĐ)">
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      className={inputClass}
+                                      value={editAssetForm.purchase_cost_vnd}
+                                      onChange={(e) => setEditAssetForm({ ...editAssetForm, purchase_cost_vnd: e.target.value })}
+                                    />
+                                  </Field>
+                                  <Field label="Thời gian khấu hao (tháng)">
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      max={600}
+                                      className={inputClass}
+                                      value={editAssetForm.depreciation_months}
+                                      onChange={(e) => setEditAssetForm({ ...editAssetForm, depreciation_months: e.target.value })}
+                                    />
+                                  </Field>
+                                  <Field label="Hạn bảo hành hãng">
+                                    <input
+                                      type="date"
+                                      className={inputClass}
+                                      value={editAssetForm.warranty_expiry}
+                                      onChange={(e) => setEditAssetForm({ ...editAssetForm, warranty_expiry: e.target.value })}
+                                    />
+                                  </Field>
+                                  <Field label="Nhà cung cấp (NCC)">
+                                    <input
+                                      className={inputClass}
+                                      value={editAssetForm.supplier_name}
+                                      onChange={(e) => setEditAssetForm({ ...editAssetForm, supplier_name: e.target.value })}
+                                    />
+                                  </Field>
                                   <Field label="Trạng thái">
                                     <select
                                       className={inputClass}
@@ -1102,14 +1656,16 @@ export function DepartmentEquipmentView({
                                       ))}
                                     </select>
                                   </Field>
-                                  <Field label="Lý do chỉnh sửa *">
-                                    <input
-                                      className={inputClass}
-                                      value={editAssetForm.reason}
-                                      onChange={(e) => setEditAssetForm({ ...editAssetForm, reason: e.target.value })}
-                                      required
-                                    />
-                                  </Field>
+                                  <div className="sm:col-span-2">
+                                    <Field label="Lý do chỉnh sửa *">
+                                      <input
+                                        className={inputClass}
+                                        value={editAssetForm.reason}
+                                        onChange={(e) => setEditAssetForm({ ...editAssetForm, reason: e.target.value })}
+                                        required
+                                      />
+                                    </Field>
+                                  </div>
                                 </div>
                                 <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                                   <div className="flex items-center gap-2">
@@ -1142,9 +1698,131 @@ export function DepartmentEquipmentView({
                             </td>
                           </tr>
                         )}
+                        {isLogbookRow && (
+                          <tr>
+                            <td colSpan={8} className="py-2 pr-3">
+                              <div className="p-3.5 rounded-xl border-2 border-indigo-300 dark:border-indigo-800 bg-indigo-50/40 dark:bg-slate-950/60 space-y-3">
+                                <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-indigo-200 dark:border-slate-800">
+                                  <div className="text-xs font-extrabold text-indigo-950 dark:text-indigo-200 flex items-center gap-2">
+                                    <BookOpen className="w-4 h-4 text-indigo-600" />
+                                    <span>
+                                      📖 Sổ Lý Lịch Thiết Bị 360° (ISO 13485 Equipment Logbook) — {a.code} · {a.name}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <Button
+                                      type="button"
+                                      variant="secondary"
+                                      onClick={() =>
+                                        openAssetLogbookPrintWindow(a, logbookEventsQuery.data?.events ?? [])
+                                      }
+                                    >
+                                      🖨 In Sổ Lý Lịch &amp; Khấu Hao (A4)
+                                    </Button>
+                                    <Button type="button" variant="ghost" onClick={() => setLogbookAsset(null)}>
+                                      Đóng
+                                    </Button>
+                                  </div>
+                                </div>
+
+                                {/* Tóm tắt Khấu hao, Bảo hành & Chi phí */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-xs">
+                                  <div className="p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                                    <div className="text-[11px] text-slate-500">Ngày mua &amp; Nhà cung cấp</div>
+                                    <div className="font-bold text-slate-800 dark:text-slate-100 mt-0.5">
+                                      {fmtDate(a.purchase_date)} {a.supplier_name ? `· ${a.supplier_name}` : ""}
+                                    </div>
+                                    <div className="text-[11px] text-slate-500 mt-0.5">
+                                      Hạn BH hãng: <b>{fmtDate(a.warranty_expiry)}</b>
+                                    </div>
+                                  </div>
+                                  <div className="p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                                    <div className="text-[11px] text-slate-500">Nguyên giá &amp; Khấu hao tháng</div>
+                                    <div className="font-mono font-bold text-sky-700 dark:text-sky-400 mt-0.5">
+                                      {depr ? fmtVnd(depr.cost) : "Chưa khai báo"}
+                                    </div>
+                                    <div className="text-[11px] text-slate-500 mt-0.5">
+                                      {depr ? `${fmtVnd(depr.monthlyDepreciation)}/tháng (${depr.months} tháng)` : "Vào '✏️ Sửa' để nhập nguyên giá"}
+                                    </div>
+                                  </div>
+                                  <div className="p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                                    <div className="text-[11px] text-slate-500">Đã khấu hao / Giá trị còn lại</div>
+                                    <div className="font-mono font-bold text-emerald-700 dark:text-emerald-400 mt-0.5">
+                                      {depr ? `Còn lại: ${fmtVnd(depr.remaining)}` : "—"}
+                                    </div>
+                                    <div className="text-[11px] text-slate-500 mt-0.5">
+                                      {depr ? `Đã KH: ${fmtVnd(depr.accumulated)} (${depr.elapsedMonths}/${depr.months} th · ${depr.pct}%)` : "—"}
+                                    </div>
+                                  </div>
+                                  <div className="p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                                    <div className="text-[11px] text-slate-500">Tổng chi phí Bảo trì / Sửa chữa lũy kế</div>
+                                    <div className="font-mono font-bold text-amber-700 dark:text-amber-400 mt-0.5">
+                                      {fmtVnd(Number(a.total_maintenance_cost_vnd || 0))}
+                                    </div>
+                                    <div className="text-[11px] text-slate-500 mt-0.5">
+                                      Số lần hoàn thành: <b>{Number(a.completed_event_count || 0)} lần</b>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Lịch sử các lần bảo trì, hiệu chuẩn, sửa chữa của riêng máy này */}
+                                {(logbookEventsQuery.data?.events ?? []).length === 0 ? (
+                                  <Empty>Thiết bị này chưa phát sinh lịch sử bảo trì, hiệu chuẩn hay sửa chữa nào.</Empty>
+                                ) : (
+                                  <Table
+                                    head={[
+                                      "Mã phiếu",
+                                      "Loại",
+                                      "Ngày KH / Hoàn thành",
+                                      "Người thực hiện",
+                                      "Nội dung xử lý, Phụ tùng thay thế & Hình ảnh / Biên bản",
+                                      "Chi phí",
+                                      "Trạng thái",
+                                    ]}
+                                  >
+                                    {(logbookEventsQuery.data?.events ?? []).map((ev: any) => {
+                                      const evSt = EVENT_STATUS_BADGE[ev.status] ?? ["QUARANTINE", ev.status];
+                                      return (
+                                        <tr key={ev.id}>
+                                          <td className="py-1.5 pr-2 font-mono text-xs font-bold text-sky-700">{ev.code}</td>
+                                          <td className="py-1.5 pr-2 text-xs">{EVENT_KIND_LABELS[ev.kind] ?? ev.kind}</td>
+                                          <td className="py-1.5 pr-2 text-xs font-mono">
+                                            <div>KH: {fmtDate(ev.planned_date)}</div>
+                                            {ev.done_date && <div className="text-emerald-700 font-bold">Xong: {fmtDate(ev.done_date)}</div>}
+                                          </td>
+                                          <td className="py-1.5 pr-2 text-xs">{ev.performed_by || ev.assignee || "—"}</td>
+                                          <td className="py-1.5 pr-2 text-xs space-y-0.5">
+                                            <div>{ev.description ?? "—"}</div>
+                                            {ev.result && (
+                                              <div className="text-emerald-700 dark:text-emerald-400 font-medium">
+                                                ↳ KQ: {ev.result}
+                                              </div>
+                                            )}
+                                            {ev.spare_parts && (
+                                              <div className="text-indigo-700 dark:text-indigo-300 font-semibold">
+                                                🔩 Phụ tùng đã thay: {ev.spare_parts}
+                                              </div>
+                                            )}
+                                            <EventAttachmentsBar eventId={ev.id} initialFiles={ev.attachments} />
+                                          </td>
+                                          <td className="py-1.5 pr-2 text-xs font-mono font-bold text-right">
+                                            {Number(ev.cost_vnd) > 0 ? fmtVnd(Number(ev.cost_vnd)) : "0 ₫"}
+                                          </td>
+                                          <td className="py-1.5 pr-2">
+                                            <StatusBadge status={evSt[0]} label={evSt[1]} />
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </Table>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
                         {isRequestingRow && (
                           <tr>
-                            <td colSpan={7} className="py-2 pr-3">
+                            <td colSpan={8} className="py-2 pr-3">
                               <Card
                                 title={`🔧 Gửi Đề xuất Bảo trì / Hiệu chuẩn / Báo hỏng tới Phòng Kỹ thuật – Thiết bị: ${a.code} — ${a.name}`}
                                 actions={

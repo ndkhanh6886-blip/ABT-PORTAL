@@ -4,7 +4,8 @@ import { closeFactoryPool, getFactoryPool, withTransaction } from "../../core/db
 import { migrate } from "../../db/migrate";
 import { createOrgUnit, createUser, grant } from "../../__tests__/helpers";
 import "../../modules";
-import { createAsset, deleteAsset, updateAsset } from "../service";
+import { createAsset, deleteAsset, listAssets, updateAsset } from "../service";
+import { listEvents, planEvent, recordEventSparePart } from "../events";
 import { createProject, listProjects } from "../../rd/projects";
 
 const PIN = "482910";
@@ -25,7 +26,7 @@ describe("Asset Full Edit / Safe Delete & Independent Software vs R&D Gates", ()
     manager = await createUser("Quản lý Thiết bị & Dự án", PIN);
     await grant(
       manager,
-      ["asset.view", "asset.manage", "rd.view", "rd.project.manage"],
+      ["asset.view", "asset.operate", "asset.manage", "rd.view", "rd.project.manage"],
       null
     );
   });
@@ -132,5 +133,59 @@ describe("Asset Full Edit / Safe Delete & Independent Software vs R&D Gates", ()
     const swList = await withTransaction((tx) => listProjects(tx, manager, { domain: "SOFTWARE" }));
     expect(swList.some((p: any) => p.id === swProj.id)).toBe(true);
     expect(swList.some((p: any) => p.id === kitProj.id)).toBe(false);
+  });
+
+  it("4. Tracks asset depreciation fields and records spare parts & maintenance cost on asset events", async () => {
+    const asset = await withTransaction((tx) =>
+      createAsset(tx, manager, {
+        name: "Máy Tách Chiết Tự Động KingFisher",
+        asset_type: "OTHER",
+        owner_org_unit_id: rdDept,
+        serial_no: "SN-DEP-004",
+        purchase_date: "2025-01-15",
+        purchase_cost_vnd: 360000000,
+        depreciation_months: 36,
+        warranty_expiry: "2027-01-15",
+        supplier_name: "Thermo Fisher Scientific VN",
+      })
+    );
+
+    const event = await withTransaction((tx) =>
+      planEvent(tx, manager, {
+        asset_id: asset.id,
+        kind: "REPAIR",
+        planned_date: "2026-11-27",
+        description: "Thay cảm biến nhiệt và trục từ",
+      })
+    );
+
+    const partRes = await withTransaction((tx) =>
+      recordEventSparePart(tx, manager, event.id, {
+        part_name: "Cảm biến nhiệt Pt100 chính hãng",
+        qty: 2,
+        uom: "cái",
+        unit_cost_vnd: 2250000,
+        notes: "Nhập chính hãng Thermo",
+      })
+    );
+
+    expect(partRes.event.parts_json.length).toBe(1);
+    expect(partRes.event.parts_json[0].part_name).toBe("Cảm biến nhiệt Pt100 chính hãng");
+    expect(partRes.event.cost_vnd).toBe(4500000);
+    expect(partRes.event.spare_parts).toContain("Cảm biến nhiệt Pt100 chính hãng");
+
+    const evRes = await withTransaction((tx) => listEvents(tx, manager, { asset_id: asset.id }));
+    expect(evRes.events.length).toBe(1);
+    expect(Array.isArray(evRes.events[0].parts_json)).toBe(true);
+    expect(evRes.events[0].parts_json.length).toBe(1);
+    expect(Number(evRes.events[0].cost_vnd)).toBe(4500000);
+
+    const assets = await withTransaction((tx) => listAssets(tx, manager));
+    const found = assets.find((a: any) => a.id === asset.id);
+    expect(found).toBeDefined();
+    expect(Number(found.purchase_cost_vnd)).toBe(360000000);
+    expect(Number(found.depreciation_months)).toBe(36);
+    expect(found.supplier_name).toBe("Thermo Fisher Scientific VN");
+    expect(Number(found.total_maintenance_cost_vnd)).toBe(4500000);
   });
 });

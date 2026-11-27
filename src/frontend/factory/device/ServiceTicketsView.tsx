@@ -1,9 +1,11 @@
 "use client";
 
 import React, { useState } from "react";
+import { Paperclip, Printer } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import { ActionBar, type AllowedAction } from "../actions";
-import { api, fmtDate, fmtVnd } from "../api";
+import { api, escHtml, fmtDate, fmtVnd } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { DepartmentEquipmentView } from "../asset/DepartmentEquipmentView";
 import { TICKET_STATUS, useDeviceOptions } from "./shared";
@@ -48,6 +50,21 @@ interface ServiceData {
     deviation_code: string | null;
     status: string;
     version: number;
+    replaced_parts?: {
+      id: string;
+      item_code: string;
+      item_name: string;
+      lot_code: string | null;
+      component_serial: string | null;
+      qty: number;
+      uom: string;
+      installed_at: string;
+    }[];
+    attachments?: {
+      id: string;
+      file_name: string;
+      mime_type?: string;
+    }[];
     actions: AllowedAction[];
   }[];
   schedules: {
@@ -133,6 +150,66 @@ export function ServiceTicketsView() {
   });
 
   const selected = (svc.data?.tickets ?? []).find((t) => t.id === selectedId) ?? null;
+
+  const uploadTicketFileMut = useMutation({
+    mutationFn: async ({ ticketId, file }: { ticketId: string; file: File }) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`/api/factory/device/service-tickets/${ticketId}/files`, {
+        method: "POST",
+        body: fd,
+        credentials: "same-origin",
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `Lỗi tải file (${res.status})`);
+    },
+    onSuccess: () => refreshAll(),
+  });
+
+  function openServiceTicketPrintWindow(ticket: ServiceData["tickets"][number]) {
+    const win = window.open("", "_blank", "width=920,height=740");
+    if (!win) return;
+    const parts = Array.isArray(ticket.replaced_parts) ? ticket.replaced_parts : [];
+    const partsHtml = parts
+      .map(
+        (p, idx) => `<tr>
+          <td>${idx + 1}</td>
+          <td><b>${escHtml(p.item_code)}</b> — ${escHtml(p.item_name)}</td>
+          <td>${escHtml(p.lot_code || "—")} / ${escHtml(p.component_serial || "—")}</td>
+          <td style="text-align:right">${escHtml(p.qty)} ${escHtml(p.uom)}</td>
+          <td>${escHtml(fmtDate(p.installed_at))}</td>
+        </tr>`
+      )
+      .join("");
+
+    writeSafePrintDocument(
+      win,
+      `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Biên Bản Dịch Vụ Kỹ Thuật (FSR) — ${escHtml(ticket.code)}</title>
+        <style>body{font-family:Arial,sans-serif;padding:24px;color:#0f172a}table{width:100%;border-collapse:collapse;margin-top:10px;font-size:12px}th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:left}th{background:#f1f5f9}.box{background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:12px;margin-top:10px;font-size:12.5px}</style>
+      </head><body>
+        <h2 style="margin:0;color:#0284c7">CÔNG TY TNHH Y SINH ABT — BIÊN BẢN NGHIỆM THU DỊCH VỤ KỸ THUẬT / BẢO HÀNH (FIELD SERVICE REPORT)</h2>
+        <div class="box">
+          <div><b>Số phiếu dịch vụ:</b> ${escHtml(ticket.code)} · <b>Phân loại:</b> ${escHtml(TICKET_TYPE_LABELS[ticket.ticket_type] ?? ticket.ticket_type)} · <b>Ngày tiếp nhận:</b> ${escHtml(fmtDate(ticket.reported_at))}</div>
+          <div style="margin-top:4px"><b>Khách hàng / Đơn vị sử dụng:</b> ${escHtml(ticket.customer_name || "—")}</div>
+          <div style="margin-top:4px"><b>Thiết bị:</b> ${escHtml(ticket.model_code)} — ${escHtml(ticket.model_name)} · <b>Số Serial (S/N):</b> <b>${escHtml(ticket.serial_no)}</b></div>
+          <div style="margin-top:4px"><b>Hạn bảo hành máy:</b> ${escHtml(fmtDate(ticket.warranty_end))} · <b>Chế độ:</b> ${ticket.is_warranty ? "Bảo hành miễn phí (0 ₫)" : escHtml(fmtVnd(ticket.service_cost))}</div>
+        </div>
+        <div class="box">
+          <div><b>1. Triệu chứng / Nội dung yêu cầu của Khách hàng:</b><br/>${escHtml(ticket.symptom)}</div>
+          <div style="margin-top:8px"><b>2. Chẩn đoán kỹ thuật (Diagnosis):</b><br/>${escHtml(ticket.diagnosis || diagnosisText || "—")}</div>
+          <div style="margin-top:8px"><b>3. Biện pháp khắc phục &amp; Kết quả kiểm tra nghiệm thu (Resolution):</b><br/>${escHtml(ticket.resolution || resolutionText || "—")}</div>
+        </div>
+        <h4 style="margin:14px 0 4px">4. DANH MỤC PHỤ TÙNG / LINH KIỆN THAY THẾ (ĐÃ GHI VÀO HỒ SƠ DHR CỦA MÁY)</h4>
+        <table><thead><tr><th>#</th><th>Mã &amp; Tên linh kiện</th><th>Số Lot / Serial linh kiện</th><th>Số lượng</th><th>Ngày thay</th></tr></thead>
+        <tbody>${partsHtml || '<tr><td colspan="5" style="text-align:center">Không phát sinh thay thế linh kiện</td></tr>'}</tbody></table>
+        <div style="display:flex;justify-content:space-between;margin-top:36px;font-size:13px">
+          <div><b>Kỹ sư Dịch vụ Kỹ thuật ABT</b><br/><br/><br/>(Ký, ghi rõ họ tên)</div>
+          <div><b>Phụ trách Kỹ thuật – Công nghệ</b><br/><br/><br/>(Ký, ghi rõ họ tên)</div>
+          <div><b>Đại diện Khách hàng nghiệm thu</b><br/><br/><br/>(Ký, đóng dấu / ghi rõ họ tên)</div>
+        </div>
+      </body></html>`
+    );
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -275,6 +352,9 @@ export function ServiceTicketsView() {
               title={`Xử lý kỹ thuật phiếu ${selected.code} — Serial ${selected.serial_no}`}
               actions={
                 <div className="flex flex-wrap items-center gap-2">
+                  <Button variant="secondary" onClick={() => openServiceTicketPrintWindow(selected)}>
+                    🖨 In Biên bản FSR (A4)
+                  </Button>
                   <ActionBar
                     endpoint={`/api/factory/device/service-tickets/${selected.id}/actions`}
                     version={selected.version}
@@ -305,6 +385,69 @@ export function ServiceTicketsView() {
                   <div>
                     <strong>Triệu chứng / Mô tả sự cố:</strong> {selected.symptom}
                   </div>
+                  {selected.diagnosis && (
+                    <div>
+                      <strong>Chẩn đoán kỹ thuật:</strong> {selected.diagnosis}
+                    </div>
+                  )}
+                  {selected.resolution && (
+                    <div className="text-emerald-700 dark:text-emerald-400">
+                      <strong>Kết quả khắc phục &amp; Nghiệm thu:</strong> {selected.resolution}
+                    </div>
+                  )}
+                </div>
+
+                {/* Danh sách phụ tùng đã thay & File hình ảnh / Biên bản FSR đính kèm */}
+                {Array.isArray(selected.replaced_parts) && selected.replaced_parts.length > 0 && (
+                  <div className="p-2.5 rounded-xl border border-indigo-200 dark:border-indigo-900 bg-indigo-50/50 dark:bg-indigo-950/20 text-xs space-y-1">
+                    <div className="font-bold text-indigo-900 dark:text-indigo-200">
+                      🔩 Phụ tùng / Linh kiện đã xuất kho thay thế trên phiếu này (đã ghi vào DHR):
+                    </div>
+                    <ul className="list-disc list-inside space-y-0.5 text-slate-700 dark:text-slate-300">
+                      {selected.replaced_parts.map((p) => (
+                        <li key={p.id}>
+                          <span className="font-mono font-bold">{p.item_code}</span> — {p.item_name} (SL: <b>{p.qty} {p.uom}</b>
+                          {p.lot_code ? ` · Lot: ${p.lot_code}` : ""}
+                          {p.component_serial ? ` · S/N: ${p.component_serial}` : ""})
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <div className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50 text-xs space-y-1.5">
+                  <div className="font-bold text-slate-700 dark:text-slate-200">
+                    📎 Hình ảnh hiện trường, Biên bản nghiệm thu (FSR) có chữ ký KH &amp; Tài liệu đính kèm:
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {(selected.attachments ?? []).map((f) => (
+                      <a
+                        key={f.id}
+                        href={`/api/factory/device/service-tickets/${selected.id}/files/${f.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-50 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300 font-semibold hover:underline"
+                      >
+                        <span>📄</span>
+                        <span>{f.file_name}</span>
+                      </a>
+                    ))}
+                    <label className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-dashed border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-sky-500 hover:text-sky-700 cursor-pointer font-semibold">
+                      <Paperclip className="w-3.5 h-3.5" />
+                      <span>{uploadTicketFileMut.isPending ? "Đang tải..." : "+ Đính kèm ảnh / biên bản nghiệm thu"}</span>
+                      <input
+                        type="file"
+                        className="hidden"
+                        accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) uploadTicketFileMut.mutate({ ticketId: selected.id, file });
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>
+                  </div>
+                  {uploadTicketFileMut.error != null && <ErrorNote error={uploadTicketFileMut.error} />}
                 </div>
 
                 <ErrorNote error={actMut.error} />
@@ -461,7 +604,7 @@ export function ServiceTicketsView() {
 
       <Card title="Lịch bảo trì & Hiệu chuẩn định kỳ tại khách hàng (Preventive Maintenance Schedules)">
         {svc.data && svc.data.schedules.length > 0 ? (
-          <Table head={["Số Serial", "Dòng thiết bị", "Khách hàng", "Chu kỳ", "Lần bảo trì gần nhất", "Hạn bảo trì tiếp theo"]}>
+          <Table head={["Số Serial", "Dòng thiết bị", "Khách hàng", "Chu kỳ", "Lần bảo trì gần nhất", "Hạn bảo trì tiếp theo", "Thao tác"]}>
             {svc.data.schedules.map((s) => (
               <tr key={s.id}>
                 <td className="py-2 pr-3 font-mono font-bold">{s.serial_no}</td>
@@ -473,6 +616,22 @@ export function ServiceTicketsView() {
                 <td className="py-2 pr-3">{fmtDate(s.last_service_at)}</td>
                 <td className="py-2 pr-3 font-bold">
                   {fmtDate(s.next_due)} {s.is_overdue && <span className="text-rose-600 ml-1">(Quá hạn)</span>}
+                </td>
+                <td className="py-2 text-right">
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setForm({
+                        unit_id: s.unit_id,
+                        ticket_type: "PREVENTIVE",
+                        symptom: `Bảo trì & hiệu chuẩn định kỳ (${s.interval_months} tháng/lần) cho máy ${s.serial_no} tại ${s.customer_name || "Khách hàng"} (Hạn: ${fmtDate(s.next_due)})`,
+                        service_cost: "0",
+                      });
+                      setShowCreate(true);
+                    }}
+                  >
+                    + Lập phiếu Bảo trì định kỳ
+                  </Button>
                 </td>
               </tr>
             ))}

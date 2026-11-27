@@ -27,6 +27,11 @@ const assetSchema = z.object({
   calibration_interval_days: z.coerce.number().int().positive().optional().nullable(),
   last_calibration_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
   next_calibration_due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+  purchase_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+  purchase_cost_vnd: z.coerce.number().min(0).optional().nullable(),
+  depreciation_months: z.coerce.number().int().min(1).max(600).optional().nullable(),
+  warranty_expiry: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+  supplier_name: z.string().trim().max(150).optional().nullable(),
   notes: z.string().trim().max(500).optional().nullable(),
   synthesizer: z
     .object({ column_positions: z.coerce.number().int().min(1).max(384), supported_scales: z.array(z.string()).max(30).default([]) })
@@ -37,6 +42,17 @@ const assetSchema = z.object({
 let assetExtraColsEnsured = false;
 export async function ensureAssetExtraColumnsSchema(tx: Tx): Promise<void> {
   if (assetExtraColsEnsured) return;
+  await tx.query(`
+    ALTER TABLE asset.asset
+      ADD COLUMN IF NOT EXISTS purchase_date date,
+      ADD COLUMN IF NOT EXISTS purchase_cost_vnd numeric(18,0),
+      ADD COLUMN IF NOT EXISTS depreciation_months integer,
+      ADD COLUMN IF NOT EXISTS warranty_expiry date,
+      ADD COLUMN IF NOT EXISTS supplier_name text;
+    ALTER TABLE asset.event
+      ADD COLUMN IF NOT EXISTS spare_parts text,
+      ADD COLUMN IF NOT EXISTS parts_json jsonb NOT NULL DEFAULT '[]'::jsonb;
+  `);
   assetExtraColsEnsured = true;
 }
 
@@ -55,6 +71,11 @@ const updateAssetSchema = z.object({
   calibration_interval_days: z.coerce.number().int().positive().optional().nullable(),
   last_calibration_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
   next_calibration_due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+  purchase_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+  purchase_cost_vnd: z.coerce.number().min(0).optional().nullable(),
+  depreciation_months: z.coerce.number().int().min(1).max(600).optional().nullable(),
+  warranty_expiry: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+  supplier_name: z.string().trim().max(150).optional().nullable(),
   notes: z.string().trim().max(500).optional().nullable(),
   synthesizer: z
     .object({ column_positions: z.coerce.number().int().min(1).max(384), supported_scales: z.array(z.string()).max(30).default([]) })
@@ -133,6 +154,11 @@ export async function updateAsset(tx: Tx, actor: AuthzActor, assetId: string, in
     data.calibration_interval_days === undefined ? cur.calibration_interval_days : data.calibration_interval_days;
   const nextLastCal = data.last_calibration_date === undefined ? cur.last_calibration_date : data.last_calibration_date;
   const nextCal = data.next_calibration_due === undefined ? cur.next_calibration_due : data.next_calibration_due;
+  const nextPurchaseDate = data.purchase_date === undefined ? cur.purchase_date : data.purchase_date;
+  const nextPurchaseCost = data.purchase_cost_vnd === undefined ? cur.purchase_cost_vnd : data.purchase_cost_vnd;
+  const nextDeprMonths = data.depreciation_months === undefined ? cur.depreciation_months : data.depreciation_months;
+  const nextWarrantyExpiry = data.warranty_expiry === undefined ? cur.warranty_expiry : data.warranty_expiry;
+  const nextSupplierName = data.supplier_name === undefined ? cur.supplier_name : data.supplier_name;
   const nextNotes = data.notes === undefined ? cur.notes : data.notes;
 
   const curCalStr = cur.next_calibration_due ? String(cur.next_calibration_due).slice(0, 10) : null;
@@ -149,7 +175,9 @@ export async function updateAsset(tx: Tx, actor: AuthzActor, assetId: string, in
             location = $6, equipment_category = $7, manufacturer = $8,
             model = $9, serial_no = $10, status = $11,
             calibration_interval_days = $12, last_calibration_date = $13, next_calibration_due = $14,
-            notes = $15, version = version + 1, updated_at = now(), updated_by = $16
+            purchase_date = $15, purchase_cost_vnd = $16, depreciation_months = $17,
+            warranty_expiry = $18, supplier_name = $19,
+            notes = $20, version = version + 1, updated_at = now(), updated_by = $21
       WHERE id = $1`,
     [
       assetId,
@@ -166,6 +194,11 @@ export async function updateAsset(tx: Tx, actor: AuthzActor, assetId: string, in
       nextCalInterval,
       nextLastCal,
       nextCal,
+      nextPurchaseDate,
+      nextPurchaseCost,
+      nextDeprMonths,
+      nextWarrantyExpiry,
+      nextSupplierName,
       nextNotes,
       actor.userId,
     ]
@@ -479,8 +512,12 @@ export async function listAssets(tx: Tx, actor: AuthzActor, type?: string, deptC
   await syncOverdueCalibrationAssets(tx);
   const rows = (
     await tx.query(
-      `SELECT a.*, o.code AS owner_code, o.name AS owner_name, s.column_positions, s.supported_scales,
-              (SELECT count(*)::int FROM asset.event e WHERE e.asset_id = a.id AND e.status = 'PLANNED') AS open_event_count
+      `SELECT a.*,
+              a.purchase_cost_vnd::float AS purchase_cost_vnd,
+              o.code AS owner_code, o.name AS owner_name, s.column_positions, s.supported_scales,
+              (SELECT count(*)::int FROM asset.event e WHERE e.asset_id = a.id AND e.status = 'PLANNED') AS open_event_count,
+              (SELECT count(*)::int FROM asset.event e WHERE e.asset_id = a.id AND e.status = 'DONE') AS completed_event_count,
+              (SELECT COALESCE(sum(e.cost_vnd), 0)::float FROM asset.event e WHERE e.asset_id = a.id AND e.status <> 'CANCELLED') AS total_maintenance_cost_vnd
          FROM asset.asset a
          JOIN core.org_unit o ON o.id = a.owner_org_unit_id
          LEFT JOIN oligo.synthesizer s ON s.asset_id = a.id

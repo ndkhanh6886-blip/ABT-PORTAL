@@ -6,6 +6,7 @@ import { vnToday } from "../core/dates";
 import { invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { insertRecord, parseInput } from "../core/records";
+import { readAttachment, saveAttachment } from "../core/files";
 import { defineMachine, listAllowedActions, runTransition } from "../core/stateMachine";
 import { allocate, findCandidates } from "../inv/allocation";
 import { createStockDocument, stockDocumentMachine } from "../inv/documents";
@@ -385,7 +386,34 @@ export async function listServiceTickets(tx: Tx, actor: AuthzActor) {
               du.serial_no, du.customer_name, du.warranty_end::text AS warranty_end,
               m.code AS model_code, m.name AS model_name,
               u.name AS org_unit_name, asg.display_name AS assigned_to_name,
-              dv.code AS deviation_code
+              dv.code AS deviation_code,
+              COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                  'id', c.id,
+                  'item_code', it.code,
+                  'item_name', it.name,
+                  'lot_code', l.code,
+                  'component_serial', c.component_serial,
+                  'qty', c.qty::float,
+                  'uom', c.uom,
+                  'installed_at', c.installed_at
+                ) ORDER BY c.installed_at)
+                FROM device.device_unit_component c
+                JOIN master.item it ON it.id = c.item_id
+                LEFT JOIN inv.lot l ON l.id = c.lot_id
+                WHERE c.service_ticket_id = st.id
+              ), '[]'::jsonb) AS replaced_parts,
+              COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                  'id', f.id,
+                  'file_name', f.file_name,
+                  'mime_type', f.mime_type,
+                  'size_bytes', f.size_bytes,
+                  'uploaded_at', f.uploaded_at
+                ) ORDER BY f.uploaded_at)
+                FROM core.attachment f
+                WHERE f.entity_type = 'device_service_ticket' AND f.entity_id = st.id::text AND f.voided_at IS NULL
+              ), '[]'::jsonb) AS attachments
          FROM device.service_ticket st
          JOIN device.device_unit du ON du.id = st.unit_id
          JOIN device.device_model m ON m.id = du.model_id
@@ -403,6 +431,45 @@ export async function listServiceTickets(tx: Tx, actor: AuthzActor) {
     }
   }
   return visible;
+}
+
+export async function attachToServiceTicket(
+  tx: Tx,
+  actor: AuthzActor,
+  ticketId: string,
+  file: { fileName: string; mimeType: string; data: Buffer }
+) {
+  const t = (await tx.query("SELECT id, org_unit_id FROM device.service_ticket WHERE id = $1", [ticketId])).rows[0];
+  if (!t) throw notFound("phiếu dịch vụ kỹ thuật");
+  await authorize(tx, actor, "device.view", t.org_unit_id);
+  const category = file.mimeType.startsWith("image/") ? "IMAGE" : "DOCUMENT";
+  return saveAttachment(tx, actor, { entityType: "device_service_ticket", entityId: ticketId, category, ...file });
+}
+
+export async function listServiceTicketFiles(tx: Tx, actor: AuthzActor, ticketId: string) {
+  const t = (await tx.query("SELECT id, org_unit_id FROM device.service_ticket WHERE id = $1", [ticketId])).rows[0];
+  if (!t) throw notFound("phiếu dịch vụ kỹ thuật");
+  await authorize(tx, actor, "device.view", t.org_unit_id);
+  return (
+    await tx.query(
+      "SELECT f.id, f.file_name, f.mime_type, f.size_bytes, f.uploaded_at FROM core.attachment f WHERE f.entity_type = 'device_service_ticket' AND f.entity_id = $1 AND f.voided_at IS NULL ORDER BY f.uploaded_at",
+      [ticketId]
+    )
+  ).rows;
+}
+
+export async function readServiceTicketFile(tx: Tx, actor: AuthzActor, ticketId: string, fileId: string) {
+  const t = (await tx.query("SELECT id, org_unit_id FROM device.service_ticket WHERE id = $1", [ticketId])).rows[0];
+  if (!t) throw notFound("phiếu dịch vụ kỹ thuật");
+  await authorize(tx, actor, "device.view", t.org_unit_id);
+  const f = (
+    await tx.query(
+      "SELECT 1 FROM core.attachment WHERE id = $1 AND entity_type = 'device_service_ticket' AND entity_id = $2",
+      [fileId, ticketId]
+    )
+  ).rows[0];
+  if (!f) throw notFound("file đính kèm");
+  return readAttachment(tx, fileId);
 }
 
 export async function listServiceSchedules(tx: Tx, actor: AuthzActor) {
