@@ -27580,7 +27580,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         )}
                                                                         placeholder={isSvc && (!p.price || Number(p.price) === 0) ? "Theo phát sinh..." : isUnpriced ? "Giá theo đợt..." : "Giá End User..."}
                                                                     />
-                                                                    <div className="flex items-center justify-between gap-1 mt-1">
+                                                                    <div className="flex flex-wrap items-center justify-between gap-x-1 gap-y-0.5 mt-1">
                                                                         {isSvc && (!p.price || Number(p.price) === 0) ? (
                                                                             <span className="px-1 py-0.2 rounded text-[11px] font-mono font-bold text-indigo-300 bg-indigo-950/60 border border-indigo-500/40 whitespace-nowrap">
                                                                                 Nhập khi báo giá / SO
@@ -27600,7 +27600,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             </span>
                                                                         )}
                                                                         {isUnpriced ? (
-                                                                            <span className="text-[11px] text-amber-400/90 font-medium text-right">
+                                                                            <span className="text-[11px] text-amber-400/90 font-medium text-right whitespace-nowrap">
                                                                                 Báo theo đợt
                                                                             </span>
                                                                         ) : (Number(p.costPrice) > 0 && Number(p.price) <= Number(p.costPrice)) ? (
