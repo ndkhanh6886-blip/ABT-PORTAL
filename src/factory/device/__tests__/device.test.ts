@@ -36,8 +36,10 @@ import {
   subcontractOrderMachine,
 } from "../subcontract";
 import {
+  attachToServiceTicket,
   createServiceTicket,
   evaluateComplaintCapa,
+  listServiceTickets,
   replaceTicketComponent,
   serviceTicketMachine,
 } from "../serviceTickets";
@@ -817,6 +819,28 @@ describe("Phase 4c — Module Phòng Kỹ thuật – Công nghệ / Thiết b�
 
     const unitBackInField = (await getFactoryPool().query("SELECT status FROM device.device_unit WHERE id = $1", [unit.id])).rows[0];
     expect(unitBackInField.status).toBe("IN_SERVICE_FIELD");
+
+    // 4.3 Attach signed FSR report / site photo to service ticket and verify listServiceTickets returns attachments & replaced_parts
+    const png1x1 = Buffer.from(
+      "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082",
+      "hex"
+    );
+    await withTransaction((tx) =>
+      attachToServiceTicket(tx, engineer, compTicket.id, {
+        fileName: "Bien-ban-FSR-ky-xac-nhan.png",
+        mimeType: "image/png",
+        data: png1x1,
+      })
+    );
+    const ticketList = await withTransaction((tx) => listServiceTickets(tx, engineer));
+    const listedComp = ticketList.find((t: any) => t.id === compTicket.id);
+    expect(listedComp).toBeDefined();
+    expect(Array.isArray(listedComp.replaced_parts)).toBe(true);
+    expect(listedComp.replaced_parts.length).toBe(1);
+    expect(listedComp.replaced_parts[0].component_serial).toBe("PCB-REP-2026-99");
+    expect(Array.isArray(listedComp.attachments)).toBe(true);
+    expect(listedComp.attachments.length).toBe(1);
+    expect(listedComp.attachments[0].file_name).toBe("Bien-ban-FSR-ky-xac-nhan.png");
   });
 
   it("5. End-to-End Device Lifecycle: R&D 5-Gate -> Production Transfer -> PO & MRP Shortage -> PR + Subcontract + WO -> BOM Kitting -> Delivery", async () => {
