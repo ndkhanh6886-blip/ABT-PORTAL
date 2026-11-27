@@ -47,7 +47,7 @@ function SectionTabs({
   const visible = items.filter((i) => i.show);
   if (visible.length < minItems) return null;
   return (
-    <div className="mb-3 flex flex-wrap items-center gap-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-1.5">
+    <nav aria-label={title} className="mb-3 flex flex-wrap items-center gap-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-1.5">
       <span className="hidden sm:block px-2 text-[11px] font-extrabold uppercase tracking-wider text-slate-400 whitespace-nowrap">{title}</span>
       {visible.map((i) => (
         <a
@@ -59,7 +59,7 @@ function SectionTabs({
               onChange(i.tab);
             }
           }}
-          title="Giữ Ctrl + Click hoặc Chuột phải -> Mở trong tab mới"
+          aria-current={active === i.tab ? "page" : undefined}
           className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${
             active === i.tab ? activeClass : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
           }`}
@@ -68,7 +68,7 @@ function SectionTabs({
           {i.label}
         </a>
       ))}
-    </div>
+    </nav>
   );
 }
 

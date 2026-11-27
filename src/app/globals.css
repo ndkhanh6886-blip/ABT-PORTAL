@@ -2420,3 +2420,17 @@ html.dark .status-badge.tone-pending   { --tone-bg: rgba(245, 158, 11, 0.14); --
 html.dark .status-badge.tone-review    { --tone-bg: rgba(139, 92, 246, 0.16); --tone-fg: #c4b5fd; --tone-line: rgba(139, 92, 246, 0.4); }
 html.dark .status-badge.tone-hold      { --tone-bg: rgba(249, 115, 22, 0.15); --tone-fg: #fdba74; --tone-line: rgba(249, 115, 22, 0.4); }
 html.dark .status-badge.tone-danger    { --tone-bg: rgba(244, 63, 94, 0.14); --tone-fg: #fda4af; --tone-line: rgba(244, 63, 94, 0.4); }
+
+/* ==========================================================================
+   KEYBOARD FOCUS (focus-visible)
+   Only shows for keyboard navigation (Tab), never on mouse click. !important because many
+   buttons/links carry outline-none or ring utilities that would otherwise hide it.
+   Form fields keep their own focus ring (focus:ring-*), so they are not listed here.
+   ========================================================================== */
+:is(a[href], button, summary, [role="button"], [role="tab"], [role="menuitem"], [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: 2px solid var(--primary) !important;
+  outline-offset: 2px !important;
+}
+[role="dialog"]:focus {
+  outline: none;
+}

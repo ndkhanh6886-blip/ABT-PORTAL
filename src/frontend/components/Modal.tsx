@@ -1,6 +1,6 @@
 "use client";
 
-import React, { ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import React, { ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Maximize2, Minimize2 } from "lucide-react";
 import { cn } from "@/backend/services/utils";
@@ -18,12 +18,17 @@ interface ModalProps {
 const openStack: number[] = [];
 let modalSeq = 0;
 
+const FOCUSABLE =
+    'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]';
+
 const DISCARD_MESSAGE = "Bạn có thay đổi chưa lưu. Đóng và bỏ các thay đổi này?";
 
 export const Modal = ({ isOpen, onClose, title, children, size = "md" }: ModalProps) => {
     const [maximized, setMaximized] = useState(false);
     // Có người dùng nhập / sửa gì trong khung chưa (tự nhận biết qua sự kiện nhập liệu)
     const dirtyRef = useRef(false);
+    const dialogRef = useRef<HTMLDivElement>(null);
+    const titleId = useId();
     const onCloseRef = useRef(onClose);
     onCloseRef.current = onClose;
 
@@ -49,10 +54,42 @@ export const Modal = ({ isOpen, onClose, title, children, size = "md" }: ModalPr
         setMaximized(false);
         const id = seqRef.current || ++modalSeq;
         openStack.push(id);
+        // Bàn phím: đưa con trỏ vào khung khi mở, trả về chỗ cũ khi đóng
+        const returnFocusTo = document.activeElement as HTMLElement | null;
+        const focusTimer = window.setTimeout(() => {
+            const dialog = dialogRef.current;
+            if (dialog && !dialog.contains(document.activeElement)) dialog.focus({ preventScroll: true });
+        }, 0);
         const onKey = (e: KeyboardEvent) => {
-            if (e.key !== "Escape" || e.defaultPrevented || openStack[openStack.length - 1] !== id) return;
-            e.preventDefault();
-            requestClose();
+            if (e.defaultPrevented || openStack[openStack.length - 1] !== id) return;
+            if (e.key === "Escape") {
+                e.preventDefault();
+                requestClose();
+                return;
+            }
+            // Tab / Shift+Tab chỉ đi vòng trong khung trên cùng
+            if (e.key !== "Tab") return;
+            const dialog = dialogRef.current;
+            if (!dialog) return;
+            // Con trỏ đang ở phần nổi ngoài khung (danh sách chọn gắn vào body...): để trình duyệt tự xử lý
+            const current = document.activeElement;
+            if (current && current !== document.body && !dialog.contains(current)) return;
+            const items = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(el => el.offsetParent !== null);
+            if (items.length === 0) {
+                e.preventDefault();
+                dialog.focus();
+                return;
+            }
+            const first = items[0];
+            const last = items[items.length - 1];
+            const active = document.activeElement;
+            if (e.shiftKey && (active === first || active === dialog || active === document.body)) {
+                e.preventDefault();
+                last.focus();
+            } else if (!e.shiftKey && (active === last || active === document.body)) {
+                e.preventDefault();
+                first.focus();
+            }
         };
         // Tải lại trang / đóng tab khi đang có thay đổi chưa lưu
         const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -63,6 +100,8 @@ export const Modal = ({ isOpen, onClose, title, children, size = "md" }: ModalPr
         window.addEventListener("keydown", onKey);
         window.addEventListener("beforeunload", onBeforeUnload);
         return () => {
+            window.clearTimeout(focusTimer);
+            if (returnFocusTo && document.contains(returnFocusTo)) returnFocusTo.focus({ preventScroll: true });
             const i = openStack.indexOf(id);
             if (i >= 0) openStack.splice(i, 1);
             window.removeEventListener("keydown", onKey);
@@ -104,6 +143,11 @@ export const Modal = ({ isOpen, onClose, title, children, size = "md" }: ModalPr
                         className={cn("fixed inset-0 flex items-center justify-center z-[120] pointer-events-none", maximized ? "p-0" : "p-4")}
                     >
                         <motion.div
+                            ref={dialogRef}
+                            role="dialog"
+                            aria-modal="true"
+                            aria-labelledby={titleId}
+                            tabIndex={-1}
                             initial={{ opacity: 0, scale: 0.95, y: 20 }}
                             animate={{ opacity: 1, scale: 1, y: 0 }}
                             exit={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -126,12 +170,13 @@ export const Modal = ({ isOpen, onClose, title, children, size = "md" }: ModalPr
                             )}
                         >
                             <div className="flex items-center justify-between gap-3 px-6 py-4 sm:py-5 border-b border-white/5 bg-white/5">
-                                <h3 className="text-lg sm:text-xl font-bold text-white tracking-tight min-w-0 break-words leading-snug">{title}</h3>
+                                <h3 id={titleId} className="text-lg sm:text-xl font-bold text-white tracking-tight min-w-0 break-words leading-snug">{title}</h3>
                                 <div className="flex items-center gap-1 shrink-0">
                                     <button
                                         type="button"
                                         onClick={() => setMaximized(m => !m)}
                                         title={maximized ? "Thu nhỏ" : "Phóng to toàn màn hình"}
+                                        aria-label={maximized ? "Thu nhỏ khung" : "Phóng to khung toàn màn hình"}
                                         className="p-2 hover:bg-white/10 rounded-xl transition-all text-slate-400 hover:text-white"
                                     >
                                         {maximized ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
@@ -140,6 +185,7 @@ export const Modal = ({ isOpen, onClose, title, children, size = "md" }: ModalPr
                                         type="button"
                                         onClick={requestClose}
                                         title="Đóng (Esc)"
+                                        aria-label="Đóng"
                                         className="p-2 hover:bg-white/10 rounded-xl transition-all text-slate-400 hover:text-white"
                                     >
                                         <X className="w-5 h-5" />
