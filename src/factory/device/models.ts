@@ -382,8 +382,48 @@ function mapStationToCode(station?: string | null): "STATION_1_MECH" | "STATION_
 }
 
 let catalogSeededInProcess = false;
+let deviceBomSchemaVerified = false;
+
+async function ensureDeviceBomSchemaColumns(tx: Tx) {
+  if (deviceBomSchemaVerified) return;
+  await tx.query("SAVEPOINT sp_device_bom_schema");
+  try {
+    await tx.query(`
+      ALTER TABLE device.device_model
+        ADD COLUMN IF NOT EXISTS specs_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+        ADD COLUMN IF NOT EXISTS baseline_specs_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+        ADD COLUMN IF NOT EXISTS accessories_standard jsonb NOT NULL DEFAULT '[]'::jsonb,
+        ADD COLUMN IF NOT EXISTS accessories_optional jsonb NOT NULL DEFAULT '[]'::jsonb,
+        ADD COLUMN IF NOT EXISTS category_label text,
+        ADD COLUMN IF NOT EXISTS manufacturer text,
+        ADD COLUMN IF NOT EXISTS origin text,
+        ADD COLUMN IF NOT EXISTS price numeric(18,2) NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS price_dealer1 numeric(18,2) NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS price_dealer2 numeric(18,2) NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS lead_time_days int NOT NULL DEFAULT 14,
+        ADD COLUMN IF NOT EXISTS image_url text,
+        ADD COLUMN IF NOT EXISTS production_stages jsonb NOT NULL DEFAULT '[]'::jsonb,
+        ADD COLUMN IF NOT EXISTS bom_json jsonb NOT NULL DEFAULT '[]'::jsonb,
+        ADD COLUMN IF NOT EXISTS base_model_code text;
+
+      ALTER TABLE device.model_bom_line
+        ADD COLUMN IF NOT EXISTS tracking_type text NOT NULL DEFAULT 'LOT',
+        ADD COLUMN IF NOT EXISTS drawing_code text,
+        ADD COLUMN IF NOT EXISTS unit_cost numeric(18,2) NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS display_uom text,
+        ADD COLUMN IF NOT EXISTS part_category text,
+        ADD COLUMN IF NOT EXISTS station_label text,
+        ADD COLUMN IF NOT EXISTS preferred_vendor text;
+    `);
+    await tx.query("RELEASE SAVEPOINT sp_device_bom_schema");
+    deviceBomSchemaVerified = true;
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_device_bom_schema");
+  }
+}
 
 export async function ensureTechCatalogAndBomSeeded(tx: Tx) {
+  await ensureDeviceBomSchemaColumns(tx);
   if (process.env.FACTORY_ALLOW_DEMO_SEED !== "1") {
     catalogSeededInProcess = true;
     return;
@@ -568,7 +608,10 @@ export async function ensureTechCatalogAndBomSeeded(tx: Tx) {
       modelId = ins.id;
     } else {
       modelId = existing.id;
-      if (!existing.price || existing.price <= 0 || !existing.bom_len || existing.bom_len === 0) {
+      const existingRevLinesCnt = currentRevId
+        ? ((await tx.query("SELECT count(*)::int AS cnt FROM device.model_bom_line WHERE revision_id = $1", [currentRevId])).rows[0]?.cnt ?? 0)
+        : 0;
+      if (!existing.price || existing.price <= 0 || ((!existing.bom_len || existing.bom_len === 0) && existingRevLinesCnt === 0)) {
         await tx.query(
           `UPDATE device.device_model
               SET category_label = COALESCE(category_label, $2),
@@ -585,7 +628,7 @@ export async function ensureTechCatalogAndBomSeeded(tx: Tx) {
                   accessories_standard = CASE WHEN accessories_standard IS NULL OR accessories_standard = '[]'::jsonb THEN $13::jsonb ELSE accessories_standard END,
                   accessories_optional = CASE WHEN accessories_optional IS NULL OR accessories_optional = '[]'::jsonb THEN $14::jsonb ELSE accessories_optional END,
                   production_stages = CASE WHEN production_stages IS NULL OR production_stages = '[]'::jsonb THEN $15::jsonb ELSE production_stages END,
-                  bom_json = CASE WHEN bom_json IS NULL OR bom_json = '[]'::jsonb THEN $16::jsonb ELSE bom_json END,
+                  bom_json = CASE WHEN (bom_json IS NULL OR bom_json = '[]'::jsonb) AND $17::int = 0 THEN $16::jsonb ELSE bom_json END,
                   status = 'COMMERCIAL'
             WHERE id = $1`,
           [
@@ -605,6 +648,7 @@ export async function ensureTechCatalogAndBomSeeded(tx: Tx) {
             JSON.stringify(seed.accessoriesOptional ?? []),
             JSON.stringify(seed.productionStages ?? []),
             JSON.stringify(seed.bom ?? []),
+            existingRevLinesCnt,
           ]
         );
       }
@@ -657,20 +701,60 @@ async function syncBomJsonToRevisionLines(
   revisionId: string,
   bomItems: LegacyEquipmentBOMItem[],
   partItemMap?: Map<string, { id: string; baseUom: string; unit: string; unitCost: number; category: string }>,
-  defaultLocId?: string
+  defaultLocId?: string,
+  orgUnitId?: string,
+  actorUserId?: number | string | null
 ) {
+  await ensureDeviceBomSchemaColumns(tx);
+
+  // Unlink any device_unit_component rows referencing the old BOM lines before deleting them
+  await tx.query("SAVEPOINT sp_unlink_unit_comp");
+  try {
+    await tx.query(
+      `UPDATE device.device_unit_component
+          SET bom_line_id = NULL
+        WHERE bom_line_id IN (SELECT id FROM device.model_bom_line WHERE revision_id = $1)`,
+      [revisionId]
+    );
+    await tx.query("RELEASE SAVEPOINT sp_unlink_unit_comp");
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_unlink_unit_comp");
+  }
+
   await tx.query("DELETE FROM device.model_bom_line WHERE revision_id = $1", [revisionId]);
+
+  let defaultSubVendorId: string | null = null;
   let lineNo = 1;
-  for (const line of bomItems) {
-    const partCode = (line.partCode || `PART-${lineNo}`).trim().toUpperCase();
-    const partName = (line.partName || partCode).trim();
-    const baseUom = mapUnitToBaseUom(line.unit);
+  for (const rawLine of bomItems) {
+    if (!rawLine || typeof rawLine !== "object") continue;
+    const line = rawLine as LegacyEquipmentBOMItem & Record<string, unknown>;
+    const rawCode = String(line.partCode ?? line.item_code ?? `PART-${lineNo}`).trim();
+    const partCode = (rawCode || `PART-${lineNo}`).toUpperCase().slice(0, 60);
+    const partName = String(line.partName ?? line.item_name ?? partCode).trim().slice(0, 250) || partCode;
+    let baseUom = mapUnitToBaseUom(String(line.unit ?? line.display_uom ?? line.uom ?? "Cái"));
+
+    // Ensure target UOM exists in master.uom so FK on master.item and device.model_bom_line never fails
+    await tx.query(
+      `INSERT INTO master.uom (code, name, dimension, is_base, factor_to_base, precision, status)
+       VALUES ($1, $1, 'COUNT', false, 1, 2, 'ACTIVE')
+       ON CONFLICT (code) DO UPDATE SET status = 'ACTIVE'`,
+      [baseUom]
+    );
+
     let itemId = partItemMap?.get(partCode)?.id;
 
     if (!itemId) {
-      const found = (await tx.query("SELECT id FROM master.item WHERE code = $1", [partCode])).rows[0];
+      const found = (
+        await tx.query(
+          "SELECT id, base_uom FROM master.item WHERE upper(code) = upper($1) OR upper(kd_item_code) = upper($1) ORDER BY (upper(code) = upper($1)) DESC LIMIT 1",
+          [partCode]
+        )
+      ).rows[0];
       if (found) {
         itemId = found.id;
+        if (found.base_uom) {
+          baseUom = found.base_uom;
+        }
       } else {
         const metaJson = JSON.stringify({
           legacyTechPart: true,
@@ -684,11 +768,12 @@ async function syncBomJsonToRevisionLines(
             `INSERT INTO master.item (code, name, item_type, base_uom, tracking, storage_condition, min_stock, reorder_qty, receipt_qc_required, is_purchasable, is_saleable, is_manufacturable, notes, status)
              VALUES ($1, $2, 'COMPONENT', $3, 'LOT', 'RT', 5, 10, true, true, false, false, $4, 'ACTIVE')
              ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
-             RETURNING id`,
+             RETURNING id, base_uom`,
             [partCode, partName, baseUom, metaJson]
           )
         ).rows[0];
         itemId = created.id;
+        if (created.base_uom) baseUom = created.base_uom;
         if (defaultLocId) {
           const lotRow = (
             await tx.query(
@@ -711,19 +796,32 @@ async function syncBomJsonToRevisionLines(
       }
     }
 
-    const stationCode = mapStationToCode(line.station);
-    const sourceType = line.sourceType === "OUTSOURCE" ? "SUBCONTRACT" : "BUY";
-    const qty = Math.max(Number(line.quantity) || 1, 0.0001);
+    const stationCode = mapStationToCode(String(line.station ?? line.station_label ?? line.station_code ?? ""));
+    const rawSource = String(line.sourceType ?? line.source_type ?? "BUY").toUpperCase();
+    const sourceType = rawSource === "OUTSOURCE" || rawSource === "SUBCONTRACT" ? "SUBCONTRACT" : rawSource === "MAKE" ? "MAKE" : "BUY";
+    const rawQty = Number(line.quantity ?? line.qty_per_unit ?? 1);
+    const qty = Number.isFinite(rawQty) && rawQty > 0 ? rawQty : 1;
+    const rawCost = Number(line.unitCost ?? line.unit_cost ?? 0);
+    const unitCost = Number.isFinite(rawCost) && rawCost >= 0 ? rawCost : 0;
+    const trackingRaw = String(line.trackingType ?? line.tracking_type ?? "LOT").toUpperCase();
+    const trackingType = trackingRaw === "SERIAL" || trackingRaw === "BULK" ? trackingRaw : "LOT";
+    const requiresSerial = trackingType === "SERIAL";
+    const drawingCode = String(line.drawingFile ?? line.drawing_code ?? "").trim().slice(0, 120) || null;
+    const notes = String(line.notes ?? "").trim().slice(0, 500) || null;
+    const displayUom = String(line.unit ?? line.display_uom ?? baseUom ?? "Cái").trim().slice(0, 50) || "Cái";
+    const partCategory = String(line.category ?? line.part_category ?? "Bo mạch & Điện tử").trim().slice(0, 120) || "Bo mạch & Điện tử";
+    const stationLabel = String(line.station ?? line.station_label ?? "1. Lắp ráp Khung Cơ khí & Vỏ máy").trim().slice(0, 200);
+    const preferredVendor = String(line.preferredVendor ?? line.preferred_vendor ?? "").trim().slice(0, 200) || null;
 
     await tx.query(
       `INSERT INTO device.model_bom_line (
          revision_id, line_no, station_code, component_item_id, qty_per_unit, uom,
          source_type, is_critical, requires_serial, tracking_type, drawing_code, notes,
-         unit_cost, display_uom, part_category, station_label, preferred_vendor
+         unit_cost, display_uom, part_category, station_label, preferred_vendor, created_by, updated_by
        ) VALUES (
          $1, $2, $3, $4, $5, $6,
-         $7, true, false, 'LOT', $8, $9,
-         $10, $11, $12, $13, $14
+         $7, true, $8, $9, $10, $11,
+         $12, $13, $14, $15, $16, $17, $17
        )`,
       [
         revisionId,
@@ -733,15 +831,81 @@ async function syncBomJsonToRevisionLines(
         qty,
         baseUom,
         sourceType,
-        line.drawingFile || null,
-        line.notes || null,
-        Number(line.unitCost) || 0,
-        line.unit || "Cái",
-        line.category || "Bo mạch & Điện tử",
-        line.station || "1. Lắp ráp Khung Cơ khí & Vỏ máy",
-        line.preferredVendor || null,
+        requiresSerial,
+        trackingType,
+        drawingCode,
+        notes,
+        unitCost,
+        displayUom,
+        partCategory,
+        stationLabel,
+        preferredVendor,
+        actorUserId ?? null,
       ]
     );
+
+    // If this BOM line is marked for external subcontracting (OUTSOURCE / SUBCONTRACT),
+    // automatically ensure an active device.subcontract_part record exists so it appears in Gia công ngoài & PO Subcontract orders.
+    if (sourceType === "SUBCONTRACT" && itemId && orgUnitId) {
+      await tx.query("SAVEPOINT sp_auto_subcontract_part");
+      try {
+        const existingPart = (
+          await tx.query("SELECT id FROM device.subcontract_part WHERE item_id = $1 AND status = 'ACTIVE' LIMIT 1", [itemId])
+        ).rows[0];
+        if (!existingPart) {
+          if (!defaultSubVendorId) {
+            const v = (
+              await tx.query(
+                "SELECT id FROM master.partner WHERE is_subcontractor = true AND status = 'ACTIVE' ORDER BY (code = 'NCC-CNC-01') DESC, created_at ASC LIMIT 1"
+              )
+            ).rows[0];
+            if (v) {
+              defaultSubVendorId = v.id;
+            } else {
+              const createdVendor = (
+                await tx.query(
+                  `INSERT INTO master.partner (code, name, is_supplier, is_subcontractor, status, created_by, updated_by)
+                   VALUES ('NCC-CNC-01', 'Công ty Cơ khí Chính xác & Gia công CNC', true, true, 'ACTIVE', $1, $1)
+                   ON CONFLICT (code) DO UPDATE SET is_subcontractor = true, status = 'ACTIVE'
+                   RETURNING id`,
+                  [actorUserId ?? null]
+                )
+              ).rows[0];
+              defaultSubVendorId = createdVendor?.id ?? null;
+            }
+          }
+          if (defaultSubVendorId) {
+            const subPartCode = `GC-${partCode}`.slice(0, 40);
+            await tx.query(
+              `INSERT INTO device.subcontract_part (
+                 code, name, org_unit_id, item_id, drawing_code, drawing_revision, material_spec,
+                 surface_treatment, vendor_id, lead_time_days, std_cost, status, created_by, updated_by
+               ) VALUES (
+                 $1, $2, $3, $4, $5, 'Rev 1.0', 'Theo bản vẽ kỹ thuật DMR',
+                 'Hoàn thiện bề mặt chuẩn công nghiệp', $6, 7, $7, 'ACTIVE', $8, $8
+               )
+               ON CONFLICT (code) DO UPDATE
+                 SET item_id = EXCLUDED.item_id,
+                     drawing_code = COALESCE(EXCLUDED.drawing_code, device.subcontract_part.drawing_code),
+                     status = 'ACTIVE'`,
+              [
+                subPartCode,
+                partName,
+                orgUnitId,
+                itemId,
+                drawingCode || `DWG-${partCode}`,
+                defaultSubVendorId,
+                unitCost,
+                actorUserId ?? null,
+              ]
+            );
+          }
+        }
+        await tx.query("RELEASE SAVEPOINT sp_auto_subcontract_part");
+      } catch {
+        await tx.query("ROLLBACK TO SAVEPOINT sp_auto_subcontract_part");
+      }
+    }
   }
 }
 
@@ -915,50 +1079,92 @@ const updateCatalogBomSchema = z.object({
 });
 
 export async function updateDeviceModelCatalogAndBom(tx: Tx, actor: AuthzActor, input: unknown) {
+  await ensureDeviceBomSchemaColumns(tx);
   await ensureTechCatalogAndBomSeeded(tx);
   const d = parseInput(updateCatalogBomSchema, input);
   const cur = (await tx.query("SELECT * FROM device.device_model WHERE id = $1 FOR UPDATE", [d.model_id])).rows[0];
   if (!cur) throw notFound("model thiết bị");
   await authorize(tx, actor, "device.model.manage", cur.org_unit_id);
 
-  const patch: Record<string, unknown> = {};
+  let nextCode = cur.code as string;
   if (d.code !== undefined && d.code.toUpperCase() !== cur.code) {
     const newCode = d.code.toUpperCase();
     const dup = await tx.query("SELECT 1 FROM device.device_model WHERE code = $1 AND id <> $2", [newCode, d.model_id]);
     if (dup.rowCount) throw conflict(`Mã thiết bị ${newCode} đã tồn tại.`);
-    patch.code = newCode;
+    nextCode = newCode;
   }
-  if (d.name !== undefined) patch.name = d.name;
-  if (d.category !== undefined) patch.category = d.category;
-  if (d.category_label !== undefined) patch.category_label = d.category_label;
-  if (d.manufacturer !== undefined) patch.manufacturer = d.manufacturer;
-  if (d.origin !== undefined) patch.origin = d.origin;
-  if (d.price !== undefined) patch.price = d.price;
-  if (d.price_dealer1 !== undefined) patch.price_dealer1 = d.price_dealer1;
-  if (d.price_dealer2 !== undefined) patch.price_dealer2 = d.price_dealer2;
-  if (d.warranty_months !== undefined) patch.warranty_months = d.warranty_months;
-  if (d.lead_time_days !== undefined) patch.lead_time_days = d.lead_time_days;
-  if (d.required_burn_in_hours !== undefined) patch.required_burn_in_hours = d.required_burn_in_hours;
-  if (d.image_url !== undefined) patch.image_url = d.image_url;
-  if (d.description !== undefined) patch.description = d.description;
-  if (d.specs_json !== undefined) patch.specs_json = JSON.stringify(d.specs_json);
-  if (d.baseline_specs_json !== undefined) patch.baseline_specs_json = JSON.stringify(d.baseline_specs_json);
-  if (d.accessories_standard !== undefined) patch.accessories_standard = JSON.stringify(d.accessories_standard);
-  if (d.accessories_optional !== undefined) patch.accessories_optional = JSON.stringify(d.accessories_optional);
-  if (d.production_stages !== undefined) patch.production_stages = JSON.stringify(d.production_stages);
-  if (d.bom_json !== undefined) patch.bom_json = JSON.stringify(d.bom_json);
 
-  const updated = await updateRecord<DeviceModelRow>(
-    tx,
-    actor,
-    "device.device_model",
-    "device_model",
-    d.model_id,
-    cur.version,
-    patch
+  await tx.query(
+    `UPDATE device.device_model
+        SET code = $2,
+            name = COALESCE($3, name),
+            category = COALESCE($4, category),
+            category_label = CASE WHEN $5::boolean THEN $6 ELSE category_label END,
+            manufacturer = CASE WHEN $7::boolean THEN $8 ELSE manufacturer END,
+            origin = CASE WHEN $9::boolean THEN $10 ELSE origin END,
+            price = COALESCE($11, price),
+            price_dealer1 = COALESCE($12, price_dealer1),
+            price_dealer2 = COALESCE($13, price_dealer2),
+            warranty_months = COALESCE($14, warranty_months),
+            lead_time_days = COALESCE($15, lead_time_days),
+            required_burn_in_hours = COALESCE($16, required_burn_in_hours),
+            image_url = CASE WHEN $17::boolean THEN $18 ELSE image_url END,
+            description = CASE WHEN $19::boolean THEN $20 ELSE description END,
+            specs_json = COALESCE($21::jsonb, specs_json),
+            baseline_specs_json = COALESCE($22::jsonb, baseline_specs_json),
+            accessories_standard = COALESCE($23::jsonb, accessories_standard),
+            accessories_optional = COALESCE($24::jsonb, accessories_optional),
+            production_stages = COALESCE($25::jsonb, production_stages),
+            bom_json = COALESCE($26::jsonb, bom_json),
+            version = COALESCE(version, 1) + 1,
+            updated_at = now(),
+            updated_by = $27
+      WHERE id = $1`,
+    [
+      d.model_id,
+      nextCode,
+      d.name ?? null,
+      d.category ?? null,
+      d.category_label !== undefined,
+      d.category_label ?? null,
+      d.manufacturer !== undefined,
+      d.manufacturer ?? null,
+      d.origin !== undefined,
+      d.origin ?? null,
+      d.price ?? null,
+      d.price_dealer1 ?? null,
+      d.price_dealer2 ?? null,
+      d.warranty_months ?? null,
+      d.lead_time_days ?? null,
+      d.required_burn_in_hours ?? null,
+      d.image_url !== undefined,
+      d.image_url ?? null,
+      d.description !== undefined,
+      d.description ?? null,
+      d.specs_json !== undefined ? JSON.stringify(d.specs_json) : null,
+      d.baseline_specs_json !== undefined ? JSON.stringify(d.baseline_specs_json) : null,
+      d.accessories_standard !== undefined ? JSON.stringify(d.accessories_standard) : null,
+      d.accessories_optional !== undefined ? JSON.stringify(d.accessories_optional) : null,
+      d.production_stages !== undefined ? JSON.stringify(d.production_stages) : null,
+      d.bom_json !== undefined ? JSON.stringify(d.bom_json) : null,
+      actor.userId,
+    ]
   );
 
-  // Sync bom_json to active/latest revision's model_bom_line table
+  await writeAudit(tx, actor, {
+    entityType: "device_model",
+    entityId: d.model_id,
+    action: "update_catalog_bom",
+    changes: {
+      code: [cur.code, nextCode],
+      bom_count: [
+        Array.isArray(cur.bom_json) ? cur.bom_json.length : 0,
+        Array.isArray(d.bom_json) ? d.bom_json.length : Array.isArray(cur.bom_json) ? cur.bom_json.length : 0,
+      ],
+    },
+  });
+
+  // Sync bom_json to active/latest revision's model_bom_line table so MRP & Subcontract (OPO) see updated source_type immediately
   if (d.bom_json !== undefined) {
     let revId = cur.current_revision_id as string | null;
     if (!revId) {
@@ -967,13 +1173,14 @@ export async function updateDeviceModelCatalogAndBom(tx: Tx, actor: AuthzActor, 
       ).rows[0];
       if (latestRev) {
         revId = latestRev.id;
+        await tx.query("UPDATE device.device_model SET current_revision_id = $2 WHERE id = $1", [d.model_id, revId]);
       } else {
         const revIns = (
           await tx.query(
             `INSERT INTO device.model_revision (model_id, revision, firmware_version, dmr_summary, effectivity_type, released_by, released_at, status, created_by, updated_by)
              VALUES ($1, '1.0', 'v1.0.0', $2, 'IMMEDIATE', $3, now(), 'RELEASED', $3, $3)
              RETURNING id`,
-            [d.model_id, `Hồ sơ DMR cho thiết bị ${cur.code}`, actor.userId]
+            [d.model_id, `Hồ sơ DMR cho thiết bị ${nextCode}`, actor.userId]
           )
         ).rows[0];
         revId = revIns.id;
@@ -981,14 +1188,19 @@ export async function updateDeviceModelCatalogAndBom(tx: Tx, actor: AuthzActor, 
       }
     }
     if (revId) {
-      const revStatus = (await tx.query("SELECT status FROM device.model_revision WHERE id = $1", [revId])).rows[0]?.status;
-      if (revStatus === "DRAFT") {
-        await syncBomJsonToRevisionLines(tx, revId, d.bom_json as LegacyEquipmentBOMItem[]);
-      }
+      await syncBomJsonToRevisionLines(
+        tx,
+        revId,
+        d.bom_json as LegacyEquipmentBOMItem[],
+        undefined,
+        undefined,
+        cur.org_unit_id,
+        actor.userId
+      );
     }
   }
 
-  return getDeviceModelDetail(tx, actor, updated.id);
+  return getDeviceModelDetail(tx, actor, d.model_id);
 }
 
 const cloneUpgradeSchema = z.object({
@@ -1298,7 +1510,41 @@ export async function listDeviceModels(tx: Tx, actor: AuthzActor) {
   ).rows;
   const visible = [];
   for (const r of rows) {
-    if (await hasFactoryPermission(tx, actor, "device.view", r.org_unit_id)) visible.push(r);
+    if (await hasFactoryPermission(tx, actor, "device.view", r.org_unit_id)) {
+      if ((!Array.isArray(r.bom_json) || r.bom_json.length === 0) && r.current_revision_id) {
+        const revLines = (
+          await tx.query(
+            `SELECT bl.*,
+                    bl.qty_per_unit::float AS qty_per_unit,
+                    coalesce(bl.unit_cost, 0)::float AS unit_cost,
+                    it.code AS item_code, it.name AS item_name
+               FROM device.model_bom_line bl
+               JOIN master.item it ON it.id = bl.component_item_id
+              WHERE bl.revision_id = $1
+              ORDER BY bl.line_no ASC`,
+            [r.current_revision_id]
+          )
+        ).rows;
+        if (revLines.length > 0) {
+          r.bom_json = revLines.map((l) => ({
+            id: l.id,
+            partCode: l.item_code,
+            partName: l.item_name,
+            category: l.part_category || "Bo mạch & Điện tử",
+            quantity: Number(l.qty_per_unit) || 1,
+            unit: l.display_uom || l.uom || "Cái",
+            unitCost: Number(l.unit_cost) || 0,
+            sourceType: l.source_type === "SUBCONTRACT" ? "OUTSOURCE" : "BUY",
+            station: l.station_label || "1. Lắp ráp Khung Cơ khí & Vỏ máy",
+            drawingFile: l.drawing_code || "",
+            preferredVendor: l.preferred_vendor || "",
+            trackingType: l.tracking_type || "LOT",
+            notes: l.notes || "",
+          }));
+        }
+      }
+      visible.push(r);
+    }
   }
   return visible;
 }
@@ -1370,6 +1616,24 @@ export async function getDeviceModelDetail(tx: Tx, actor: AuthzActor, id: string
   ).rows;
   for (const e of ecos) {
     e.actions = await listAllowedActions(tx, ecoMachine, actor, e);
+  }
+
+  if ((!Array.isArray(model.bom_json) || model.bom_json.length === 0) && revisions.length > 0 && Array.isArray(revisions[0].bom_lines) && revisions[0].bom_lines.length > 0) {
+    model.bom_json = revisions[0].bom_lines.map((l: any) => ({
+      id: l.id,
+      partCode: l.item_code,
+      partName: l.item_name,
+      category: l.part_category || "Bo mạch & Điện tử",
+      quantity: Number(l.qty_per_unit) || 1,
+      unit: l.display_uom || l.uom || "Cái",
+      unitCost: Number(l.unit_cost) || 0,
+      sourceType: l.source_type === "SUBCONTRACT" ? "OUTSOURCE" : "BUY",
+      station: l.station_label || "1. Lắp ráp Khung Cơ khí & Vỏ máy",
+      drawingFile: l.drawing_code || "",
+      preferredVendor: l.preferred_vendor || "",
+      trackingType: l.tracking_type || "LOT",
+      notes: l.notes || "",
+    }));
   }
 
   return { ...model, revisions, ecos };
