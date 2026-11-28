@@ -314,12 +314,21 @@ function parseChannelMembers(rawMembers: any): string[] {
   return arr.map((m) => String(m || "").trim()).filter(Boolean);
 }
 
+function memberTokenVariants(rawMember: string): { lowers: string[]; keys: string[] } {
+  const clean = String(rawMember || "").trim();
+  if (!clean) return { lowers: [], keys: [] };
+  const withoutParen = clean.replace(/\s*\(.*?\)/g, "").trim();
+  const parenCode = clean.match(/\(([^)]+)\)/)?.[1]?.trim() || "";
+  const lowers = Array.from(new Set([clean, withoutParen, parenCode].map((s) => s.toLowerCase()).filter(Boolean)));
+  const keys = Array.from(new Set([clean, withoutParen, parenCode].map((s) => stripVn(s)).filter(Boolean)));
+  return { lowers, keys };
+}
+
 function userMatchesMemberList(ident: ChatIdentity, members: string[]): boolean {
   if (!members || members.length === 0) return false;
   for (const m of members) {
-    const lower = m.toLowerCase();
-    const key = stripVn(m);
-    if (ident.aliases.includes(lower) || (key && ident.aliasKeys.includes(key))) {
+    const { lowers, keys } = memberTokenVariants(m);
+    if (lowers.some((l) => ident.aliases.includes(l)) || keys.some((k) => ident.aliasKeys.includes(k))) {
       return true;
     }
   }
@@ -329,9 +338,8 @@ function userMatchesMemberList(ident: ChatIdentity, members: string[]): boolean 
 function userIsChannelCreator(ident: ChatIdentity, c: any): boolean {
   const creator = String(c?.created_by || "").trim();
   if (!creator || stripVn(creator) === "he thong") return false;
-  const lower = creator.toLowerCase();
-  const key = stripVn(creator);
-  return ident.aliases.includes(lower) || (Boolean(key) && ident.aliasKeys.includes(key));
+  const { lowers, keys } = memberTokenVariants(creator);
+  return lowers.some((l) => ident.aliases.includes(l)) || keys.some((k) => ident.aliasKeys.includes(k));
 }
 
 function isChannelAdmin(ident: ChatIdentity, c: any): boolean {
@@ -399,12 +407,24 @@ async function getChatIdentity(req: NextRequest): Promise<ChatIdentity | null> {
         WHERE LOWER(employee_code) = LOWER($1)
            OR LOWER(REGEXP_REPLACE(employee_code, '^NV-(ABT|TBRS|TBR|VIA)-?', '\\1', 'i')) = LOWER($1)
            OR LOWER(TRIM(full_name)) = LOWER(TRIM($2))
+        ORDER BY (LOWER(employee_code) = LOWER($1)) DESC,
+                 (LOWER(REGEXP_REPLACE(employee_code, '^NV-(ABT|TBRS|TBR|VIA)-?', '\\1', 'i')) = LOWER($1)) DESC
         LIMIT 1`,
       [me.username, name]
     );
     if (p.rows[0]) {
-      if (p.rows[0].employee_code) aliases.add(String(p.rows[0].employee_code).trim().toLowerCase());
-      if (p.rows[0].full_name) aliases.add(String(p.rows[0].full_name).trim().toLowerCase());
+      if (p.rows[0].employee_code) {
+        const empCode = String(p.rows[0].employee_code).trim().toLowerCase();
+        aliases.add(empCode);
+        aliases.add(empCode.replace(/^nv-(abt|tbrs|tbr|via)-?/i, "$1"));
+      }
+      if (p.rows[0].full_name) {
+        const fn = String(p.rows[0].full_name).trim().toLowerCase();
+        aliases.add(fn);
+        if (p.rows[0].employee_code) {
+          aliases.add(`${fn} (${String(p.rows[0].employee_code).trim().toLowerCase()})`);
+        }
+      }
       if (p.rows[0].department) depts.add(String(p.rows[0].department).trim());
       if (p.rows[0].position) position = String(p.rows[0].position).trim();
     }
@@ -1564,32 +1584,45 @@ export async function POST(req: NextRequest) {
         if (existing_channel_id) {
           const exRes = await query("SELECT * FROM chat_channels WHERE id = $1", [Number(existing_channel_id)]);
           if (exRes.rows.length > 0) {
-            groupChannel = exRes.rows[0];
-            // Ensure all attendees are in members
-            const curMems: string[] = Array.isArray(groupChannel.members) ? groupChannel.members : [];
-            const mergedMems = Array.from(new Set([...curMems, ...allMembers]));
-            await query("UPDATE chat_channels SET members = $1, last_message_at = CURRENT_TIMESTAMP WHERE id = $2", [
-              JSON.stringify(mergedMems),
-              groupChannel.id
-            ]);
+            const candidateCh = exRes.rows[0];
+            // Bảo mật: chỉ thành viên hiện có của nhóm (hoặc Trưởng nhóm / Quản trị viên) mới được gửi lịch họp & thêm thành viên vào nhóm đã tồn tại
+            if (!canUserAccessChannelRow(ident, candidateCh)) {
+              return chatForbidden();
+            }
+            if (String(candidateCh.channel_type || "").toUpperCase() === "DIRECT") {
+              return NextResponse.json({ error: "Không thể thêm danh sách thành viên họp vào kênh tin nhắn riêng 1-1." }, { status: 400 });
+            }
+            groupChannel = candidateCh;
+            // Chỉ người quản lý nhóm mới được tự động thêm người mới vào nhóm kín hiện có
+            if (isChannelAdmin(ident, groupChannel)) {
+              const curMems: string[] = parseChannelMembers(groupChannel.members);
+              const mergedMems = Array.from(new Set([...curMems, ...allMembers]));
+              await query("UPDATE chat_channels SET members = $1, last_message_at = CURRENT_TIMESTAMP WHERE id = $2", [
+                JSON.stringify(mergedMems),
+                groupChannel.id
+              ]);
+            }
           }
         }
 
         if (!groupChannel) {
           const groupName = `📅 Họp: ${String(title || "Cuộc họp nội bộ").trim().slice(0, 60)}`;
-          // Check if a group channel with the same name already exists
+          // Check if a group channel with the same name already exists AND the caller is already a member/creator of it
           const existGrp = await query(
-            "SELECT * FROM chat_channels WHERE channel_type = 'GROUP' AND LOWER(TRIM(name)) = LOWER(TRIM($1)) ORDER BY id DESC LIMIT 1",
+            "SELECT * FROM chat_channels WHERE channel_type = 'GROUP' AND LOWER(TRIM(name)) = LOWER(TRIM($1)) ORDER BY id DESC LIMIT 5",
             [groupName]
           );
-          if (existGrp.rows.length > 0) {
-            groupChannel = existGrp.rows[0];
-            const curMems: string[] = Array.isArray(groupChannel.members) ? groupChannel.members : [];
-            const mergedMems = Array.from(new Set([...curMems, ...allMembers]));
-            await query("UPDATE chat_channels SET members = $1, last_message_at = CURRENT_TIMESTAMP WHERE id = $2", [
-              JSON.stringify(mergedMems),
-              groupChannel.id
-            ]);
+          const accessibleExistingGrp = (existGrp.rows || []).find((row: any) => canUserAccessChannelRow(ident, row));
+          if (accessibleExistingGrp) {
+            groupChannel = accessibleExistingGrp;
+            if (isChannelAdmin(ident, groupChannel)) {
+              const curMems: string[] = parseChannelMembers(groupChannel.members);
+              const mergedMems = Array.from(new Set([...curMems, ...allMembers]));
+              await query("UPDATE chat_channels SET members = $1, last_message_at = CURRENT_TIMESTAMP WHERE id = $2", [
+                JSON.stringify(mergedMems),
+                groupChannel.id
+              ]);
+            }
           } else {
             const slug = groupName
               .toLowerCase()
@@ -1737,8 +1770,20 @@ export async function POST(req: NextRequest) {
       }
 
       const channel = cRes.rows[0];
-      const currentMembers: string[] = Array.isArray(channel.members) ? channel.members : [];
-      const updatedMembers = Array.from(new Set([...currentMembers, ...new_members]));
+      // Bảo mật: phải là thành viên hiện tại của nhóm (và với kênh kín/phòng ban phải là Trưởng nhóm/Admin) mới được thêm người mới; cấm thêm người vào kênh DIRECT 1-1
+      if (!canUserAccessChannelRow(ident, channel)) {
+        return chatForbidden();
+      }
+      const chType = String(channel.channel_type || "CHANNEL").toUpperCase();
+      if (chType === "DIRECT" || String(channel.channel_code || "").toLowerCase().startsWith("dm-")) {
+        return NextResponse.json({ error: "Không thể thêm thành viên vào cuộc trò chuyện riêng 1-1." }, { status: 400 });
+      }
+      if (channel.is_private && !isChannelAdmin(ident, channel) && !userMatchesMemberList(ident, parseChannelMembers(channel.members))) {
+        return chatForbidden();
+      }
+      const currentMembers: string[] = parseChannelMembers(channel.members);
+      const cleanNewMembers = new_members.map((m: any) => String(m || "").trim()).filter(Boolean);
+      const updatedMembers = Array.from(new Set([...currentMembers, ...cleanNewMembers]));
 
       await query("UPDATE chat_channels SET members = $1 WHERE id = $2", [JSON.stringify(updatedMembers), channel_id]);
 
@@ -2023,9 +2068,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, deleted_id: channel_id });
     }
 
-    // 3. Toggle Emoji Reaction (M5: with row-lock)
+    // 3. Toggle Emoji Reaction (M5: with row-lock & strict message channel ownership verification)
     if (action === "toggle_reaction") {
       const { message_id, emoji, user_name } = body;
+      if (!message_id || !emoji) {
+        return NextResponse.json({ error: "Thiếu thông tin tin nhắn hoặc biểu tượng cảm xúc" }, { status: 400 });
+      }
+      const msgCheck = await query("SELECT channel_id FROM chat_messages WHERE id = $1", [message_id]);
+      if (msgCheck.rows.length === 0) {
+        return NextResponse.json({ error: "Không tìm thấy tin nhắn" }, { status: 404 });
+      }
+      if (!(await canAccessChannel(ident, msgCheck.rows[0].channel_id))) {
+        return chatForbidden();
+      }
       const updatedReactions = await withTransaction(async (c) => {
         const res = await c.query("SELECT reactions FROM chat_messages WHERE id = $1 FOR UPDATE", [message_id]);
         if (res.rows.length === 0) throw new HttpError(404, "Không tìm thấy tin nhắn");
@@ -2046,18 +2101,34 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, reactions: updatedReactions });
     }
 
-    // 4. Toggle Pin Message (M5: with row-lock)
+    // 4. Toggle Pin Message (M5: with row-lock & strict message-to-channel access check to prevent IDOR)
     if (action === "toggle_pin" || action === "pin_message") {
       const { message_id, channel_id, is_pinned } = body;
+      if (!message_id) {
+        return NextResponse.json({ error: "Thiếu mã định danh tin nhắn cần ghim" }, { status: 400 });
+      }
+      // Bảo mật chống IDOR: lấy trực tiếp channel_id thật của tin nhắn từ DB và kiểm tra người gọi có quyền truy cập kênh đó hay không
+      const msgOwnerRes = await query("SELECT channel_id FROM chat_messages WHERE id = $1", [message_id]);
+      if (msgOwnerRes.rows.length === 0) {
+        return NextResponse.json({ error: "Không tìm thấy tin nhắn" }, { status: 404 });
+      }
+      const actualMsgChannelId = Number(msgOwnerRes.rows[0].channel_id);
+      if (channel_id && Number(channel_id) !== actualMsgChannelId) {
+        return chatForbidden();
+      }
+      if (!(await canAccessChannel(ident, actualMsgChannelId))) {
+        return chatForbidden();
+      }
+
       const result = await withTransaction(async (c) => {
         const res = await c.query("SELECT is_pinned, content, sender_name, channel_id, created_at FROM chat_messages WHERE id = $1 FOR UPDATE", [message_id]);
         if (res.rows.length === 0) throw new HttpError(404, "Không tìm thấy tin nhắn");
 
-        const targetChannelId = channel_id || res.rows[0].channel_id;
+        const targetChannelId = Number(res.rows[0].channel_id);
         const newPinned = typeof is_pinned === "boolean" ? is_pinned : !res.rows[0].is_pinned;
         await c.query("UPDATE chat_messages SET is_pinned = $1 WHERE id = $2", [newPinned, message_id]);
 
-        // Update pinned_messages array in channel with row lock
+        // Update pinned_messages array in the message's own channel with row lock
         let pins: any[] = [];
         if (targetChannelId) {
           const chRes = await c.query("SELECT pinned_messages FROM chat_channels WHERE id = $1 FOR UPDATE", [targetChannelId]);

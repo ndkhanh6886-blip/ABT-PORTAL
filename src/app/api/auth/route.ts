@@ -12,10 +12,11 @@ const USER_LOOKUP_WHERE = `
   OR LOWER(COALESCE(login_name, '')) = LOWER($1)
   OR LOWER(username) = LOWER(REPLACE(REPLACE($1, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA'))
   OR LOWER(username) = LOWER(REPLACE(REPLACE($1, 'NV-ABT', 'ABT'), 'NV-VIA', 'VIA'))
-  OR LOWER(email) = LOWER($1)
-  OR LOWER(full_name) = LOWER($1)`;
+  OR LOWER(username) = LOWER(REGEXP_REPLACE($1, '^NV-(TBRS|TBR|VIA|ABT)-?', '\\1', 'i'))
+  OR LOWER(username) = LOWER(REGEXP_REPLACE($1, '^(TBRS|TBR|VIA|ABT)-?([0-9]+)$', 'NV-\\1-\\2', 'i'))
+  OR LOWER(email) = LOWER($1)`;
 
-// Exact username/email matches first so a shared full name can never shadow another account
+// Exact username/email matches first
 const USER_LOOKUP_ORDER = `ORDER BY (LOWER(username) = LOWER($1)) DESC, (LOWER(COALESCE(login_name, '')) = LOWER($1)) DESC, (LOWER(email) = LOWER($1)) DESC, id ASC`;
 
 /** Initial / well-known passwords: accepted once, then the user must choose a new one. */
@@ -150,6 +151,70 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Quá nhiều lần đăng nhập sai từ thiết bị này. Vui lòng thử lại sau ít phút." }, { status: 429 });
     }
 
+    if (action === "forgot_password") {
+      const rawAccount = String(username || body?.account || "").trim();
+      const contactNote = String(body?.note || body?.phone || "").trim().slice(0, 300);
+      if (!rawAccount) {
+        return NextResponse.json({ error: "Vui lòng nhập Tên đăng nhập (Mã nhân viên) hoặc Email của bạn." }, { status: 400 });
+      }
+      if (isRateLimited(`forgot-pw:${ip}`, 10)) {
+        return NextResponse.json({ error: "Bạn đã gửi quá nhiều yêu cầu. Vui lòng thử lại sau ít phút." }, { status: 429 });
+      }
+      hitRateLimit(`forgot-pw:${ip}`, 10, IP_WINDOW_MS);
+
+      const foundRes = await query(
+        `SELECT id, username, full_name, department, email FROM users WHERE ${USER_LOOKUP_WHERE} ${USER_LOOKUP_ORDER} LIMIT 1`,
+        [rawAccount]
+      ).catch(() => ({ rows: [] as any[] }));
+      const matchedUser = foundRes.rows[0];
+      const displayTarget = matchedUser
+        ? `${matchedUser.full_name || matchedUser.username} (${matchedUser.username} - ${matchedUser.department || "ABT"})`
+        : rawAccount;
+
+      await logAudit(
+        "PASSWORD_RESET_REQUEST",
+        "AUTH",
+        `Yêu cầu hỗ trợ đặt lại mật khẩu cho tài khoản: ${displayTarget}${contactNote ? ` — Ghi chú: ${contactNote}` : ""} (IP ${ip} · ${device})`,
+        matchedUser?.username || rawAccount,
+        matchedUser?.full_name || "Chưa đăng nhập",
+        ip,
+        userAgent
+      ).catch(() => {});
+
+      // Ghi thông báo lên chuông Quản trị viên hệ thống để Admin cấp lại mật khẩu ngay trong phần Cài đặt -> Tài khoản
+      try {
+        const notifRes = await query("SELECT data, version FROM app_storage WHERE key = 'tbr_activity_notifications'");
+        const curList = Array.isArray(notifRes.rows[0]?.data) ? notifRes.rows[0].data : [];
+        const newNotif = {
+          id: `pw-reset-${Date.now()}`,
+          title: `🔑 Yêu cầu cấp lại mật khẩu: ${matchedUser?.username || rawAccount}`,
+          message: `Nhân sự ${displayTarget} vừa gửi yêu cầu hỗ trợ đặt lại mật khẩu từ màn hình đăng nhập.${contactNote ? ` Ghi chú liên hệ: "${contactNote}".` : ""} Quản trị viên vui lòng vào Cài đặt hệ thống → Quản lý tài khoản để đặt lại mật khẩu.`,
+          type: "warning",
+          category: "system",
+          timestamp: new Date().toISOString(),
+          read: false,
+          sender: { name: matchedUser?.full_name || rawAccount },
+          targetEmployeeNames: ["Quản Trị Viên Hệ Thống", "Nguyễn Duy Khánh"],
+          targetDept: "Ban Giám Đốc",
+          link: { tab: "settings" }
+        };
+        const nextList = [newNotif, ...curList].slice(0, 300);
+        await query(
+          `INSERT INTO app_storage (key, data, version, updated_at)
+           VALUES ('tbr_activity_notifications', $1::jsonb, 1, NOW())
+           ON CONFLICT (key) DO UPDATE
+           SET data = EXCLUDED.data, version = COALESCE(app_storage.version, 1) + 1, updated_at = NOW()`,
+          [JSON.stringify(nextList)]
+        );
+      } catch {}
+
+      return NextResponse.json({
+        success: true,
+        message:
+          "Đã gửi yêu cầu cấp lại mật khẩu tới Quản trị viên hệ thống & Phòng IT. Quản trị viên sẽ xác minh và cấp mật khẩu mới cho bạn."
+      });
+    }
+
     if (action === "change_password") {
       // Only the signed-in user changes their own password. Changing it with "username + current password"
       // without a session let anyone who knew an employee code and the initial password take the account over.
@@ -194,7 +259,7 @@ export async function POST(req: NextRequest) {
           WHERE id = $2 RETURNING id, username, full_name, role, department, session_version, must_change_password`,
         [newHash, user.id]
       );
-      // Đồng bộ mật khẩu mới sang các bản ghi tài khoản alias cùng mã nhân viên / họ tên (VD: NV-TBR-016 <-> TBR016)
+      // Đồng bộ mật khẩu mới sang bản ghi tài khoản alias cùng MÃ NHÂN VIÊN (VD: NV-TBR-016 <-> TBR016), tuyệt đối KHÔNG đồng bộ theo full_name để tránh ghi đè tài khoản người trùng họ tên
       await query(
         `UPDATE users
             SET password_hash = $1,
@@ -202,14 +267,12 @@ export async function POST(req: NextRequest) {
                 failed_login_count = 0,
                 locked_until = NULL
           WHERE id != $2
+            AND $3 <> ''
             AND (
-              ($3 <> '' AND (
-                LOWER(username) = LOWER(REGEXP_REPLACE($3, '^NV-(TBRS|TBR|VIA|ABT)-?', '\\1', 'i'))
-                OR LOWER(username) = LOWER(REGEXP_REPLACE($3, '^(TBRS|TBR|VIA|ABT)-?([0-9]+)$', 'NV-\\1-\\2', 'i'))
-              ))
-              OR ($4 <> '' AND LOWER(TRIM(full_name)) = LOWER(TRIM($4)))
+              LOWER(username) = LOWER(REGEXP_REPLACE($3, '^NV-(TBRS|TBR|VIA|ABT)-?', '\\1', 'i'))
+              OR LOWER(username) = LOWER(REGEXP_REPLACE($3, '^(TBRS|TBR|VIA|ABT)-?([0-9]+)$', 'NV-\\1-\\2', 'i'))
             )`,
-        [newHash, user.id, String(user.username || ""), String(user.full_name || "")]
+        [newHash, user.id, String(user.username || "")]
       ).catch(() => {});
       await logAudit("CHANGE_PASSWORD", "AUTH", `Người dùng ${user.full_name} (${user.username}) đã đổi mật khẩu thành công (IP ${ip} · ${device})`, user.username, user.full_name, ip, userAgent);
       const response = NextResponse.json({ success: true, message: "Đổi mật khẩu thành công" });
@@ -287,9 +350,13 @@ export async function POST(req: NextRequest) {
         WHERE id = $1`,
       needsRehash(user.password_hash) ? [user.id, mustChange, syncedHash] : [user.id, mustChange]
     );
-    // Nếu có các bản ghi tài khoản trùng của cùng nhân sự (VD: NV-TBR-016 và TBR016), tự động đồng bộ mật khẩu đúng sang các bản ghi đó
+    // Nếu có bản ghi alias cùng mã nhân viên (VD: NV-TBR-016 và TBR016), đồng bộ mật khẩu đúng sang bản ghi cùng mã đó (không đồng bộ theo full_name)
     if (candidates.length > 1) {
-      const otherIds = candidates.filter((c) => c.id !== user.id).map((c) => c.id);
+      const normCode = (u: string) => String(u || "").trim().toLowerCase().replace(/^nv-(tbrs|tbr|via|abt)-?/i, "$1");
+      const myCodeKey = normCode(user.username);
+      const otherIds = candidates
+        .filter((c) => c.id !== user.id && myCodeKey && normCode(c.username) === myCodeKey)
+        .map((c) => c.id);
       if (otherIds.length > 0) {
         await query(
           `UPDATE users SET password_hash = $1, must_change_password = $2, failed_login_count = 0, locked_until = NULL WHERE id = ANY($3::int[])`,

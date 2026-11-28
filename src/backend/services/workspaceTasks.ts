@@ -100,21 +100,52 @@ export function isSameWorkspaceDept(a: any, b: any): boolean {
 
 /**
  * Tên nhân sự để so sánh: cùng một tên có thể được lưu ở dạng Unicode tổ hợp / dựng sẵn khác nhau, hoặc đặt dấu
- * kiểu cũ / mới ("Thùy" - "Thuỳ", "Hòa" - "Hoà"), có khoảng trắng thừa.
+ * kiểu cũ / mới ("Thùy" - "Thuỳ", "Hòa" - "Hoà"), có khoảng trắng thừa hoặc kèm ghi chú chức danh/mã nhân viên trong ngoặc đơn.
  */
 export function canonStaffName(name: any): string {
-  let s = String(name || "").normalize("NFC").toLowerCase().replace(/[\s \u200b]+/g, " ").trim();
+  let s = String(name || "")
+    .normalize("NFC")
+    .toLowerCase()
+    .replace(/\s*\(.*?\)/g, "")
+    .replace(/^(?:anh|chị|chi|ông|bà|dr\.?|ths\.?|ts\.?|ks\.?|cn\.?)\s+/i, "")
+    .replace(/[\s \u00a0\u200b]+/g, " ")
+    .trim();
   // đặt dấu kiểu mới (dấu trên chữ thứ hai của oa, oe, uy) -> kiểu cũ, để hai cách gõ trùng nhau
   s = s.normalize("NFD").replace(/([ou])([\u0300\u0301\u0303\u0309\u0323])([aey])/g, "$1$3$2").normalize("NFC");
   return s;
 }
 
-/** Hai tên là cùng một người (so sánh sau chuẩn hóa; tên đầy đủ chứa tên ngắn vẫn tính là trùng). */
+/** Chuẩn hóa mã nhân viên / username để so sánh chính xác (VD: NV-ABT-016 === ABT016). */
+export function canonStaffCode(raw: any): string {
+  const s = String(raw || "").trim().toLowerCase();
+  if (!s) return "";
+  const m = s.match(/\b((?:nv-?)?(?:abt|tbrs|tbr|via)-?[0-9a-z]+)\b/i);
+  const token = m ? m[1].toLowerCase() : s;
+  return token.replace(/^nv-?/i, "").replace(/-/g, "");
+}
+
+/**
+ * Hai định danh nhân sự là cùng một người:
+ * - So sánh khớp chính xác theo mã nhân viên / username (nếu cả hai đều có mã NV-ABT-xxx / ABTxxx), HOẶC
+ * - So sánh khớp chính xác hoàn toàn (`x === y`) sau khi đã chuẩn hóa Unicode và cắt bỏ phần ghi chú trong ngoặc `(...)`.
+ * Tuyệt đối KHÔNG dùng `.includes()` chuỗi con để tránh trường hợp nhân sự tên ngắn ("An", "Bảo", "Sơn", "Tài") khớp nhầm vào tên người khác.
+ */
 export function sameStaffName(a: any, b: any): boolean {
-  const x = canonStaffName(a);
-  const y = canonStaffName(b);
+  const rawA = String(a || "").trim();
+  const rawB = String(b || "").trim();
+  if (!rawA || !rawB) return false;
+
+  const codeMatchRe = /^(?:nv-?)?(?:abt|tbrs|tbr|via)-?[0-9]+$/i;
+  const parenCodeA = rawA.match(/\(((?:nv-?)?(?:abt|tbrs|tbr|via)-?[0-9]+)\)/i)?.[1] || (codeMatchRe.test(rawA) ? rawA : "");
+  const parenCodeB = rawB.match(/\(((?:nv-?)?(?:abt|tbrs|tbr|via)-?[0-9]+)\)/i)?.[1] || (codeMatchRe.test(rawB) ? rawB : "");
+  if (parenCodeA && parenCodeB) {
+    return canonStaffCode(parenCodeA) === canonStaffCode(parenCodeB);
+  }
+
+  const x = canonStaffName(rawA);
+  const y = canonStaffName(rawB);
   if (!x || !y) return false;
-  return x === y || x.includes(y) || y.includes(x);
+  return x === y;
 }
 
 /** Khóa lưu danh mục phân loại công việc (Quản trị viên sửa được) */

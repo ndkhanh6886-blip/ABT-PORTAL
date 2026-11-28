@@ -665,6 +665,7 @@ function canonName(name: any): string {
     .normalize("NFC")
     .toLowerCase()
     .replace(/\s*\(.*?\)/g, "")
+    .replace(/^(?:anh|chị|chi|ông|bà|dr\.?|ths\.?|ts\.?|ks\.?|cn\.?)\s+/i, "")
     .replace(/[\s\u00a0\u200b]+/g, " ")
     .trim();
   s = s
@@ -678,7 +679,7 @@ export function isSamePerson(a: any, b: any): boolean {
   const x = canonName(a);
   const y = canonName(b);
   if (!x || !y) return false;
-  return x === y || x.includes(y) || y.includes(x);
+  return x === y;
 }
 
 export function formatMoneyVND(val: any): string {

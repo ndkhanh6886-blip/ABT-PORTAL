@@ -5712,13 +5712,6 @@ export const UnifiedWorkspace: React.FC = () => {
           try {
             localStorage.setItem("workspace_proposals", JSON.stringify(rec.list));
           } catch {}
-          if (rec.added) {
-            fetch("/api/storage?key=workspace_proposals", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(rec.list)
-            }).catch(() => {});
-          }
           if (targetPropId) {
             setExternalOpenProposalId(`${targetPropId}|${Date.now()}`);
           }
@@ -10565,18 +10558,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
     if (filteredNotifications && filteredNotifications.length > 0) {
       setProposals((prev) => {
         const rec = reconcileProposalsWithNotifications(prev);
-        if (rec.added) {
-          try {
-            localStorage.setItem("workspace_proposals", JSON.stringify(rec.list));
-          } catch {}
-          fetch("/api/storage?key=workspace_proposals", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(rec.list)
-          }).catch(() => {});
-          return rec.list;
-        }
-        return prev;
+        return rec.added ? rec.list : prev;
       });
     }
   }, [filteredNotifications, reconcileProposalsWithNotifications]);
@@ -10592,13 +10574,6 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           try {
             localStorage.setItem("workspace_proposals", JSON.stringify(rec.list));
           } catch {}
-          if (rec.added) {
-            fetch("/api/storage?key=workspace_proposals", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(rec.list)
-            }).catch(() => {});
-          }
         }
       })
       .catch(() => {});

@@ -316,3 +316,272 @@ export function preserveRedactedProposalFields(current: any, upserts: any[], me:
     };
   });
 }
+
+/**
+ * Kiểm tra người dùng `me` có thẩm quyền phê duyệt / từ chối / trả lại ở một bước (`step`) của đề xuất `proposal` hay không.
+ */
+export function canActorDecideProposalStep(proposal: any, step: any, me: AuthorizedUser): boolean {
+  if (!proposal || !step || !me) return false;
+  if (isDirectorOrAdminActor(me)) return true;
+
+  const myName = String(me.full_name || me.username || "").trim();
+  const myDept = String(me.department || "").trim();
+  if (!myName) return false;
+
+  // Người tạo đề xuất không được tự duyệt bước Trưởng bộ phận (DEPT_HEAD) cho chính đơn của mình
+  if (String(step.roleType || "").toUpperCase() === "DEPT_HEAD" && sameStaffName(proposal.requesterName, myName)) {
+    return false;
+  }
+
+  // 1. Khớp trực tiếp tên người duyệt được chỉ định trên bước
+  if (step.approverName && !isGenericRoleApprover(step.approverName) && sameStaffName(step.approverName, myName)) {
+    return true;
+  }
+
+  // 2. Bước dành cho Ban Giám Đốc (DIRECTOR) -> chỉ Ban Giám Đốc / Admin được duyệt (đã xử lý ở isDirectorOrAdminActor phía trên)
+  if (String(step.roleType || "").toUpperCase() === "DIRECTOR" || isSameWorkspaceDept(step.dept, "Ban Giám Đốc")) {
+    return isDirectorOrAdminActor(me);
+  }
+
+  // 3. Bước mang nhãn chức danh chung (VD: "Trưởng bộ phận", "Kế toán trưởng", "Hành Chính Nhân Sự") hoặc cùng phòng chuyên môn
+  const stepTargetDept =
+    !step.dept || String(step.dept).trim() === "Theo phòng người tạo"
+      ? String(proposal.requesterDept || "")
+      : String(step.dept);
+
+  const sameDept =
+    Boolean(myDept) &&
+    (isSameWorkspaceDept(stepTargetDept, myDept) ||
+      (Boolean(canonicalDepartment(stepTargetDept)) &&
+        canonicalDepartment(stepTargetDept) === canonicalDepartment(myDept)));
+
+  if (!sameDept) return false;
+
+  if (String(step.roleType || "").toUpperCase() === "DEPT_HEAD") {
+    return isDeptLeaderActor(me);
+  }
+
+  // Các bước REVIEWER / EXECUTOR (VD: Kế toán kiểm tra chứng từ, HCNS ghi nhận công phép, Kho xuất thực thi)
+  if (isDeptLeaderActor(me)) return true;
+  if (isGenericRoleApprover(step.approverName)) return true;
+
+  return false;
+}
+
+/**
+ * Kiểm soát toàn vẹn & phân quyền trên máy chủ đối với từng đề xuất / đơn nghỉ phép được gửi lên qua `/api/storage` (`workspace_proposals`):
+ * 1. TẠO MỚI ĐỀ XUẤT (chưa có trên máy chủ):
+ *    - Bắt buộc `requesterName` phải là tên của chính người đang đăng nhập (trừ Ban Giám Đốc / Admin).
+ *    - Không cho phép nhân viên thường tự tạo đề xuất / đơn nghỉ phép với trạng thái `"APPROVED"` hoặc `"EXECUTED"` mà chưa qua quản lý duyệt:
+ *      mọi bước duyệt mà người tạo không có thẩm quyền duyệt đều bị đưa về `"PENDING_NOW"` / `"WAITING"` và trạng thái tổng của đơn đưa về `"PENDING"` (hoặc `"DRAFT"`).
+ * 2. CẬP NHẬT ĐỀ XUẤT ĐÃ CÓ TRÊN MÁY CHỦ:
+ *    - Không cho phép sửa `requesterName` (chủ đơn) hay `createdAt`.
+ *    - Nếu người gửi KHÔNG nằm trong luồng đề xuất (không phải chủ đơn, người duyệt, người thực thi, người theo dõi, quản lý phòng):
+ *      từ chối mọi thay đổi, giữ nguyên bản ghi gốc trên máy chủ (`prev`).
+ *    - Nếu sửa nội dung gốc của đơn (`title`, `totalAmount`, `summaryReason`, `formValues`, `lineItems`):
+ *      chỉ chính chủ đơn (khi đơn đang ở `DRAFT` / `PENDING` / `RETURNED` / `WITHDRAWN`) hoặc Ban Giám Đốc / Admin mới được sửa.
+ *      Người khác (kể cả người chỉ xem hoặc bình luận) hoặc đơn đã `APPROVED` / `EXECUTED` bị khóa nguyên nội dung gốc từ bản máy chủ (`prev`).
+ *    - Nếu chuyển trạng thái bước duyệt sang `APPROVED` / `REJECTED` / `RETURNED` hoặc chuyển trạng thái tổng sang `APPROVED` / `REJECTED`:
+ *      kiểm tra người đang đăng nhập có đúng thẩm quyền duyệt bước đó (`canActorDecideProposalStep`) hay không. Nếu không có quyền,
+ *      khôi phục lại trạng thái bước duyệt và trạng thái tổng (`prev.status`, `prev.steps`, `prev.currentStepIndex`) từ bản máy chủ.
+ * 3. XÓA ĐỀ XUẤT:
+ *    - Chỉ chủ đơn (khi đơn chưa `APPROVED` / `EXECUTED`) hoặc Ban Giám Đốc / Admin mới được xóa đơn.
+ */
+export function enforceProposalWriteGuards(current: any, incomingUpserts: any[], me: AuthorizedUser): any[] {
+  if (!Array.isArray(incomingUpserts)) return incomingUpserts;
+  const isBodOrAdmin = isDirectorOrAdminActor(me);
+  const myName = String(me.full_name || me.username || "").trim();
+  const myDept = String(me.department || "").trim();
+
+  const currentById = new Map<string, any>();
+  if (Array.isArray(current)) {
+    for (const item of current) {
+      const id = itemIdentity(item);
+      if (id !== null) currentById.set(id, item);
+    }
+  }
+
+  const sanitizedUpserts: any[] = [];
+
+  for (const rawItem of incomingUpserts) {
+    if (!rawItem || typeof rawItem !== "object") continue;
+    const id = itemIdentity(rawItem);
+    const prev = id !== null ? currentById.get(id) : undefined;
+
+    // TRƯỜNG HỢP 1: TẠO ĐỀ XUẤT MỚI
+    if (!prev) {
+      const item = { ...rawItem };
+      // Chống mạo danh người khác tạo đề xuất
+      if (!isBodOrAdmin && myName && !sameStaffName(item.requesterName, myName)) {
+        item.requesterName = myName;
+        if (myDept) item.requesterDept = myDept;
+      }
+
+      const rawSteps = Array.isArray(item.steps) ? item.steps : [];
+      const wantedStatus = String(item.status || "PENDING").toUpperCase();
+
+      // Nếu không phải Ban Giám Đốc / Admin thì không được tự tạo đơn ở trạng thái đã duyệt ("APPROVED" / "EXECUTED")
+      if (!isBodOrAdmin && (wantedStatus === "APPROVED" || wantedStatus === "EXECUTED")) {
+        const canSelfApproveAll =
+          rawSteps.length > 0 && rawSteps.every((st: any) => canActorDecideProposalStep(item, st, me));
+        if (!canSelfApproveAll) {
+          console.warn(
+            `[proposalGuard] Chặn ${me.username} (${myName}) tự tạo đề xuất mới ${item.proposalCode || item.id} ở trạng thái ${wantedStatus}; chuyển về PENDING.`
+          );
+          let firstPendingAssigned = false;
+          item.steps = rawSteps.map((st: any) => {
+            if (st?.status === "SKIPPED") return st;
+            if (!firstPendingAssigned) {
+              firstPendingAssigned = true;
+              return { ...st, status: "PENDING_NOW", decidedAt: undefined, decidedBy: undefined };
+            }
+            return { ...st, status: "WAITING", decidedAt: undefined, decidedBy: undefined };
+          });
+          item.currentStepIndex = 0;
+          item.status = "PENDING";
+        }
+      }
+      sanitizedUpserts.push(item);
+      continue;
+    }
+
+    // TRƯỜNG HỢP 2: CẬP NHẬT ĐỀ XUẤT ĐÃ CÓ TRÊN MÁY CHỦ
+    const isOwner = Boolean(myName && sameStaffName(prev.requesterName, myName));
+    const inFlow = isActorDirectlyInProposalFlow(prev, me);
+
+    // Nếu chỉ là lần đồng bộ danh sách tự động từ trình duyệt của người khác (không phải chủ đơn, không duyệt mới, không bình luận mới)
+    // hoặc người gửi không nằm trong luồng đề xuất -> giữ nguyên bản trên máy chủ để chống ghi đè chéo giữa các máy
+    const prevCommentsLen = Array.isArray(prev.comments) ? prev.comments.length : 0;
+    const nextCommentsLen = Array.isArray(rawItem.comments) ? rawItem.comments.length : 0;
+    const hasNewComment = nextCommentsLen > prevCommentsLen;
+
+    if (!isBodOrAdmin && !inFlow && !hasNewComment) {
+      sanitizedUpserts.push(prev);
+      continue;
+    }
+
+    let nextItem = {
+      ...rawItem,
+      // Khóa cứng thông tin người tạo và thời điểm tạo gốc
+      requesterName: prev.requesterName,
+      requesterDept: isOwner || isBodOrAdmin ? (rawItem.requesterDept || prev.requesterDept) : prev.requesterDept,
+      createdAt: prev.createdAt || rawItem.createdAt,
+    };
+
+    const prevStatus = String(prev.status || "PENDING").toUpperCase();
+    const nextStatus = String(nextItem.status || prevStatus).toUpperCase();
+    const isAlreadyFinal = prevStatus === "APPROVED" || prevStatus === "EXECUTED";
+
+    // Kiểm tra quyền sửa nội dung gốc của đề xuất (title, summaryReason, formValues, lineItems, totalAmount, neededByDate)
+    const canEditCoreContent =
+      isBodOrAdmin || (isOwner && !isAlreadyFinal && ["DRAFT", "PENDING", "RETURNED", "WITHDRAWN"].includes(prevStatus));
+
+    if (!canEditCoreContent) {
+      nextItem = {
+        ...nextItem,
+        title: prev.title,
+        templateId: prev.templateId,
+        templateName: prev.templateName,
+        category: prev.category,
+        priority: prev.priority,
+        neededByDate: prev.neededByDate,
+        totalAmount: prev.totalAmount,
+        currency: prev.currency,
+        summaryReason: prev.summaryReason,
+        formValues: prev.formValues,
+        lineItems: prev.lineItems,
+        attachments: prev.attachments,
+        customerName: prev.customerName,
+        supplierName: prev.supplierName,
+        linkedRefCode: prev.linkedRefCode,
+        visibility: prev.visibility,
+      };
+    }
+
+    // Kiểm tra tính hợp lệ của việc chuyển trạng thái bước duyệt (steps) và trạng thái tổng (status)
+    if (!isBodOrAdmin) {
+      const prevSteps: any[] = Array.isArray(prev.steps) ? prev.steps : [];
+      const nextSteps: any[] = Array.isArray(nextItem.steps) ? nextItem.steps : [];
+
+      let unauthorizedDecision = false;
+      for (let i = 0; i < nextSteps.length; i++) {
+        const ns = nextSteps[i];
+        const ps = prevSteps[i];
+        if (!ns) continue;
+        const psStatus = String(ps?.status || "WAITING").toUpperCase();
+        const nsStatus = String(ns?.status || "WAITING").toUpperCase();
+        if (psStatus !== nsStatus && ["APPROVED", "REJECTED", "RETURNED"].includes(nsStatus)) {
+          if (!canActorDecideProposalStep(prev, ps || ns, me)) {
+            unauthorizedDecision = true;
+            break;
+          }
+        }
+      }
+
+      // Kiểm tra chuyển trạng thái tổng của đơn
+      if (!unauthorizedDecision && prevStatus !== nextStatus) {
+        if (nextStatus === "WITHDRAWN") {
+          if (!isOwner || isAlreadyFinal) unauthorizedDecision = true;
+        } else if (nextStatus === "APPROVED" || nextStatus === "REJECTED" || nextStatus === "RETURNED") {
+          const canDecideAnyActive = prevSteps.some(
+            (ps: any) =>
+              (ps?.status === "PENDING_NOW" || ps?.status === "WAITING") && canActorDecideProposalStep(prev, ps, me)
+          );
+          if (!canDecideAnyActive) unauthorizedDecision = true;
+        } else if (nextStatus === "EXECUTED") {
+          const isExecutor =
+            (prev.executorName && sameStaffName(prev.executorName, myName)) ||
+            prevSteps.some((ps: any) => ps?.roleType === "EXECUTOR" && canActorDecideProposalStep(prev, ps, me)) ||
+            isDeptLeaderActor(me);
+          if (!isExecutor) unauthorizedDecision = true;
+        } else if (nextStatus === "PENDING" && prevStatus === "RETURNED") {
+          if (!isOwner) unauthorizedDecision = true;
+        }
+      }
+
+      if (unauthorizedDecision) {
+        console.warn(
+          `[proposalGuard] Chặn ${me.username} (${myName}) thay đổi trạng thái duyệt trái phép trên đề xuất ${prev.proposalCode || prev.id} (${prevStatus} -> ${nextStatus}).`
+        );
+        nextItem = {
+          ...nextItem,
+          status: prev.status,
+          steps: prev.steps,
+          currentStepIndex: prev.currentStepIndex,
+          executedAt: prev.executedAt,
+          executionNote: prev.executionNote,
+          executionAttachments: prev.executionAttachments,
+        };
+      }
+    }
+
+    sanitizedUpserts.push(nextItem);
+  }
+
+  return sanitizedUpserts;
+}
+
+/**
+ * Chỉ cho phép chủ đơn (khi đơn chưa APPROVED / EXECUTED) hoặc Ban Giám Đốc / Admin xóa đề xuất.
+ */
+export function filterAuthorizedProposalDeletes(current: any, deleteIds: string[], me: AuthorizedUser): string[] {
+  if (!Array.isArray(deleteIds) || deleteIds.length === 0) return [];
+  if (isDirectorOrAdminActor(me)) return deleteIds;
+  if (!Array.isArray(current)) return [];
+  const myName = String(me.full_name || me.username || "").trim();
+  if (!myName) return [];
+
+  const currentById = new Map<string, any>();
+  for (const item of current) {
+    const id = itemIdentity(item);
+    if (id !== null) currentById.set(id, item);
+  }
+
+  return deleteIds.filter((delId) => {
+    const target = currentById.get(delId);
+    if (!target) return false;
+    const st = String(target.status || "").toUpperCase();
+    if (st === "APPROVED" || st === "EXECUTED") return false;
+    return sameStaffName(target.requesterName, myName);
+  });
+}

@@ -33,6 +33,45 @@ export const LoginScreen: React.FC = () => {
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
   const [portalMode, setPortalMode] = useState<"staff" | "customer">("staff");
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotAccount, setForgotAccount] = useState("");
+  const [forgotNote, setForgotNote] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotResult, setForgotResult] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const handleForgotSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const acc = (forgotAccount || username).trim();
+    if (!acc) {
+      setForgotResult({ ok: false, text: "Vui lòng nhập Tên đăng nhập (Mã nhân viên) hoặc Email cần hỗ trợ." });
+      return;
+    }
+    setForgotLoading(true);
+    setForgotResult(null);
+    try {
+      const res = await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "forgot_password", username: acc, note: forgotNote.trim() }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json.success) {
+        setForgotResult({
+          ok: true,
+          text: json.message || "Đã gửi yêu cầu cấp lại mật khẩu tới Quản trị viên hệ thống.",
+        });
+      } else {
+        setForgotResult({
+          ok: false,
+          text: json.error || "Không thể gửi yêu cầu lúc này. Vui lòng liên hệ trực tiếp Quản trị viên.",
+        });
+      }
+    } catch {
+      setForgotResult({ ok: false, text: "Lỗi kết nối máy chủ. Vui lòng thử lại." });
+    } finally {
+      setForgotLoading(false);
+    }
+  };
 
   if (portalMode === "customer") {
     return <CustomerPortalView onBackToStaffLogin={() => setPortalMode("staff")} />;
@@ -230,7 +269,17 @@ export const LoginScreen: React.FC = () => {
                 <div className="space-y-1.5 text-left">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-bold text-slate-300">Mật Khẩu</label>
-                    <span className="text-[11px] text-slate-500 hover:text-orange-400 cursor-pointer">Quên mật khẩu?</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setForgotAccount(username.trim());
+                        setForgotResult(null);
+                        setForgotOpen(true);
+                      }}
+                      className="text-[11px] text-slate-400 hover:text-orange-400 underline-offset-2 hover:underline cursor-pointer"
+                    >
+                      Quên mật khẩu?
+                    </button>
                   </div>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
@@ -316,6 +365,85 @@ export const LoginScreen: React.FC = () => {
 
         </div>
       </main>
+
+      {/* Forgot Password Modal */}
+      {forgotOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-700 p-6 shadow-2xl text-left space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <KeyRound className="w-5 h-5 text-orange-500" />
+                <h3 className="text-sm font-bold text-white">Yêu Cầu Cấp Lại Mật Khẩu</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setForgotOpen(false)}
+                className="text-slate-400 hover:text-white text-xs font-bold px-2 py-1 rounded-lg bg-slate-800 cursor-pointer"
+              >
+                Đóng ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Để đảm bảo an toàn bảo mật dữ liệu nội bộ, yêu cầu đặt lại mật khẩu sẽ được gửi trực tiếp tới{" "}
+              <strong className="text-orange-400">Quản trị viên hệ thống / Phòng IT</strong> để xác minh và cấp lại mật khẩu mới.
+            </p>
+
+            {forgotResult && (
+              <div
+                className={`p-3 rounded-xl border text-xs flex items-start gap-2 ${
+                  forgotResult.ok
+                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                    : "bg-rose-500/10 border-rose-500/30 text-rose-300"
+                }`}
+              >
+                {forgotResult.ok ? <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" /> : <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />}
+                <span>{forgotResult.text}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleForgotSubmit} className="space-y-3">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-300">Mã Nhân Viên / Tên Đăng Nhập hoặc Email *</label>
+                <input
+                  type="text"
+                  value={forgotAccount}
+                  onChange={(e) => setForgotAccount(e.target.value)}
+                  placeholder="VD: NV-ABT-015, sales_head hoặc email công ty..."
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-500 text-xs focus:outline-hidden focus:border-orange-500"
+                  required
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-300">Số điện thoại / Zalo hoặc Ghi chú xác minh</label>
+                <input
+                  type="text"
+                  value={forgotNote}
+                  onChange={(e) => setForgotNote(e.target.value)}
+                  placeholder="VD: SĐT/Zalo nhận mật khẩu mới hoặc phòng ban..."
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-500 text-xs focus:outline-hidden focus:border-orange-500"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setForgotOpen(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  disabled={forgotLoading}
+                  className="px-4 py-2 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+                >
+                  {forgotLoading ? "Đang gửi..." : "Gửi yêu cầu cấp lại mật khẩu"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <footer className="relative z-10 w-full py-4 px-6 text-center text-xs text-slate-500 border-t border-slate-800/80 bg-slate-950/40">

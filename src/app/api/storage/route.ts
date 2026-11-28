@@ -15,6 +15,8 @@ import {
   dedupeProposalCodes,
   filterReadableProposalsForUser,
   preserveRedactedProposalFields,
+  enforceProposalWriteGuards,
+  filterAuthorizedProposalDeletes,
 } from "@/backend/services/proposalStoreGuard";
 import type { AuthorizedUser } from "@/backend/services/authz";
 import { syncCatalogSuppliersAndProducts } from "@/backend/services/supplierCatalogSync";
@@ -276,9 +278,11 @@ export async function POST(request: NextRequest) {
             if (dropped.length) console.warn(`[storage] Bỏ ${dropped.length} đơn đã xóa khỏi lần lưu của ${me.username}: ${dropped.join(", ")}`);
           }
           if (hideCost) patch.upserts = keepStoredCosts(current, patch.upserts);
-          // Danh sách đơn từ: không cho một lần lưu xóa hàng loạt đơn (trình duyệt có danh sách sai đã xóa sạch đơn thật)
+          // Danh sách đơn từ: kiểm tra quyền sở hữu / quyền phê duyệt từng đơn và không cho xóa hàng loạt
           if (key === PROTECTED_PROPOSAL_KEY) {
             patch.upserts = preserveRedactedProposalFields(current, patch.upserts || [], me);
+            patch.upserts = enforceProposalWriteGuards(current, patch.upserts || [], me);
+            patch.deletes = filterAuthorizedProposalDeletes(current, patch.deletes || [], me);
             droppedDeletes = limitProposalDeletes(patch);
           }
           // Một lần lưu không được xóa quá nửa danh sách (>= 10 bản ghi): thường do tab cũ / dữ liệu tải lỗi
@@ -340,10 +344,11 @@ export async function POST(request: NextRequest) {
     if (Array.isArray(data)) {
       const cur = await query("SELECT data FROM app_storage WHERE key = $1", [key]);
       if (key === PROTECTED_PROPOSAL_KEY) {
-        // Ghi đè cả danh sách đơn từ không được làm mất đơn đang có, và không để trùng mã
+        // Ghi đè cả danh sách đơn từ: kiểm tra quyền sở hữu & quyền phê duyệt từng đơn, không làm mất đơn đang có, và không để trùng mã
         const curList = cur.rows[0]?.data ?? null;
         const restoredIncoming = preserveRedactedProposalFields(curList, data, me);
-        const { list, kept } = keepMissingProposals(curList, restoredIncoming);
+        const guardedIncoming = enforceProposalWriteGuards(curList, restoredIncoming, me);
+        const { list, kept } = keepMissingProposals(curList, guardedIncoming);
         const existingIds = new Set((Array.isArray(curList) ? curList : []).map((p: any) => String(itemIdentity(p))));
         const recoded = dedupeProposalCodes(list, existingIds, curList);
         proposalRecoded = recoded;
