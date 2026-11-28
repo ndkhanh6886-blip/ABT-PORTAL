@@ -974,6 +974,27 @@ export async function reopenCancelledQcTest(tx: Tx, actor: AuthzActor, input: un
   return getQcTest(tx, test.id);
 }
 
+/** Trimmed non-empty values only, keys sorted — so key order or blank fields never count as a change. */
+function normalizeCoaCustomFields(cf: Record<string, unknown> | null | undefined): string {
+  const entries = Object.entries(cf ?? {})
+    .map(([k, v]) => [k, v == null ? "" : String(v).trim()] as const)
+    .filter(([, v]) => v !== "")
+    .sort(([a], [b]) => a.localeCompare(b));
+  return JSON.stringify(entries);
+}
+
+/**
+ * Whether re-issuing a COA with `requested` custom fields changes what the current revision holds.
+ * The new revision stores `{ ...existing, ...requested }`, so that merge is what must be compared — comparing
+ * `requested` alone against the merged fields of the last revision made every re-click append another revision.
+ */
+export function coaCustomFieldsWouldChange(
+  existing: Record<string, unknown> | null | undefined,
+  requested: Record<string, unknown> | null | undefined
+): boolean {
+  return normalizeCoaCustomFields({ ...(existing ?? {}), ...(requested ?? {}) }) !== normalizeCoaCustomFields(existing);
+}
+
 const coaCustomFieldsSchema = z
   .object({
     contract_no: z.string().trim().max(160).optional().nullable(),
@@ -1111,9 +1132,7 @@ export async function issueCoaFromQcTest(
     const hasCustomFieldInput = Object.values(rawReqCf).some((v) => v != null && String(v).trim() !== "");
     const existingTplKey = String(existingCoa.template_key || "STANDARD").trim().toUpperCase();
     const tplChanged = Boolean(requestedTplKey && requestedTplKey !== existingTplKey);
-    const cfChanged =
-      hasCustomFieldInput &&
-      JSON.stringify(rawReqCf) !== JSON.stringify(existingCoa.custom_fields ?? {});
+    const cfChanged = hasCustomFieldInput && coaCustomFieldsWouldChange(existingCoa.custom_fields, rawReqCf);
 
     if (tplChanged || cfChanged) {
       const mfgStr = String(existingCoa.mfg_date ?? order?.mfg_date ?? lot.mfg_date ?? vnToday()).slice(0, 10);
@@ -2514,7 +2533,7 @@ export async function updateCoaCertificate(
   }
 
   await writeAudit(tx, actor, {
-    entityType: "kit.coa_certificate",
+    entityType: "coa_certificate",
     entityId: newRow.id,
     action: "amend_coa_append_only",
     changes: {
