@@ -167,8 +167,11 @@ export const NotificationDropdown: React.FC = () => {
         const combinedText = `${item.title || ""} ${item.message || ""}`;
         const codeMatch = combinedText.match(/\b((?:WF|TASK|PR|PO|BG|SO|HD|DXNP|DX|DNTT|DNTU|QT|TTR|DXM)-[A-Z0-9-]+)\b/i);
         const extractedCode = codeMatch ? codeMatch[1] : "";
-        const quoteMatch = combinedText.match(/"([^"]{3,120})"/) || combinedText.match(/\[([^\]]{3,120})\]/);
-        const extractedTitle = quoteMatch ? quoteMatch[1] : "";
+        const meetingTitleMatch = (item.title || "").match(/(?:Thông báo lịch họp|Nhắc lịch họp)\s*:\s*(.+)$/i);
+        const quoteMatch =
+            combinedText.match(/"([^"]{3,120})"/) ||
+            combinedText.match(/\[(?!(?:MỜI HỌP|NHẮC HỌP|THÔNG BÁO[^\]]*|NHẮC LỊCH[^\]]*|BÁO ĐỘNG[^\]]*)\])([^\]]{3,120})\]/i);
+        const extractedTitle = meetingTitleMatch ? meetingTitleMatch[1].trim() : quoteMatch ? quoteMatch[1] : "";
 
         let linkUrlTab = "";
         let linkUrlItemId = "";
@@ -183,14 +186,24 @@ export const NotificationDropdown: React.FC = () => {
         const rawTab = item.link?.tab || linkUrlTab || "";
         const titleLower = combinedText.toLowerCase();
         const isFactoryDirectTab = /^(?:factory-|internal-orders)/i.test(rawTab);
+        const isPlannerNotif =
+            item.category === "plan" ||
+            item.link?.subTab === "planner" ||
+            item.link?.subTab === "plans" ||
+            titleLower.includes("thông báo lịch họp") ||
+            titleLower.includes("nhắc lịch họp") ||
+            titleLower.includes("[mời họp]") ||
+            titleLower.includes("[nhắc họp]");
         const isProposalNotif =
-            rawTab === "proposals" ||
-            item.link?.subTab === "proposals" ||
-            /^(?:DXNP|DX|DNTT|DNTU|QT|TTR|DXM)-/i.test(extractedCode) ||
-            titleLower.includes("trình duyệt") ||
-            titleLower.includes("nghỉ phép");
+            !isPlannerNotif && (
+                rawTab === "proposals" ||
+                item.link?.subTab === "proposals" ||
+                /^(?:DXNP|DX|DNTT|DNTU|QT|TTR|DXM)-/i.test(extractedCode) ||
+                titleLower.includes("trình duyệt") ||
+                titleLower.includes("nghỉ phép")
+            );
         const isWorkflowNotif =
-            !isProposalNotif && (
+            !isProposalNotif && !isPlannerNotif && (
                 item.category === "workflow" ||
                 rawTab === "workflows" ||
                 item.link?.subTab === "workflows" ||
@@ -202,14 +215,17 @@ export const NotificationDropdown: React.FC = () => {
             );
 
         let targetTab = rawTab;
-        let targetSubTab = item.link?.subTab || (isProposalNotif ? "proposals" : undefined);
+        let targetSubTab = item.link?.subTab === "plans" ? "planner" : (item.link?.subTab || (isPlannerNotif ? "planner" : isProposalNotif ? "proposals" : undefined));
 
         if (isFactoryDirectTab) {
             targetTab = rawTab;
-        } else if (!targetTab || targetTab === "tasks" || targetTab === "workflows" || targetTab === "proposals") {
+        } else if (!targetTab || targetTab === "tasks" || targetTab === "workflows" || targetTab === "proposals" || targetTab === "planner" || targetTab === "plans") {
             if (targetTab === "tasks" || targetTab === "workflows" || targetTab === "proposals") {
                 targetSubTab = targetTab;
                 targetTab = "workspace";
+            } else if (targetTab === "planner" || targetTab === "plans" || isPlannerNotif) {
+                targetTab = "workspace";
+                targetSubTab = "planner";
             } else if (isProposalNotif) {
                 targetTab = "workspace";
                 targetSubTab = "proposals";
@@ -223,10 +239,10 @@ export const NotificationDropdown: React.FC = () => {
                 targetTab = "application";
             } else {
                 targetTab = "workspace";
-                targetSubTab = isWorkflowNotif ? "workflows" : item.category === "plan" ? "plans" : item.category === "daily" ? "reports" : "tasks";
+                targetSubTab = isWorkflowNotif ? "workflows" : item.category === "plan" ? "planner" : item.category === "daily" ? "reports" : "tasks";
             }
         } else if (targetTab === "workspace" && !targetSubTab) {
-            targetSubTab = isProposalNotif ? "proposals" : isWorkflowNotif ? "workflows" : "tasks";
+            targetSubTab = isPlannerNotif ? "planner" : isProposalNotif ? "proposals" : isWorkflowNotif ? "workflows" : "tasks";
         }
 
         const resolvedItemId =

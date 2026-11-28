@@ -5702,6 +5702,140 @@ export const UnifiedWorkspace: React.FC = () => {
     return { list: normalized, added: anyChanged };
   }, [personnelList]);
 
+  // Đồng bộ & khôi phục lịch họp từ thông báo hoạt động ("[MỜI HỌP]" / "Thông báo lịch họp:") nếu trên lịch tuần chưa có
+  // (phòng trường hợp máy người tạo bị xung đột phiên bản storage khi lưu hoặc trình duyệt người nhận đang giữ cache cũ)
+  const reconcileSchedulesWithNotifications = useCallback(
+    (baseList: any[], extraNotif?: any): { list: any[]; added: boolean } => {
+      const currentList = Array.isArray(baseList) ? [...baseList] : [];
+      const notifPool: any[] = [];
+      if (extraNotif) {
+        notifPool.push(extraNotif.notification || extraNotif);
+      }
+      if (Array.isArray(filteredNotifications)) {
+        notifPool.push(...filteredNotifications);
+      }
+      if (notifPool.length === 0) {
+        return { list: currentList, added: false };
+      }
+
+      const getDayNameFromIso = (isoStr: string) => {
+        const idx = (new Date(isoStr + "T00:00:00").getDay() + 6) % 7;
+        return ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"][idx] || "Thứ 2";
+      };
+
+      const parseDateToIso = (text: string): string => {
+        if (!text) return "";
+        const dmy = text.match(/\b(\d{2})[-/](\d{2})[-/](\d{4})\b/);
+        if (dmy) return `${dmy[3]}-${dmy[2]}-${dmy[1]}`;
+        const ymd = text.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+        if (ymd) return `${ymd[1]}-${ymd[2]}-${ymd[3]}`;
+        return "";
+      };
+
+      let added = false;
+      for (const n of notifPool) {
+        if (!n || typeof n !== "object") continue;
+        const nTitle = String(n.title || "").trim();
+        const nMsg = String(n.message || "").trim();
+        const combined = `${nTitle} ${nMsg}`;
+        const isMeetingNotif =
+          n.category === "plan" ||
+          n?.link?.subTab === "planner" ||
+          /thông báo lịch họp|nhắc lịch họp|\[mời họp\]|\[nhắc họp\]/i.test(combined);
+        if (!isMeetingNotif) continue;
+
+        const metaItem = n?.metadata?.scheduleItem;
+        if (metaItem && typeof metaItem === "object" && metaItem.title && metaItem.date) {
+          const mDate = String(metaItem.date).slice(0, 10);
+          const mTitleNorm = canonStaffName(metaItem.title);
+          const exists = currentList.some(
+            (s) =>
+              s &&
+              (String(s.id) === String(metaItem.id) ||
+                (String(s.date || "").slice(0, 10) === mDate && canonStaffName(s.title || "") === mTitleNorm))
+          );
+          if (!exists) {
+            currentList.push({
+              ...metaItem,
+              day: metaItem.day || getDayNameFromIso(mDate),
+              date: mDate,
+              endDate: metaItem.endDate ? String(metaItem.endDate).slice(0, 10) : mDate,
+              eventType: metaItem.eventType || "MEETING"
+            });
+            added = true;
+          }
+          continue;
+        }
+
+        const titleMatch = nTitle.match(/(?:Thông báo lịch họp|Nhắc lịch họp)\s*:\s*(.+)$/i);
+        const extractedTitle = (titleMatch ? titleMatch[1] : nTitle.replace(/^[📅🔔\s]+/, "")).trim();
+        const isoDate = parseDateToIso(String(n?.metadata?.date || "")) || parseDateToIso(nMsg) || parseDateToIso(nTitle);
+        if (!extractedTitle || !isoDate) continue;
+
+        const titleNorm = canonStaffName(extractedTitle);
+        const alreadyExists = currentList.some(
+          (s) =>
+            s &&
+            String(s.date || "").slice(0, 10) === isoDate &&
+            canonStaffName(s.title || "") === titleNorm
+        );
+        if (alreadyExists) continue;
+
+        const timeMatch = nMsg.match(/\blúc\s+([0-9]{1,2}[:h][0-9]{2}(?:\s*[-–→]\s*[0-9]{1,2}[:h][0-9]{2})?)/i);
+        const timeStr = timeMatch ? timeMatch[1].trim() : "08:30 - 11:30";
+        const locMatch = nMsg.match(/\btại\s+([^•\n]+)/i);
+        const locationStr = locMatch ? locMatch[1].trim() : "Phòng họp Công ty";
+        const hostMatch = nMsg.match(/Chủ trì\s*:\s*([^•\n]+)/i);
+        const hostName = (hostMatch ? hostMatch[1].trim() : String(n?.sender?.name || "")).trim() || "Chủ trì";
+        const membersMatch = nMsg.match(/Thành viên(?:\s*\(\d+\))?\s*:\s*([^•\n]+)/i);
+        const parsedMembers = membersMatch
+          ? membersMatch[1]
+              .replace(/\(\+\d+\s*người\)/gi, "")
+              .split(",")
+              .map((x) => x.trim())
+              .filter(Boolean)
+          : [];
+        const targetNames = Array.isArray(n.targetEmployeeNames)
+          ? n.targetEmployeeNames.map((x: any) => String(x || "").trim()).filter(Boolean)
+          : [];
+        const allAttendees = Array.from(new Set([hostName, ...targetNames, ...parsedMembers].filter(Boolean)));
+        const coActorsList = allAttendees.filter((a) => !sameStaffName(a, hostName));
+        const matchedRes = companyResources.find((r) => canonStaffName(r.name) === canonStaffName(locationStr));
+
+        currentList.push({
+          id: n?.link?.itemId || `notif-meeting-${isoDate}-${titleNorm.replace(/\s+/g, "-")}`,
+          day: getDayNameFromIso(isoDate),
+          date: isoDate,
+          endDate: isoDate,
+          time: timeStr,
+          category: n.targetDept && n.targetDept !== "all" ? n.targetDept : "Họp & Giao Ban",
+          title: extractedTitle,
+          actor: allAttendees.join(", "),
+          coActors: coActorsList,
+          createdBy: hostName,
+          location: matchedRes ? matchedRes.name : locationStr,
+          resourceId: matchedRes ? matchedRes.id : "",
+          resourceName: matchedRes ? matchedRes.name : "",
+          linkedTaskCodes: [],
+          eventType: "MEETING",
+          meetingAgenda: "",
+          meetingLink: "",
+          sendChatNotify: true,
+          createMeetingGroup: false,
+          sendBellNotify: true,
+          reminderMinutes: 30,
+          isPublic: false,
+          attachments: []
+        });
+        added = true;
+      }
+
+      if (!added) return { list: currentList, added: false };
+      return { list: dedupeWeeklySchedules(currentList), added: true };
+    },
+    [filteredNotifications, companyResources, dedupeWeeklySchedules]
+  );
+
   // Deep-link opener for notifications ("Đi tới xem ↗") -> opens specific Task or Workflow Detail Modal
   const openWorkspaceItemFromNotification = useCallback((rawPayload: any): boolean => {
     if (!rawPayload) return false;
@@ -5756,6 +5890,125 @@ export const UnifiedWorkspace: React.FC = () => {
           }
         })
         .catch(() => {});
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("workspace_open_task_detail");
+      }
+      return true;
+    }
+
+    // Điều hướng thông minh cho thông báo Lịch Họp & Lịch Công Tác Tuần ("Đi tới xem ↗")
+    const isPlannerNotif =
+      subTab === "planner" ||
+      subTab === "plans" ||
+      notif?.category === "plan" ||
+      notif?.link?.subTab === "planner" ||
+      notif?.link?.subTab === "plans" ||
+      fullText.includes("thông báo lịch họp") ||
+      fullText.includes("nhắc lịch họp") ||
+      fullText.includes("[mời họp]") ||
+      fullText.includes("[nhắc họp]");
+
+    if (isPlannerNotif) {
+      const combinedNotifText = `${ notif?.title || "" } ${ rawTitle } ${ rawMsg } ${ notif?.message || "" }`;
+      const parseNotifIsoDate = (): string => {
+        const metaDate = notif?.metadata?.date || notif?.metadata?.scheduleItem?.date;
+        if (metaDate && /^\d{4}-\d{2}-\d{2}/.test(String(metaDate))) {
+          return String(metaDate).slice(0, 10);
+        }
+        const dmy = combinedNotifText.match(/\b(\d{2})[-/](\d{2})[-/](\d{4})\b/);
+        if (dmy) return `${dmy[3]}-${dmy[2]}-${dmy[1]}`;
+        const ymd = combinedNotifText.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+        if (ymd) return `${ymd[1]}-${ymd[2]}-${ymd[3]}`;
+        return "";
+      };
+
+      const targetIsoDate = parseNotifIsoDate();
+      if (targetIsoDate) {
+        const base = new Date((currentTodayIso || todayVN()) + "T00:00:00");
+        const baseDow = (base.getDay() + 6) % 7;
+        const baseMon = new Date(base);
+        baseMon.setDate(base.getDate() - baseDow);
+
+        const target = new Date(targetIsoDate + "T00:00:00");
+        if (!isNaN(target.getTime())) {
+          const tDow = (target.getDay() + 6) % 7;
+          const tMon = new Date(target);
+          tMon.setDate(target.getDate() - tDow);
+          const diffWeeks = Math.round((tMon.getTime() - baseMon.getTime()) / (7 * 86400000));
+          setWeekOffset(diffWeeks);
+        }
+      }
+
+      const meetingTitleMatch = String(notif?.title || rawTitle || "").match(/(?:Thông báo lịch họp|Nhắc lịch họp)\s*:\s*(.+)$/i);
+      const targetMeetingTitleNorm = canonStaffName(meetingTitleMatch ? meetingTitleMatch[1] : rawTitle);
+
+      const findMatchedScheduleItem = (list: any[]) => {
+        if (!Array.isArray(list) || list.length === 0) return null;
+        return (
+          (rawId && list.find((s) => s && String(s.id) === rawId)) ||
+          (targetIsoDate &&
+            targetMeetingTitleNorm &&
+            list.find(
+              (s) =>
+                s &&
+                String(s.date || "").slice(0, 10) === targetIsoDate &&
+                (canonStaffName(s.title || "") === targetMeetingTitleNorm ||
+                  canonStaffName(s.title || "").includes(targetMeetingTitleNorm) ||
+                  targetMeetingTitleNorm.includes(canonStaffName(s.title || "")))
+            )) ||
+          (targetMeetingTitleNorm &&
+            list.find(
+              (s) =>
+                s &&
+                (canonStaffName(s.title || "") === targetMeetingTitleNorm ||
+                  canonStaffName(s.title || "").includes(targetMeetingTitleNorm))
+            )) ||
+          null
+        );
+      };
+
+      setSelectedDept(defaultDeptForRole);
+      setSelectedAssignee("all");
+      setPlannerView("calendar");
+      setPlannerSectionMode((prev) => (prev === "RESOURCE_ONLY" ? "BOTH_SEPARATE" : prev));
+      setIsWorkBoardCollapsed(false);
+      setIsMeetingBannerCollapsed(false);
+      setActiveSubTab("planner");
+
+      setWeeklySchedule((prev) => {
+        const rec = reconcileSchedulesWithNotifications(prev, rawPayload);
+        const listToSearch = rec.added ? rec.list : prev;
+        const matched = findMatchedScheduleItem(listToSearch);
+        if (matched) {
+          setTimeout(() => setViewingScheduleEvent(matched), 50);
+        }
+        return rec.added ? rec.list : prev;
+      });
+
+      fetch("/api/storage?key=unified_weekly_schedule", { headers: { "x-no-cache": "1" } })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => {
+          const serverArr = Array.isArray(j?.data) ? j.data : [];
+          const rec = reconcileSchedulesWithNotifications(serverArr, rawPayload);
+          const cleaned = dedupeWeeklySchedules(rec.list);
+          setWeeklySchedule(cleaned);
+          try {
+            localStorage.setItem("unified_weekly_schedule", JSON.stringify(cleaned));
+          } catch {}
+          if (rec.added) {
+            fetch("/api/storage?key=unified_weekly_schedule", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(cleaned)
+            }).catch(() => {});
+          }
+          const matched = findMatchedScheduleItem(cleaned);
+          if (matched) {
+            setViewingScheduleEvent(matched);
+          }
+        })
+        .catch(() => {});
+
       if (typeof window !== "undefined") {
         localStorage.removeItem("workspace_open_task_detail");
       }
@@ -9106,7 +9359,15 @@ export const UnifiedWorkspace: React.FC = () => {
         sender: { name: currentStaffName || hostName },
         targetEmployeeNames: allParticipants,
         targetDept: meetingObj?.category || "all",
-        link: { tab: "workspace", subTab: "planner" }
+        metadata: {
+          scheduleItem: meetingObj,
+          date: meetingObj?.date
+        },
+        link: {
+          tab: "workspace",
+          subTab: "planner",
+          itemId: meetingObj?.id ? String(meetingObj.id) : undefined
+        }
       });
     }
 
@@ -9439,21 +9700,6 @@ export const UnifiedWorkspace: React.FC = () => {
       attachments: scheduleForm.attachments || []
     }));
 
-    // Nếu là Lịch Họp (hoặc bật gửi tin nhắn thông báo), phát thông báo qua Chat + Chuông tới các thành viên tham dự
-    if (isMeeting && (scheduleForm.sendChatNotify || scheduleForm.sendBellNotify)) {
-      const broadcastRes = await handleBroadcastMeetingMessage(createdItems[0], "INVITE", {
-        sendChat: Boolean(scheduleForm.sendChatNotify),
-        createGroup: Boolean(scheduleForm.createMeetingGroup),
-        sendBell: Boolean(scheduleForm.sendBellNotify)
-      });
-      if (broadcastRes.groupChannelId) {
-        createdItems = createdItems.map((it) => ({
-          ...it,
-          chatChannelId: broadcastRes.groupChannelId
-        }));
-      }
-    }
-
     // Sửa lịch nhiều ngày: bỏ các thẻ cũ cùng nội dung (bản tách từng ngày của chính lịch này) ở những ngày sắp tạo lại,
     // tránh mỗi lần sửa lại sinh thêm một bộ thẻ trùng
     let baseList = weeklySchedule;
@@ -9469,13 +9715,18 @@ export const UnifiedWorkspace: React.FC = () => {
         );
       }
     }
-    const updatedRaw = wasEditing
-      ? [
-          ...baseList.map((s) => (s.id === editingScheduleId ? { ...s, ...createdItems[0] } : s)),
-          ...createdItems.slice(1)
-        ]
-      : [...weeklySchedule, ...createdItems];
-    const updated = dedupeWeeklySchedules(updatedRaw);
+    const buildUpdatedScheduleList = (items: any[]) => {
+      const raw = wasEditing
+        ? [
+            ...baseList.map((s) => (s.id === editingScheduleId ? { ...s, ...items[0] } : s)),
+            ...items.slice(1)
+          ]
+        : [...weeklySchedule, ...items];
+      return dedupeWeeklySchedules(raw);
+    };
+
+    // Lưu lịch lên máy chủ TRƯỚC KHI phát thông báo chuông để người nhận bấm "Đi tới xem ↗" luôn tải được lịch mới nhất
+    let updated = buildUpdatedScheduleList(createdItems);
     setWeeklySchedule(updated);
     setEditingScheduleId(null);
     try {
@@ -9491,8 +9742,52 @@ export const UnifiedWorkspace: React.FC = () => {
       console.warn("Error saving weekly schedule:", err);
     }
 
+    // Nếu là Lịch Họp (hoặc bật gửi tin nhắn thông báo), phát thông báo qua Chat + Chuông tới các thành viên tham dự
+    if (isMeeting && (scheduleForm.sendChatNotify || scheduleForm.sendBellNotify)) {
+      const broadcastRes = await handleBroadcastMeetingMessage(createdItems[0], "INVITE", {
+        sendChat: Boolean(scheduleForm.sendChatNotify),
+        createGroup: Boolean(scheduleForm.createMeetingGroup),
+        sendBell: Boolean(scheduleForm.sendBellNotify)
+      });
+      if (broadcastRes.groupChannelId) {
+        createdItems = createdItems.map((it) => ({
+          ...it,
+          chatChannelId: broadcastRes.groupChannelId
+        }));
+        updated = buildUpdatedScheduleList(createdItems);
+        setWeeklySchedule(updated);
+        try {
+          if (typeof window !== "undefined") {
+            localStorage.setItem("unified_weekly_schedule", JSON.stringify(updated));
+          }
+          await fetch("/api/storage?key=unified_weekly_schedule", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(updated)
+          });
+        } catch {}
+      }
+    }
+
     const uniqueCreatedDates = Array.from(new Set(createdItems.map((it) => it.date))).sort();
     const firstIso = uniqueCreatedDates[0] || targetIsoDates[0];
+    // Tự động chuyển lịch sang đúng tuần chứa lịch vừa tạo nếu lịch đó nằm ở tuần khác (VD: tạo lịch tuần sau)
+    if (firstIso && !options?.keepOpen) {
+      const base = new Date((currentTodayIso || todayVN()) + "T00:00:00");
+      const baseDow = (base.getDay() + 6) % 7;
+      const baseMon = new Date(base);
+      baseMon.setDate(base.getDate() - baseDow);
+      const target = new Date(firstIso + "T00:00:00");
+      if (!isNaN(target.getTime())) {
+        const tDow = (target.getDay() + 6) % 7;
+        const tMon = new Date(target);
+        tMon.setDate(target.getDate() - tDow);
+        const diffWeeks = Math.round((tMon.getTime() - baseMon.getTime()) / (7 * 86400000));
+        if (diffWeeks !== weekOffset) {
+          setWeekOffset(diffWeeks);
+        }
+      }
+    }
     const lastIso = uniqueCreatedDates[uniqueCreatedDates.length - 1] || firstIso;
     const firstDayName = getDayNameFromIso(firstIso);
     const firstDateLabel = `${firstIso.slice(8, 10)}/${firstIso.slice(5, 7)}`;
@@ -10684,8 +10979,50 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
         const rec = reconcileProposalsWithNotifications(prev);
         return rec.added ? rec.list : prev;
       });
+      if (weeklyScheduleLoaded) {
+        setWeeklySchedule((prev) => {
+          const rec = reconcileSchedulesWithNotifications(prev);
+          if (!rec.added) return prev;
+          try {
+            if (typeof window !== "undefined") {
+              localStorage.setItem("unified_weekly_schedule", JSON.stringify(rec.list));
+            }
+            fetch("/api/storage?key=unified_weekly_schedule", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(rec.list)
+            }).catch(() => {});
+          } catch {}
+          return rec.list;
+        });
+      }
     }
-  }, [filteredNotifications, reconcileProposalsWithNotifications]);
+  }, [filteredNotifications, weeklyScheduleLoaded, reconcileProposalsWithNotifications, reconcileSchedulesWithNotifications]);
+
+  useEffect(() => {
+    if (activeSubTab !== "planner") return;
+    fetch("/api/storage?key=unified_weekly_schedule", { headers: { "x-no-cache": "1" } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (Array.isArray(j?.data)) {
+          const rec = reconcileSchedulesWithNotifications(j.data);
+          const cleaned = dedupeWeeklySchedules(rec.list);
+          setWeeklySchedule(cleaned);
+          setWeeklyScheduleLoaded(true);
+          try {
+            localStorage.setItem("unified_weekly_schedule", JSON.stringify(cleaned));
+          } catch {}
+          if (rec.added) {
+            fetch("/api/storage?key=unified_weekly_schedule", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(cleaned)
+            }).catch(() => {});
+          }
+        }
+      })
+      .catch(() => {});
+  }, [activeSubTab, reconcileSchedulesWithNotifications, dedupeWeeklySchedules]);
 
   useEffect(() => {
     if (activeSubTab !== "proposals") return;
