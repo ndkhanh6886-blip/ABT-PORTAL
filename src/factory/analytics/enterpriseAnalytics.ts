@@ -4,9 +4,10 @@ import type { Tx } from "../core/db";
 import { authorize, authorizeAnywhere, type AuthzActor } from "../core/authz";
 import { writeAudit } from "../core/audit";
 import { addDays, vnToday } from "../core/dates";
-import { invalid, notFound } from "../core/errors";
+import { conflict, invalid, notFound } from "../core/errors";
 import { parseInput } from "../core/records";
 import { runTransition } from "../core/stateMachine";
+import { releaseLotReservations } from "../inv/reservations";
 import { ensureWarehouseOpsSchema } from "../inv/warehouseOps";
 import { ensureSupplyChainSchema } from "../purchase/supplyChainOps";
 import { createRequest } from "../purchase/requests";
@@ -1751,15 +1752,39 @@ const cascadeQuarantineSchema = z.object({
   reason: z.string().trim().min(5).default("Phong tỏa liên hoàn (Cascade Quarantine) để điều tra chất lượng phả hệ 360°"),
 });
 
+/** Lot states a cascade quarantine leaves alone: already blocked or already out of usable stock. */
+const CASCADE_SKIP_STATUSES = ["ON_HOLD", "REJECTED", "EXPIRED"];
+
 export async function cascadeQuarantineLotTree(tx: Tx, actor: AuthzActor, input: unknown) {
   await ensureAnalyticsSchema(tx);
   const d = parseInput(cascadeQuarantineSchema, input);
+  // FOR UPDATE serialises a double click: the second request waits, then sees the NCR the first one opened.
   const rootLot = (
-    await tx.query("SELECT l.id, l.code, l.item_id, l.status FROM inv.lot l WHERE l.id = $1", [d.lot_id])
+    await tx.query("SELECT l.id, l.code, l.item_id, l.status FROM inv.lot l WHERE l.id = $1 FOR UPDATE", [d.lot_id])
   ).rows[0];
   if (!rootLot) throw notFound("Lô cần phong tỏa");
 
-  // Trace all downstream child lots (1st and 2nd degree)
+  const existing = (
+    await tx.query(
+      `SELECT n.code AS ncr_code, dv.code AS deviation_code
+         FROM qms.ncr n
+         JOIN qms.deviation dv ON dv.id = n.deviation_id
+        WHERE n.lot_id = $1
+          AND n.status <> 'CLOSED'
+          AND dv.step_ref = 'CASCADE_QUARANTINE_360'
+        ORDER BY n.created_at
+        LIMIT 1`,
+      [rootLot.id]
+    )
+  ).rows[0];
+  if (existing) {
+    throw conflict(
+      `Lô ${rootLot.code} đã được phong tỏa liên hoàn theo ${existing.ncr_code} / ${existing.deviation_code} (chưa đóng). Xử lý tiếp trên phiếu đó ở QA/QC › Sai lệch & NCR, không mở thêm NCR trùng.`,
+      "ALREADY_QUARANTINED"
+    );
+  }
+
+  // Trace all downstream child lots (up to 4 levels)
   const downstreamRows = (
     await tx.query(
       `WITH RECURSIVE tree AS (
@@ -1774,39 +1799,68 @@ export async function cascadeQuarantineLotTree(tx: Tx, actor: AuthzActor, input:
        )
        SELECT DISTINCT l.id, l.code, l.item_id, l.status
          FROM tree t
-         JOIN inv.lot l ON l.id = t.lot_id`,
+         JOIN inv.lot l ON l.id = t.lot_id
+        WHERE l.id <> $1`,
       [d.lot_id]
     )
   ).rows;
 
   const allAffectedLots = [rootLot, ...downstreamRows];
   const quarantinedCodes: string[] = [];
+  const holdReason = `Phong tỏa liên hoàn 360°: ${d.reason}`.slice(0, 500);
 
   for (const lot of allAffectedLots) {
-    await tx.query(
-      "UPDATE inv.lot SET status = 'ON_HOLD', updated_at = now() WHERE id = $1",
-      [lot.id]
+    if (CASCADE_SKIP_STATUSES.includes(lot.status)) continue;
+    const res = await tx.query(
+      `UPDATE inv.lot
+          SET status = 'ON_HOLD', hold_reason = $2, version = version + 1, updated_at = now(), updated_by = $3
+        WHERE id = $1 AND status <> ALL($4::text[])`,
+      [lot.id, holdReason, actor.userId, CASCADE_SKIP_STATUSES]
     );
+    if (!res.rowCount) continue;
+    await releaseLotReservations(tx, actor, lot.id);
     await writeAudit(tx, actor, {
       entityType: "lot",
       entityId: lot.id,
       action: "cascade_quarantine_hold",
-      changes: { status: [lot.status, "ON_HOLD"], reason: [null, d.reason] },
+      changes: { status: [lot.status, "ON_HOLD"], hold_reason: [null, holdReason] },
+      reason: holdReason,
     });
     quarantinedCodes.push(lot.code);
   }
 
   // Also put any active Kit production order using these lots on hold
   const lotIds = allAffectedLots.map((x) => x.id);
-  await tx.query(
-    `UPDATE kit.production_order
-        SET status = 'ON_HOLD',
-            notes = COALESCE(notes, '') || $2,
-            updated_at = now()
-      WHERE lot_id = ANY($1::uuid[])
-        AND status IN ('CONFIRMED', 'IN_PROGRESS', 'PENDING_QC', 'PENDING_RELEASE')`,
-    [lotIds, `\n[Cascade Quarantine]: ${d.reason}`]
-  );
+  const heldOrders = (
+    await tx.query(
+      `UPDATE kit.production_order po
+          SET status = 'ON_HOLD',
+              notes = COALESCE(po.notes, '') || $2,
+              version = po.version + 1,
+              updated_at = now(),
+              updated_by = $3
+         FROM kit.production_order old
+        WHERE old.id = po.id
+          AND po.lot_id = ANY($1::uuid[])
+          AND po.status IN ('CONFIRMED', 'IN_PROGRESS', 'PENDING_QC', 'PENDING_RELEASE')
+        RETURNING po.id, old.status AS old_status`,
+      [lotIds, `\n[Cascade Quarantine]: ${d.reason}`, actor.userId]
+    )
+  ).rows;
+  for (const o of heldOrders) {
+    await writeAudit(tx, actor, {
+      entityType: "kit_production_order",
+      entityId: o.id,
+      action: "cascade_quarantine_hold",
+      changes: { status: [o.old_status, "ON_HOLD"] },
+      reason: holdReason,
+    });
+  }
+
+  const downstreamCodes = downstreamRows.map((x: any) => x.code);
+  const downstreamText = downstreamCodes.length
+    ? `${downstreamCodes.length} lô thành phẩm/bán thành phẩm liên đới (${downstreamCodes.join(", ")})`
+    : "không có lô thành phẩm/bán thành phẩm liên đới nào";
 
   // Open an official Deviation + NCR for the root lot
   const devRes = await raiseDeviation(tx, actor, {
@@ -1814,7 +1868,7 @@ export async function cascadeQuarantineLotTree(tx: Tx, actor: AuthzActor, input:
     entity_type: "LOT",
     entity_id: rootLot.id,
     severity: "CRITICAL",
-    description: `[Phong tỏa Liên hoàn 360°] Khóa lô gốc ${rootLot.code} và ${downstreamRows.length} lô thành phẩm/bán thành phẩm liên đới (${quarantinedCodes.join(", ")}). Lý do: ${d.reason}`,
+    description: `[Phong tỏa Liên hoàn 360°] Khóa lô gốc ${rootLot.code} và ${downstreamText}. Lý do: ${d.reason}`,
     step_ref: "CASCADE_QUARANTINE_360",
     ncr: { item_id: rootLot.item_id, lot_id: rootLot.id, qty_affected: allAffectedLots.length },
   });
@@ -1824,6 +1878,7 @@ export async function cascadeQuarantineLotTree(tx: Tx, actor: AuthzActor, input:
     root_lot_code: rootLot.code,
     quarantined_lot_codes: quarantinedCodes,
     affected_count: quarantinedCodes.length,
+    downstream_lot_codes: downstreamCodes,
     deviation_id: devRes.deviation_id,
     ncr_id: devRes.ncr_id,
   };

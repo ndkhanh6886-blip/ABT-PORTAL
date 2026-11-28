@@ -8,6 +8,7 @@ import { type QcFormsConfig } from "../qcSignatures";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { IncidentsView } from "../qa/IncidentsView";
 import { QcDocumentPreview } from "../qa/QcDocumentPreview";
+import { askCascadeQuarantineReason } from "../qa/cascadeQuarantinePrompt";
 import { ACTION_LABELS, type KitOptions } from "./shared";
 
 export function QualityTraceView({ options }: { options: KitOptions }) {
@@ -21,6 +22,7 @@ export function QualityTraceView({ options }: { options: KitOptions }) {
   const [selectedCoa, setSelectedCoa] = useState<any | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [showCreateRetain, setShowCreateRetain] = useState(false);
+  const [quarantining, setQuarantining] = useState(false);
   const [showCreateStability, setShowCreateStability] = useState(false);
 
   const [retForm, setRetForm] = useState({
@@ -191,19 +193,24 @@ export function QualityTraceView({ options }: { options: KitOptions }) {
               {selectedLotId && (
                 <Button
                   variant="danger"
+                  disabled={quarantining}
                   onClick={async () => {
+                    if (quarantining) return;
+                    const lotCode = options.lots.find((l) => l.id === selectedLotId)?.code ?? "đã chọn";
+                    const reason = askCascadeQuarantineReason(lotCode);
+                    if (!reason) return;
+                    setQuarantining(true);
+                    setError(null);
                     try {
                       await api("/api/factory/analytics", {
                         method: "POST",
-                        body: JSON.stringify({
-                          op: "cascade_quarantine",
-                          lot_id: selectedLotId,
-                          reason: "Phong tỏa liên hoàn (Cascade Quarantine) từ màn hình Truy xuất Phả hệ 2 chiều",
-                        }),
+                        body: JSON.stringify({ op: "cascade_quarantine", lot_id: selectedLotId, reason }),
                       });
                       await loadTrace(selectedLotId);
                     } catch (err) {
                       setError(err);
+                    } finally {
+                      setQuarantining(false);
                     }
                   }}
                 >
