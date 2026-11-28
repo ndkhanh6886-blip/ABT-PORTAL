@@ -628,8 +628,74 @@ describe("Proposal approval routing & escalation rules", () => {
     expect(isProposalWaitingForUser(ceoProposal, "Đỗ Ngọc Diễm Trúc", "Ban Giám Đốc", true, false, SAMPLE_PERSONNEL)).toBe(false);
 
     // Kiểm tra ánh xạ chức danh BGĐ cụ thể qua resolveBodMemberForStep
-    expect(resolveBodMemberForStep({ approverName: "PGĐ Kinh doanh", dept: "Ban Giám Đốc" }, "QA/QC", SAMPLE_PERSONNEL).approverName).toBe("Đỗ Ngọc Diễm Trúc");
+    expect(resolveBodMemberForStep({ approverName: "PGĐ Kinh doanh", dept: "Ban Giám Đốc" }, "Kinh Doanh", SAMPLE_PERSONNEL).approverName).toBe("Đỗ Ngọc Diễm Trúc");
+    expect(resolveBodMemberForStep({ approverName: "PGĐ Kinh doanh", dept: "Ban Giám Đốc" }, "QA/QC", SAMPLE_PERSONNEL).approverName).toBe("Nguyễn Duy Khánh");
     expect(resolveBodMemberForStep({ approverName: "PGĐ Kỹ thuật", dept: "Ban Giám Đốc" }, "Kinh Doanh", SAMPLE_PERSONNEL).approverName).toBe("Nguyễn Duy Khánh");
     expect(resolveBodMemberForStep({ approverName: "Giám đốc", dept: "Ban Giám Đốc" }, "Kinh Doanh", SAMPLE_PERSONNEL).approverName).toBe("Nguyễn Văn Tùng");
+  });
+
+  it("routes DXKNM (Đề xuất Xuất Kho Nhà Máy) for any department without QC-QA step and assigns Step 2 directly to Đoàn Hồng Sơn", () => {
+    const dxknmTemplateSteps: ProposalStepInstance[] = [
+      {
+        stepOrder: 1,
+        stepName: "Trưởng bộ phận duyệt nhu cầu",
+        roleType: "DEPT_HEAD",
+        dept: "Application",
+        approverName: "Trưởng bộ phận",
+        status: "PENDING_NOW",
+        slaHours: 4
+      },
+      {
+        stepOrder: 2,
+        stepName: "Kiểm tra tồn kho: Xác nhận giao hàng (nếu có sẵn) hoặc Tạo lệnh sản xuất (nếu chưa có)",
+        roleType: "EXECUTOR",
+        dept: "Sản Xuất Kit",
+        approverName: "Đoàn Hồng Sơn",
+        status: "WAITING",
+        slaHours: 4
+      }
+    ];
+
+    // 1. Nhân viên phòng Application lập phiếu -> B1: Trần Tài (Application), B2: Đoàn Hồng Sơn (Sản Xuất Kit), không qua bước QC-QA
+    const appStaffRes = normalizeProposalStepsForRequester(
+      dxknmTemplateSteps,
+      "Application",
+      "Lê Minh Quân",
+      SAMPLE_PERSONNEL
+    );
+    expect(appStaffRes.steps).toHaveLength(2);
+    expect(appStaffRes.steps[0]).toMatchObject({
+      stepOrder: 1,
+      roleType: "DEPT_HEAD",
+      dept: "Application",
+      approverName: "Trần Tài"
+    });
+    expect(appStaffRes.steps[1]).toMatchObject({
+      stepOrder: 2,
+      roleType: "EXECUTOR",
+      dept: "Sản Xuất Kit",
+      approverName: "Đoàn Hồng Sơn"
+    });
+
+    // 2. Phó Trưởng phòng Application (Trần Tài) lập phiếu -> B1 nâng lên PGĐ Kinh doanh (Đỗ Ngọc Diễm Trúc), B2 giữ nguyên Đoàn Hồng Sơn
+    const appLeadRes = normalizeProposalStepsForRequester(
+      dxknmTemplateSteps,
+      "Application",
+      "Trần Tài",
+      SAMPLE_PERSONNEL
+    );
+    expect(appLeadRes.steps).toHaveLength(2);
+    expect(appLeadRes.steps[0]).toMatchObject({
+      stepOrder: 1,
+      roleType: "DIRECTOR",
+      dept: "Ban Giám Đốc",
+      approverName: "Đỗ Ngọc Diễm Trúc"
+    });
+    expect(appLeadRes.steps[1]).toMatchObject({
+      stepOrder: 2,
+      roleType: "EXECUTOR",
+      dept: "Sản Xuất Kit",
+      approverName: "Đoàn Hồng Sơn"
+    });
   });
 });

@@ -4,6 +4,7 @@ import {
   addOligoSequencesToInternalOrder,
   createInternalOrderManual,
   createPrFromOrderMrp,
+  createProductionFromDxknmProposal,
   createQuarterlyForecastAndSplitToDepartments,
   dispatchInternalOrderLineToProduction,
   getInternalOrderCatalogOptions,
@@ -32,6 +33,8 @@ export const POST = factoryRoute(async (tx, { actor, body: rawBody }) => {
       return dispatchInternalOrderLineToProduction(tx, actor, body);
     case "add_oligo_sequences_to_order":
       return addOligoSequencesToInternalOrder(tx, actor, body);
+    case "create_production_from_dxknm":
+      return createProductionFromDxknmProposal(tx, actor, body);
     default:
       throw invalid(`Thao tác đơn nội bộ không hợp lệ: ${op}`);
   }

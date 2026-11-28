@@ -550,22 +550,21 @@ export const DEFAULT_PROPOSAL_TEMPLATES: ProposalTemplate[] = [
     id: "tmpl_factory_fefo_special_issue",
     codePrefix: "DXKNM",
     category: "TECHNICAL_OPS",
-    name: "Đề xuất Xuất Kho Nhà Máy: Cấp phát NVL/Hóa chất R&D & Lô Thẩm định",
+    name: "Đề xuất Xuất Kho Nhà Máy: Cấp phát Thành phẩm, NVL/Hóa chất & Mẫu thử",
     icon: "🏭",
-    description: "Độc lập với Kho Kinh Doanh: Đề xuất Kho Nhà Máy xuất nguyên vật liệu, enzyme, cột tổng hợp hoặc bán thành phẩm phục vụ thực nghiệm R&D, thẩm định QC hoặc bù hao hụt sản xuất.",
+    description: "Dành cho tất cả các phòng ban (Application, R&D, Sản xuất, QC, Thiết bị, Kinh doanh...): Đề xuất lĩnh thành phẩm, bán thành phẩm, nguyên vật liệu hoặc hóa chất tại Kho Nhà Máy. Anh Đoàn Hồng Sơn kiểm tra tồn kho để xác nhận giao ngay nếu hàng có sẵn hoặc tạo Lệnh sản xuất nếu hàng chưa có sẵn.",
     hasAmount: true,
     hasLineItems: true,
-    lineItemColumns: { col1: "Mã - Tên NVL / Hóa chất / Bán thành phẩm", col2: "Số Lot FEFO & Hạn dùng", col3: "Số lượng lĩnh", col4: "Đơn giá vốn (VNĐ)" },
+    lineItemColumns: { col1: "Mã - Tên Thành phẩm / NVL / Hóa chất", col2: "Quy cách / Số Lot & Hạn dùng", col3: "Số lượng yêu cầu", col4: "Đơn giá vốn ước tính (VNĐ)" },
     autoDirectorThreshold: 3000000,
-    slaTotalHours: 12,
+    slaTotalHours: 8,
     fields: [
-      { key: "factoryIssueType", label: "Mục đích lĩnh vật tư tại Kho Nhà Máy", type: "select", options: ["Thực nghiệm Đề tài R&D (ELN)", "Chạy mẫu Kiểm nghiệm QA/QC & Độ ổn định", "Xuất bù hao hụt Lệnh sản xuất Kit / Mẻ Oligo", "Lắp ráp / Thử nghiệm Thiết bị mới"], required: true },
-      { key: "batchOrProjectRef", label: "Mã Lệnh sản xuất / Đề tài R&D liên quan", type: "text", placeholder: "VD:LSX-KIT-2611 / RD-HPV-01", required: true }
+      { key: "factoryIssueType", label: "Mục đích lĩnh hàng tại Kho Nhà Máy", type: "select", options: ["Chạy mẫu thử nghiệm / Demo ứng dụng (Phòng Application)", "Thực nghiệm Đề tài R&D (ELN)", "Chạy mẫu Kiểm nghiệm QA/QC & Độ ổn định", "Xuất bù hao hụt Lệnh sản xuất Kit / Mẻ Oligo", "Lắp ráp / Thử nghiệm Thiết bị mới", "Cấp phát phục vụ công tác chuyên môn phòng ban khác"], required: true },
+      { key: "batchOrProjectRef", label: "Mã Công việc / Đề tài / Khách hàng / Lệnh SX liên quan", type: "text", placeholder: "VD: APP-2611 / LSX-KIT-2611 / RD-PRJ-01", required: true }
     ],
     defaultSteps: [
-      { stepOrder: 1, stepName: "Trưởng phòng chuyên môn (R&D / SX / Thiết bị) duyệt", roleType: "DEPT_HEAD", defaultDept: "Nghiên Cứu R&D", defaultApprover: "Trưởng bộ phận", slaHours: 4 },
-      { stepOrder: 2, stepName: "QA/QC kiểm tra trạng thái lô Released & FEFO", roleType: "REVIEWER", defaultDept: "QA/QC", defaultApprover: "Trưởng phòng QA/QC", slaHours: 4 },
-      { stepOrder: 3, stepName: "Kho Nhà Máy xuất cấp phát thực thi", roleType: "EXECUTOR", defaultDept: "Kho Nhà Máy", defaultApprover: "Thủ kho Nhà Máy", slaHours: 4 }
+      { stepOrder: 1, stepName: "Trưởng bộ phận duyệt nhu cầu", roleType: "DEPT_HEAD", defaultDept: "Theo phòng người tạo", defaultApprover: "Trưởng bộ phận", slaHours: 4 },
+      { stepOrder: 2, stepName: "Kiểm tra tồn kho: Xác nhận giao hàng (nếu có sẵn) hoặc Tạo lệnh sản xuất (nếu chưa có)", roleType: "EXECUTOR", defaultDept: "Sản Xuất Kit", defaultApprover: "Đoàn Hồng Sơn", slaHours: 4 }
     ]
   },
   {
@@ -1995,8 +1994,95 @@ export function ProposalsApprovalView({
         return f;
       });
     }
+    let nextName = tmpl.name;
+    let nextDesc = tmpl.description;
+    let nextSla = tmpl.slaTotalHours;
+    if (tmpl.id === "tmpl_factory_fefo_special_issue" || tmpl.codePrefix === "DXKNM") {
+      // Chuẩn hóa biểu mẫu DXKNM dùng chung cho tất cả các phòng ban (không chỉ R&D):
+      // - Bước 1: Trưởng bộ phận theo phòng người tạo
+      // - Bỏ bước Trưởng phòng QC-QA (vì thành phẩm xuất kho đã được QC-QA duyệt Released)
+      // - Bước 2: Anh Đoàn Hồng Sơn kiểm tra tồn kho để xác nhận giao hàng (nếu có sẵn) hoặc tạo lệnh sản xuất (nếu chưa có)
+      const hasLegacyQaStep = nextSteps.some(
+        (s) =>
+          s.defaultDept === "QA/QC" ||
+          s.defaultDept === "QC/QA" ||
+          /qa\/qc|qc-qa|released\s*&\s*fefo/i.test(String(s.stepName || "")) ||
+          /qa\/qc|qc-qa/i.test(String(s.defaultApprover || ""))
+      );
+      const hasLegacyRdStep1 =
+        nextSteps[0]?.defaultDept === "Nghiên Cứu R&D" ||
+        /r&d\s*\/\s*sx\s*\/\s*thiết bị/i.test(String(nextSteps[0]?.stepName || ""));
+      const lastStep = nextSteps[nextSteps.length - 1];
+      const hasLegacyWarehouseStep =
+        !lastStep ||
+        !isSamePerson(lastStep.defaultApprover, "Đoàn Hồng Sơn") ||
+        /thủ kho nhà máy/i.test(String(lastStep.defaultApprover || ""));
+
+      if (hasLegacyQaStep || hasLegacyRdStep1 || hasLegacyWarehouseStep) {
+        changed = true;
+        nextSteps.splice(
+          0,
+          nextSteps.length,
+          {
+            stepOrder: 1,
+            stepName: "Trưởng bộ phận duyệt nhu cầu",
+            roleType: "DEPT_HEAD",
+            defaultDept: "Theo phòng người tạo",
+            defaultApprover: "Trưởng bộ phận",
+            slaHours: 4
+          },
+          {
+            stepOrder: 2,
+            stepName: "Kiểm tra tồn kho: Xác nhận giao hàng (nếu có sẵn) hoặc Tạo lệnh sản xuất (nếu chưa có)",
+            roleType: "EXECUTOR",
+            defaultDept: "Sản Xuất Kit",
+            defaultApprover: "Đoàn Hồng Sơn",
+            slaHours: 4
+          }
+        );
+        nextSla = 8;
+      }
+      if (/cấp phát nvl\/hóa chất r&d/i.test(String(nextName || ""))) {
+        changed = true;
+        nextName = "Đề xuất Xuất Kho Nhà Máy: Cấp phát Thành phẩm, NVL/Hóa chất & Mẫu thử";
+        nextDesc =
+          "Dành cho tất cả các phòng ban (Application, R&D, Sản xuất, QC, Thiết bị, Kinh doanh...): Đề xuất lĩnh thành phẩm, bán thành phẩm, nguyên vật liệu hoặc hóa chất tại Kho Nhà Máy. Anh Đoàn Hồng Sơn kiểm tra tồn kho để xác nhận giao ngay nếu hàng có sẵn hoặc tạo Lệnh sản xuất nếu hàng chưa có sẵn.";
+      }
+      const canonicalIssueOptions = [
+        "Chạy mẫu thử nghiệm / Demo ứng dụng (Phòng Application)",
+        "Thực nghiệm Đề tài R&D (ELN)",
+        "Chạy mẫu Kiểm nghiệm QA/QC & Độ ổn định",
+        "Xuất bù hao hụt Lệnh sản xuất Kit / Mẻ Oligo",
+        "Lắp ráp / Thử nghiệm Thiết bị mới",
+        "Cấp phát phục vụ công tác chuyên môn phòng ban khác"
+      ];
+      nextFields = nextFields.map((f) => {
+        if (f.key === "factoryIssueType" && Array.isArray(f.options)) {
+          const missingOpt = canonicalIssueOptions.some((o) => !f.options!.includes(o));
+          if (missingOpt) {
+            changed = true;
+            return {
+              ...f,
+              label: "Mục đích lĩnh hàng tại Kho Nhà Máy",
+              options: canonicalIssueOptions
+            };
+          }
+        }
+        if (f.key === "batchOrProjectRef" && /đề tài r&d liên quan/i.test(String(f.label || ""))) {
+          changed = true;
+          return {
+            ...f,
+            label: "Mã Công việc / Đề tài / Khách hàng / Lệnh SX liên quan",
+            placeholder: "VD: APP-2611 / LSX-KIT-2611 / RD-PRJ-01"
+          };
+        }
+        return f;
+      });
+    }
     return {
-      template: changed ? { ...tmpl, defaultSteps: nextSteps, fields: nextFields } : tmpl,
+      template: changed
+        ? { ...tmpl, name: nextName, description: nextDesc, slaTotalHours: nextSla, defaultSteps: nextSteps, fields: nextFields }
+        : tmpl,
       changed
     };
   };
@@ -2241,22 +2327,78 @@ export function ProposalsApprovalView({
     const nextList = proposals.map((p) => {
       if (!p || (p.status !== "PENDING" && p.status !== "DRAFT" && p.status !== "RETURNED")) return p;
       const tmpl = templates.find((t) => t.id === p.templateId);
+      const isDxknm =
+        p.templateId === "tmpl_factory_fefo_special_issue" ||
+        String(p.proposalCode || "").toUpperCase().startsWith("DXKNM");
+      let baseSteps = p.steps || [];
+      let dxknmMigrated = false;
+
+      if (isDxknm && baseSteps.length > 0) {
+        // Loại bỏ bước duyệt QA/QC chưa ký (vì thành phẩm xuất kho đã được QC-QA duyệt rồi)
+        // và cập nhật bước kiểm tra kho / tạo lệnh SX cuối cùng về Anh Đoàn Hồng Sơn
+        const withoutUnapprovedQa = baseSteps.filter((st, idx) => {
+          if (idx === 0 || st.status === "APPROVED") return true;
+          const isLegacyQaStep =
+            st.dept === "QA/QC" ||
+            st.dept === "QC/QA" ||
+            /qa\/qc|qc-qa|released\s*&\s*fefo/i.test(String(st.stepName || ""));
+          if (isLegacyQaStep) {
+            dxknmMigrated = true;
+            return false;
+          }
+          return true;
+        });
+
+        baseSteps = withoutUnapprovedQa.map((st, idx, arr) => {
+          if (idx === 0 && st.status !== "APPROVED" && p.requesterDept && st.dept === "Nghiên Cứu R&D" && !isSameWorkspaceDept(p.requesterDept, "Nghiên Cứu R&D")) {
+            dxknmMigrated = true;
+            return {
+              ...st,
+              stepName: "Trưởng bộ phận duyệt nhu cầu",
+              dept: p.requesterDept,
+              approverName: "Trưởng bộ phận"
+            };
+          }
+          if (idx === arr.length - 1 && idx > 0 && st.status !== "APPROVED" && (!isSamePerson(st.approverName, "Đoàn Hồng Sơn") || /thủ kho nhà máy/i.test(String(st.approverName || "")))) {
+            dxknmMigrated = true;
+            return {
+              ...st,
+              stepName: "Kiểm tra tồn kho: Xác nhận giao hàng (nếu có sẵn) hoặc Tạo lệnh sản xuất (nếu chưa có)",
+              roleType: "EXECUTOR" as const,
+              dept: "Sản Xuất Kit",
+              approverName: "Đoàn Hồng Sơn"
+            };
+          }
+          return st;
+        });
+      }
+
       const norm = normalizeProposalStepsForRequester(
-        p.steps || [],
+        baseSteps,
         p.requesterDept || "Kinh Doanh",
         p.requesterName || "",
         personnelList,
         tmpl?.defaultSteps
       );
-      if (!norm.changed) return p;
+      if (!norm.changed && !dxknmMigrated) return p;
       anyChanged = true;
+      let normalizedSteps = norm.steps;
+      if (p.status === "PENDING" && !normalizedSteps.some((s) => s.status === "PENDING_NOW")) {
+        const firstWaitingIdx = normalizedSteps.findIndex((s) => s.status !== "APPROVED" && s.status !== "SKIPPED");
+        if (firstWaitingIdx >= 0) {
+          normalizedSteps = normalizedSteps.map((s, i) =>
+            i === firstWaitingIdx ? { ...s, status: "PENDING_NOW" as const } : s
+          );
+        }
+      }
       const activeIdx =
-        norm.steps.findIndex((s) => s.status === "PENDING_NOW") >= 0
-          ? norm.steps.findIndex((s) => s.status === "PENDING_NOW")
-          : Math.min(p.currentStepIndex || 0, Math.max(0, norm.steps.length - 1));
+        normalizedSteps.findIndex((s) => s.status === "PENDING_NOW") >= 0
+          ? normalizedSteps.findIndex((s) => s.status === "PENDING_NOW")
+          : Math.min(p.currentStepIndex || 0, Math.max(0, normalizedSteps.length - 1));
       return {
         ...p,
-        steps: norm.steps,
+        steps: normalizedSteps,
+        executorName: isDxknm ? "Đoàn Hồng Sơn" : p.executorName,
         currentStepIndex: activeIdx
       };
     });
@@ -3533,6 +3675,79 @@ export function ProposalsApprovalView({
     }
 
     showToast(`${auditAction} cho phiếu [${proposal.proposalCode}] thành công!`, "success");
+  };
+
+  const [isCreatingDxknmProduction, setIsCreatingDxknmProduction] = useState(false);
+
+  // Thao tác dành cho Anh Đoàn Hồng Sơn trên phiếu Đề xuất Xuất Kho Nhà Máy (DXKNM):
+  // - Nếu hàng không có sẵn trong kho -> tự động tạo Đơn nội bộ & phát hành Lệnh sản xuất (Kit/Oligo/Thiết bị), đồng thời xác nhận duyệt bước kiểm tra kho.
+  const handleCreateProductionFromDxknm = async (proposal: ProposalItem, alsoApproveCurrentStep: boolean) => {
+    if (isCreatingDxknmProduction) return;
+    setIsCreatingDxknmProduction(true);
+    try {
+      const res = await fetch("/api/factory/intake/ops", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          op: "create_production_from_dxknm",
+          proposal_code: proposal.proposalCode,
+          title: proposal.title,
+          requester_name: proposal.requesterName,
+          requester_dept: proposal.requesterDept,
+          needed_by_date: proposal.neededByDate,
+          summary_reason: proposal.summaryReason,
+          batch_or_project_ref: proposal.formValues?.batchOrProjectRef || proposal.linkedRefCode || "",
+          line_items: (proposal.lineItems || []).map((li) => ({
+            itemName: li.itemName,
+            specification: li.specification,
+            quantity: Number(li.quantity) || 1,
+            unitPrice: Number(li.unitPrice) || 0
+          }))
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      const ioCodes: string[] = Array.isArray(data?.internal_order_codes) ? data.internal_order_codes : [];
+      const moCodes: string[] = Array.isArray(data?.production_order_codes) ? data.production_order_codes : [];
+      const warnings: string[] = Array.isArray(data?.dispatch_warnings) ? data.dispatch_warnings : [];
+
+      let autoSummary = "Đã kiểm tra tồn kho: Hàng chưa có sẵn — Chuyển tạo Lệnh sản xuất";
+      if (res.ok) {
+        if (moCodes.length > 0) {
+          autoSummary = `Đã kiểm tra tồn kho: Hàng chưa có sẵn — Đã tạo Đơn nội bộ (${ioCodes.join(", ")}) & phát hành Lệnh sản xuất (${moCodes.join(", ")})`;
+        } else if (ioCodes.length > 0) {
+          autoSummary = `Đã kiểm tra tồn kho: Hàng chưa có sẵn — Đã tạo Đơn nội bộ (${ioCodes.join(", ")}) để lên Lệnh sản xuất`;
+        }
+        if (warnings.length > 0) {
+          autoSummary += ` (Lưu ý: ${warnings.join("; ")})`;
+        }
+      } else if (data?.error?.message || data?.message) {
+        showToast(data?.error?.message || data?.message, "warning");
+      }
+
+      const rawUserNote = alsoApproveCurrentStep ? decisionNote.trim() : executionNoteInput.trim();
+      const combinedNote = rawUserNote ? `${rawUserNote} | ${autoSummary}` : autoSummary;
+
+      if (alsoApproveCurrentStep) {
+        await handleDecision(proposal, "APPROVE", combinedNote);
+      } else {
+        await handleDecision(proposal, "EXECUTE", combinedNote);
+      }
+      if (res.ok && data?.message) {
+        showToast(data.message, "success");
+      }
+    } catch {
+      const rawUserNote = alsoApproveCurrentStep ? decisionNote.trim() : executionNoteInput.trim();
+      const fallbackNote = rawUserNote
+        ? `${rawUserNote} | Đã kiểm tra tồn kho: Hàng chưa có sẵn — Chuyển tạo Lệnh sản xuất`
+        : "Đã kiểm tra tồn kho: Hàng chưa có sẵn — Chuyển tạo Lệnh sản xuất";
+      if (alsoApproveCurrentStep) {
+        await handleDecision(proposal, "APPROVE", fallbackNote);
+      } else {
+        await handleDecision(proposal, "EXECUTE", fallbackNote);
+      }
+    } finally {
+      setIsCreatingDxknmProduction(false);
+    }
   };
 
   // Ủy quyền / Chuyển người duyệt bước hiện tại
@@ -7748,14 +7963,51 @@ export function ProposalsApprovalView({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleDecision(p, "APPROVE")}
-                      className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-sm cursor-pointer"
-                    >
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>✅ Đồng Ý Phê Duyệt{decisionAttachments.length > 0 ? ` (& Gửi ${decisionAttachments.length} file)` : ""}</span>
-                    </button>
+                    {(p.templateId === "tmpl_factory_fefo_special_issue" ||
+                      String(p.proposalCode || "").toUpperCase().startsWith("DXKNM")) &&
+                    (activeStepObj?.roleType === "EXECUTOR" || isSamePerson(activeStepObj?.approverName, "Đoàn Hồng Sơn")) ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleDecision(
+                              p,
+                              "APPROVE",
+                              decisionNote.trim()
+                                ? `${decisionNote.trim()} (Đã kiểm tra kho: Hàng có sẵn — Xác nhận giao hàng)`
+                                : "Đã kiểm tra tồn kho: Hàng có sẵn — Xác nhận giao hàng / Xuất kho bàn giao cho bộ phận yêu cầu"
+                            )
+                          }
+                          className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-sm cursor-pointer"
+                        >
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>📦 Hàng Có Sẵn — Xác Nhận Giao Hàng</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={isCreatingDxknmProduction}
+                          onClick={() => handleCreateProductionFromDxknm(p, true)}
+                          className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-sm cursor-pointer"
+                        >
+                          <Plus className="w-4 h-4" />
+                          <span>
+                            {isCreatingDxknmProduction
+                              ? "⏳ Đang tạo Lệnh sản xuất..."
+                              : "🏭 Hàng Chưa Có Sẵn — Xác Nhận & Tạo Lệnh Sản Xuất"}
+                          </span>
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleDecision(p, "APPROVE")}
+                        className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-sm cursor-pointer"
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>✅ Đồng Ý Phê Duyệt{decisionAttachments.length > 0 ? ` (& Gửi ${decisionAttachments.length} file)` : ""}</span>
+                      </button>
+                    )}
 
                     <button
                       type="button"
@@ -7794,6 +8046,22 @@ export function ProposalsApprovalView({
                       </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      {(p.templateId === "tmpl_factory_fefo_special_issue" ||
+                        String(p.proposalCode || "").toUpperCase().startsWith("DXKNM")) && (
+                        <button
+                          type="button"
+                          disabled={isCreatingDxknmProduction}
+                          onClick={() => handleCreateProductionFromDxknm(p, false)}
+                          className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-extrabold text-xs cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>
+                            {isCreatingDxknmProduction
+                              ? "⏳ Đang tạo Lệnh sản xuất..."
+                              : "🏭 Tạo Đơn nội bộ / Lệnh sản xuất"}
+                          </span>
+                        </button>
+                      )}
                       {isBusinessTripProposal(p) && onViewWeeklyScheduleFromProposal && (
                         <button
                           type="button"

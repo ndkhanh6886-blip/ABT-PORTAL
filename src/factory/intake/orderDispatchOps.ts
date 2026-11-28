@@ -1678,3 +1678,203 @@ export async function createPrFromOrderMrp(tx: Tx, actor: AuthzActor, input: unk
     message: `Đã phát hành Phiếu Đề nghị Mua hàng ${pr.code} (${resolvedPrLines.length} dòng vật tư) từ ${mrp.org_unit_name} sang Phòng Cung ứng NVL.`,
   };
 }
+
+const createFromDxknmSchema = z.object({
+  proposal_code: z.string().trim().min(1),
+  title: z.string().trim().optional().nullable(),
+  requester_name: z.string().trim().optional().nullable(),
+  requester_dept: z.string().trim().optional().nullable(),
+  needed_by_date: z.string().trim().optional().nullable(),
+  summary_reason: z.string().trim().optional().nullable(),
+  batch_or_project_ref: z.string().trim().optional().nullable(),
+  line_items: z
+    .array(
+      z.object({
+        itemName: z.string().trim().min(1),
+        specification: z.string().trim().optional().nullable(),
+        quantity: z.coerce.number().positive().default(1),
+        unitPrice: z.coerce.number().min(0).optional().default(0),
+      })
+    )
+    .default([]),
+});
+
+function extractCandidateItemCode(rawItemName: string): { codeCandidate: string | null; nameCandidate: string } {
+  const raw = String(rawItemName || "").trim();
+  const bracketMatch = raw.match(/^\[\s*([A-Za-z0-9._/-]+)\s*\]\s*(.*)$/);
+  if (bracketMatch) {
+    return {
+      codeCandidate: bracketMatch[1].trim(),
+      nameCandidate: (bracketMatch[2] || bracketMatch[1]).trim(),
+    };
+  }
+  const dashMatch = raw.match(/^([A-Za-z]{2,8}-[A-Za-z0-9._/-]+)\s*(?:[-–—:]\s*(.*))?$/);
+  if (dashMatch) {
+    return {
+      codeCandidate: dashMatch[1].trim(),
+      nameCandidate: (dashMatch[2] || dashMatch[1]).trim(),
+    };
+  }
+  return {
+    codeCandidate: null,
+    nameCandidate: raw,
+  };
+}
+
+/**
+ * Khi Anh Đoàn Hồng Sơn kiểm tra phiếu Đề xuất Xuất Kho Nhà Máy (DXKNM) mà hàng chưa có sẵn trong kho:
+ * - Tự động đối chiếu các dòng hàng trên phiếu đề xuất với danh mục `master.item`.
+ * - Khởi tạo Đơn nội bộ (`intake.internal_order`) cho từng phân hệ sản xuất (`KIT`, `OLIGO`, `DEVICE`).
+ * - Tự động phát hành Lệnh sản xuất (`kit.production_order` MO..., `oligo.oligo_order`, `device.device_order`) cho các mặt hàng đã có BOM/Routing hiệu lực.
+ */
+export async function createProductionFromDxknmProposal(tx: Tx, actor: AuthzActor, input: unknown) {
+  await authorizeAnywhere(tx, actor, "intake.order.view");
+  const d = parseInput(createFromDxknmSchema, input);
+
+  type MatchedLine = {
+    item_id: string;
+    item_code: string;
+    item_name: string;
+    domain_key: "KIT" | "OLIGO" | "DEVICE";
+    qty: number;
+    unit_price: number;
+    specification: string;
+  };
+
+  const matchedLines: MatchedLine[] = [];
+  const unmatchedItems: string[] = [];
+
+  for (const li of d.line_items) {
+    const { codeCandidate, nameCandidate } = extractCandidateItemCode(li.itemName);
+    const found = (
+      await tx.query(
+        `SELECT i.id, i.code, i.name, i.item_type, i.base_uom, i.kd_item_code,
+                CASE
+                  WHEN i.item_type = 'DEVICE'
+                    OR i.code LIKE 'THE-%' OR i.code LIKE 'MPS-%' OR i.code LIKE 'MBC-%' OR i.code LIKE 'EQ-%' OR i.code LIKE 'DEV-%'
+                    OR EXISTS (SELECT 1 FROM device.device_model dm WHERE dm.item_id = i.id OR upper(dm.code) = upper(i.code)) THEN 'DEVICE'
+                  WHEN i.item_type = 'OLIGO_SERVICE'
+                    OR i.code LIKE 'OLG-%' OR i.code LIKE 'OLI-%' OR i.code LIKE 'PRI-%' OR i.code LIKE 'PRB-%'
+                    OR i.code LIKE 'PRIMER-%' OR i.code LIKE 'PROBE-%' THEN 'OLIGO'
+                  ELSE 'KIT'
+                END AS domain_key
+           FROM master.item i
+          WHERE i.status = 'ACTIVE'
+            AND (
+              ($1::text IS NOT NULL AND (upper(i.code) = upper($1) OR upper(i.kd_item_code) = upper($1)))
+              OR upper(i.code) = upper($2)
+              OR upper(i.kd_item_code) = upper($2)
+              OR upper(i.name) = upper($2)
+              OR ($3::text <> '' AND upper(i.name) = upper($3))
+              OR ($3::text <> '' AND i.name ILIKE '%' || $3 || '%')
+            )
+          ORDER BY
+            CASE
+              WHEN $1::text IS NOT NULL AND (upper(i.code) = upper($1) OR upper(i.kd_item_code) = upper($1)) THEN 0
+              WHEN upper(i.code) = upper($2) OR upper(i.kd_item_code) = upper($2) THEN 1
+              WHEN upper(i.name) = upper($2) OR ($3::text <> '' AND upper(i.name) = upper($3)) THEN 2
+              ELSE 3
+            END,
+            (i.item_type IN ('FINISHED_KIT', 'SEMI_FINISHED', 'DEVICE', 'OLIGO_SERVICE')) DESC,
+            i.created_at ASC
+          LIMIT 1`,
+        [codeCandidate, li.itemName.trim(), nameCandidate]
+      )
+    ).rows[0];
+
+    if (found) {
+      matchedLines.push({
+        item_id: found.id,
+        item_code: found.code,
+        item_name: found.name,
+        domain_key: (found.domain_key as "KIT" | "OLIGO" | "DEVICE") || "KIT",
+        qty: Math.max(1, Number(li.quantity) || 1),
+        unit_price: Math.max(0, Number(li.unitPrice) || 0),
+        specification: String(li.specification || "").trim(),
+      });
+    } else {
+      unmatchedItems.push(li.itemName);
+    }
+  }
+
+  const byDomain = new Map<"KIT" | "OLIGO" | "DEVICE", MatchedLine[]>();
+  for (const ml of matchedLines) {
+    const arr = byDomain.get(ml.domain_key) || [];
+    arr.push(ml);
+    byDomain.set(ml.domain_key, arr);
+  }
+
+  const internalOrderCodes: string[] = [];
+  const productionOrderCodes: string[] = [];
+  const dispatchWarnings: string[] = [];
+
+  const reqLabel = [d.requester_dept, d.requester_name].filter(Boolean).join(" — ") || "Đề xuất nội bộ";
+  const noteParts = [
+    `[Đề xuất ${d.proposal_code}]`,
+    d.title ? d.title : null,
+    d.batch_or_project_ref ? `(Mã tham chiếu: ${d.batch_or_project_ref})` : null,
+    d.summary_reason ? `— ${d.summary_reason}` : null,
+  ].filter(Boolean);
+
+  for (const [domainKey, lines] of byDomain.entries()) {
+    const poCode = byDomain.size > 1 ? `PO-${d.proposal_code}-${domainKey}` : `PO-${d.proposal_code}`;
+    const internalOrder = await createInternalOrderManual(tx, actor, {
+      target_module: domainKey,
+      kd_po_code: poCode,
+      kd_so_code: d.proposal_code,
+      ship_mode: "TO_KD",
+      customer_name: reqLabel,
+      requested_date: d.needed_by_date && /^\d{4}-\d{2}-\d{2}$/.test(d.needed_by_date) ? d.needed_by_date : addDays(vnToday(), 7),
+      notes: noteParts.join(" "),
+      auto_accept: true,
+      lines: lines.map((l) => ({
+        item_id: l.item_id,
+        qty: l.qty,
+        transfer_price: l.unit_price,
+      })),
+    });
+    internalOrderCodes.push(internalOrder.code);
+
+    const ioLines = (
+      await tx.query("SELECT id, line_no, kd_item_code FROM intake.internal_order_line WHERE order_id = $1 ORDER BY line_no ASC", [
+        internalOrder.id,
+      ])
+    ).rows;
+
+    for (let i = 0; i < ioLines.length; i++) {
+      const ioLine = ioLines[i];
+      const spName = `sp_dxknm_dispatch_${domainKey}_${i}`;
+      await tx.query(`SAVEPOINT ${spName}`);
+      try {
+        const dispatched = await dispatchInternalOrderLineToProduction(tx, actor, {
+          order_id: internalOrder.id,
+          line_id: ioLine.id,
+          qty: lines[i]?.qty,
+        });
+        await tx.query(`RELEASE SAVEPOINT ${spName}`);
+        if (dispatched?.order_code && !productionOrderCodes.includes(dispatched.order_code)) {
+          productionOrderCodes.push(dispatched.order_code);
+        }
+      } catch (err: any) {
+        await tx.query(`ROLLBACK TO SAVEPOINT ${spName}`).catch(() => {});
+        dispatchWarnings.push(`${ioLine.kd_item_code}: ${err?.message || "Chưa đủ BOM/Routing hiệu lực để phát hành tự động"}`);
+      }
+    }
+  }
+
+  return {
+    proposal_code: d.proposal_code,
+    matched_count: matchedLines.length,
+    unmatched_items: unmatchedItems,
+    internal_order_codes: internalOrderCodes,
+    production_order_codes: productionOrderCodes,
+    dispatch_warnings: dispatchWarnings,
+    message:
+      productionOrderCodes.length > 0
+        ? `Đã tạo Đơn nội bộ (${internalOrderCodes.join(", ")}) và phát hành Lệnh sản xuất (${productionOrderCodes.join(", ")}) từ đề xuất ${d.proposal_code}.`
+        : internalOrderCodes.length > 0
+          ? `Đã tạo Đơn nội bộ (${internalOrderCodes.join(", ")}) từ đề xuất ${d.proposal_code}. Vui lòng vào phân hệ Sản xuất để hoàn tất phát hành Lệnh sản xuất.`
+          : `Đã ghi nhận yêu cầu tạo Lệnh sản xuất cho đề xuất ${d.proposal_code}. Vui lòng chọn mã thành phẩm trong phân hệ Sản xuất Kit để phát hành lệnh.`,
+  };
+}
+
