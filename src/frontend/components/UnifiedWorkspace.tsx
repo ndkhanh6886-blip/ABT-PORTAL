@@ -1072,17 +1072,41 @@ export function mergeWithDefaultWorkflowTemplates(dbTemplates?: any[]): any[] {
     const defCode = String(def.code || def.id).toUpperCase();
     const matchedDb = dbList.find((t) => String(t.code || "").toUpperCase() === defCode);
     if (matchedDb) {
+      const defFollowers = Array.isArray(matchedDb.default_followers)
+        ? matchedDb.default_followers
+        : Array.isArray(matchedDb.defaultFollowers)
+        ? matchedDb.defaultFollowers
+        : [];
       return {
         ...def,
         ...matchedDb,
         sourceDept: matchedDb.source_dept || matchedDb.sourceDept || def.sourceDept,
         targetDept: matchedDb.target_dept || matchedDb.targetDept || def.targetDept,
-        steps: Array.isArray(matchedDb.steps) && matchedDb.steps.length > 0 ? matchedDb.steps : def.steps
+        steps: Array.isArray(matchedDb.steps) && matchedDb.steps.length > 0 ? matchedDb.steps : def.steps,
+        default_followers: defFollowers,
+        defaultFollowers: defFollowers
       };
     }
-    return def;
+    return {
+      ...def,
+      default_followers: (def as any).default_followers || [],
+      defaultFollowers: (def as any).defaultFollowers || []
+    };
   });
-  const customTemplates = dbList.filter((t) => !defaultCodes.has(String(t.code || "").toUpperCase()));
+  const customTemplates = dbList
+    .filter((t) => !defaultCodes.has(String(t.code || "").toUpperCase()))
+    .map((t) => {
+      const defFollowers = Array.isArray(t.default_followers)
+        ? t.default_followers
+        : Array.isArray(t.defaultFollowers)
+        ? t.defaultFollowers
+        : [];
+      return {
+        ...t,
+        default_followers: defFollowers,
+        defaultFollowers: defFollowers
+      };
+    });
   return [...mergedDefaults, ...customTemplates];
 }
 
@@ -3926,6 +3950,7 @@ export const UnifiedWorkspace: React.FC = () => {
     product_info: string;
     due_date: string;
     description: string;
+    followers?: string[];
     steps?: any[];
     attachments?: Array<{ name: string; url: string; size?: number; type?: string; uploaded_at?: string }>;
   }>({
@@ -3940,6 +3965,7 @@ export const UnifiedWorkspace: React.FC = () => {
     product_info: "",
     due_date: toVNDateString(new Date(Date.now() + 5 * 86400000)),
     description: "",
+    followers: [] as string[],
     steps: []
   });
 
@@ -3955,6 +3981,7 @@ export const UnifiedWorkspace: React.FC = () => {
     icon: "FlaskConical",
     description: "",
     sla_days: 3,
+    default_followers: [] as string[],
     steps: [
       {
         step_index: 0,
@@ -4752,12 +4779,14 @@ export const UnifiedWorkspace: React.FC = () => {
     return false;
   }, [workflowByCode]);
 
-  // Kiểm tra Phiếu phối hợp có liên quan trực tiếp tới người đang đăng nhập (Người yêu cầu hoặc Người xử lý ở bất kỳ bước nào)
-  const wfInvolvesMe = useCallback((w: any, mode: "requested" | "assigned" | "any" = "any"): boolean => {
+  // Kiểm tra Phiếu phối hợp có liên quan trực tiếp tới người đang đăng nhập (Người yêu cầu, Người xử lý ở bất kỳ bước nào, hoặc Người theo dõi)
+  const wfInvolvesMe = useCallback((w: any, mode: "requested" | "assigned" | "following" | "any" = "any"): boolean => {
     const me = String(currentStaffName || "").trim();
     if (!me || !w) return false;
     const isRequester = sameStaffName(String(w.requester_name || "").trim(), me);
     if (mode === "requested") return isRequester;
+    const isFollower = taskHasFollower(w.followers, me);
+    if (mode === "following") return isFollower;
     const steps = Array.isArray(w.steps) ? w.steps : [];
     const topAssignees = String(w.assignee_name || "")
       .split(/[,;\n]+/)
@@ -4775,8 +4804,8 @@ export const UnifiedWorkspace: React.FC = () => {
     });
     const isAssignee = isTopAssignee || isStepAssignee;
     if (mode === "assigned") return isAssignee;
-    return isRequester || isAssignee;
-  }, [currentStaffName]);
+    return isRequester || isAssignee || isFollower;
+  }, [currentStaffName, taskHasFollower]);
 
   // Kiểm tra một Phiếu phối hợp liên phòng ban có liên quan tới phòng ban targetDept hay không
   const workflowInvolvesDept = useCallback((w: any, targetDept: string): boolean => {
@@ -5540,6 +5569,7 @@ export const UnifiedWorkspace: React.FC = () => {
         selectedAssignee !== "__UNASSIGNED__" &&
         (sameStaffName(w.requester_name, selectedAssignee) ||
           taskHasAssignee(w.assignee_name, selectedAssignee) ||
+          taskHasFollower(w.followers, selectedAssignee) ||
           (Array.isArray(w.steps) &&
             w.steps.some((s: any) =>
               taskHasAssignee(
@@ -5549,11 +5579,13 @@ export const UnifiedWorkspace: React.FC = () => {
             )));
       const matchDept =
         filterDept === "all" ||
+        taskHasFollower(w.followers, currentStaffName) ||
         workflowInvolvesDept(w, filterDept);
       if (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__" && !involvesSelectedStaff) {
         return false;
       }
       const q = searchQuery.trim().toLowerCase();
+      const wfFollowersStr = parseTaskFollowersList(w.followers).join(" ").toLowerCase();
       const matchSearch =
         q === "" ||
         (w.title && w.title.toLowerCase().includes(q)) ||
@@ -5562,6 +5594,7 @@ export const UnifiedWorkspace: React.FC = () => {
         (w.product_info && w.product_info.toLowerCase().includes(q)) ||
         (w.requester_name && w.requester_name.toLowerCase().includes(q)) ||
         (w.assignee_name && w.assignee_name.toLowerCase().includes(q)) ||
+        (wfFollowersStr && wfFollowersStr.includes(q)) ||
         (Array.isArray(w.steps) &&
           w.steps.some(
             (s: any) =>
@@ -5570,7 +5603,7 @@ export const UnifiedWorkspace: React.FC = () => {
           ));
       return matchDept && matchSearch;
     });
-  }, [workflows, filterDept, selectedAssignee, searchQuery, workflowInvolvesDept, taskHasAssignee]);
+  }, [workflows, filterDept, selectedAssignee, searchQuery, currentStaffName, workflowInvolvesDept, taskHasAssignee, taskHasFollower, parseTaskFollowersList]);
 
   // Helper to re-index & normalize multi-department / multi-assignee workflow steps
   const reindexWorkflowSteps = useCallback((rawSteps: any[]) => {
@@ -5902,7 +5935,7 @@ export const UnifiedWorkspace: React.FC = () => {
   });
   const [wfStatusFilter, setWfStatusFilter] = useState<"open" | "PENDING" | "WORKING" | "REVIEW" | "COMPLETED" | "DUE_SOON" | "OVERDUE" | "all">("open");
   const [wfCategoryFilter, setWfCategoryFilter] = useState<"all" | "TENDER" | "PROCUREMENT" | "WAREHOUSE" | "LAB" | "FINANCE" | "GENERAL">("all");
-  const [wfMineFilter, setWfMineFilter] = useState<"all" | "requested" | "assigned">("all");
+  const [wfMineFilter, setWfMineFilter] = useState<"all" | "requested" | "assigned" | "following">("all");
   const [wfPriorityFilter, setWfPriorityFilter] = useState<string>("all");
   const [wfSort, setWfSort] = useState<"newest" | "deadline" | "priority">("newest");
   const [wfCompactMode, setWfCompactMode] = useState<boolean>(true);
@@ -7163,6 +7196,7 @@ export const UnifiedWorkspace: React.FC = () => {
         }
       }
 
+      const cleanFollowers = parseTaskFollowersList((wfForm as any).followers);
       const payload = {
         ...wfForm,
         results_summary: structuredSummary,
@@ -7171,6 +7205,7 @@ export const UnifiedWorkspace: React.FC = () => {
         assignee_name: activeStepAssignee,
         current_step_index: activeStepIdx,
         steps: sanitizedSteps,
+        followers: cleanFollowers,
         ...(isEditingExistingWf ? { force_rollback: true } : {})
       };
 
@@ -7191,14 +7226,16 @@ export const UnifiedWorkspace: React.FC = () => {
           setSelectedWorkflowDetail({
             ...selectedWorkflowDetail,
             ...payload,
-            steps: sanitizedSteps
+            steps: sanitizedSteps,
+            followers: cleanFollowers
           });
         }
         const allStepAssignees = Array.from(
           new Set(
             [
               ...(payload.assignee_name ? payload.assignee_name.split(",") : []),
-              ...sanitizedSteps.flatMap((st: any) => st.assignees || [])
+              ...sanitizedSteps.flatMap((st: any) => st.assignees || []),
+              ...cleanFollowers
             ]
               .map((s: string) => s.trim())
               .filter(Boolean)
@@ -7481,6 +7518,60 @@ export const UnifiedWorkspace: React.FC = () => {
     };
   }, [workflows, currentStaffName, userDept, isDirector]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Cập nhật danh sách Người theo dõi (Followers — Chỉ xem tiến độ) trên Phiếu quy trình phối hợp đã tạo
+  const handleUpdateWorkflowFollowers = async (wf: any, nextFollowersRaw: string[], addedPerson?: string) => {
+    const cleanFollowers = parseTaskFollowersList(nextFollowersRaw);
+    if (!wf || !wf.id) {
+      setWfForm((prev: any) => ({ ...prev, followers: cleanFollowers }));
+      return;
+    }
+    try {
+      const res = await fetch("/api/workflows?action=workflow_followers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: wf.id, followers: cleanFollowers })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        showToast(data.error || "Không cập nhật được người theo dõi quy trình", "error");
+        return;
+      }
+      const savedFollowers = data.followers || cleanFollowers;
+      const savedLogs = data.logs || wf.logs;
+      setWorkflows((prev) =>
+        prev.map((w) => (w.id === wf.id ? { ...w, followers: savedFollowers, logs: savedLogs } : w))
+      );
+      if (selectedWorkflowDetail && selectedWorkflowDetail.id === wf.id) {
+        setSelectedWorkflowDetail((prev: any) =>
+          prev ? { ...prev, followers: savedFollowers, logs: savedLogs } : prev
+        );
+      }
+      if (addedPerson && !sameStaffName(addedPerson, currentStaffName)) {
+        notifyActivity({
+          title: `👁️ Mời theo dõi quy trình phối hợp [${wf.workflow_code || wf.id}]`,
+          message: `${currentStaffName} đã thêm bạn làm Người theo dõi tại quy trình phối hợp "${wf.title}" (${wf.requester_dept} ➔ ${wf.target_dept}).`,
+          type: "info",
+          category: "task",
+          sender: { name: currentStaffName },
+          targetEmployeeNames: [addedPerson],
+          targetDept: wf.target_dept || "all",
+          workflowId: wf.id,
+          workflowCode: wf.workflow_code,
+          link: { tab: "workspace", subTab: "workflows", itemId: String(wf.workflow_code || wf.id) }
+        });
+      }
+      showToast(
+        addedPerson
+          ? `👁️ Đã thêm ${addedPerson} làm Người theo dõi quy trình!`
+          : "👁️ Đã cập nhật danh sách người theo dõi quy trình phối hợp!",
+        "info"
+      );
+      fetchData({ silent: true });
+    } catch {
+      showToast("Lỗi kết nối khi cập nhật người theo dõi quy trình", "error");
+    }
+  };
+
   // Open Create Template Modal
   const handleOpenCreateTemplate = async () => {
     if (!(await ensureManageTemplatesPermission())) return;
@@ -7493,6 +7584,7 @@ export const UnifiedWorkspace: React.FC = () => {
       icon: "FlaskConical",
       description: "",
       sla_days: 3,
+      default_followers: [],
       steps: [
         {
           step_index: 0,
@@ -7534,6 +7626,7 @@ export const UnifiedWorkspace: React.FC = () => {
       icon: tmpl.icon || "FlaskConical",
       description: tmpl.description || "",
       sla_days: tmpl.sla_days || 3,
+      default_followers: parseTaskFollowersList(tmpl.default_followers ?? tmpl.defaultFollowers),
       steps: Array.isArray(tmpl.steps) && tmpl.steps.length > 0 ? tmpl.steps : [
         { step_index: 0, title: "Tiếp nhận", dept: tmpl.target_dept || tmpl.targetDept || "Application", assignee_name: "", sla_hours: 24, deliverables: "Biên bản" }
       ]
@@ -7548,8 +7641,10 @@ export const UnifiedWorkspace: React.FC = () => {
       return;
     }
     try {
+      const cleanDefaultFollowers = parseTaskFollowersList(templateForm.default_followers);
       const normalizedPayload = {
         ...templateForm,
+        default_followers: cleanDefaultFollowers,
         steps: reindexWorkflowSteps(templateForm.steps || [])
       };
       const res = await fetch("/api/workflows?action=template", {
@@ -7563,7 +7658,7 @@ export const UnifiedWorkspace: React.FC = () => {
         setIsTemplateModalOpen(false);
         const mergedTemplates = mergeWithDefaultWorkflowTemplates(data.templates);
         setWorkflowTemplates(mergedTemplates);
-        // Nếu đang mở hoặc chọn đúng mẫu quy trình này trong wfForm thì đồng bộ ngay các bước & SLA mới
+        // Nếu đang mở hoặc chọn đúng mẫu quy trình này trong wfForm thì đồng bộ ngay các bước, SLA & Người theo dõi mặc định mới
         const savedCode = String(normalizedPayload.code || normalizedPayload.id || "");
         if (savedCode && String(wfForm.workflow_type) === savedCode) {
           const updatedSteps = reindexWorkflowSteps(
@@ -7577,7 +7672,10 @@ export const UnifiedWorkspace: React.FC = () => {
           setWfForm((prev: any) => ({
             ...prev,
             due_date: toVNDateString(new Date(Date.now() + (Number(normalizedPayload.sla_days) || 3) * 86400000)),
-            steps: updatedSteps
+            steps: updatedSteps,
+            followers: prev.id
+              ? parseTaskFollowersList([...(prev.followers || []), ...cleanDefaultFollowers])
+              : cleanDefaultFollowers
           }));
         }
         fetchData();
@@ -7589,7 +7687,7 @@ export const UnifiedWorkspace: React.FC = () => {
     }
   };
 
-  // Lưu trực tiếp các bước & thời gian SLA đang chỉnh sửa trong Modal Khởi Tạo Phiếu vào Mẫu Quy Trình
+  // Lưu trực tiếp các bước, thời gian SLA & người theo dõi đang chỉnh sửa trong Modal Khởi Tạo Phiếu vào Mẫu Quy Trình
   const handleSaveCurrentWfStepsToTemplate = async () => {
     if (!(await ensureManageTemplatesPermission())) {
       return;
@@ -7618,6 +7716,11 @@ export const UnifiedWorkspace: React.FC = () => {
     });
     const totalHours = sanitizedSteps.reduce((sum: number, s: any) => sum + (Number(s.sla_hours) || 24), 0);
     const computedSlaDays = Math.max(1, Math.ceil(totalHours / 24));
+    const effectiveDefaultFollowers = parseTaskFollowersList(
+      (wfForm as any).followers !== undefined
+        ? (wfForm as any).followers
+        : (currentTmpl?.default_followers ?? currentTmpl?.defaultFollowers)
+    );
     const payload = {
       id: currentTmpl && typeof currentTmpl.id === "number" ? currentTmpl.id : null,
       code: currentTmpl ? (currentTmpl.code || currentTmpl.id) : (wfForm.workflow_type || `WF-TMP-${Date.now().toString().slice(-4)}`),
@@ -7627,6 +7730,7 @@ export const UnifiedWorkspace: React.FC = () => {
       icon: currentTmpl?.icon || "Layers",
       description: currentTmpl?.description || wfForm.description || "",
       sla_days: computedSlaDays,
+      default_followers: effectiveDefaultFollowers,
       steps: sanitizedSteps
     };
 
@@ -7638,7 +7742,7 @@ export const UnifiedWorkspace: React.FC = () => {
       });
       const data = await res.json();
       if (data.success) {
-        showToast(`✅ Đã lưu cập nhật (${sanitizedSteps.length} bước • Tổng SLA: ${totalHours}h / ${computedSlaDays} ngày) vào Mẫu Quy Trình!`, "success");
+        showToast(`✅ Đã lưu cập nhật (${sanitizedSteps.length} bước • Tổng SLA: ${totalHours}h / ${computedSlaDays} ngày • ${effectiveDefaultFollowers.length} người theo dõi mặc định) vào Mẫu Quy Trình!`, "success");
         setWorkflowTemplates(mergeWithDefaultWorkflowTemplates(data.templates));
         fetchData();
       } else {
@@ -7680,6 +7784,7 @@ export const UnifiedWorkspace: React.FC = () => {
       due_date: wf.due_date ? String(wf.due_date).slice(0, 10) : toVNDateString(new Date(Date.now() + 3 * 86400000)),
       description: wf.description || "",
       attachments: Array.isArray(wf.attachments) ? wf.attachments : [],
+      followers: parseTaskFollowersList(wf.followers),
       steps: stepsCopy
     } as any);
     setIsWorkflowModalOpen(true);
@@ -7739,6 +7844,7 @@ export const UnifiedWorkspace: React.FC = () => {
     const totalStepHours = stepsCopy.reduce((sum: number, s: any) => sum + (Number(s.sla_hours) || 24), 0);
     const initMode = stepsCopy[0]?.weekend_mode || slaWeekendMode;
     const initWorkingDays = stepsCopy.length > 0 ? Math.max(1, Math.ceil(totalStepHours / 24)) : (tmpl.sla_days || 5);
+    const defaultFollowers = parseTaskFollowersList(tmpl.default_followers ?? tmpl.defaultFollowers);
 
     setWfForm({
       id: undefined,
@@ -7754,6 +7860,7 @@ export const UnifiedWorkspace: React.FC = () => {
       product_info: "",
       due_date: computeWfDueDateVN(initWorkingDays, initMode),
       description: tmpl.description || "",
+      followers: defaultFollowers,
       steps: stepsCopy
     } as any);
     setIsWorkflowModalOpen(true);
@@ -7867,7 +7974,8 @@ export const UnifiedWorkspace: React.FC = () => {
           sender: { name: currentStaffName },
           targetEmployeeNames: [
             advanceStepData.workflow?.requester_name,
-            advanceStepData.nextAssigneeName
+            advanceStepData.nextAssigneeName,
+            ...parseTaskFollowersList(advanceStepData.workflow?.followers)
           ].filter(Boolean) as string[],
           targetDept: isLastStep ? advanceStepData.workflow?.requester_dept : advanceStepData.nextStep?.dept,
           workflowId: advanceStepData.workflow?.id,
@@ -8019,7 +8127,8 @@ export const UnifiedWorkspace: React.FC = () => {
 
         const targetRecipients = [
           selectedWorkflowForRecord.requester_name,
-          selectedWorkflowForRecord.assignee_name
+          selectedWorkflowForRecord.assignee_name,
+          ...parseTaskFollowersList(selectedWorkflowForRecord.followers)
         ].filter(Boolean) as string[];
         notifyActivity({
           title: "Báo cáo kết quả quy trình liên phòng",
@@ -13349,6 +13458,14 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           <span className="px-1.5 py-0.2 rounded text-[11px] font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200/50">
                             ⏱ SLA: {slaDays} ngày
                           </span>
+                          {parseTaskFollowersList(wf.default_followers ?? wf.defaultFollowers).length > 0 && (
+                            <span
+                              className="px-1.5 py-0.2 rounded text-[11px] font-bold bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 border border-sky-200/60"
+                              title={`Người theo dõi mặc định: ${parseTaskFollowersList(wf.default_followers ?? wf.defaultFollowers).join(", ")}`}
+                            >
+                              👁️ {parseTaskFollowersList(wf.default_followers ?? wf.defaultFollowers).length} theo dõi
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -13511,6 +13628,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     <option value="all">Mọi phiếu</option>
                     <option value="requested">Tôi yêu cầu</option>
                     <option value="assigned">Tôi phụ trách</option>
+                    <option value="following">👁️ Tôi theo dõi (CC)</option>
                   </select>
                   <select
                     value={wfPriorityFilter}
@@ -13731,6 +13849,18 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           <span>
                             <strong className="text-slate-700 dark:text-slate-300">Người yêu cầu:</strong> {wf.requester_name}
                           </span>
+                          {parseTaskFollowersList(wf.followers).length > 0 && (
+                            <>
+                              <span className="text-slate-300 dark:text-slate-700">•</span>
+                              <span
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-50 dark:bg-sky-950/60 text-sky-800 dark:text-sky-200 border border-sky-200 dark:border-sky-800 font-bold text-[11px]"
+                                title={`Người theo dõi tiến độ (Chỉ xem): ${parseTaskFollowersList(wf.followers).join(", ")}`}
+                              >
+                                <Eye className="w-3 h-3 text-sky-600 shrink-0" />
+                                <span>Theo dõi ({parseTaskFollowersList(wf.followers).length}): {parseTaskFollowersList(wf.followers).join(", ")}</span>
+                              </span>
+                            </>
+                          )}
                           <span className="text-slate-300 dark:text-slate-700">•</span>
                           <span className={`inline-flex items-center gap-1 font-semibold ${dlMeta.isTicketOverdue ? "text-rose-600 dark:text-rose-400 font-bold" : dlMeta.isTicketDueSoon ? "text-amber-600 dark:text-amber-400 font-bold" : ""}`}>
                             <strong className="text-slate-700 dark:text-slate-300">Hạn chót:</strong> {wf.due_date ? formatDayVN(wf.due_date) : "—"}
@@ -19770,6 +19900,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     const totalStepHours = stepsCopy.reduce((sum: number, s: any) => sum + (Number(s.sla_hours) || 24), 0);
                     const initMode = stepsCopy[0]?.weekend_mode || slaWeekendMode;
                     const initWorkingDays = stepsCopy.length > 0 ? Math.max(1, Math.ceil(totalStepHours / 24)) : (tmpl.sla_days || 5);
+                    const tmplDefaultFollowers = parseTaskFollowersList(tmpl.default_followers ?? tmpl.defaultFollowers);
                     setWfForm({
                       ...wfForm,
                       workflow_type: selectedVal,
@@ -19778,6 +19909,9 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       assignee_name: stepsCopy.length > 0 ? stepsCopy[0].assignee_name : "",
                       due_date: computeWfDueDateVN(initWorkingDays, initMode),
                       description: tmpl.description || wfForm.description,
+                      followers: (wfForm as any).id
+                        ? parseTaskFollowersList([...((wfForm as any).followers || []), ...tmplDefaultFollowers])
+                        : tmplDefaultFollowers,
                       steps: stepsCopy
                     });
                   } else {
@@ -20417,6 +20551,113 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             </div>
           </div>
 
+          {/* Người theo dõi quy trình phối hợp này (Kế thừa từ biểu mẫu + Thêm mới nếu cần) */}
+          {(() => {
+            const currentWfFollowers = parseTaskFollowersList((wfForm as any).followers);
+            const activeTmpl = (workflowTemplates.length > 0 ? workflowTemplates : DEFAULT_WORKFLOW_TEMPLATES).find(
+              (w: any) => String(w.code || w.id) === String(wfForm.workflow_type)
+            );
+            const tmplDefaultFollowers = parseTaskFollowersList(activeTmpl?.default_followers ?? activeTmpl?.defaultFollowers);
+            return (
+              <div className="p-3.5 rounded-2xl bg-sky-50/70 dark:bg-sky-950/25 border border-sky-200 dark:border-sky-800/80 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="font-extrabold uppercase text-sky-900 dark:text-sky-200 flex items-center gap-1.5 text-xs">
+                      <Eye className="w-3.5 h-3.5 text-sky-600" />
+                      <span>
+                        👁️ Người Theo Dõi Quy Trình Phối Hợp Này — Chỉ Theo Dõi Tiến Độ, Không Phê Duyệt ({currentWfFollowers.length} người):
+                      </span>
+                    </span>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                      Hệ thống tự động gắn sẵn <strong>Người theo dõi mặc định của biểu mẫu</strong>. Bạn có thể <strong>thêm người theo dõi mới (nếu cần)</strong> để họ cùng nhận thông báo &amp; giám sát tiến độ quy trình này.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {tmplDefaultFollowers.length > 0 &&
+                      tmplDefaultFollowers.some((df) => !currentWfFollowers.some((cf) => sameStaffName(cf, df))) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const merged = parseTaskFollowersList([...currentWfFollowers, ...tmplDefaultFollowers]);
+                            setWfForm((prev: any) => ({ ...prev, followers: merged }));
+                          }}
+                          className="px-2.5 py-1.5 rounded-xl text-[11px] font-bold bg-sky-100 hover:bg-sky-200 dark:bg-sky-900/60 text-sky-800 dark:text-sky-200 border border-sky-300 dark:border-sky-700 cursor-pointer"
+                        >
+                          ↺ Khôi phục mặc định từ mẫu ({tmplDefaultFollowers.length})
+                        </button>
+                      )}
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        const picked = cleanWorkspaceAssignee(e.target.value);
+                        if (!picked) return;
+                        if (currentWfFollowers.some((f) => sameStaffName(f, picked))) return;
+                        setWfForm((prev: any) => ({
+                          ...prev,
+                          followers: [...currentWfFollowers, picked]
+                        }));
+                      }}
+                      className="px-3 py-1.5 rounded-xl text-xs font-bold border border-sky-300 dark:border-sky-700 bg-white dark:bg-slate-900 text-sky-800 dark:text-sky-200 cursor-pointer"
+                    >
+                      <option value="">+ Thêm người theo dõi quy trình (Nếu cần)...</option>
+                      {personnelList
+                        .filter((p: any) => p.full_name && !currentWfFollowers.some((f) => sameStaffName(f, p.full_name)))
+                        .map((p: any) => (
+                          <option key={p.id || p.employee_code || p.full_name} value={p.full_name}>
+                            👁️ {p.full_name} ({p.department || "ABT"})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </div>
+
+                {currentWfFollowers.length === 0 ? (
+                  <div className="text-[11px] text-slate-500 italic bg-white/70 dark:bg-slate-900/60 px-3 py-2 rounded-xl border border-dashed border-sky-200 dark:border-sky-800/60">
+                    Chưa có người theo dõi nào cho quy trình này. Chọn ở ô <strong>&ldquo;+ Thêm người theo dõi quy trình (Nếu cần)...&rdquo;</strong> góc phải nếu muốn mời thêm người giám sát tiến độ.
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {currentWfFollowers.map((fName) => {
+                      const isFromTemplate = tmplDefaultFollowers.some((df) => sameStaffName(df, fName));
+                      return (
+                        <span
+                          key={fName}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white dark:bg-slate-900 border border-sky-300 dark:border-sky-700 text-xs font-bold text-sky-800 dark:text-sky-200 shadow-2xs"
+                        >
+                          <Eye className="w-3 h-3 text-sky-600 shrink-0" />
+                          <span>{fName}</span>
+                          <span
+                            className={`text-[10px] font-semibold px-1.5 py-0.2 rounded ${
+                              isFromTemplate
+                                ? "bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300"
+                                : "bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300"
+                            }`}
+                          >
+                            {isFromTemplate ? "Mặc định từ mẫu" : "Thêm mới"}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setWfForm((prev: any) => ({
+                                ...prev,
+                                followers: currentWfFollowers.filter((x) => !sameStaffName(x, fName))
+                              }))
+                            }
+                            className="text-slate-400 hover:text-rose-600 font-bold ml-0.5 cursor-pointer"
+                            title="Bỏ người theo dõi này"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           <div>
             <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mô tả yêu cầu chi tiết</label>
             <FastTextarea
@@ -20924,6 +21165,87 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             </div>
           </div>
 
+          {/* Người theo dõi mặc định của biểu mẫu quy trình phối hợp (Default Followers / CC) */}
+          {(() => {
+            const tmplFollowers = parseTaskFollowersList(templateForm.default_followers);
+            return (
+              <div className="p-3.5 rounded-2xl bg-sky-50/70 dark:bg-sky-950/25 border border-sky-200 dark:border-sky-800/80 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="font-extrabold uppercase text-sky-900 dark:text-sky-200 flex items-center gap-1.5 text-xs">
+                      <Eye className="w-3.5 h-3.5 text-sky-600" />
+                      <span>
+                        👁️ Người Theo Dõi Mặc Định Của Biểu Mẫu Quy Trình — Chỉ Theo Dõi, Không Phê Duyệt ({tmplFollowers.length} người):
+                      </span>
+                    </span>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                      Khi nhân viên khởi tạo quy trình phối hợp từ biểu mẫu này, hệ thống sẽ tự động gắn sẵn những nhân sự dưới đây làm <strong>Người theo dõi (CC)</strong> để nhận thông báo &amp; xem tiến độ các bước.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        const picked = cleanWorkspaceAssignee(e.target.value);
+                        if (!picked) return;
+                        if (tmplFollowers.some((f) => sameStaffName(f, picked))) return;
+                        setTemplateForm({
+                          ...templateForm,
+                          default_followers: [...tmplFollowers, picked]
+                        });
+                      }}
+                      className="px-3 py-1.5 rounded-xl text-xs font-bold border border-sky-300 dark:border-sky-700 bg-white dark:bg-slate-900 text-sky-800 dark:text-sky-200 cursor-pointer"
+                    >
+                      <option value="">+ Chọn nhân sự theo dõi mặc định...</option>
+                      {personnelList
+                        .filter((p: any) => p.full_name && !tmplFollowers.some((f) => sameStaffName(f, p.full_name)))
+                        .map((p: any) => (
+                          <option key={p.id || p.employee_code || p.full_name} value={p.full_name}>
+                            👁️ {p.full_name} ({p.department || "ABT"})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </div>
+
+                {tmplFollowers.length === 0 ? (
+                  <div className="text-[11px] text-slate-500 italic bg-white/70 dark:bg-slate-900/60 px-3 py-2 rounded-xl border border-dashed border-sky-200 dark:border-sky-800/60">
+                    Chưa cài người theo dõi mặc định cho biểu mẫu quy trình này. Hãy chọn nhân sự ở ô <strong>&ldquo;+ Chọn nhân sự theo dõi mặc định...&rdquo;</strong> góc phải rồi bấm <strong>Lưu Quy Trình Vào Hệ Thống</strong>.
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {tmplFollowers.map((fName) => (
+                      <span
+                        key={fName}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white dark:bg-slate-900 border border-sky-300 dark:border-sky-700 text-xs font-bold text-sky-800 dark:text-sky-200 shadow-2xs"
+                      >
+                        <Eye className="w-3 h-3 text-sky-600 shrink-0" />
+                        <span>{fName}</span>
+                        <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300">
+                          Mặc định theo dõi
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setTemplateForm({
+                              ...templateForm,
+                              default_followers: tmplFollowers.filter((x) => !sameStaffName(x, fName))
+                            })
+                          }
+                          className="text-slate-400 hover:text-rose-600 font-bold ml-0.5 cursor-pointer"
+                          title="Bỏ người theo dõi mặc định này"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
             <button
               type="button"
@@ -21151,6 +21473,78 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 <div>Bước hiện tại: <strong>Bước {(Number(selectedWorkflowDetail.current_step_index) || 0) + 1}/{Array.isArray(selectedWorkflowDetail.steps) && selectedWorkflowDetail.steps.length > 0 ? selectedWorkflowDetail.steps.length : 1}</strong></div>
               </div>
             </div>
+
+            {/* Danh sách Người theo dõi (Followers — Chỉ theo dõi tiến độ) trong Chi tiết Phiếu phối hợp */}
+            {(() => {
+              const detailFollowers = parseTaskFollowersList(selectedWorkflowDetail.followers);
+              return (
+                <div className="p-3 rounded-xl bg-sky-50/70 dark:bg-sky-950/25 border border-sky-200 dark:border-sky-800/80 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="font-extrabold uppercase text-sky-900 dark:text-sky-200 flex items-center gap-1.5 text-xs">
+                        <Eye className="w-3.5 h-3.5 text-sky-600" />
+                        <span>
+                          Người Theo Dõi Quy Trình Phối Hợp — Chỉ Xem Tiến Độ ({detailFollowers.length} người):
+                        </span>
+                      </span>
+                    </div>
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        const picked = cleanWorkspaceAssignee(e.target.value);
+                        if (!picked) return;
+                        if (detailFollowers.some((f) => sameStaffName(f, picked))) return;
+                        handleUpdateWorkflowFollowers(selectedWorkflowDetail, [...detailFollowers, picked], picked);
+                      }}
+                      className="px-2.5 py-1 rounded-xl text-[11px] font-bold border border-sky-300 dark:border-sky-700 bg-white dark:bg-slate-900 text-sky-800 dark:text-sky-200 cursor-pointer"
+                    >
+                      <option value="">+ Thêm người theo dõi (Chỉ xem)...</option>
+                      {personnelList
+                        .filter((p: any) => p.full_name && !detailFollowers.some((f) => sameStaffName(f, p.full_name)))
+                        .map((p: any) => (
+                          <option key={p.id || p.employee_code || p.full_name} value={p.full_name}>
+                            👁️ {p.full_name} ({p.department || "ABT"})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+
+                  {detailFollowers.length === 0 ? (
+                    <div className="text-[11px] text-slate-500 italic">
+                      Chưa có người theo dõi nào được gắn vào phiếu phối hợp này.
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {detailFollowers.map((fName) => (
+                        <span
+                          key={fName}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white dark:bg-slate-900 border border-sky-300 dark:border-sky-700 text-xs font-bold text-sky-800 dark:text-sky-200"
+                        >
+                          <Eye className="w-3 h-3 text-sky-600 shrink-0" />
+                          <span>{fName}</span>
+                          <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300">
+                            Chỉ theo dõi
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleUpdateWorkflowFollowers(
+                                selectedWorkflowDetail,
+                                detailFollowers.filter((x) => !sameStaffName(x, fName))
+                              )
+                            }
+                            className="text-slate-400 hover:text-rose-600 font-bold ml-0.5 cursor-pointer"
+                            title="Bỏ người theo dõi này"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Interactive Stepper Pipeline in Detail Modal */}
             {selectedWorkflowDetail.steps && selectedWorkflowDetail.steps.length > 0 && (

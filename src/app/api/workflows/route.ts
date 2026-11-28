@@ -329,6 +329,8 @@ async function ensureFictionalAssigneesCleaned() {
   fictionalCleanupDone = true;
   try {
     await query(`ALTER TABLE company_tasks ADD COLUMN IF NOT EXISTS followers JSONB DEFAULT '[]'::jsonb;`).catch(() => {});
+    await query(`ALTER TABLE workflow_templates ADD COLUMN IF NOT EXISTS default_followers JSONB DEFAULT '[]'::jsonb;`).catch(() => {});
+    await query(`ALTER TABLE workflow_requests ADD COLUMN IF NOT EXISTS followers JSONB DEFAULT '[]'::jsonb;`).catch(() => {});
     await query(`
       DO $$
       DECLARE col record;
@@ -932,8 +934,8 @@ export async function POST(req: NextRequest) {
                       `INSERT INTO company_tasks (
                          task_code, title, department, task_category, assignee_name, customer_name,
                          priority, status, deadline, description, related_workflow_code, logs,
-                         created_by, created_by_name
-                       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+                         created_by, created_by_name, followers
+                       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb)`,
                       [
                         nextTaskCode,
                         `[Bước ${nextPendingIdx + 1}/${wfSteps.length}] ${wfSteps[nextPendingIdx].title} (${wfCode})`,
@@ -948,7 +950,8 @@ export async function POST(req: NextRequest) {
                         wfCode,
                         JSON.stringify([{ time: nowVNDateTime(), action: `Tự động chuyển giao từ Bước ${targetStepIdx + 1} (hoàn thành trên Bảng Công Việc)`, actor: actorName }]),
                         me.username || null,
-                        wfRow.requester_name || actorName
+                        wfRow.requester_name || actorName,
+                        JSON.stringify(parseTaskFollowers(wfRow.followers))
                       ]
                     );
                   }
@@ -1422,6 +1425,7 @@ export async function POST(req: NextRequest) {
         const safeComments = Array.isArray(comments) ? comments : (existing.comments || []);
         const safeAttachments = Array.isArray(attachments) ? attachments : (existing.attachments || []);
         const safeResultsSummary = results_summary !== undefined && results_summary !== "" ? results_summary : (existing.results_summary || "");
+        const safeFollowers = body.followers !== undefined ? parseTaskFollowers(body.followers) : parseTaskFollowers(existing.followers);
 
         const prevLogs: any[] = Array.isArray(existing.logs) ? existing.logs : [];
         const mergedWfLogs: any[] = Array.isArray(logs) && logs.length >= prevLogs.length ? [...logs] : [...prevLogs];
@@ -1437,8 +1441,8 @@ export async function POST(req: NextRequest) {
            SET title=$1, priority=$2, status=$3, requester_name=$4, requester_dept=$5,
                assignee_name=$6, target_dept=$7, customer_name=$8, product_info=$9,
                due_date=$10, description=$11, results_summary=$12, attachments=$13,
-               comments=$14, logs=$15, steps=$16, current_step_index=$17, updated_at=CURRENT_TIMESTAMP
-           WHERE id=$18`,
+               comments=$14, logs=$15, steps=$16, current_step_index=$17, followers=$18::jsonb, updated_at=CURRENT_TIMESTAMP
+           WHERE id=$19`,
           [
             title || existing.title,
             priority || existing.priority || "MEDIUM",
@@ -1457,6 +1461,7 @@ export async function POST(req: NextRequest) {
             JSON.stringify(mergedWfLogs),
             JSON.stringify(safeSteps),
             safeStepIndex,
+            JSON.stringify(safeFollowers),
             id
           ]
         );
@@ -1476,8 +1481,9 @@ export async function POST(req: NextRequest) {
                  customer_name = $4,
                  priority = $5,
                  deadline = $6,
-                 description = $7
-             WHERE related_workflow_code = $8 AND status != 'DONE'`,
+                 description = $7,
+                 followers = $8::jsonb
+             WHERE related_workflow_code = $9 AND status != 'DONE'`,
             [
               syncedTaskTitle,
               effectiveTargetDept,
@@ -1486,6 +1492,7 @@ export async function POST(req: NextRequest) {
               priority || existing.priority || "MEDIUM",
               due_date || existing.due_date || null,
               syncedTaskDesc,
+              JSON.stringify(safeFollowers),
               existing.workflow_code
             ]
           );
@@ -1555,14 +1562,15 @@ export async function POST(req: NextRequest) {
             : formattedSteps.length > 0 || Boolean(finalAssignee)
             ? "IN_PROGRESS"
             : status || "PENDING";
+        const initialFollowers = parseTaskFollowers(body.followers);
 
         const wfInsertRes = await query(
           `INSERT INTO workflow_requests (
              workflow_code, workflow_type, title, priority, status,
              requester_name, requester_dept, assignee_name, target_dept,
              customer_name, product_info, due_date, description, results_summary,
-             attachments, comments, logs, steps, current_step_index
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+             attachments, comments, logs, steps, current_step_index, followers
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb)
            RETURNING id`,
           [
             code,
@@ -1583,7 +1591,8 @@ export async function POST(req: NextRequest) {
             JSON.stringify(comments || []),
             JSON.stringify(initialLogs),
             JSON.stringify(formattedSteps),
-            0
+            0,
+            JSON.stringify(initialFollowers)
           ]
         );
         const createdWfId = wfInsertRes.rows[0]?.id;
@@ -1598,8 +1607,8 @@ export async function POST(req: NextRequest) {
           `INSERT INTO company_tasks (
              task_code, title, department, task_category, assignee_name, customer_name,
              priority, status, deadline, description, related_workflow_code, logs,
-             created_by, created_by_name
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+             created_by, created_by_name, followers
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb)`,
           [
             autoTaskCode,
             taskTitle,
@@ -1616,7 +1625,8 @@ export async function POST(req: NextRequest) {
             code,
             JSON.stringify([{ time: nowVNDateTime(), action: `Tiếp nhận yêu cầu liên phòng ban ${code}`, actor: requester_name || "Hệ Thống" }]),
             me.username || null,
-            requester_name || me.full_name || me.username || null
+            requester_name || me.full_name || me.username || null,
+            JSON.stringify(initialFollowers)
           ]
         );
 
@@ -1796,8 +1806,8 @@ export async function POST(req: NextRequest) {
             `INSERT INTO company_tasks (
                task_code, title, department, task_category, assignee_name, customer_name,
                priority, status, deadline, description, related_workflow_code, logs,
-               created_by, created_by_name
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+               created_by, created_by_name, followers
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb)`,
             [
               nextTaskCode,
               `[Bước ${nextIdx + 1}/${steps.length}] ${steps[nextIdx].title} (${wf.workflow_code})`,
@@ -1812,7 +1822,8 @@ export async function POST(req: NextRequest) {
               wf.workflow_code,
               JSON.stringify([{ time: nowVNDateTime(), action: `Tiếp nhận chuyển giao từ Bước ${currentIdx + 1}`, actor: actor || "Hệ Thống" }]),
               me.username || null,
-              wf.requester_name || actor || me.full_name || me.username || null
+              wf.requester_name || actor || me.full_name || me.username || null,
+              JSON.stringify(parseTaskFollowers(wf.followers))
             ]
           );
         }
@@ -1933,6 +1944,47 @@ export async function POST(req: NextRequest) {
           });
 }
 
+    // 3b3. Cập nhật danh sách Người theo dõi (Followers — Chỉ theo dõi tiến độ) của Phiếu quy trình phối hợp
+    if (action === "workflow_followers") {
+      const { id, followers } = body;
+      if (!id) {
+        return NextResponse.json({ error: "Thiếu mã định danh phiếu quy trình" }, { status: 400 });
+      }
+      const wfRes = await query("SELECT * FROM workflow_requests WHERE id = $1 LIMIT 1", [id]);
+      if (wfRes.rows.length === 0) {
+        return NextResponse.json({ error: "Không tìm thấy phiếu quy trình phối hợp" }, { status: 404 });
+      }
+      const wfRow = wfRes.rows[0];
+      const nextFollowers = parseTaskFollowers(followers);
+      const actorName = me.full_name || me.username || "Nhân viên";
+      const prevLogs: any[] = Array.isArray(wfRow.logs) ? [...wfRow.logs] : [];
+      prevLogs.push({
+        time: nowVNDateTime(),
+        action: `[Cập nhật Người theo dõi]: ${nextFollowers.length > 0 ? nextFollowers.join(", ") : "Không có"}`,
+        actor: actorName
+      });
+      await query(
+        `UPDATE workflow_requests SET followers = $1::jsonb, logs = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3`,
+        [JSON.stringify(nextFollowers), JSON.stringify(prevLogs), id]
+      );
+      if (wfRow.workflow_code) {
+        await query(
+          `UPDATE company_tasks SET followers = $1::jsonb WHERE related_workflow_code = $2 AND status != 'DONE'`,
+          [JSON.stringify(nextFollowers), wfRow.workflow_code]
+        );
+      }
+      await logAudit(
+        "UPDATE",
+        "WORKFLOW",
+        `Cập nhật người theo dõi phiếu quy trình ${wfRow.workflow_code || id}: ${nextFollowers.join(", ") || "Trống"}`
+      );
+      return NextResponse.json({
+        success: true,
+        followers: nextFollowers,
+        logs: prevLogs
+      });
+    }
+
     // 3c. Workflow Template Create / Update
     if (action === "template") {
       if (!isAdminUser(me) && !hasPermission(me, "workspace.manage_templates")) {
@@ -1944,12 +1996,13 @@ export async function POST(req: NextRequest) {
       }
 
       const tCode = code || `WF-TMP-${Date.now().toString().slice(-6)}`;
+      const normalizedDefaultFollowers = parseTaskFollowers(body.default_followers ?? body.defaultFollowers);
       if (id && !isNaN(Number(id))) {
         await query(
           `UPDATE workflow_templates 
-           SET code=$1, name=$2, source_dept=$3, target_dept=$4, icon=$5, description=$6, sla_days=$7, steps=$8, updated_at=CURRENT_TIMESTAMP
-           WHERE id=$9`,
-          [tCode, name, source_dept, target_dept, icon || "ArrowRight", description || "", sla_days || 3, JSON.stringify(steps || []), Number(id)]
+           SET code=$1, name=$2, source_dept=$3, target_dept=$4, icon=$5, description=$6, sla_days=$7, steps=$8, default_followers=$9::jsonb, updated_at=CURRENT_TIMESTAMP
+           WHERE id=$10`,
+          [tCode, name, source_dept, target_dept, icon || "ArrowRight", description || "", sla_days || 3, JSON.stringify(steps || []), JSON.stringify(normalizedDefaultFollowers), Number(id)]
         );
         await logAudit("UPDATE", "WORKFLOW_TEMPLATE", `Cập nhật mẫu quy trình: ${name}`);
       } else {
@@ -1957,16 +2010,16 @@ export async function POST(req: NextRequest) {
         if (existingByCode.rows.length > 0) {
           await query(
             `UPDATE workflow_templates 
-             SET name=$1, source_dept=$2, target_dept=$3, icon=$4, description=$5, sla_days=$6, steps=$7, is_active=TRUE, updated_at=CURRENT_TIMESTAMP
-             WHERE id=$8`,
-            [name, source_dept, target_dept, icon || "ArrowRight", description || "", sla_days || 3, JSON.stringify(steps || []), existingByCode.rows[0].id]
+             SET name=$1, source_dept=$2, target_dept=$3, icon=$4, description=$5, sla_days=$6, steps=$7, default_followers=$8::jsonb, is_active=TRUE, updated_at=CURRENT_TIMESTAMP
+             WHERE id=$9`,
+            [name, source_dept, target_dept, icon || "ArrowRight", description || "", sla_days || 3, JSON.stringify(steps || []), JSON.stringify(normalizedDefaultFollowers), existingByCode.rows[0].id]
           );
           await logAudit("UPDATE", "WORKFLOW_TEMPLATE", `Cập nhật mẫu quy trình chuẩn: ${name}`);
         } else {
           await query(
-            `INSERT INTO workflow_templates (code, name, source_dept, target_dept, icon, description, sla_days, steps)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-            [tCode, name, source_dept, target_dept, icon || "ArrowRight", description || "", sla_days || 3, JSON.stringify(steps || [])]
+            `INSERT INTO workflow_templates (code, name, source_dept, target_dept, icon, description, sla_days, steps, default_followers)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)`,
+            [tCode, name, source_dept, target_dept, icon || "ArrowRight", description || "", sla_days || 3, JSON.stringify(steps || []), JSON.stringify(normalizedDefaultFollowers)]
           );
           await logAudit("CREATE", "WORKFLOW_TEMPLATE", `Tạo mới mẫu quy trình: ${name} (${source_dept} ➔ ${target_dept})`);
         }
