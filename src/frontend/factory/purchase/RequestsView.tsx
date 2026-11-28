@@ -422,7 +422,21 @@ function NewRequestForm({ onDone }: { onDone: () => void }) {
 interface PrDetail {
   id: string; code: string; status: string; version: number; org_unit_name: string; warehouse_code: string; warehouse_name: string;
   requester_name: string; approver_name: string | null; needed_by: string | null; reason: string; est_total: string; requires_bod: boolean;
-  lines: { id: string; line_no: number; item_code: string; item_name: string; qty: string; uom: string; est_price: string | null; qty_ordered: string }[];
+  lines: {
+    id: string;
+    line_no: number;
+    item_code: string;
+    item_name: string;
+    qty: string;
+    uom: string;
+    est_price: string | null;
+    qty_ordered: string;
+    notes?: string | null;
+    linked_po_code?: string | null;
+    linked_po_status?: string | null;
+    linked_mo_code?: string | null;
+    linked_mo_status?: string | null;
+  }[];
   actions: AllowedAction[];
 }
 
@@ -440,16 +454,44 @@ function RequestDetail({ id, onClose }: { id: string; onClose: () => void }) {
             {p.approver_name && <> · Duyệt: {p.approver_name}</>} · Cần trước: {fmtDate(p.needed_by)} · Ước tính: {fmtQty(p.est_total)} đ{p.requires_bod && " (vượt ngưỡng, cần BGĐ)"}
           </p>
           <p className="text-xs">Lý do: {p.reason}</p>
-          <Table head={["#", "Vật tư", "Số lượng", "Đã đặt", "Đơn giá ước tính"]}>
-            {p.lines.map((l) => (
-              <tr key={l.id}>
-                <td className="py-2 pr-3">{l.line_no}</td>
-                <td className="py-2 pr-3">{l.item_code} — {l.item_name}</td>
-                <td className="py-2 pr-3 whitespace-nowrap">{fmtQty(l.qty)} {l.uom}</td>
-                <td className="py-2 pr-3">{fmtQty(l.qty_ordered)}</td>
-                <td className="py-2 pr-3">{l.est_price ? `${fmtQty(l.est_price)} đ` : "—"}</td>
-              </tr>
-            ))}
+          <Table head={["#", "Vật tư", "Số lượng yêu cầu", "Đã cấp / Đã đặt", "Tiến độ từng dòng (Số Lot · Ngày cấp · Lệnh P.SX · PO)", "Đơn giá ước tính"]}>
+            {p.lines.map((l) => {
+              const reqQty = Number(l.qty) || 0;
+              const ordQty = Number(l.qty_ordered) || 0;
+              const isFulfilled = ordQty >= reqQty && reqQty > 0;
+              return (
+                <tr key={l.id} className={isFulfilled ? "bg-emerald-50/40 dark:bg-emerald-950/15" : ""}>
+                  <td className="py-2 pr-3">{l.line_no}</td>
+                  <td className="py-2 pr-3">
+                    <b>{l.item_code}</b> — {l.item_name}
+                  </td>
+                  <td className="py-2 pr-3 whitespace-nowrap font-semibold">{fmtQty(l.qty)} {l.uom}</td>
+                  <td className="py-2 pr-3 whitespace-nowrap font-bold">
+                    {fmtQty(l.qty_ordered)} / {fmtQty(l.qty)} {l.uom}
+                  </td>
+                  <td className="py-2 pr-3 text-xs">
+                    {l.linked_po_code ? (
+                      <span className="font-bold text-sky-700 dark:text-sky-400">
+                        🛒 Đang đặt mua PO: {l.linked_po_code} ({l.linked_po_status})
+                      </span>
+                    ) : l.linked_mo_code && !isFulfilled ? (
+                      <span className="font-bold text-amber-700 dark:text-amber-300">
+                        ⏳ Đang chờ P.SX pha chế ({l.linked_mo_code} · {l.linked_mo_status || "IN_PROGRESS"})
+                      </span>
+                    ) : isFulfilled ? (
+                      <span className="font-bold text-emerald-700 dark:text-emerald-400">
+                        {l.notes || "✅ Đã cấp hoàn tất"}
+                      </span>
+                    ) : l.notes ? (
+                      <span className="font-semibold text-indigo-700 dark:text-indigo-300">{l.notes}</span>
+                    ) : (
+                      <span className="text-slate-400">⏳ Chờ Kho / Cung ứng điều phối</span>
+                    )}
+                  </td>
+                  <td className="py-2 pr-3">{l.est_price ? `${fmtQty(l.est_price)} đ` : "—"}</td>
+                </tr>
+              );
+            })}
           </Table>
           <ActionBar endpoint={`/api/factory/purchase/requests/${p.id}/actions`} version={p.version} actions={p.actions} labels={ACTION_LABEL} onDone={() => { qc.invalidateQueries({ queryKey: ["factory", "pr", id] }); qc.invalidateQueries({ queryKey: ["factory", "prs"] }); }} />
         </div>

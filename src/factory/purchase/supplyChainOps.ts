@@ -77,7 +77,11 @@ export async function getSupplyChainOverview(tx: Tx, actor: AuthzActor) {
                 SELECT 1 FROM kit.bom kb
                  WHERE kb.product_item_id = i.id AND kb.status = 'EFFECTIVE'
               ) AS has_kit_bom,
-              l.notes AS line_notes
+              l.notes AS line_notes,
+              po_info.po_code AS linked_po_code,
+              po_info.po_status AS linked_po_status,
+              mo_info.mo_code AS linked_mo_code,
+              mo_info.mo_status AS linked_mo_status
          FROM purchase.purchase_request_line l
          JOIN purchase.purchase_request pr ON pr.id = l.pr_id
          JOIN core.org_unit o ON o.id = pr.org_unit_id
@@ -102,13 +106,34 @@ export async function getSupplyChainOverview(tx: Tx, actor: AuthzActor) {
             ORDER BY (wh2.code = 'KHO-KIT') DESC, sum(b2.qty_on_hand - b2.qty_reserved) DESC
             LIMIT 1
          ) other_wh ON true
+         LEFT JOIN LATERAL (
+           SELECT po.code AS po_code, po.status AS po_status
+             FROM purchase.purchase_order_line pol
+             JOIN purchase.purchase_order po ON po.id = pol.po_id
+            WHERE pol.pr_line_id = l.id AND po.status <> 'CANCELLED'
+            ORDER BY po.created_at DESC
+            LIMIT 1
+         ) po_info ON true
+         LEFT JOIN LATERAL (
+           SELECT kpo.code AS mo_code, kpo.status AS mo_status
+             FROM intake.internal_order io
+             JOIN intake.internal_order_line iol ON iol.order_id = io.id AND iol.item_id = l.item_id
+             LEFT JOIN kit.production_order kpo ON kpo.internal_order_line_id = iol.id AND kpo.status <> 'CANCELLED'
+            WHERE io.kd_so_code = pr.code AND io.status <> 'CANCELLED'
+            ORDER BY kpo.created_at DESC NULLS LAST, io.created_at DESC
+            LIMIT 1
+         ) mo_info ON true
         WHERE pr.status IN ('DRAFT', 'SUBMITTED', 'PENDING_BOD', 'APPROVED', 'ORDERED')
-          AND l.qty > l.qty_ordered
+          AND EXISTS (
+            SELECT 1 FROM purchase.purchase_request_line l_open
+             WHERE l_open.pr_id = pr.id AND l_open.qty > l_open.qty_ordered
+          )
         ORDER BY
           CASE COALESCE(pr.priority, 'NORMAL') WHEN 'URGENT' THEN 1 WHEN 'HIGH' THEN 2 ELSE 3 END,
           pr.needed_by ASC NULLS LAST,
-          pr.created_at DESC
-        LIMIT 60`,
+          pr.created_at DESC,
+          l.line_no ASC
+        LIMIT 100`,
       [today]
     )
   ).rows;
@@ -345,8 +370,23 @@ export async function fulfillPrLineFromCentralHub(tx: Tx, actor: AuthzActor, inp
     notes: `[Cấp phát điều phối PR ${line.pr_code}] Điều chuyển FEFO từ ${srcWh.code} sang ${line.warehouse_code}`,
   });
 
-  const tagNote = `[Đã cấp ${transferQty} ${line.uom} từ ${srcWh.code} · Phiếu ${dispatchResult.document.code}]`;
-  const mergedNotes = line.notes ? `${line.notes} ${tagNote}`.slice(0, 500) : tagNote;
+  const lotRows = (
+    await tx.query(
+      `SELECT DISTINCT COALESCE(lot.code, 'Không lô') AS lot_code
+         FROM inv.stock_document_line dl
+         LEFT JOIN inv.lot lot ON lot.id = dl.lot_id
+        WHERE dl.document_id = $1`,
+      [dispatchResult.document.id]
+    )
+  ).rows as Array<{ lot_code: string }>;
+  const lotCodesStr = lotRows.map((r) => r.lot_code).join(", ") || "FEFO";
+  const todayStr = vnToday();
+
+  const tagNote = `[✅ Đã cấp ${transferQty} ${line.uom} từ ${srcWh.code} · Số Lot: ${lotCodesStr} ·Ngày ${todayStr} · Phiếu ${dispatchResult.document.code}]`;
+  const cleanedPrevNotes = String(line.notes || "")
+    .replace(/\[⏳ Đang chờ P\.SX[^\]]*\]/g, "")
+    .trim();
+  const mergedNotes = cleanedPrevNotes ? `${cleanedPrevNotes} ${tagNote}`.slice(0, 500) : tagNote;
   await tx.query("UPDATE purchase.purchase_request_line SET qty_ordered = qty_ordered + $2, notes = $3 WHERE id = $1", [
     line.id,
     transferQty,
@@ -357,6 +397,8 @@ export async function fulfillPrLineFromCentralHub(tx: Tx, actor: AuthzActor, inp
   return {
     transferred_qty: transferQty,
     document_code: dispatchResult.document.code,
+    lot_codes: lotCodesStr,
+    fulfilled_date: todayStr,
     from_warehouse: srcWh.code,
     to_warehouse: line.warehouse_code,
   };
@@ -434,16 +476,19 @@ export async function dispatchPrLineToProduction(tx: Tx, actor: AuthzActor, inpu
   }
 
   const tagNote = productionOrderCode
-    ? `[Đã chuyển P.SX pha chế · Lệnh ${productionOrderCode}]`
-    : `[Đã chuyển Đơn nội bộ ${internalOrder.code} sang P.SX]`;
-  const mergedNotes = line.notes ? `${line.notes} ${tagNote}`.slice(0, 500) : tagNote;
+    ? `[⏳ Đang chờ P.SX pha chế (${productionOrderCode} · Đơn NB ${internalOrder.code})]`
+    : `[⏳ Đang chờ P.SX pha chế (Đơn NB ${internalOrder.code})]`;
+  const cleanedPrevNotes = String(line.notes || "")
+    .replace(/\[⏳ Đang chờ P\.SX[^\]]*\]/g, "")
+    .trim();
+  const mergedNotes = cleanedPrevNotes ? `${cleanedPrevNotes} ${tagNote}`.slice(0, 500) : tagNote;
 
-  await tx.query("UPDATE purchase.purchase_request_line SET qty_ordered = qty_ordered + $2, notes = $3 WHERE id = $1", [
+  // Giữ dòng PR ở trạng thái mở (chưa cộng qty_ordered) với nhãn "⏳ Đang chờ P.SX pha chế (MO...)"
+  // để khi P.SX (Anh Sơn) pha xong và nhập kho KHO-KIT, Kho/P.SX bấm "🧪 Cấp từ Kho SX (KHO-KIT)" mới chính thức trừ kho và hoàn tất dòng PR.
+  await tx.query("UPDATE purchase.purchase_request_line SET notes = $2 WHERE id = $1", [
     line.id,
-    qtyToProduce,
     mergedNotes,
   ]);
-  await syncRequestStatus(tx, SYSTEM_ACTOR, [line.pr_id]);
 
   return {
     internal_order_code: internalOrder.code,

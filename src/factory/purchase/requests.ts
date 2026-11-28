@@ -348,9 +348,33 @@ export async function getRequest(tx: Tx, actor: AuthzActor, id: string) {
   const lines = (
     await tx.query(
       `SELECT l.id, l.line_no, l.item_id, i.code AS item_code, i.name AS item_name, l.qty::text AS qty, l.uom, l.est_price::text AS est_price,
-              l.qty_ordered::text AS qty_ordered, l.notes
-         FROM purchase.purchase_request_line l JOIN master.item i ON i.id = l.item_id WHERE l.pr_id = $1 ORDER BY l.line_no`,
-      [id]
+              l.qty_ordered::text AS qty_ordered, l.notes,
+              po_info.po_code AS linked_po_code,
+              po_info.po_status AS linked_po_status,
+              mo_info.mo_code AS linked_mo_code,
+              mo_info.mo_status AS linked_mo_status
+         FROM purchase.purchase_request_line l
+         JOIN master.item i ON i.id = l.item_id
+         LEFT JOIN LATERAL (
+           SELECT po.code AS po_code, po.status AS po_status
+             FROM purchase.purchase_order_line pol
+             JOIN purchase.purchase_order po ON po.id = pol.po_id
+            WHERE pol.pr_line_id = l.id AND po.status <> 'CANCELLED'
+            ORDER BY po.created_at DESC
+            LIMIT 1
+         ) po_info ON true
+         LEFT JOIN LATERAL (
+           SELECT kpo.code AS mo_code, kpo.status AS mo_status
+             FROM intake.internal_order io
+             JOIN intake.internal_order_line iol ON iol.order_id = io.id AND iol.item_id = l.item_id
+             LEFT JOIN kit.production_order kpo ON kpo.internal_order_line_id = iol.id AND kpo.status <> 'CANCELLED'
+            WHERE io.kd_so_code = $2 AND io.status <> 'CANCELLED'
+            ORDER BY kpo.created_at DESC NULLS LAST, io.created_at DESC
+            LIMIT 1
+         ) mo_info ON true
+        WHERE l.pr_id = $1
+        ORDER BY l.line_no`,
+      [id, pr.code]
     )
   ).rows;
   return { ...pr, lines };

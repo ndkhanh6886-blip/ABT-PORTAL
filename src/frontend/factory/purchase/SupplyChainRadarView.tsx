@@ -58,6 +58,10 @@ interface SupplyChainOverview {
     is_manufacturable?: boolean;
     has_kit_bom?: boolean;
     line_notes?: string | null;
+    linked_po_code?: string | null;
+    linked_po_status?: string | null;
+    linked_mo_code?: string | null;
+    linked_mo_status?: string | null;
   }[];
   mrp_shortage_radar: {
     item_id: string;
@@ -123,7 +127,14 @@ export function SupplyChainRadarView({
 
   const fulfillFromHubMut = useMutation({
     mutationFn: (payload: { pr_line_id: string; source_warehouse_id?: string | null }) =>
-      api<{ transferred_qty: number; document_code: string; from_warehouse?: string; to_warehouse: string }>("/api/factory/purchase/ops", {
+      api<{
+        transferred_qty: number;
+        document_code: string;
+        lot_codes?: string;
+        fulfilled_date?: string;
+        from_warehouse?: string;
+        to_warehouse: string;
+      }>("/api/factory/purchase/ops", {
         method: "POST",
         idempotent: true,
         json: {
@@ -134,7 +145,7 @@ export function SupplyChainRadarView({
       }),
     onSuccess: (res) => {
       setToast(
-        `⚡ Đã điều chuyển FEFO tức thì ${fmtQty(res.transferred_qty)} từ ${res.from_warehouse || "KHO-TONG"} sang ${res.to_warehouse} (Phiếu ${res.document_code}) — Tự động trừ kho & ghi nhận Số Lot!`
+        `⚡ Đã điều chuyển FEFO tức thì ${fmtQty(res.transferred_qty)} từ ${res.from_warehouse || "KHO-TONG"} sang ${res.to_warehouse} (Số Lot: ${res.lot_codes || "FEFO"} · Phiếu ${res.document_code}) — Tự động trừ kho!`
       );
       refreshAll();
     },
@@ -379,24 +390,31 @@ export function SupplyChainRadarView({
           >
             {d?.open_pr_lines_dispatch.map((l) => {
               const pri = PRIORITY_BADGE[l.priority] ?? PRIORITY_BADGE.NORMAL;
-              const canFulfillFromHub = l.warehouse_code !== "KHO-TONG" && l.hub_available_qty > 0;
+              const isLineFulfilled = l.qty_open <= 0;
+              const canFulfillFromHub = !isLineFulfilled && l.warehouse_code !== "KHO-TONG" && l.hub_available_qty > 0;
               const otherBranchAvail = Number(l.other_branch_available_qty ?? 0);
               const canFulfillFromBranch =
-                otherBranchAvail > 0 && Boolean(l.other_branch_warehouse_id) && Boolean(l.other_branch_warehouse_code);
+                !isLineFulfilled &&
+                otherBranchAvail > 0 &&
+                Boolean(l.other_branch_warehouse_id) &&
+                Boolean(l.other_branch_warehouse_code);
               const canProduceInHouse =
                 Boolean(l.has_kit_bom) ||
                 Boolean(l.is_manufacturable) ||
                 l.item_type === "SEMI_FINISHED" ||
                 l.item_type === "FINISHED_KIT" ||
                 /^(BTP|ST|DD|MM|MIX|IC|BUF)/i.test(l.item_code);
+              const isWaitingForProduction =
+                !isLineFulfilled &&
+                (Boolean(l.linked_mo_code) || /đang chờ p\.sx pha chế/i.test(String(l.line_notes || "")));
               return (
-                <tr key={l.pr_line_id}>
+                <tr key={l.pr_line_id} className={isLineFulfilled ? "bg-emerald-50/40 dark:bg-emerald-950/15" : ""}>
                   <td className="py-2 pr-3 whitespace-nowrap">
                     <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${pri.cls}`}>{pri.label}</span>
                     {l.needed_by && (
                       <div className="text-[11px] text-slate-500 mt-0.5">
                         Cần: {fmtDate(l.needed_by)}{" "}
-                        {l.days_until_needed !== null && (
+                        {l.days_until_needed !== null && !isLineFulfilled && (
                           <b className={l.days_until_needed <= 2 ? "text-rose-600" : "text-slate-600"}>
                             ({l.days_until_needed < 0 ? `Trễ ${Math.abs(l.days_until_needed)}n` : `còn ${l.days_until_needed}n`})
                           </b>
@@ -415,11 +433,26 @@ export function SupplyChainRadarView({
                     <div className="font-mono font-semibold">{l.item_code}</div>
                     <div className="text-[11px] text-slate-500">{l.item_name}</div>
                     {l.line_notes && (
-                      <div className="text-[10px] text-indigo-600 dark:text-indigo-400 mt-0.5">{l.line_notes}</div>
+                      <div className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-300 mt-0.5">
+                        {l.line_notes}
+                      </div>
                     )}
                   </td>
                   <td className="py-2 pr-3 font-bold whitespace-nowrap">
-                    {fmtQty(l.qty_open)} {l.uom}
+                    {isLineFulfilled ? (
+                      <span className="text-emerald-700 dark:text-emerald-400">
+                        {fmtQty(l.qty_requested)} / {fmtQty(l.qty_requested)} {l.uom}
+                      </span>
+                    ) : (
+                      <span>
+                        {fmtQty(l.qty_open)} {l.uom}
+                        {l.qty_ordered > 0 && (
+                          <span className="block text-[10px] text-emerald-700 dark:text-emerald-400">
+                            (Đã cấp/đặt: {fmtQty(l.qty_ordered)}/{fmtQty(l.qty_requested)})
+                          </span>
+                        )}
+                      </span>
+                    )}
                   </td>
                   <td className="py-2 pr-3 whitespace-nowrap">
                     {l.hub_available_qty > 0 ? (
@@ -431,9 +464,9 @@ export function SupplyChainRadarView({
                     )}
                   </td>
                   <td className="py-2 pr-3 whitespace-nowrap">
-                    {canFulfillFromBranch ? (
+                    {otherBranchAvail > 0 && l.other_branch_warehouse_code ? (
                       <span className="font-bold text-teal-700 dark:text-teal-400">
-                        🔄 {l.other_branch_warehouse_code}: {fmtQty(otherBranchAvail)} {l.uom}
+                        🧪 {l.other_branch_warehouse_code}: {fmtQty(otherBranchAvail)} {l.uom}
                       </span>
                     ) : (
                       <span className="text-slate-400 text-xs">0</span>
@@ -443,58 +476,75 @@ export function SupplyChainRadarView({
                     {fmtQty(l.dept_available_qty)} {l.uom}
                   </td>
                   <td className="py-2 pr-3">
-                    <StatusBadge
-                      status={l.pr_status === "APPROVED" ? "RELEASED" : "QUARANTINE"}
-                      label={l.pr_status === "APPROVED" ? "Đã duyệt chờ điều phối" : l.pr_status}
-                    />
+                    {isLineFulfilled && l.linked_po_code ? (
+                      <StatusBadge status="RELEASED" label={`🛒 Đang đặt mua PO (${l.linked_po_code})`} />
+                    ) : isLineFulfilled ? (
+                      <StatusBadge status="RELEASED" label="✅ Đã cấp hoàn tất" />
+                    ) : isWaitingForProduction ? (
+                      <StatusBadge
+                        status="QUARANTINE"
+                        label={`⏳ Đang chờ P.SX pha chế (${l.linked_mo_code || "P.SX"})`}
+                      />
+                    ) : (
+                      <StatusBadge
+                        status={l.pr_status === "APPROVED" ? "RELEASED" : "QUARANTINE"}
+                        label={l.pr_status === "APPROVED" ? "Đã duyệt chờ điều phối" : l.pr_status}
+                      />
+                    )}
                   </td>
                   <td className="py-2 pr-3 whitespace-nowrap">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {canFulfillFromHub && (
-                        <Button
-                          onClick={() => fulfillFromHubMut.mutate({ pr_line_id: l.pr_line_id })}
-                          disabled={fulfillFromHubMut.isPending}
-                        >
-                          ⚡ Cấp từ KHO-TONG ({fmtQty(Math.min(l.qty_open, l.hub_available_qty))})
-                        </Button>
-                      )}
-                      {canFulfillFromBranch && (
-                        <Button
-                          variant={canFulfillFromHub ? "ghost" : "primary"}
-                          onClick={() =>
-                            fulfillFromHubMut.mutate({
-                              pr_line_id: l.pr_line_id,
-                              source_warehouse_id: l.other_branch_warehouse_id,
-                            })
-                          }
-                          disabled={fulfillFromHubMut.isPending}
-                        >
-                          🔄 Chuyển từ {l.other_branch_warehouse_code} ({fmtQty(Math.min(l.qty_open, otherBranchAvail))})
-                        </Button>
-                      )}
-                      {canProduceInHouse && !canFulfillFromHub && !canFulfillFromBranch && (
-                        <Button
-                          onClick={() => dispatchToProductionMut.mutate(l.pr_line_id)}
-                          disabled={dispatchToProductionMut.isPending}
-                        >
-                          ⚗️ Chuyển P.SX pha chế / SX
-                        </Button>
-                      )}
-                      {["DRAFT", "SUBMITTED"].includes(l.pr_status) && (
-                        <Button
-                          variant="ghost"
-                          onClick={() => fastTrackApproveMut.mutate({ pr_id: l.pr_id, priority: "HIGH" })}
-                          disabled={fastTrackApproveMut.isPending}
-                        >
-                          ✅ Duyệt Nhanh PR
-                        </Button>
-                      )}
-                      {l.pr_status === "APPROVED" && (
-                        <Button variant="ghost" onClick={onGoInbox}>
-                          🛒 Đặt PO →
-                        </Button>
-                      )}
-                    </div>
+                    {isLineFulfilled ? (
+                      <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">
+                        {l.linked_po_code ? `🛒 Đã lên PO ${l.linked_po_code}` : "✅ Đã cấp & trừ kho"}
+                      </span>
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {canFulfillFromHub && (
+                          <Button
+                            onClick={() => fulfillFromHubMut.mutate({ pr_line_id: l.pr_line_id })}
+                            disabled={fulfillFromHubMut.isPending}
+                          >
+                            ⚡ Cấp từ KHO-TONG ({fmtQty(Math.min(l.qty_open, l.hub_available_qty))})
+                          </Button>
+                        )}
+                        {canFulfillFromBranch && (
+                          <Button
+                            variant={canFulfillFromHub ? "ghost" : "primary"}
+                            onClick={() =>
+                              fulfillFromHubMut.mutate({
+                                pr_line_id: l.pr_line_id,
+                                source_warehouse_id: l.other_branch_warehouse_id,
+                              })
+                            }
+                            disabled={fulfillFromHubMut.isPending}
+                          >
+                            🧪 Cấp từ Kho SX ({l.other_branch_warehouse_code}: {fmtQty(Math.min(l.qty_open, otherBranchAvail))})
+                          </Button>
+                        )}
+                        {canProduceInHouse && !canFulfillFromHub && !canFulfillFromBranch && !isWaitingForProduction && (
+                          <Button
+                            onClick={() => dispatchToProductionMut.mutate(l.pr_line_id)}
+                            disabled={dispatchToProductionMut.isPending}
+                          >
+                            ⚗️ Yêu cầu P.SX (Anh Sơn) pha chế / Sản xuất
+                          </Button>
+                        )}
+                        {["DRAFT", "SUBMITTED"].includes(l.pr_status) && (
+                          <Button
+                            variant="ghost"
+                            onClick={() => fastTrackApproveMut.mutate({ pr_id: l.pr_id, priority: "HIGH" })}
+                            disabled={fastTrackApproveMut.isPending}
+                          >
+                            ✅ Duyệt Nhanh PR
+                          </Button>
+                        )}
+                        {l.pr_status === "APPROVED" && !isWaitingForProduction && (
+                          <Button variant="ghost" onClick={onGoInbox}>
+                            🛒 Tạo PO mua hàng →
+                          </Button>
+                        )}
+                      </div>
+                    )}
                   </td>
                 </tr>
               );
