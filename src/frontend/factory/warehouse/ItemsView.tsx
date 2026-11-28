@@ -34,6 +34,36 @@ interface UomOption {
   dimension: string;
 }
 
+const FALLBACK_UOMS: UomOption[] = [
+  { code: "µL", name: "Microlít (µL)", dimension: "VOLUME" },
+  { code: "mL", name: "Mililít (mL)", dimension: "VOLUME" },
+  { code: "L", name: "Lít (L)", dimension: "VOLUME" },
+  { code: "µg", name: "Microgam (µg)", dimension: "MASS" },
+  { code: "mg", name: "Miligam (mg)", dimension: "MASS" },
+  { code: "g", name: "Gam (g)", dimension: "MASS" },
+  { code: "kg", name: "Kilôgam (kg)", dimension: "MASS" },
+  { code: "tube", name: "Ống (tube)", dimension: "COUNT" },
+  { code: "vial", name: "Lọ (vial)", dimension: "COUNT" },
+  { code: "bottle", name: "Chai (bottle)", dimension: "COUNT" },
+  { code: "pcs", name: "Cái / Chiếc (pcs)", dimension: "COUNT" },
+  { code: "box", name: "Hộp (box)", dimension: "COUNT" },
+  { code: "kit", name: "Bộ Kit (kit)", dimension: "COUNT" },
+  { code: "set", name: "Bộ (set)", dimension: "COUNT" },
+  { code: "plate", name: "Đĩa (plate)", dimension: "COUNT" },
+  { code: "test", name: "Test xét nghiệm (test)", dimension: "COUNT" },
+  { code: "Rxn", name: "Phản ứng (Reaction)", dimension: "COUNT" },
+  { code: "OD", name: "Đơn vị mật độ quang (OD)", dimension: "OD" },
+  { code: "U", name: "Đơn vị hoạt độ Enzyme (Unit)", dimension: "COUNT" },
+  { code: "kU", name: "Nghìn đơn vị Enzyme (kU)", dimension: "COUNT" },
+  { code: "nmol", name: "Nanomol (nmol)", dimension: "AMOUNT" },
+  { code: "µmol", name: "Micromol (µmol)", dimension: "AMOUNT" },
+  { code: "pmol", name: "Picomol (pmol)", dimension: "AMOUNT" },
+  { code: "mol", name: "Mol (mol)", dimension: "AMOUNT" },
+  { code: "m", name: "Mét (m)", dimension: "LENGTH" },
+  { code: "cm", name: "Centimét (cm)", dimension: "LENGTH" },
+  { code: "mm", name: "Milimét (mm)", dimension: "LENGTH" },
+];
+
 interface ItemRow {
   id: string;
   code: string;
@@ -699,6 +729,17 @@ export function ItemsView({ canManage }: { canManage: boolean }) {
     queryFn: () => api<UomOption[]>("/api/factory/master/uoms"),
   });
 
+  const effectiveUoms = useMemo(() => {
+    const map = new Map<string, UomOption>();
+    for (const u of FALLBACK_UOMS) {
+      map.set(u.code.toLowerCase(), u);
+    }
+    for (const u of uoms.data ?? []) {
+      if (u?.code) map.set(u.code.toLowerCase(), u);
+    }
+    return Array.from(map.values());
+  }, [uoms.data]);
+
   const params = new URLSearchParams({
     page: String(page),
     page_size: "50",
@@ -762,7 +803,7 @@ export function ItemsView({ canManage }: { canManage: boolean }) {
       {showConversions && !convTargetItem && (
         <UomConversionPanel
           canManage={canManage}
-          uoms={uoms.data ?? []}
+          uoms={effectiveUoms}
           items={items.data?.rows ?? []}
           preselectedItem={null}
           onClose={() => {
@@ -831,7 +872,7 @@ export function ItemsView({ canManage }: { canManage: boolean }) {
           </div>
         )}
 
-        {adding && <NewItemForm uoms={uoms.data ?? []} onDone={() => setAdding(false)} />}
+        {adding && <NewItemForm uoms={effectiveUoms} onDone={() => setAdding(false)} />}
 
         <div className="flex flex-wrap items-center justify-between gap-2 mb-3 p-2 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50">
           <div className="flex flex-wrap items-center gap-1.5">
@@ -1014,7 +1055,7 @@ export function ItemsView({ canManage }: { canManage: boolean }) {
                         <td colSpan={12} className="py-2 pr-3">
                           <BaseUomModal
                             item={r}
-                            uoms={uoms.data ?? []}
+                            uoms={effectiveUoms}
                             onClose={() => setEditingUomItem(null)}
                           />
                         </td>
@@ -1025,7 +1066,7 @@ export function ItemsView({ canManage }: { canManage: boolean }) {
                         <td colSpan={12} className="py-2 pr-3">
                           <UomConversionPanel
                             canManage={canManage}
-                            uoms={uoms.data ?? []}
+                            uoms={effectiveUoms}
                             items={items.data?.rows ?? []}
                             preselectedItem={r}
                             onClose={() => {

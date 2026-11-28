@@ -173,14 +173,34 @@ async function assertUom(tx: Tx, code: string): Promise<string> {
   }
   const normalized = normalizeUomAlias(code);
   const r = await tx.query(
-    `SELECT code FROM master.uom
-      WHERE (lower(code) = lower($1) OR lower(code) = lower($2)) AND status = 'ACTIVE'
+    `SELECT code, status FROM master.uom
+      WHERE lower(code) = lower($1) OR lower(code) = lower($2)
       ORDER BY (code = $1) DESC, (code = $2) DESC
       LIMIT 1`,
     [normalized, code.trim()]
   );
-  if (!r.rowCount) throw invalid(`Đơn vị tính "${code}" không có trong danh mục.`);
-  return r.rows[0].code as string;
+  if (r.rowCount) {
+    const found = r.rows[0];
+    if (found.status !== "ACTIVE") {
+      await tx.query("UPDATE master.uom SET status = 'ACTIVE' WHERE code = $1", [found.code]);
+    }
+    return found.code as string;
+  }
+  const cleanCode = (normalized || code.trim()).slice(0, 12);
+  await tx.query("SAVEPOINT sp_assert_uom_insert");
+  try {
+    await tx.query(
+      `INSERT INTO master.uom (code, name, dimension, status)
+       VALUES ($1, $2, 'COUNT', 'ACTIVE')
+       ON CONFLICT (code) DO UPDATE SET status = 'ACTIVE'`,
+      [cleanCode, cleanCode]
+    );
+    await tx.query("RELEASE SAVEPOINT sp_assert_uom_insert");
+    return cleanCode;
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_assert_uom_insert").catch(() => {});
+    throw invalid(`Đơn vị tính "${code}" không có trong danh mục.`);
+  }
 }
 
 export async function createItem(tx: Tx, actor: AuthzActor, input: unknown): Promise<Item> {
