@@ -212,6 +212,31 @@ export function parseDemoRatio(spec: string | null | undefined, baseTests: numbe
   return 0.5;
 }
 
+/**
+ * Tính số lượng Tube PCR cấp kèm / 1 bộ Kit Demo theo quy cách Demo chuẩn ABT:
+ * - Demo 25 test (.DM25) hoặc 24 test (.DM24): cấp 32 cái (4 strip-8)
+ * - Demo 10 test (.DM10): cấp 16 cái (2 strip-8)
+ * - Demo 1/2 bộ (.DM): cấp 50% số tube chuẩn (làm tròn lên theo bội số 8 giếng/strip, VD: 80 -> 40 cái, 64 -> 32 cái)
+ */
+export function resolveDemoPcrTubesPerKit(
+  spec: string | null | undefined,
+  standardPcrTubes: number,
+  demoRatio: number
+): number {
+  const s = String(spec ?? "").trim().toLowerCase();
+  const testMatch = s.match(/(\d+(?:\.\d+)?)\s*(?:test|rxn|phản ứng|pu|t\b)/i) ?? s.match(/^(\d+(?:\.\d+)?)$/);
+  if (testMatch) {
+    const tests = Number(testMatch[1]);
+    if (tests === 25 || tests === 24) return 32;
+    if (tests === 10) return 16;
+    if (tests > 5) {
+      return Math.max(8, Math.ceil((standardPcrTubes * (tests / 75)) / 8) * 8);
+    }
+  }
+  const scaled = Math.round(standardPcrTubes * demoRatio);
+  return Math.max(8, Math.ceil(scaled / 8) * 8);
+}
+
 export interface ExplodedBomLine {
   bom_line_id: string;
   line_no: number;
@@ -373,12 +398,16 @@ export async function explodeKitBom(
       prod.code.toUpperCase().includes(".IC"));
 
   const isDemo = Boolean(order.is_demo) || order.order_mode === "DEMO" || parsedFromLot.isDemo;
+  const effectiveDemoSpec = order.demo_specification || parsedFromLot.demoSpec || "25 test";
   const targetMixTests = isAliquoted ? 64 : 75;
-  const targetPcrTubes = isAliquoted ? 64 : 80;
+  const standardPcrTubes = isAliquoted ? 64 : 80;
   const baseTests = Number((order as any).mix_tests_per_kit || bom.tests_per_kit || (isPcrKit ? targetMixTests : 50));
   const demoRatio = isDemo
-    ? parseDemoRatio(order.demo_specification || parsedFromLot.demoSpec || "25 test", baseTests)
+    ? parseDemoRatio(effectiveDemoSpec, baseTests)
     : 1;
+  const targetPcrTubes = isDemo
+    ? resolveDemoPcrTubesPerKit(effectiveDemoSpec, standardPcrTubes, demoRatio)
+    : standardPcrTubes;
 
   const plannedQty = Number(order.planned_qty) || 0;
   const retQty = order.no_retention ? 0 : Number(order.qc_retention_qty || 0);
@@ -424,12 +453,15 @@ export async function explodeKitBom(
       continue;
     }
 
-    // 2. Quy tắc Tube 1.5mL chứa PCR Mix (CTT1.5): Dạng chia sẵn (.C / .C.IC) chia trực tiếp vào 64 tube PCR nên không kèm tube 1.5mL chứa Mix
+    // 2. Quy tắc Tube 1.5mL chứa PCR Mix (CTT1.5):
+    // - Dạng chia sẵn (.C / .C.IC) chia trực tiếp vào 64 tube PCR nên không kèm tube 1.5mL chứa Mix.
+    // - Bộ chuẩn 75 test dùng 3 ống CTT1.5 (mỗi ống chứa 25 test Mix); khi sản xuất hàng Demo (VD: 25 test -> 1 ống, 10 test -> 1 ống), số ống CTT1.5 giảm theo tỉ lệ Mix và làm tròn lên nguyên ống.
     const isMix15Tube =
       codeUpper === "CTT1.5" ||
+      /^CTT1\.5(\b|[-_])/i.test(codeUpper) ||
       (l.component_role === "PACKAGING" &&
         (nameLower.includes("1.5") || codeUpper.includes("1.5")) &&
-        (nameLower.includes("mix") || String(l.notes || "").toLowerCase().includes("mix")));
+        (nameLower.includes("mix") || String(l.notes || "").toLowerCase().includes("mix") || Number(l.qty_per_base) > 1));
     if (isAliquoted && isMix15Tube) {
       continue;
     }
@@ -492,9 +524,15 @@ export async function explodeKitBom(
     const effectiveOrderQty = includeQcRet ? plannedQty + retQty : plannedQty;
     const scale = effectiveOrderQty / baseQty;
 
-    // 4. Quy tắc Demo: Hóa chất giảm theo tỉ lệ, nhưng vật tư cố định (chai chứa, vỏ hộp) giữ nguyên
-    const isFixedInDemo = Boolean(l.is_demo_fixed_component) || l.component_role === "PACKAGING";
-    const lineDemoRatio = isDemo && !isFixedInDemo && l.is_mix_component !== false ? demoRatio : 1;
+    // 4. Quy tắc Demo:
+    // - Hóa chất / Bán thành phẩm giảm theo tỉ lệ demoRatio.
+    // - Tube 1.5mL chứa Mix (CTT1.5: chuẩn 3 ống x 25 test = 75 test) giảm theo tỉ lệ demoRatio (VD: Demo 25 test -> 3 * 25/75 = 1 ống; Demo 10 test -> ceil(3 * 10/75) = 1 ống).
+    // - Tube / Strip PCR cấp kèm (VT-TUBE-*) đã được tính trực tiếp vào unitNorm = targetPcrTubes (25 test -> 32 cái; 10 test -> 16 cái) nên hệ số nhân thêm là 1.
+    // - Vật tư bao bì cố định (đế hộp giấy DGM, vỏ hộp HGM, nhãn, HDSD...) giữ nguyên 1 bộ/kit.
+    const isFixedInDemo =
+      isPcrTubeLine ||
+      (!isMix15Tube && (Boolean(l.is_demo_fixed_component) || l.component_role === "PACKAGING"));
+    const lineDemoRatio = isDemo && (isMix15Tube || (!isFixedInDemo && l.is_mix_component !== false)) ? demoRatio : 1;
 
     const scrapFactor = 1 + Number(l.scrap_pct || 0) / 100;
     const rawQty = scale * unitNorm * lineDemoRatio * scrapFactor;
@@ -2170,7 +2208,12 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
   const effectiveDemoSpec = d.demo_specification ?? parsedTypedLot.demoSpec ?? (isDemo ? "25 test" : null);
   const orderMode = isDemo ? "DEMO" : isAliquoted ? "ALIQUOTED" : d.order_mode ?? "STANDARD";
   const mixTestsPerKit = isPcrKit ? (isAliquoted ? 64 : 75) : Number(bom.tests_per_kit || 50);
-  const pcrTubesPerKit = isPcrKit ? (isAliquoted ? 64 : 80) : 0;
+  const standardPcrTubesPerKit = isPcrKit ? (isAliquoted ? 64 : 80) : 0;
+  const pcrTubesPerKit = isPcrKit
+    ? isDemo
+      ? resolveDemoPcrTubesPerKit(effectiveDemoSpec, standardPcrTubesPerKit, parseDemoRatio(effectiveDemoSpec, mixTestsPerKit))
+      : standardPcrTubesPerKit
+    : 0;
   const bomVariantCode = isPcrKit ? String(bom.variant_code || targetVariantCode || "BASE") : "BASE";
 
   let customLotCode = d.lot_code?.trim() || undefined;

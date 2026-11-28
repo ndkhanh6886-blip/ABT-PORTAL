@@ -1966,4 +1966,157 @@ describe("Phase 4b — Module Phòng Sản xuất Kit (kit schema)", () => {
       expect(t02Line.component_base_uom).toBeTruthy();
     });
   });
+
+  it("explodeKitBom scales CTT1.5 to 1 tube and PCR tubes to 32 pcs (25 test) or 16 pcs (10 test) in Demo orders", async () => {
+    const site = await makeSite();
+    const { operator, checker } = await setupKitTeam(site);
+    const suffix = Date.now().toString(36).slice(-5).toUpperCase();
+
+    const kitItem = await makeItem(site, {
+      code: `KIT-DEMO-${suffix}`,
+      name: `Kit qPCR Demo Test ${suffix}`,
+      item_type: "FINISHED_KIT",
+      base_uom: "pcs",
+      shelf_life_days: 365,
+    });
+    const mixItem = await makeItem(site, {
+      code: `MV101-${suffix}`,
+      name: "qPCR Master Mix",
+      item_type: "SEMI_FINISHED",
+      base_uom: "test",
+    });
+    const cttItem = await makeItem(site, {
+      code: `CTT1.5-${suffix}`,
+      name: "Cryotube trắng 1.5ml (đế bằng)",
+      item_type: "CONSUMABLE",
+      base_uom: "cái",
+    });
+    const boxItem = await makeItem(site, {
+      code: `HGM-${suffix}`,
+      name: "Hộp giấy mix 6x8x5.5 cm",
+      item_type: "CONSUMABLE",
+      base_uom: "cái",
+    });
+
+    const rt = await withTransaction(async (tx) => {
+      await ensureStandardVtTubeItems(tx);
+      const r = await createRouting(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: kitItem.id,
+        name: `Routing Demo ${suffix}`,
+      });
+      await addRoutingStep(tx, operator, {
+        routing_id: r.id,
+        seq: 10,
+        step_code: "STEP-DEMO-10",
+        step_name: "Đóng gói Kit Demo",
+        category: "PACKAGING",
+        required_asset_id: "",
+        instructions: "Cấp phát tube CTT1.5 và tube PCR theo quy cách demo.",
+      });
+      return r;
+    });
+    await act(routingMachine, operator, rt.id, "submit_review");
+    await act(routingMachine, checker, rt.id, "approve", signed);
+
+    const bom = await withTransaction(async (tx) => {
+      const t02Row = (await tx.query("SELECT id, base_uom FROM master.item WHERE code = 'VT-TUBE-T02'")).rows[0];
+      const b = await createBom(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: kitItem.id,
+        name: `BOM Demo ${suffix}`,
+        base_qty: 1,
+        base_uom: "pcs",
+        tests_per_kit: 75,
+        routing_id: rt.id,
+      });
+      await addBomLine(tx, operator, {
+        bom_id: b.id,
+        line_no: 1,
+        box_no: 1,
+        component_item_id: mixItem.id,
+        component_role: "MASTER_MIX",
+        qty_per_base: 75,
+        uom: "test",
+      });
+      await addBomLine(tx, operator, {
+        bom_id: b.id,
+        line_no: 2,
+        box_no: 1,
+        component_item_id: cttItem.id,
+        component_role: "PACKAGING",
+        qty_per_base: 3,
+        uom: cttItem.base_uom,
+      });
+      await addBomLine(tx, operator, {
+        bom_id: b.id,
+        line_no: 3,
+        box_no: 1,
+        component_item_id: boxItem.id,
+        component_role: "PACKAGING",
+        qty_per_base: 1,
+        uom: "cái",
+      });
+      await addBomLine(tx, operator, {
+        bom_id: b.id,
+        line_no: 4,
+        box_no: 1,
+        component_item_id: t02Row.id,
+        component_role: "PCR_TUBE_STRIP",
+        qty_per_base: 80,
+        uom: t02Row.base_uom,
+      });
+      return b;
+    });
+    await act(bomMachine, operator, bom.id, "submit_review");
+    await act(bomMachine, checker, bom.id, "approve", signed);
+
+    // 1. Demo 25 test (1 bộ, không lưu mẫu): CTT1.5 = 1 cái, VT-TUBE-T02 = 32 cái, Hộp giấy HGM = 1 cái
+    const order25 = await withTransaction((tx) =>
+      createProductionOrder(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: kitItem.id,
+        bom_id: bom.id,
+        routing_id: rt.id,
+        warehouse_id: site.warehouse,
+        planned_qty: 1,
+        supply_form: "NO_SPLIT_NO_IC",
+        tube_code: "T02",
+        is_demo: true,
+        demo_specification: "25 test",
+        no_retention: true,
+      })
+    );
+    const detail25 = await withTransaction((tx) => getProductionOrderDetail(tx, operator, order25.id));
+    const ctt25 = detail25.exploded_bom.find((l: any) => l.component_code === cttItem.code);
+    const tube25 = detail25.exploded_bom.find((l: any) => l.component_code === "VT-TUBE-T02");
+    const box25 = detail25.exploded_bom.find((l: any) => l.component_code === boxItem.code);
+    expect(ctt25?.required_qty).toBe(1);
+    expect(tube25?.required_qty).toBe(32);
+    expect(box25?.required_qty).toBe(1);
+    expect(detail25.order.pcr_tubes_per_kit).toBe(32);
+
+    // 2. Demo 10 test (1 bộ, không lưu mẫu): CTT1.5 = 1 cái, VT-TUBE-T02 = 16 cái, Hộp giấy HGM = 1 cái
+    const order10 = await withTransaction((tx) =>
+      createProductionOrder(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: kitItem.id,
+        bom_id: bom.id,
+        routing_id: rt.id,
+        warehouse_id: site.warehouse,
+        planned_qty: 1,
+        supply_form: "NO_SPLIT_NO_IC",
+        tube_code: "T02",
+        is_demo: true,
+        demo_specification: "10 test",
+        no_retention: true,
+      })
+    );
+    const detail10 = await withTransaction((tx) => getProductionOrderDetail(tx, operator, order10.id));
+    const ctt10 = detail10.exploded_bom.find((l: any) => l.component_code === cttItem.code);
+    const tube10 = detail10.exploded_bom.find((l: any) => l.component_code === "VT-TUBE-T02");
+    expect(ctt10?.required_qty).toBe(1);
+    expect(tube10?.required_qty).toBe(16);
+    expect(detail10.order.pcr_tubes_per_kit).toBe(16);
+  });
 });

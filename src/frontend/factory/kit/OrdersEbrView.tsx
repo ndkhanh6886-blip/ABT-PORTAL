@@ -1607,10 +1607,10 @@ export function OrdersEbrView({
                               value={orderForm.demo_specification}
                               onChange={(e) => setOrderForm({ ...orderForm, demo_specification: e.target.value })}
                             >
-                              <option value="25 test">25 test — Hậu tố .DM25 (Co giãn Mix theo tỉ lệ, giữ nguyên chai/hộp)</option>
-                              <option value="24 test">24 test — Hậu tố .DM24 (1/2 bộ chia sẵn, giữ nguyên vỏ hộp)</option>
-                              <option value="1/2 bộ">1/2 bộ — Hậu tố .DM (50% Mix, giữ nguyên 1 bộ chai chứa &amp; vỏ hộp)</option>
-                              <option value="10 test">10 test — Hậu tố .DM10 (Demo nhỏ, giữ nguyên chai chứa &amp; vỏ hộp)</option>
+                              <option value="25 test">25 test — Hậu tố .DM25 (1 ống CTT1.5 + 32 cái Tube PCR, giữ nguyên vỏ hộp)</option>
+                              <option value="24 test">24 test — Hậu tố .DM24 (1/2 bộ chia sẵn · 32 cái Tube PCR, giữ nguyên vỏ hộp)</option>
+                              <option value="1/2 bộ">1/2 bộ — Hậu tố .DM (50% Mix, giữ nguyên vỏ hộp)</option>
+                              <option value="10 test">10 test — Hậu tố .DM10 (1 ống CTT1.5 + 16 cái Tube PCR, giữ nguyên vỏ hộp)</option>
                             </select>
                           </Field>
                         )}
