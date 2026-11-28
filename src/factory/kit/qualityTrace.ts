@@ -2,7 +2,7 @@ import { z } from "zod/v3";
 import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
 import { authorize, authorizeAnywhere, type AuthzActor } from "../core/authz";
-import { addDays, vnToday } from "../core/dates";
+import { addDays, addMonths, vnToday } from "../core/dates";
 import { invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { insertRecord, parseInput } from "../core/records";
@@ -321,7 +321,7 @@ export async function createRetainSample(tx: Tx, actor: AuthzActor, input: unkno
   if (!lot) throw notFound("lô thành phẩm Kit");
 
   // Retain sample is kept at least 1 year past lot expiry date (ISO 13485 / GMP)
-  const retainUntil = d.retain_until ?? addDays(lot.expiry_date ?? vnToday(), 365);
+  const retainUntil = d.retain_until ?? addMonths(String(lot.expiry_date ?? vnToday()).slice(0, 10), 12);
   const code = await nextNumber(tx, "KIT_RETAIN");
   return insertRecord<RetainSampleRow>(tx, actor, "kit.retain_sample", "kit_retain_sample", {
     code,
@@ -393,7 +393,7 @@ export async function createStabilityStudy(tx: Tx, actor: AuthzActor, input: unk
   });
 
   for (const m of d.months) {
-    const dueDate = addDays(startDate, m * 30);
+    const dueDate = addMonths(startDate, m);
     await tx.query(
       `INSERT INTO kit.stability_timepoint (study_id, month_mark, label, due_date)
        VALUES ($1, $2, $3, $4) ON CONFLICT (study_id, month_mark) DO NOTHING`,

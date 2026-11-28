@@ -2,7 +2,7 @@ import { z } from "zod/v3";
 import type { Tx } from "../core/db";
 import { diffChanges, writeAudit } from "../core/audit";
 import { authorize, authorizeAnywhere, hasFactoryPermission, type AuthzActor } from "../core/authz";
-import { addDays, vnToday } from "../core/dates";
+import { addDays, addMonths, computeShelfLifeExpiry, vnToday } from "../core/dates";
 import { conflict, invalid, notFound } from "../core/errors";
 import { notifyUsers, usersWithPermission } from "../core/notifications";
 import { nextNumber } from "../core/numbering";
@@ -791,8 +791,11 @@ export const productionOrderMachine = defineMachine<ProductionOrderStatus, Produ
       patch: ({ actor }) => ({ confirmed_by: actor.userId, confirmed_at: new Date() }),
       effects: async ({ tx, actor, updated: row }) => {
         const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1", [row.bom_id])).rows[0] as KitBomRow;
-        const mfgDate = row.mfg_date ?? vnToday();
-        const expiryDate = row.expiry_date ?? addDays(mfgDate, bom.shelf_life_days || 365);
+        const mfgDate = toYmd(row.mfg_date) || vnToday();
+        const expiryDate = computeShelfLifeExpiry(mfgDate, {
+          shelfLifeMonths: (bom as any)?.shelf_life_months,
+          shelfLifeDays: bom?.shelf_life_days,
+        });
 
         // 1. Ensure output Kit lot exists in QUARANTINE with fixed expiry_date from mfg_date + shelf_life_days
         let lotId = row.lot_id;
@@ -2133,7 +2136,10 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
   }
 
   const mfgDate = d.mfg_date ?? vnToday();
-  const expiryDate = addDays(mfgDate, bom.shelf_life_days || product.shelf_life_days || 365);
+  const expiryDate = computeShelfLifeExpiry(mfgDate, {
+    shelfLifeMonths: (bom as any)?.shelf_life_months,
+    shelfLifeDays: bom.shelf_life_days || product.shelf_life_days || 365,
+  });
   const code = await nextNumber(tx, "KIT_ORDER");
 
   const isPcrKit =
@@ -3180,9 +3186,12 @@ export async function updateOrderDates(
       "LABEL_ALREADY_PRINTED"
     );
   }
-  const mfgDate = input.mfg_date?.trim() || order.mfg_date || vnToday();
-  const bom = (await tx.query("SELECT shelf_life_days FROM kit.bom WHERE id = $1", [order.bom_id])).rows[0];
-  const expiryDate = addDays(mfgDate, Number(bom?.shelf_life_days || 365));
+  const mfgDate = input.mfg_date?.trim() || toYmd(order.mfg_date) || vnToday();
+  const bom = (await tx.query("SELECT shelf_life_days, shelf_life_months FROM kit.bom WHERE id = $1", [order.bom_id])).rows[0];
+  const expiryDate = computeShelfLifeExpiry(mfgDate, {
+    shelfLifeMonths: bom?.shelf_life_months,
+    shelfLifeDays: bom?.shelf_life_days,
+  });
 
   let desiredLotCode: string | undefined;
   if (input.regenerate_lot_code) {
@@ -3347,9 +3356,12 @@ export async function splitKitLot(tx: Tx, actor: AuthzActor, orderId: string, in
     if (dup.rowCount) throw invalid(`Mã số lô tách '${customCode}' đã tồn tại trong hệ thống kho.`);
   }
 
-  const bom = (await tx.query("SELECT shelf_life_days FROM kit.bom WHERE id = $1", [order.bom_id])).rows[0];
-  const mfgDate = d.mfg_date?.trim() || order.mfg_date || parentLot.mfg_date || vnToday();
-  const expiryDate = addDays(mfgDate, Number(bom?.shelf_life_days || 365));
+  const bom = (await tx.query("SELECT shelf_life_days, shelf_life_months FROM kit.bom WHERE id = $1", [order.bom_id])).rows[0];
+  const mfgDate = d.mfg_date?.trim() || toYmd(order.mfg_date) || toYmd(parentLot.mfg_date) || vnToday();
+  const expiryDate = computeShelfLifeExpiry(mfgDate, {
+    shelfLifeMonths: bom?.shelf_life_months,
+    shelfLifeDays: bom?.shelf_life_days,
+  });
 
   const childLot = await createLot(tx, actor, {
     item_id: order.product_item_id,
@@ -3481,8 +3493,46 @@ export async function splitKitLot(tx: Tx, actor: AuthzActor, orderId: string, in
 
 let kitDailyTrackerSchemaEnsured = false;
 
-export async function ensureKitDailyTrackerAndQcGateSchema(_tx: Tx) {
-  kitDailyTrackerSchemaEnsured = true;
+export async function ensureKitDailyTrackerAndQcGateSchema(tx: Tx) {
+  if (kitDailyTrackerSchemaEnsured) return;
+  await tx.query("SAVEPOINT sp_kit_shelf_life_months_fix");
+  try {
+    // Tự động chuẩn hóa HSD của các Lệnh sản xuất & Lô TP/BTP đã tạo trước đó bị tính theo 30 ngày/tháng (VD: 25/11/2026 + 720 ngày = 14/11/2028)
+    // về đúng ngày cộng theo tháng dương lịch (25/11/2026 + 24 tháng = 25/11/2028)
+    await tx.query(`
+      WITH target_orders AS (
+        SELECT po.id AS order_id,
+               po.lot_id,
+               (po.mfg_date + (COALESCE(NULLIF(b.shelf_life_months, 0), GREATEST(1, ROUND(COALESCE(b.shelf_life_days, 365) / 30.0))::int) || ' months')::interval)::date AS expected_exp
+          FROM kit.production_order po
+          JOIN kit.bom b ON b.id = po.bom_id
+         WHERE po.mfg_date IS NOT NULL
+           AND COALESCE(b.shelf_life_days, 365) >= 28
+           AND po.expiry_date IS DISTINCT FROM (po.mfg_date + (COALESCE(NULLIF(b.shelf_life_months, 0), GREATEST(1, ROUND(COALESCE(b.shelf_life_days, 365) / 30.0))::int) || ' months')::interval)::date
+           AND (
+             po.expiry_date = (po.mfg_date + COALESCE(b.shelf_life_days, 365))
+             OR po.expiry_date = (po.mfg_date + (COALESCE(NULLIF(b.shelf_life_months, 0), GREATEST(1, ROUND(COALESCE(b.shelf_life_days, 365) / 30.0))::int) * 30))
+           )
+      ),
+      upd_po AS (
+        UPDATE kit.production_order po
+           SET expiry_date = t.expected_exp
+          FROM target_orders t
+         WHERE po.id = t.order_id
+         RETURNING t.lot_id, t.expected_exp
+      )
+      UPDATE inv.lot l
+         SET expiry_date = u.expected_exp
+        FROM upd_po u
+       WHERE u.lot_id IS NOT NULL
+         AND l.id = u.lot_id
+         AND l.expiry_date IS DISTINCT FROM u.expected_exp
+    `);
+    await tx.query("RELEASE SAVEPOINT sp_kit_shelf_life_months_fix");
+    kitDailyTrackerSchemaEnsured = true;
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT sp_kit_shelf_life_months_fix").catch(() => {});
+  }
 }
 
 export async function assignStepOperator(

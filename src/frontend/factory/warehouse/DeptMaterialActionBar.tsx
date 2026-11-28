@@ -607,32 +607,16 @@ export function DeptMaterialActionBar({
 
           <button
             type="button"
-            onClick={() => {
-              setTransferSuccessMsg(null);
-              setPanel(panel === "transfer" ? "none" : "transfer");
-            }}
-            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl font-bold transition-colors cursor-pointer ${
-              panel === "transfer"
-                ? "bg-teal-700 text-white"
-                : "bg-teal-50 dark:bg-teal-950/50 text-teal-800 dark:text-teal-300 border border-teal-200 dark:border-teal-800 hover:bg-teal-100"
-            }`}
-            title="Đề xuất / Điều chuyển nguyên vật liệu từ Kho Trung Tâm (KHO-TONG) về Kho nhánh phòng ban (không bắt buộc có Lệnh SX hay Dự án cụ thể)"
-          >
-            <ArrowRightLeft className="w-3.5 h-3.5" />
-            🚚 + Chuyển NVL từ Kho Tổng về Kho Phòng
-          </button>
-
-          <button
-            type="button"
             onClick={() => setPanel(panel === "requisition" ? "none" : "requisition")}
             className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl font-bold transition-colors cursor-pointer ${
               panel === "requisition"
                 ? "bg-emerald-700 text-white"
                 : "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100"
             }`}
+            title="Xuất tiêu hao nguyên vật liệu đang có sẵn tại kho nhánh của phòng ban"
           >
             <PackagePlus className="w-3.5 h-3.5" />
-            + Xuất / Lĩnh NVL tại kho
+            + Xuất sử dụng tại kho phòng
           </button>
 
           <button
@@ -643,9 +627,10 @@ export function DeptMaterialActionBar({
                 ? "bg-amber-600 text-white"
                 : "bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800 hover:bg-amber-100"
             }`}
+            title="Lập đề nghị cấp / mua vật tư tập trung gửi về Cung ứng & Kho (Cung ứng sẽ tự động kiểm tra để cấp từ Kho Tổng, luân chuyển từ Kho nhánh khác, chuyển P.SX pha chế hoặc lập PO mua ngoài)"
           >
             <ShoppingCart className="w-3.5 h-3.5" />
-            + Báo thiếu / Đề nghị mua (PR)
+            + Đề nghị cấp / Mua vật tư (PR)
           </button>
 
           <button
@@ -1266,14 +1251,14 @@ export function DeptMaterialActionBar({
           >
             <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/70">
               <span className="text-[11px] text-emerald-900 dark:text-emerald-200">
-                💡 <b>Xuất tiêu hao tại kho:</b> Ghi nhận vật tư xuất ra để sử dụng ngay (trừ trực tiếp tồn kho). Nếu bạn muốn <b>rút vật tư từ Kho Trung Tâm (KHO-TONG) về dự trữ tại Kho nhánh {deptLabel}</b>, hãy bấm nút bên phải:
+                💡 <b>Xuất tiêu hao tại kho phòng:</b> Ghi nhận vật tư đang có sẵn tại kho nhánh {deptLabel} xuất ra sử dụng ngay. Nếu kho phòng chưa có sẵn vật tư (cần cấp từ Kho Tổng, luân chuyển từ kho phòng khác, pha chế mới hoặc mua ngoài), hãy bấm nút bên phải:
               </span>
               <button
                 type="button"
-                onClick={() => setPanel("transfer")}
-                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-teal-700 hover:bg-teal-800 text-white cursor-pointer"
+                onClick={() => setPanel("pr")}
+                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-amber-600 hover:bg-amber-700 text-white cursor-pointer"
               >
-                🚚 Chuyển NVL từ Kho Trung Tâm về Kho Phòng
+                🛒 + Đề nghị cấp / Mua vật tư (PR)
               </button>
             </div>
 
@@ -1415,9 +1400,12 @@ export function DeptMaterialActionBar({
       {/* 3. Contextual Quick Purchase Requisition (PR) Drawer */}
       {panel === "pr" && (
         <Card
-          title={`Báo thiếu / Đề nghị mua nguyên vật liệu (PR) — ${deptLabel}`}
+          title={`Đề nghị cấp / Mua nguyên vật liệu (PR) — ${deptLabel}`}
           actions={<Button variant="ghost" onClick={() => setPanel("none")}>Đóng</Button>}
         >
+          <div className="mb-3 p-2.5 rounded-xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/80 text-[11px] text-amber-900 dark:text-amber-200">
+            💡 <b>Một đầu mối đề nghị duy nhất:</b> Nhân viên chỉ cần kê khai tất cả các mã vật tư/hóa chất/bán thành phẩm đang thiếu vào phiếu này. Khi chuyển về <b>Phòng Cung ứng &amp; Kho</b>, hệ thống sẽ tự động kiểm tra tồn kho để: <b>(1) Cấp từ Kho Tổng (KHO-TONG)</b> nếu có sẵn, <b>(2) Luân chuyển từ Kho nhánh khác (VD: KHO-KIT)</b>, <b>(3) Chuyển P.Sản xuất pha chế</b>, hoặc <b>(4) Tạo PO mua ngoài</b>.
+          </div>
           <form
             className="flex flex-col gap-3.5 text-xs"
             onSubmit={(e) => {

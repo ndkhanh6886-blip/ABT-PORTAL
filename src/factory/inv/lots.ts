@@ -1,6 +1,6 @@
 import type { Tx } from "../core/db";
 import type { AuthzActor } from "../core/authz";
-import { addDays, vnToday } from "../core/dates";
+import { addDays, computeShelfLifeExpiry, vnToday } from "../core/dates";
 import { invalid } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { insertRecord } from "../core/records";
@@ -102,9 +102,10 @@ export const lotMachine = defineMachine<LotStatus, Lot>({
   ],
 });
 
-/** Expiry = manufacturing date + shelf life; fixed when the lot is created. */
-export function computeExpiry(mfgDate: string, shelfLifeDays: number | null | undefined): string | null {
-  return shelfLifeDays ? addDays(mfgDate, shelfLifeDays) : null;
+/** Expiry = manufacturing date + shelf life (by calendar months when >= 1 month); fixed when the lot is created. */
+export function computeExpiry(mfgDate: string, shelfLifeDays: number | null | undefined, shelfLifeMonths?: number | null): string | null {
+  if (!shelfLifeDays && !shelfLifeMonths) return null;
+  return computeShelfLifeExpiry(mfgDate, { shelfLifeMonths, shelfLifeDays });
 }
 
 /**

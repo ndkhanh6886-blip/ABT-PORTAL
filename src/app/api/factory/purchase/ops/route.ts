@@ -2,6 +2,7 @@ import { factoryRoute } from "@/factory/http";
 import { invalid } from "@/factory/core/errors";
 import {
   createDirectReplenishmentPo,
+  dispatchPrLineToProduction,
   fastTrackApprovePr,
   fulfillPrLineFromCentralHub,
   getSupplyChainOverview,
@@ -15,7 +16,10 @@ export const POST = factoryRoute(async (tx, { actor, body: rawBody }) => {
   const op = String(body.op ?? "");
   switch (op) {
     case "fulfill_from_hub":
+    case "fulfill_from_branch":
       return fulfillPrLineFromCentralHub(tx, actor, body);
+    case "dispatch_pr_line_to_production":
+      return dispatchPrLineToProduction(tx, actor, body);
     case "fast_track_approve_pr":
       return fastTrackApprovePr(tx, actor, body);
     case "create_direct_replenish_po":

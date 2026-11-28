@@ -51,6 +51,13 @@ interface SupplyChainOverview {
     suggested_price: number;
     hub_available_qty: number;
     dept_available_qty: number;
+    other_branch_available_qty?: number;
+    other_branch_warehouse_id?: string | null;
+    other_branch_warehouse_code?: string | null;
+    item_type?: string;
+    is_manufacturable?: boolean;
+    has_kit_bom?: boolean;
+    line_notes?: string | null;
   }[];
   mrp_shortage_radar: {
     item_id: string;
@@ -115,15 +122,43 @@ export function SupplyChainRadarView({
   };
 
   const fulfillFromHubMut = useMutation({
-    mutationFn: (pr_line_id: string) =>
-      api<{ transferred_qty: number; document_code: string; to_warehouse: string }>("/api/factory/purchase/ops", {
+    mutationFn: (payload: { pr_line_id: string; source_warehouse_id?: string | null }) =>
+      api<{ transferred_qty: number; document_code: string; from_warehouse?: string; to_warehouse: string }>("/api/factory/purchase/ops", {
         method: "POST",
         idempotent: true,
-        json: { op: "fulfill_from_hub", pr_line_id },
+        json: {
+          op: payload.source_warehouse_id ? "fulfill_from_branch" : "fulfill_from_hub",
+          pr_line_id: payload.pr_line_id,
+          source_warehouse_id: payload.source_warehouse_id ?? null,
+        },
       }),
     onSuccess: (res) => {
       setToast(
-        `⚡ Đã điều chuyển tức thì ${fmtQty(res.transferred_qty)} từ KHO-TONG sang ${res.to_warehouse} (Phiếu ${res.document_code}) — Không cần chờ mua ngoài!`
+        `⚡ Đã điều chuyển FEFO tức thì ${fmtQty(res.transferred_qty)} từ ${res.from_warehouse || "KHO-TONG"} sang ${res.to_warehouse} (Phiếu ${res.document_code}) — Tự động trừ kho & ghi nhận Số Lot!`
+      );
+      refreshAll();
+    },
+  });
+
+  const dispatchToProductionMut = useMutation({
+    mutationFn: (pr_line_id: string) =>
+      api<{
+        internal_order_code: string;
+        production_order_code: string | null;
+        warning: string | null;
+        qty: number;
+        item_code: string;
+        to_warehouse: string;
+      }>("/api/factory/purchase/ops", {
+        method: "POST",
+        idempotent: true,
+        json: { op: "dispatch_pr_line_to_production", pr_line_id },
+      }),
+    onSuccess: (res) => {
+      setToast(
+        res.production_order_code
+          ? `⚗️ Đã chuyển P.Sản xuất Kit (Anh Đoàn Hồng Sơn) pha chế / sản xuất ${res.item_code}: Đơn nội bộ ${res.internal_order_code} · Lệnh SX ${res.production_order_code}!`
+          : `⚗️ Đã tạo Đơn nội bộ ${res.internal_order_code} chuyển P.Sản xuất Kit (${res.item_code})!${res.warning ? ` (${res.warning})` : ""}`
       );
       refreshAll();
     },
@@ -203,7 +238,13 @@ export function SupplyChainRadarView({
       )}
 
       <ErrorNote
-        error={overview.error ?? fulfillFromHubMut.error ?? fastTrackApproveMut.error ?? directPoMut.error}
+        error={
+          overview.error ??
+          fulfillFromHubMut.error ??
+          dispatchToProductionMut.error ??
+          fastTrackApproveMut.error ??
+          directPoMut.error
+        }
       />
 
       {/* 4 KPI CARDS */}
@@ -307,7 +348,7 @@ export function SupplyChainRadarView({
 
       {/* BẢNG 1: ĐIỀU PHỐI THÔNG MINH NHU CẦU VẬT TƯ TỪ 5 PHÒNG BAN */}
       <Card
-        title="1. Bảng Điều Phối Nhu Cầu Vật Tư 5 Phòng Ban (`Ưu tiên Cấp từ KHO-TONG trước ➔ Duyệt Nhanh Fast-Track ➔ Gom PO`)"
+        title="1. Bảng Điều Phối Nhu Cầu Vật Tư 5 Phòng Ban (`1 Đầu Mối PR ➔ Cấp từ KHO-TONG / Luân chuyển Kho Nhánh / Chuyển P.SX Pha chế / Đặt PO`)"
         actions={
           <div className="flex items-center gap-2">
             <Button variant="ghost" onClick={refreshAll}>
@@ -318,7 +359,7 @@ export function SupplyChainRadarView({
         }
       >
         <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">
-          Cơ chế **3 Luồng Tốc Độ**: Nếu phòng ban (`R&D`, `Kit`, `Oligo`, `Thiết bị`, `QA/QC`) đề nghị vật tư mà trong **`KHO-TONG · A1` đang có sẵn hàng**, Chuyên viên Cung ứng bấm **`⚡ Cấp ngay từ Kho Tổng`** để chuyển hàng về Kho Bộ Phận tức thì mà không phải lập PO mua ngoài.
+          Các phòng ban chỉ cần bấm **`+ Đề nghị cấp / Mua vật tư (PR)`** gửi về đây. Tại bảng này, Cung ứng kiểm tra tồn kho thực tế của từng dòng để quyết định 1-Click: **(1) Cấp từ Kho Tổng (`KHO-TONG`)**, **(2) Luân chuyển từ Kho nhánh khác (VD: `KHO-KIT`)**, **(3) Chuyển P.Sản xuất (Anh Sơn) pha chế / sản xuất mới**, hoặc **(4) Tạo PO mua ngoài**.
         </p>
         {d?.open_pr_lines_dispatch.length === 0 ? (
           <Empty>Tất cả đề nghị vật tư của các phòng ban đã được cấp phát hoặc đặt hàng đầy đủ.</Empty>
@@ -330,7 +371,8 @@ export function SupplyChainRadarView({
               "Vật tư yêu cầu",
               "Số lượng cần",
               "Tồn sẵn tại KHO-TONG",
-              "Tồn tại Kho Phòng",
+              "Tồn tại Kho Nhánh Khác",
+              "Tồn tại Kho Phòng Xin",
               "Trạng thái PR",
               "Quyết định Điều phối (1-Click)",
             ]}
@@ -338,6 +380,15 @@ export function SupplyChainRadarView({
             {d?.open_pr_lines_dispatch.map((l) => {
               const pri = PRIORITY_BADGE[l.priority] ?? PRIORITY_BADGE.NORMAL;
               const canFulfillFromHub = l.warehouse_code !== "KHO-TONG" && l.hub_available_qty > 0;
+              const otherBranchAvail = Number(l.other_branch_available_qty ?? 0);
+              const canFulfillFromBranch =
+                otherBranchAvail > 0 && Boolean(l.other_branch_warehouse_id) && Boolean(l.other_branch_warehouse_code);
+              const canProduceInHouse =
+                Boolean(l.has_kit_bom) ||
+                Boolean(l.is_manufacturable) ||
+                l.item_type === "SEMI_FINISHED" ||
+                l.item_type === "FINISHED_KIT" ||
+                /^(BTP|ST|DD|MM|MIX|IC|BUF)/i.test(l.item_code);
               return (
                 <tr key={l.pr_line_id}>
                   <td className="py-2 pr-3 whitespace-nowrap">
@@ -363,6 +414,9 @@ export function SupplyChainRadarView({
                   <td className="py-2 pr-3">
                     <div className="font-mono font-semibold">{l.item_code}</div>
                     <div className="text-[11px] text-slate-500">{l.item_name}</div>
+                    {l.line_notes && (
+                      <div className="text-[10px] text-indigo-600 dark:text-indigo-400 mt-0.5">{l.line_notes}</div>
+                    )}
                   </td>
                   <td className="py-2 pr-3 font-bold whitespace-nowrap">
                     {fmtQty(l.qty_open)} {l.uom}
@@ -376,23 +430,54 @@ export function SupplyChainRadarView({
                       <span className="text-rose-600 text-xs font-semibold">Hết hàng (0)</span>
                     )}
                   </td>
+                  <td className="py-2 pr-3 whitespace-nowrap">
+                    {canFulfillFromBranch ? (
+                      <span className="font-bold text-teal-700 dark:text-teal-400">
+                        🔄 {l.other_branch_warehouse_code}: {fmtQty(otherBranchAvail)} {l.uom}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400 text-xs">0</span>
+                    )}
+                  </td>
                   <td className="py-2 pr-3 whitespace-nowrap text-xs">
                     {fmtQty(l.dept_available_qty)} {l.uom}
                   </td>
                   <td className="py-2 pr-3">
                     <StatusBadge
                       status={l.pr_status === "APPROVED" ? "RELEASED" : "QUARANTINE"}
-                      label={l.pr_status === "APPROVED" ? "Đã duyệt chờ PO" : l.pr_status}
+                      label={l.pr_status === "APPROVED" ? "Đã duyệt chờ điều phối" : l.pr_status}
                     />
                   </td>
                   <td className="py-2 pr-3 whitespace-nowrap">
                     <div className="flex flex-wrap items-center gap-1.5">
                       {canFulfillFromHub && (
                         <Button
-                          onClick={() => fulfillFromHubMut.mutate(l.pr_line_id)}
+                          onClick={() => fulfillFromHubMut.mutate({ pr_line_id: l.pr_line_id })}
                           disabled={fulfillFromHubMut.isPending}
                         >
                           ⚡ Cấp từ KHO-TONG ({fmtQty(Math.min(l.qty_open, l.hub_available_qty))})
+                        </Button>
+                      )}
+                      {canFulfillFromBranch && (
+                        <Button
+                          variant={canFulfillFromHub ? "ghost" : "primary"}
+                          onClick={() =>
+                            fulfillFromHubMut.mutate({
+                              pr_line_id: l.pr_line_id,
+                              source_warehouse_id: l.other_branch_warehouse_id,
+                            })
+                          }
+                          disabled={fulfillFromHubMut.isPending}
+                        >
+                          🔄 Chuyển từ {l.other_branch_warehouse_code} ({fmtQty(Math.min(l.qty_open, otherBranchAvail))})
+                        </Button>
+                      )}
+                      {canProduceInHouse && !canFulfillFromHub && !canFulfillFromBranch && (
+                        <Button
+                          onClick={() => dispatchToProductionMut.mutate(l.pr_line_id)}
+                          disabled={dispatchToProductionMut.isPending}
+                        >
+                          ⚗️ Chuyển P.SX pha chế / SX
                         </Button>
                       )}
                       {["DRAFT", "SUBMITTED"].includes(l.pr_status) && (

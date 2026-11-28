@@ -3220,7 +3220,7 @@ export function BomRoutingView({
                   <div>
                     <div className="text-[11px] text-slate-400">Hạn dùng &amp; Kiểm soát lô:</div>
                     <div className="font-semibold text-slate-100">
-                      ⏳ {bomDetail.bom.shelf_life_months || Math.round((bomDetail.bom.shelf_life_days || 365) / 30)} tháng ({bomDetail.bom.shelf_life_days} ngày)
+                      ⏳ {bomDetail.bom.shelf_life_months || Math.round((bomDetail.bom.shelf_life_days || 365) / 30)} tháng (tính theo tháng dương lịch)
                     </div>
                     {bomDetail.bom.bom_type === "semi_finished" && (bomDetail.bom.ph_min != null || bomDetail.bom.ph_max != null) ? (
                       <div className="text-[11px] text-amber-300 font-mono">

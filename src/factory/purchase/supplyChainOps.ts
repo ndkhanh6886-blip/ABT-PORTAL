@@ -6,6 +6,7 @@ import { invalid, notFound } from "../core/errors";
 import { parseInput } from "../core/records";
 import { runTransition } from "../core/stateMachine";
 import { canActorApproveCentralWarehouseTransfer, dispatchInterWarehouseFefo, ensureWarehouseOpsSchema } from "../inv/warehouseOps";
+import { createInternalOrderManual, dispatchInternalOrderLineToProduction } from "../intake/orderDispatchOps";
 import { createRequest, prMachine } from "./requests";
 import { createOrder, poMachine, syncRequestStatus } from "./orders";
 import "./permissions";
@@ -66,12 +67,41 @@ export async function getSupplyChainOverview(tx: Tx, actor: AuthzActor) {
                    AND loc.is_quarantine = false
                    AND COALESCE(lot.status, 'RELEASED') = 'RELEASED'
                    AND (b.qty_on_hand - b.qty_reserved) > 0
-              ), 0) AS dept_available_qty
+              ), 0) AS dept_available_qty,
+              COALESCE(other_wh.avail_qty, 0)::float AS other_branch_available_qty,
+              other_wh.warehouse_id AS other_branch_warehouse_id,
+              other_wh.warehouse_code AS other_branch_warehouse_code,
+              i.item_type,
+              COALESCE(i.is_manufacturable, false) AS is_manufacturable,
+              EXISTS (
+                SELECT 1 FROM kit.bom kb
+                 WHERE kb.product_item_id = i.id AND kb.status = 'EFFECTIVE'
+              ) AS has_kit_bom,
+              l.notes AS line_notes
          FROM purchase.purchase_request_line l
          JOIN purchase.purchase_request pr ON pr.id = l.pr_id
          JOIN core.org_unit o ON o.id = pr.org_unit_id
          JOIN master.warehouse w ON w.id = pr.target_warehouse_id
          JOIN master.item i ON i.id = l.item_id
+         LEFT JOIN LATERAL (
+           SELECT wh2.id AS warehouse_id,
+                  wh2.code AS warehouse_code,
+                  sum(b2.qty_on_hand - b2.qty_reserved)::float AS avail_qty
+             FROM inv.stock_balance b2
+             JOIN master.location loc2 ON loc2.id = b2.location_id
+             JOIN master.warehouse wh2 ON wh2.id = loc2.warehouse_id
+             LEFT JOIN inv.lot lot2 ON lot2.id = b2.lot_id
+            WHERE b2.item_id = i.id
+              AND wh2.status = 'ACTIVE'
+              AND wh2.code <> 'KHO-TONG'
+              AND wh2.id <> w.id
+              AND loc2.is_quarantine = false
+              AND COALESCE(lot2.status, 'RELEASED') = 'RELEASED'
+              AND (b2.qty_on_hand - b2.qty_reserved) > 0
+            GROUP BY wh2.id, wh2.code
+            ORDER BY (wh2.code = 'KHO-KIT') DESC, sum(b2.qty_on_hand - b2.qty_reserved) DESC
+            LIMIT 1
+         ) other_wh ON true
         WHERE pr.status IN ('DRAFT', 'SUBMITTED', 'PENDING_BOD', 'APPROVED', 'ORDERED')
           AND l.qty > l.qty_ordered
         ORDER BY
@@ -253,19 +283,20 @@ export async function getSupplyChainOverview(tx: Tx, actor: AuthzActor) {
 
 const fulfillFromHubSchema = z.object({
   pr_line_id: z.string().uuid(),
+  source_warehouse_id: z.string().uuid().optional().nullable(),
   qty: z.coerce.number().positive().optional(),
 });
 
 /**
- * Fulfill an open PR line directly from `KHO-TONG · A1` (FEFO Inter-Warehouse Transfer)
- * without needing to buy externally!
+ * Fulfill an open PR line directly from `KHO-TONG · A1` or another branch warehouse (e.g. `KHO-KIT`)
+ * via FEFO Inter-Warehouse Transfer without needing to buy externally!
  */
 export async function fulfillPrLineFromCentralHub(tx: Tx, actor: AuthzActor, input: unknown) {
   await authorizeAnywhereOneOf(tx, actor, ["inv.document.post", "inv.document.create", "purchase.po.manage", "purchase.pr.approve"]);
   const d = parseInput(fulfillFromHubSchema, input);
   const line = (
     await tx.query(
-      `SELECT l.id, l.pr_id, l.item_id, l.uom, (l.qty - l.qty_ordered)::float AS qty_open,
+      `SELECT l.id, l.pr_id, l.item_id, l.uom, l.notes, (l.qty - l.qty_ordered)::float AS qty_open,
               pr.code AS pr_code, pr.target_warehouse_id, w.code AS warehouse_code
          FROM purchase.purchase_request_line l
          JOIN purchase.purchase_request pr ON pr.id = l.pr_id
@@ -275,12 +306,15 @@ export async function fulfillPrLineFromCentralHub(tx: Tx, actor: AuthzActor, inp
     )
   ).rows[0];
   if (!line) throw notFound("Dòng đề nghị mua");
-  if (line.warehouse_code === "KHO-TONG") {
-    throw invalid("Đề nghị này vốn dành cho Kho Trung Tâm (KHO-TONG), vui lòng đặt PO mua hàng từ Nhà cung cấp.");
-  }
 
-  const khoTong = (await tx.query("SELECT id FROM master.warehouse WHERE code = 'KHO-TONG' AND status = 'ACTIVE' LIMIT 1")).rows[0];
-  if (!khoTong) throw notFound("Kho Trung Tâm KHO-TONG");
+  const srcWh = d.source_warehouse_id
+    ? (await tx.query("SELECT id, code, name FROM master.warehouse WHERE id = $1 AND status = 'ACTIVE' LIMIT 1", [d.source_warehouse_id])).rows[0]
+    : (await tx.query("SELECT id, code, name FROM master.warehouse WHERE code = 'KHO-TONG' AND status = 'ACTIVE' LIMIT 1")).rows[0];
+  if (!srcWh) throw notFound("Kho nguồn cấp phát");
+
+  if (line.target_warehouse_id === srcWh.id) {
+    throw invalid(`Kho nhận (${line.warehouse_code}) trùng với kho nguồn (${srcWh.code}). Vui lòng chọn kho nguồn khác hoặc đặt PO mua hàng.`);
+  }
 
   const availRes = (
     await tx.query(
@@ -293,30 +327,131 @@ export async function fulfillPrLineFromCentralHub(tx: Tx, actor: AuthzActor, inp
           AND loc.is_quarantine = false
           AND COALESCE(lot.status, 'RELEASED') = 'RELEASED'
           AND (b.qty_on_hand - b.qty_reserved) > 0`,
-      [khoTong.id, line.item_id]
+      [srcWh.id, line.item_id]
     )
   ).rows[0];
   const maxTransfer = Math.min(Number(line.qty_open), Number(availRes?.avail ?? 0));
   const transferQty = d.qty ? Math.min(d.qty, maxTransfer) : maxTransfer;
   if (!(transferQty > 0)) {
-    throw invalid("Kho Trung Tâm (KHO-TONG · A1) hiện không có sẵn tồn khả dụng cho vật tư này.");
+    throw invalid(`Kho nguồn (${srcWh.code}) hiện không có sẵn tồn khả dụng (RELEASED) cho vật tư này.`);
   }
 
   const dispatchResult = await dispatchInterWarehouseFefo(tx, actor, {
-    source_warehouse_id: khoTong.id,
+    source_warehouse_id: srcWh.id,
     target_warehouse_id: line.target_warehouse_id,
     item_id: line.item_id,
     qty: transferQty,
-    notes: `[Cấp phát nội bộ thay mua hàng] Đáp ứng tức thì đề nghị ${line.pr_code} từ KHO-TONG sang ${line.warehouse_code}`,
+    auto_post: true,
+    notes: `[Cấp phát điều phối PR ${line.pr_code}] Điều chuyển FEFO từ ${srcWh.code} sang ${line.warehouse_code}`,
   });
 
-  await tx.query("UPDATE purchase.purchase_request_line SET qty_ordered = qty_ordered + $2 WHERE id = $1", [line.id, transferQty]);
+  const tagNote = `[Đã cấp ${transferQty} ${line.uom} từ ${srcWh.code} · Phiếu ${dispatchResult.document.code}]`;
+  const mergedNotes = line.notes ? `${line.notes} ${tagNote}`.slice(0, 500) : tagNote;
+  await tx.query("UPDATE purchase.purchase_request_line SET qty_ordered = qty_ordered + $2, notes = $3 WHERE id = $1", [
+    line.id,
+    transferQty,
+    mergedNotes,
+  ]);
   await syncRequestStatus(tx, SYSTEM_ACTOR, [line.pr_id]);
 
   return {
     transferred_qty: transferQty,
     document_code: dispatchResult.document.code,
+    from_warehouse: srcWh.code,
     to_warehouse: line.warehouse_code,
+  };
+}
+
+const dispatchPrLineToProductionSchema = z.object({
+  pr_line_id: z.string().uuid(),
+});
+
+/**
+ * Khi dòng đề nghị cấp vật tư (PR) là Bán thành phẩm / Dung dịch pha chế nội bộ (P.Mix / P.Tách chiết / Sản xuất Kit)
+ * mà các kho chưa có sẵn tồn: Cung ứng bấm 1-Click chuyển sang Phòng Sản xuất Kit (Anh Đoàn Hồng Sơn) để tạo Đơn nội bộ & Lệnh sản xuất (MO...).
+ */
+export async function dispatchPrLineToProduction(tx: Tx, actor: AuthzActor, input: unknown) {
+  await authorizeAnywhereOneOf(tx, actor, ["purchase.po.manage", "purchase.pr.approve", "intake.order.view", "kit.order.manage"]);
+  const d = parseInput(dispatchPrLineToProductionSchema, input);
+
+  const line = (
+    await tx.query(
+      `SELECT l.id, l.pr_id, l.item_id, l.uom, l.notes, (l.qty - l.qty_ordered)::float AS qty_open,
+              pr.code AS pr_code, pr.reason, pr.needed_by::text AS needed_by,
+              o.name AS requester_org_name, w.code AS target_warehouse_code,
+              i.code AS item_code, i.name AS item_name
+         FROM purchase.purchase_request_line l
+         JOIN purchase.purchase_request pr ON pr.id = l.pr_id
+         JOIN core.org_unit o ON o.id = pr.org_unit_id
+         JOIN master.warehouse w ON w.id = pr.target_warehouse_id
+         JOIN master.item i ON i.id = l.item_id
+        WHERE l.id = $1 FOR UPDATE OF l`,
+      [d.pr_line_id]
+    )
+  ).rows[0];
+  if (!line) throw notFound("Dòng đề nghị cấp vật tư");
+  const qtyToProduce = Math.max(1, Number(line.qty_open) || 1);
+
+  const internalOrder = await createInternalOrderManual(tx, actor, {
+    target_module: "KIT",
+    kd_po_code: `PO-${line.pr_code}-${line.item_code}`,
+    kd_so_code: line.pr_code,
+    ship_mode: "TO_KD",
+    customer_name: `${line.requester_org_name} (${line.target_warehouse_code})`,
+    requested_date: line.needed_by || undefined,
+    notes: `[Pha chế / SX cấp cho ${line.requester_org_name} theo ${line.pr_code}] ${line.reason || ""}`.trim(),
+    auto_accept: true,
+    lines: [
+      {
+        item_id: line.item_id,
+        qty: qtyToProduce,
+        transfer_price: 0,
+      },
+    ],
+  });
+
+  const ioLine = (
+    await tx.query("SELECT id FROM intake.internal_order_line WHERE order_id = $1 ORDER BY line_no ASC LIMIT 1", [internalOrder.id])
+  ).rows[0];
+
+  let productionOrderCode: string | null = null;
+  let dispatchWarning: string | null = null;
+
+  if (ioLine) {
+    await tx.query("SAVEPOINT sp_pr_line_to_kit_mo");
+    try {
+      const dispatched = await dispatchInternalOrderLineToProduction(tx, actor, {
+        order_id: internalOrder.id,
+        line_id: ioLine.id,
+        qty: qtyToProduce,
+      });
+      await tx.query("RELEASE SAVEPOINT sp_pr_line_to_kit_mo");
+      productionOrderCode = dispatched?.order_code ?? null;
+    } catch (err: any) {
+      await tx.query("ROLLBACK TO SAVEPOINT sp_pr_line_to_kit_mo").catch(() => {});
+      dispatchWarning = err?.message || "Đã tạo Đơn nội bộ, chờ thiết lập BOM/Routing hiệu lực để phát lệnh SX";
+    }
+  }
+
+  const tagNote = productionOrderCode
+    ? `[Đã chuyển P.SX pha chế · Lệnh ${productionOrderCode}]`
+    : `[Đã chuyển Đơn nội bộ ${internalOrder.code} sang P.SX]`;
+  const mergedNotes = line.notes ? `${line.notes} ${tagNote}`.slice(0, 500) : tagNote;
+
+  await tx.query("UPDATE purchase.purchase_request_line SET qty_ordered = qty_ordered + $2, notes = $3 WHERE id = $1", [
+    line.id,
+    qtyToProduce,
+    mergedNotes,
+  ]);
+  await syncRequestStatus(tx, SYSTEM_ACTOR, [line.pr_id]);
+
+  return {
+    internal_order_code: internalOrder.code,
+    production_order_code: productionOrderCode,
+    warning: dispatchWarning,
+    qty: qtyToProduce,
+    item_code: line.item_code,
+    to_warehouse: line.target_warehouse_code,
   };
 }
 
