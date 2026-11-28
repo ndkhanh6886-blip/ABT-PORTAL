@@ -47,7 +47,8 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
   const { user } = useAuth();
   const { showToast } = useNotification();
   const [isOpen, setIsOpen] = useState(false);
-  const [isExpanded, setIsExpanded] = useState(false); // Expanded in-place window
+  const [isExpanded, setIsExpanded] = useState(true); // Mặc định mở danh sách kênh & đồng nghiệp xếp dọc rõ ràng
+  const [showCompactVerticalList, setShowCompactVerticalList] = useState(false);
   const [channels, setChannels] = useState<any[]>([]);
   const [personnel, setPersonnel] = useState<any[]>([]);
   const [activeChannelId, setActiveChannelId] = useState<number | null>(null);
@@ -624,67 +625,114 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
                     );
                   })}
 
-                  <div className="pt-2 text-[10px] font-bold text-slate-400 px-1 uppercase">Chat riêng đồng nghiệp:</div>
-                  {personnel.slice(0, 6).map((p, idx) => {
-                    if (p.full_name === currentUserName) return null;
-                    const cardColors = [
-                      "bg-blue-50/90 hover:bg-blue-100 border border-blue-200/80 text-slate-800 dark:bg-blue-950/35 dark:hover:bg-blue-900/50 dark:border-blue-800/50 dark:text-slate-200",
-                      "bg-emerald-50/90 hover:bg-emerald-100 border border-emerald-200/80 text-slate-800 dark:bg-emerald-950/35 dark:hover:bg-emerald-900/50 dark:border-emerald-800/50 dark:text-slate-200",
-                      "bg-purple-50/90 hover:bg-purple-100 border border-purple-200/80 text-slate-800 dark:bg-purple-950/35 dark:hover:bg-purple-900/50 dark:border-purple-800/50 dark:text-slate-200",
-                      "bg-amber-50/90 hover:bg-amber-100 border border-amber-200/80 text-slate-800 dark:bg-amber-950/35 dark:hover:bg-amber-900/50 dark:border-amber-800/50 dark:text-slate-200",
-                      "bg-rose-50/90 hover:bg-rose-100 border border-rose-200/80 text-slate-800 dark:bg-rose-950/35 dark:hover:bg-rose-900/50 dark:border-rose-800/50 dark:text-slate-200",
-                      "bg-cyan-50/90 hover:bg-cyan-100 border border-cyan-200/80 text-slate-800 dark:bg-cyan-950/35 dark:hover:bg-cyan-900/50 dark:border-cyan-800/50 dark:text-slate-200",
-                    ];
-                    return (
-                      <button
-                        key={p.id}
-                        onClick={() => handleStartDM(p.full_name)}
-                        className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-left text-[11px] font-medium cursor-pointer transition-colors ${cardColors[idx % cardColors.length]}`}
-                      >
-                        <span className="truncate">{p.full_name}</span>
-                        <span className="text-[11px] text-slate-500">{p.department}</span>
-                      </button>
-                    );
-                  })}
+                  <div className="pt-2 text-[10px] font-bold text-slate-400 px-1 uppercase">
+                    Chat riêng đồng nghiệp ({personnel.filter((p) => p.full_name !== currentUserName).length}):
+                  </div>
+                  {personnel
+                    .filter((p) => {
+                      if (!p?.full_name || p.full_name === currentUserName) return false;
+                      if (!quickSearch.trim()) return true;
+                      const q = quickSearch.toLowerCase();
+                      return (
+                        p.full_name.toLowerCase().includes(q) ||
+                        (p.department && p.department.toLowerCase().includes(q))
+                      );
+                    })
+                    .map((p, idx) => {
+                      const cardColors = [
+                        "bg-blue-50/90 hover:bg-blue-100 border border-blue-200/80 text-slate-800 dark:bg-blue-950/35 dark:hover:bg-blue-900/50 dark:border-blue-800/50 dark:text-slate-200",
+                        "bg-emerald-50/90 hover:bg-emerald-100 border border-emerald-200/80 text-slate-800 dark:bg-emerald-950/35 dark:hover:bg-emerald-900/50 dark:border-emerald-800/50 dark:text-slate-200",
+                        "bg-purple-50/90 hover:bg-purple-100 border border-purple-200/80 text-slate-800 dark:bg-purple-950/35 dark:hover:bg-purple-900/50 dark:border-purple-800/50 dark:text-slate-200",
+                        "bg-amber-50/90 hover:bg-amber-100 border border-amber-200/80 text-slate-800 dark:bg-amber-950/35 dark:hover:bg-amber-900/50 dark:border-amber-800/50 dark:text-slate-200",
+                        "bg-rose-50/90 hover:bg-rose-100 border border-rose-200/80 text-slate-800 dark:bg-rose-950/35 dark:hover:bg-rose-900/50 dark:border-rose-800/50 dark:text-slate-200",
+                        "bg-cyan-50/90 hover:bg-cyan-100 border border-cyan-200/80 text-slate-800 dark:bg-cyan-950/35 dark:hover:bg-cyan-900/50 dark:border-cyan-800/50 dark:text-slate-200",
+                      ];
+                      return (
+                        <button
+                          key={p.id || p.full_name}
+                          onClick={() => handleStartDM(p.full_name)}
+                          className={`w-full flex items-center justify-between gap-1.5 px-2 py-1.5 rounded-lg text-left text-[11px] font-medium cursor-pointer transition-colors ${cardColors[idx % cardColors.length]}`}
+                        >
+                          <span className="truncate font-semibold">{p.full_name}</span>
+                          <span className="text-[10px] text-slate-500 shrink-0">{p.department}</span>
+                        </button>
+                      );
+                    })}
                 </div>
               </div>
             )}
 
             {/* Chat Content Column */}
             <div className="flex-1 flex flex-col overflow-hidden bg-slate-50/30 dark:bg-slate-950/20">
-              {/* Channel Switcher Tabs in Compact mode */}
+              {/* Channel Switcher in Compact mode — Xếp dọc rõ ràng khi bấm mở danh sách */}
               {!isExpanded && (
-                <div className="px-2 py-1.5 bg-slate-50 dark:bg-slate-950/60 border-b border-slate-200 dark:border-slate-800 flex gap-1 overflow-x-auto text-[11px] shrink-0">
-                  {[...channels]
-                    .sort((a, b) => {
-                      const uA = getChannelUnreadCount(a);
-                      const uB = getChannelUnreadCount(b);
-                      if (uA > 0 && uB === 0) return -1;
-                      if (uB > 0 && uA === 0) return 1;
-                      return 0;
-                    })
-                    .slice(0, 8)
-                    .map(c => {
-                    const chUnread = getChannelUnreadCount(c);
-                    return (
-                      <button
-                        key={c.id}
-                        onClick={() => setActiveChannelId(c.id)}
-                        className={`relative px-2 py-0.5 rounded-lg font-semibold truncate max-w-[120px] cursor-pointer flex items-center gap-1 ${
-                          activeChannelId === c.id
-                            ? "bg-indigo-600 text-white"
-                            : "text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800"
-                        }`}
-                      >
-                        <span className="truncate">{getChannelDisplayName(c)}</span>
-                        {chUnread > 0 && activeChannelId !== c.id && (
-                          <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white text-[11px] font-extrabold flex items-center justify-center shrink-0">
-                            {chUnread}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
+                <div className="bg-slate-50 dark:bg-slate-950/70 border-b border-slate-200 dark:border-slate-800 text-[11px] shrink-0">
+                  <div className="px-2.5 py-1.5 flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowCompactVerticalList((v) => !v)}
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 font-bold cursor-pointer hover:bg-indigo-50"
+                    >
+                      <Users className="w-3.5 h-3.5" />
+                      <span>
+                        {showCompactVerticalList
+                          ? "▲ Thu gọn danh sách kênh & đồng nghiệp"
+                          : `▼ Chọn Kênh / Đồng nghiệp (${channels.length})`}
+                      </span>
+                    </button>
+                    {totalUnreadCount > 0 && (
+                      <span className="px-2 py-0.5 rounded-full bg-rose-600 text-white text-[10px] font-extrabold">
+                        {totalUnreadCount} tin mới
+                      </span>
+                    )}
+                  </div>
+                  {showCompactVerticalList && (
+                    <div className="max-h-56 overflow-y-auto px-2 pb-2 space-y-1 border-t border-slate-200/70 dark:border-slate-800 pt-1.5">
+                      <div className="relative mb-1">
+                        <Search className="w-3 h-3 absolute left-2 top-2 text-slate-400" />
+                        <input
+                          type="text"
+                          value={quickSearch}
+                          onChange={(e) => setQuickSearch(e.target.value)}
+                          placeholder="Gõ tìm tên đồng nghiệp hoặc nhóm chat..."
+                          className="w-full pl-6 pr-2 py-1 rounded-lg text-[11px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
+                        />
+                      </div>
+                      {filteredChannels.map((c) => {
+                        const chUnread = getChannelUnreadCount(c);
+                        const isActive = activeChannelId === c.id;
+                        return (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onClick={() => {
+                              setActiveChannelId(c.id);
+                              setShowCompactVerticalList(false);
+                            }}
+                            className={`w-full px-2.5 py-1.5 rounded-lg font-semibold flex items-center justify-between gap-2 text-left cursor-pointer ${
+                              isActive
+                                ? "bg-indigo-600 text-white"
+                                : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-indigo-50 dark:hover:bg-slate-800 border border-slate-200/70 dark:border-slate-800"
+                            }`}
+                          >
+                            <span className="truncate">{getChannelDisplayName(c)}</span>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {c.department && (
+                                <span className={`text-[10px] ${isActive ? "text-indigo-100" : "text-slate-400"}`}>
+                                  {c.department}
+                                </span>
+                              )}
+                              {chUnread > 0 && !isActive && (
+                                <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white text-[10px] font-extrabold flex items-center justify-center">
+                                  {chUnread}
+                                </span>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 

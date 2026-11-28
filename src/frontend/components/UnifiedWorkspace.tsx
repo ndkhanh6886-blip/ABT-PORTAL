@@ -1167,7 +1167,12 @@ const SearchablePersonnelSelect: React.FC<SearchablePersonnelSelectProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [showAllCompany, setShowAllCompany] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setShowAllCompany(false);
+  }, [filterDepartment]);
 
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
@@ -1179,10 +1184,11 @@ const SearchablePersonnelSelect: React.FC<SearchablePersonnelSelectProps> = ({
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, []);
 
-  const filtered = useMemo(() => {
-    let list = Array.isArray(personnelList) ? [...personnelList] : [];
+  const { filtered, hasDeptMatches } = useMemo(() => {
+    const fullList = Array.isArray(personnelList) ? [...personnelList] : [];
+    let deptList = [...fullList];
     if (filterDepartment && filterDepartment !== "all") {
-      list = list.filter(p => isSameWorkspaceDept(p.department, filterDepartment));
+      deptList = deptList.filter(p => isSameWorkspaceDept(p.department, filterDepartment));
       const normDept = normalizeWorkspaceDept(filterDepartment);
       const targetDepts = isWorkspaceBlockKey(normDept)
         ? Array.from(WORKSPACE_BLOCKS[normDept].depts)
@@ -1193,8 +1199,8 @@ const SearchablePersonnelSelect: React.FC<SearchablePersonnelSelectProps> = ({
         (DEPARTMENT_STAFF[dKey] || []).forEach(rawName => {
           const cleanName = rawName.replace(/\s*\(.*?\)/, "").trim();
           const posMatch = rawName.match(/\((.*?)\)/);
-          if (!list.some(p => sameStaffName(p.full_name, cleanName))) {
-            list.push({
+          if (!deptList.some(p => sameStaffName(p.full_name, cleanName))) {
+            deptList.push({
               full_name: cleanName,
               employee_code: "",
               position: posMatch ? posMatch[1] : `Nhân sự ${dKey}`,
@@ -1204,15 +1210,22 @@ const SearchablePersonnelSelect: React.FC<SearchablePersonnelSelectProps> = ({
         });
       });
     }
-    if (!search.trim()) return list;
+    const hasMatches = !filterDepartment || filterDepartment === "all" || deptList.length > 0;
+    const activeBase = !filterDepartment || filterDepartment === "all" || showAllCompany || deptList.length === 0
+      ? fullList
+      : deptList;
+    if (!search.trim()) return { filtered: activeBase, hasDeptMatches: hasMatches };
     const q = search.toLowerCase();
-    return list.filter(p => 
-      p.full_name.toLowerCase().includes(q) ||
-      (p.employee_code && p.employee_code.toLowerCase().includes(q)) ||
-      (p.position && p.position.toLowerCase().includes(q)) ||
-      (p.department && p.department.toLowerCase().includes(q))
-    );
-  }, [personnelList, filterDepartment, search]);
+    return {
+      filtered: activeBase.filter(p =>
+        p.full_name.toLowerCase().includes(q) ||
+        (p.employee_code && p.employee_code.toLowerCase().includes(q)) ||
+        (p.position && p.position.toLowerCase().includes(q)) ||
+        (p.department && p.department.toLowerCase().includes(q))
+      ),
+      hasDeptMatches: hasMatches
+    };
+  }, [personnelList, filterDepartment, search, showAllCompany]);
 
   const selectedItem = useMemo(() => {
     return personnelList.find(p => p.full_name === value);
@@ -1265,9 +1278,21 @@ const SearchablePersonnelSelect: React.FC<SearchablePersonnelSelectProps> = ({
       {isOpen && (
         <div className="absolute z-50 left-0 right-0 mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl overflow-hidden">
           {filterDepartment && filterDepartment !== "all" && (
-            <div className="px-2.5 py-1.5 bg-indigo-50/80 dark:bg-indigo-950/60 border-b border-indigo-100 dark:border-indigo-900/60 flex items-center justify-between text-[10px] font-bold text-indigo-700 dark:text-indigo-300">
-              <span>🏢 Phòng ban: {filterDepartment}</span>
-              <span>{filtered.length} nhân sự</span>
+            <div className="px-2.5 py-1.5 bg-indigo-50/80 dark:bg-indigo-950/60 border-b border-indigo-100 dark:border-indigo-900/60 flex items-center justify-between gap-2 text-[10px] font-bold text-indigo-700 dark:text-indigo-300">
+              <span>
+                {hasDeptMatches && !showAllCompany
+                  ? `🏢 Phòng ban: ${filterDepartment} (${filtered.length})`
+                  : `🌐 Toàn công ty (${filtered.length} nhân sự)`}
+              </span>
+              {hasDeptMatches && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllCompany((v) => !v)}
+                  className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-800 border border-indigo-200 dark:border-indigo-700 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-100 cursor-pointer"
+                >
+                  {showAllCompany ? `Lọc theo ${filterDepartment}` : "Xem toàn công ty"}
+                </button>
+              )}
             </div>
           )}
           <div className="p-2 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2 bg-slate-50/50 dark:bg-slate-950/50">
@@ -3385,8 +3410,9 @@ export const UnifiedWorkspace: React.FC = () => {
   const [sendingMeetingRemindId, setSendingMeetingRemindId] = useState<number | string | null>(null);
   const [weeklySchedule, setWeeklySchedule] = useState<any[]>([]);
   const [weeklyScheduleLoaded, setWeeklyScheduleLoaded] = useState<boolean>(false);
-  // Lịch tuần theo NGÀY THẬT: tuần đang xem (0 = tuần này), lịch đang sửa
+  // Lịch tuần / Lịch tháng theo NGÀY THẬT: tuần đang xem (0 = tuần này), chế độ xem 1 Tuần hoặc Nguyên Tháng (4 tuần), lịch đang sửa
   const [weekOffset, setWeekOffset] = useState(0);
+  const [plannerTimeSpan, setPlannerTimeSpan] = useState<"week" | "month">("week");
   const [currentTodayIso, setCurrentTodayIso] = useState<string>(() => todayVN());
   const [editingScheduleId, setEditingScheduleId] = useState<number | null>(null);
   // Xem chi tiết một lịch (họp / công tác) — mọi người liên quan đều xem được, kể cả không có quyền sửa
@@ -3425,6 +3451,12 @@ export const UnifiedWorkspace: React.FC = () => {
   }, [currentTodayIso]);
 
   const viewedWeek = useMemo(() => computeWeekByOffset(weekOffset, currentTodayIso), [computeWeekByOffset, weekOffset, currentTodayIso]);
+
+  // Danh sách 4 tuần liên tiếp khi người dùng chọn chế độ "🗓️ Xem Lịch Tháng (4 Tuần)"
+  const viewedMonthWeeks = useMemo(
+    () => [0, 1, 2, 3].map((idx) => computeWeekByOffset(weekOffset + idx, currentTodayIso)),
+    [computeWeekByOffset, weekOffset, currentTodayIso]
+  );
 
   const weekSelectorOptions = useMemo(() => {
     const opts: Array<{ offset: number; label: string }> = [];
@@ -3718,7 +3750,7 @@ export const UnifiedWorkspace: React.FC = () => {
         customNotifyMessage: item.customNotifyMessage || "",
         chatChannelId: item.chatChannelId,
         lastRemindedAt: item.lastRemindedAt,
-        isPublic: Boolean(item.isPublic || item.resourceId || matchedRes),
+        isPublic: Boolean(item.isPublic || defaultEventType === "RESOURCE" || (matchedRes && matchedRes.category !== "MEETING_ROOM")),
         attachments: item.attachments || []
       });
     } else {
@@ -3760,7 +3792,7 @@ export const UnifiedWorkspace: React.FC = () => {
         sendBellNotify: true,
         reminderMinutes: 30,
         customNotifyMessage: "",
-        isPublic: isMeeting || isResourceBooking || Boolean(defaultRes),
+        isPublic: isResourceBooking,
         attachments: []
       });
     }
@@ -5408,17 +5440,24 @@ export const UnifiedWorkspace: React.FC = () => {
         ...(Array.isArray(s.coActors) ? s.coActors.map((a: any) => String(a || "").trim()).filter(Boolean) : [])
       ];
       const isCreatedByMe = Boolean(s.createdBy && sameStaffName(s.createdBy, currentStaffName));
+      const isParticipant = isCreatedByMe || actorsList.some((a) => sameStaffName(a, currentStaffName));
+      const isMeetingItem = s.eventType === "MEETING" || isScheduleRealMeeting(s);
+
+      // Bảo mật lịch họp: Những người KHÔNG nằm trong thành phần cuộc họp sẽ không nhìn thấy lịch họp của người khác (trừ Ban Giám Đốc hoặc lịch họp được tích Công khai toàn công ty)
+      if (isMeetingItem && !s.isPublic && rolePerspective !== "director") {
+        if (!isParticipant) return false;
+      }
+
       if (rolePerspective === "staff") {
-        if (s.isPublic || isCreatedByMe) return true;
-        return actorsList.some((a) => sameStaffName(a, currentStaffName));
+        if (s.isPublic || isParticipant) return true;
+        return false;
       }
       if (filterDept !== "all") {
         const matchScheduleDept = isSameWorkspaceDept(s.category, filterDept);
         const matchDeptStaff = actorsList.some((a) =>
           departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, a))
         );
-        const matchActorMine = actorsList.some((a) => sameStaffName(a, currentStaffName));
-        if (!matchScheduleDept && !matchDeptStaff && !isCreatedByMe && !matchActorMine) return false;
+        if (!matchScheduleDept && !matchDeptStaff && !isParticipant) return false;
       }
       if (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__") {
         if (actorsList.some((a) => sameStaffName(a, selectedAssignee))) return true;
@@ -5428,7 +5467,7 @@ export const UnifiedWorkspace: React.FC = () => {
       }
       return true;
     });
-  }, [weeklySchedule, rolePerspective, filterDept, departmentStaffList, selectedAssignee, currentStaffName]);
+  }, [weeklySchedule, rolePerspective, filterDept, departmentStaffList, selectedAssignee, currentStaffName, isScheduleRealMeeting]);
 
   // Danh sách Lịch Sử Dụng Tài Nguyên Công Ty độc lập (chỉ gồm các đăng ký sử dụng tài nguyên eventType === "RESOURCE" và không phải lịch họp nội bộ)
   const resourceBookingSchedules = useMemo(() => {
@@ -7511,6 +7550,82 @@ export const UnifiedWorkspace: React.FC = () => {
     };
   }, [workflows, currentStaffName, userDept, isDirector]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Tự động bật báo động chủ động khi Công việc (Bảng Công Việc) của người dùng đang quá hạn hoặc sắp hết hạn (hôm nay / ngày mai)
+  useEffect(() => {
+    if (!Array.isArray(tasks) || tasks.length === 0 || !currentStaffName) return;
+    const checkTaskDeadlineAlerts = () => {
+      const todayIso = todayVN();
+      const todayKey = `unified_auto_task_dl_alerts_${todayIso}`;
+      let alertedIds: string[] = [];
+      try {
+        const raw = typeof window !== "undefined" ? localStorage.getItem(todayKey) : null;
+        if (raw) alertedIds = JSON.parse(raw);
+      } catch {}
+
+      const myOverdueTasks: any[] = [];
+      const myDueSoonTasks: any[] = [];
+      const newlyAlerted: string[] = [];
+      const tomorrowObj = new Date(todayIso + "T00:00:00");
+      tomorrowObj.setDate(tomorrowObj.getDate() + 1);
+      const tomorrowIso = `${tomorrowObj.getFullYear()}-${String(tomorrowObj.getMonth() + 1).padStart(2, "0")}-${String(tomorrowObj.getDate()).padStart(2, "0")}`;
+
+      tasks.forEach((t: any) => {
+        if (!t || t.status === "DONE") return;
+        const isAssignedToMe = taskHasAssignee(t.assignee_name, currentStaffName);
+        const isCreatedByMe = isTaskCreatedByStaff(t, currentStaffName);
+        if (!isAssignedToMe && !isCreatedByMe) return;
+
+        const dlAlert = getTaskDeadlineAlert(t, todayIso);
+        const isDueTomorrow = Boolean(dlAlert.deadlineIso && dlAlert.deadlineIso === tomorrowIso);
+        if (!dlAlert.isOverdue && !dlAlert.isDueToday && !isDueTomorrow) return;
+
+        const kind = dlAlert.isOverdue ? "OVERDUE" : dlAlert.isDueToday ? "DUE_TODAY" : "DUE_SOON";
+        const alertKey = `TSK-${t.id || t.task_code}-${kind}`;
+        if (alertedIds.includes(alertKey)) return;
+
+        newlyAlerted.push(alertKey);
+        if (dlAlert.isOverdue) {
+          myOverdueTasks.push({ task: t, dlAlert, labelText: `Quá hạn ${dlAlert.daysLate} ngày` });
+        } else {
+          myDueSoonTasks.push({
+            task: t,
+            dlAlert,
+            labelText: dlAlert.isDueToday ? "Đến hạn HÔM NAY" : "Đến hạn NGÀY MAI"
+          });
+        }
+      });
+
+      if (newlyAlerted.length === 0) return;
+
+      try {
+        if (typeof window !== "undefined") {
+          localStorage.setItem(todayKey, JSON.stringify([...alertedIds, ...newlyAlerted].slice(-200)));
+        }
+      } catch {}
+
+      if (myOverdueTasks.length > 0) {
+        const first = myOverdueTasks[0];
+        showToast(
+          `🚨 BÁO ĐỘNG CÔNG VIỆC QUÁ HẠN: Bạn có ${myOverdueTasks.length} công việc đang quá hạn chưa hoàn tất (VD: ${first.task.task_code ? `[${first.task.task_code}] ` : ""}"${first.task.title}" — ${first.labelText})!`,
+          "error"
+        );
+      } else if (myDueSoonTasks.length > 0) {
+        const first = myDueSoonTasks[0];
+        showToast(
+          `⏰ BÁO ĐỘNG SẮP HẾT HẠN: Bạn có ${myDueSoonTasks.length} công việc sắp đến hạn chót (${first.labelText}: ${first.task.task_code ? `[${first.task.task_code}] ` : ""}"${first.task.title}")!`,
+          "warning"
+        );
+      }
+    };
+
+    const initTimer = setTimeout(checkTaskDeadlineAlerts, 3200);
+    const intervalTimer = setInterval(checkTaskDeadlineAlerts, 120000);
+    return () => {
+      clearTimeout(initTimer);
+      clearInterval(intervalTimer);
+    };
+  }, [tasks, currentStaffName]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Cập nhật danh sách Người theo dõi (Followers — Chỉ xem tiến độ) trên Phiếu quy trình phối hợp đã tạo
   const handleUpdateWorkflowFollowers = async (wf: any, nextFollowersRaw: string[], addedPerson?: string) => {
     const cleanFollowers = parseTaskFollowersList(nextFollowersRaw);
@@ -7817,6 +7932,15 @@ export const UnifiedWorkspace: React.FC = () => {
             stepAssignee = "";
           } else if (isSameWorkspaceDept(stepDept, "Kinh Doanh") && !stepAssignee) {
             stepAssignee = currentStaffName || "";
+          }
+        } else if (isSameWorkspaceDept(stepDept, "Pháp Chế") && !stepAssignee) {
+          // Tự động gợi ý người phụ trách Pháp chế (nhân sự thuộc Pháp chế / Hành chính Pháp chế hoặc người duyệt pháp lý)
+          const legalPerson =
+            (personnelList || []).find((p: any) => isSameWorkspaceDept(p.department, "Pháp Chế")) ||
+            (personnelList || []).find((p: any) => /pháp\s*chế|pháp\s*lý|hợp\s*đồng/i.test(`${p.position || ""} ${p.department || ""}`)) ||
+            (personnelList || []).find((p: any) => isSameWorkspaceDept(p.department, "Hành Chính Nhân Sự"));
+          if (legalPerson?.full_name) {
+            stepAssignee = cleanWorkspaceAssignee(legalPerson.full_name);
           }
         }
         return {
@@ -9311,7 +9435,7 @@ export const UnifiedWorkspace: React.FC = () => {
       customNotifyMessage: scheduleForm.customNotifyMessage || "",
       chatChannelId: scheduleForm.chatChannelId,
       lastRemindedAt: scheduleForm.lastRemindedAt,
-      isPublic: Boolean(scheduleForm.isPublic || matchedCompanyResource || isResourceBooking || isMeeting),
+      isPublic: Boolean(scheduleForm.isPublic || isResourceBooking),
       attachments: scheduleForm.attachments || []
     }));
 
@@ -14436,21 +14560,45 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     );
                   })()}
 
-            {/* THANH ĐIỀU HƯỚNG TUẦN & CHẾ ĐỘ XEM ĐỘC LẬP: LỊCH CÔNG TÁC / LỊCH HỌP vs LỊCH SỬ DỤNG TÀI NGUYÊN */}
+            {/* THANH ĐIỀU HƯỚNG TUẦN / THÁNG & CHẾ ĐỘ XEM ĐỘC LẬP: LỊCH CÔNG TÁC / LỊCH HỌP vs LỊCH SỬ DỤNG TÀI NGUYÊN */}
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl px-4 py-3 shadow-xs flex items-center justify-between flex-wrap gap-3">
               <div className="flex items-center gap-2.5 flex-wrap">
-                <span className="text-xs font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  🗓️ Điều phối theo tuần:
-                </span>
+                <div className="inline-flex rounded-xl bg-slate-100 dark:bg-slate-800 p-0.5 border border-slate-200 dark:border-slate-700">
+                  <button
+                    type="button"
+                    onClick={() => setPlannerTimeSpan("week")}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
+                      plannerTimeSpan === "week"
+                        ? "bg-indigo-600 text-white shadow-2xs"
+                        : "text-slate-600 dark:text-slate-300 hover:text-indigo-600"
+                    }`}
+                  >
+                    📅 Xem 1 Tuần
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPlannerTimeSpan("month")}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
+                      plannerTimeSpan === "month"
+                        ? "bg-indigo-600 text-white shadow-2xs"
+                        : "text-slate-600 dark:text-slate-300 hover:text-indigo-600"
+                    }`}
+                    title="Mở rộng xem lịch nguyên 1 tháng (4 tuần liên tiếp) để chủ động sắp xếp kế hoạch công tác & lịch họp"
+                  >
+                    🗓️ Xem Nguyên Tháng (4 Tuần)
+                  </button>
+                </div>
                 <span className="text-xs font-mono font-bold px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-                  Tuần {viewedWeek.weekNo} / {viewedWeek.year} · {viewedWeek.days[0].label} – {viewedWeek.days[5].label}
+                  {plannerTimeSpan === "month"
+                    ? `4 Tuần (Tuần ${viewedMonthWeeks[0].weekNo} → Tuần ${viewedMonthWeeks[3].weekNo}/${viewedMonthWeeks[3].year} · ${viewedMonthWeeks[0].days[0].label} – ${viewedMonthWeeks[3].days[5].label})`
+                    : `Tuần ${viewedWeek.weekNo} / {viewedWeek.year} · ${viewedWeek.days[0].label} – ${viewedWeek.days[5].label}`.replace("{viewedWeek.year}", String(viewedWeek.year))}
                 </span>
                 <span className="inline-flex items-center gap-1">
                   <button
                     type="button"
-                    onClick={() => setWeekOffset((w) => w - 1)}
+                    onClick={() => setWeekOffset((w) => w - (plannerTimeSpan === "month" ? 4 : 1))}
                     className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
-                    title="Tuần trước"
+                    title={plannerTimeSpan === "month" ? "Lùi 4 tuần (Tháng trước)" : "Tuần trước"}
                   >
                     <ChevronRight className="w-3.5 h-3.5 rotate-180" />
                   </button>
@@ -14460,14 +14608,14 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       onClick={() => setWeekOffset(0)}
                       className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-indigo-600 text-white cursor-pointer"
                     >
-                      Về tuần này
+                      {plannerTimeSpan === "month" ? "Về tháng này" : "Về tuần này"}
                     </button>
                   )}
                   <button
                     type="button"
-                    onClick={() => setWeekOffset((w) => w + 1)}
+                    onClick={() => setWeekOffset((w) => w + (plannerTimeSpan === "month" ? 4 : 1))}
                     className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
-                    title="Tuần sau"
+                    title={plannerTimeSpan === "month" ? "Tiến 4 tuần (Tháng sau)" : "Tuần sau"}
                   >
                     <ChevronRight className="w-3.5 h-3.5" />
                   </button>
@@ -15086,10 +15234,12 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 >
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-xs font-extrabold">
-                      📅 BẢNG 2: LỊCH CÔNG TÁC &amp; LỊCH HỌP {weekOffset === 0 ? "TUẦN NÀY" : weekOffset === 1 ? "TUẦN SAU" : weekOffset === -1 ? "TUẦN TRƯỚC" : ""} (ĐỘC LẬP)
+                      📅 BẢNG 2: LỊCH CÔNG TÁC &amp; LỊCH HỌP {plannerTimeSpan === "month" ? "NGUYÊN THÁNG (4 TUẦN)" : weekOffset === 0 ? "TUẦN NÀY" : weekOffset === 1 ? "TUẦN SAU" : weekOffset === -1 ? "TUẦN TRƯỚC" : ""} (ĐỘC LẬP)
                     </span>
                     <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300">
-                      Tuần {viewedWeek.weekNo} ({viewedWeek.days[0].label} – {viewedWeek.days[5].label})
+                      {plannerTimeSpan === "month"
+                        ? `Tuần ${viewedMonthWeeks[0].weekNo} → Tuần ${viewedMonthWeeks[3].weekNo} (${viewedMonthWeeks[0].days[0].label} – ${viewedMonthWeeks[3].days[5].label})`
+                        : `Tuần ${viewedWeek.weekNo} (${viewedWeek.days[0].label} – ${viewedWeek.days[5].label})`}
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 mt-1">
@@ -15160,11 +15310,14 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 </div>
               ) : (
               <>
-              {/* BANNER QUẢN LÝ LỊCH HỌP & NHẮC HỌP TRONG TUẦN ĐANG XEM (THU GỌN / XỔ RA LINH HOẠT) */}
+              {/* BANNER QUẢN LÝ LỊCH HỌP & NHẮC HỌP TRONG TUẦN / THÁNG ĐANG XEM (THU GỌN / XỔ RA LINH HOẠT) */}
               {(() => {
+                const activeSpanDays = plannerTimeSpan === "month"
+                  ? viewedMonthWeeks.flatMap((w) => w.all7Days)
+                  : viewedWeek.all7Days;
                 const weekMeetings = filteredSchedules.filter((s: any) => {
                   if (!isScheduleRealMeeting(s)) return false;
-                  return viewedWeek.all7Days.some((wd) => scheduleOnDay(s, wd));
+                  return activeSpanDays.some((wd) => scheduleOnDay(s, wd));
                 });
                 if (weekMeetings.length === 0) return null;
                 return (
@@ -15417,10 +15570,24 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 </div>
               )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-                {viewedWeek.days.map((wd) => {
-                  const day = wd.name;
-                  const baseEvents = filteredSchedules.filter((s) => scheduleOnDay(s, wd));
+              <div className="space-y-4">
+                {(plannerTimeSpan === "month" ? viewedMonthWeeks : [viewedWeek]).map((wkObj, wkIdx) => (
+                  <div key={`planner-wk-${wkObj.weekNo}-${wkObj.startDate}`} className="space-y-2">
+                    {plannerTimeSpan === "month" && (
+                      <div className="flex items-center justify-between px-3 py-1.5 rounded-xl bg-indigo-50/90 dark:bg-indigo-950/50 border border-indigo-200 dark:border-indigo-800 text-xs font-extrabold text-indigo-800 dark:text-indigo-200">
+                        <span>
+                          🗓️ Tuần {wkObj.weekNo}/{wkObj.year} ({wkObj.days[0].label} – {wkObj.days[5].label})
+                          {wkObj.offset === 0 ? " • Tuần hiện tại" : wkObj.offset === 1 ? " • Tuần sau" : ` • +${wkIdx} tuần`}
+                        </span>
+                        <span className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-300">
+                          {filteredSchedules.filter((s) => wkObj.all7Days.some((wd) => scheduleOnDay(s, wd))).length} lịch trong tuần
+                        </span>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+                      {wkObj.days.map((wd) => {
+                        const day = wd.name;
+                        const baseEvents = filteredSchedules.filter((s) => scheduleOnDay(s, wd));
                   const techEvents = showTechWeeklyPlans
                     ? filteredHubWeeklyPlans.filter((h) => {
                         if (h.date !== wd.date) return false;
@@ -15639,6 +15806,9 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     </div>
                   );
                 })}
+                    </div>
+                  </div>
+                ))}
               </div>
               </>
               )}
@@ -19674,18 +19844,54 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 Đóng
               </button>
               {taskForm.id && !isTaskReadOnlyForMe(taskForm) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    // Dùng việc này làm mẫu cho một việc mới (việc gốc giữ nguyên)
-                    setTaskForm((prev: any) => ({ ...prev, id: null, task_code: undefined, logs: [], result: "", attachments: [], status: "TODO", title: `${prev.title} (bản sao)` }));
-                    showToast("Đã chuyển thành việc mới - sửa nội dung rồi bấm Tạo Công Việc", "info");
-                  }}
-                  className="px-4 py-2 rounded-xl font-bold border border-indigo-300 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40"
-                  title="Tạo việc mới từ nội dung việc này, việc gốc giữ nguyên"
-                >
-                  Nhân bản thành việc mới
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Tạo công việc định kỳ cho tháng kế tiếp (tự động cộng +1 tháng vào hạn chót và cập nhật nhãn tháng nếu có)
+                      const baseDl = toISODate(taskForm.deadline) || todayVN();
+                      const dObj = new Date(baseDl + "T00:00:00");
+                      if (!isNaN(dObj.getTime())) {
+                        dObj.setMonth(dObj.getMonth() + 1);
+                      }
+                      const nextMonthIso = !isNaN(dObj.getTime())
+                        ? `${dObj.getFullYear()}-${String(dObj.getMonth() + 1).padStart(2, "0")}-${String(dObj.getDate()).padStart(2, "0")}`
+                        : baseDl;
+                      const nextMonthLabel = `${String(dObj.getMonth() + 1).padStart(2, "0")}/${dObj.getFullYear()}`;
+                      const updatedTitle = /\b(tháng\s*\d{1,2}([/-]\d{4})?|\d{1,2}\/\d{4})\b/i.test(taskForm.title)
+                        ? taskForm.title.replace(/\b(tháng\s*\d{1,2}([/-]\d{4})?|\d{1,2}\/\d{4})\b/i, `Tháng ${nextMonthLabel}`)
+                        : `${taskForm.title} (Tháng ${nextMonthLabel})`;
+                      setTaskForm((prev: any) => ({
+                        ...prev,
+                        id: null,
+                        task_code: undefined,
+                        logs: [],
+                        result: "",
+                        attachments: [],
+                        status: "TODO",
+                        deadline: nextMonthIso,
+                        title: updatedTitle
+                      }));
+                      showToast(`📅 Đã chuyển sang tạo việc định kỳ cho Tháng ${nextMonthLabel} (Hạn: ${formatDayVN(nextMonthIso)}) — Bấm "Tạo Công Việc" để lưu!`, "info");
+                    }}
+                    className="px-3.5 py-2 rounded-xl font-bold border border-emerald-300 dark:border-emerald-800 bg-emerald-50/80 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 cursor-pointer"
+                    title="Nhân bản nhanh công việc định kỳ này sang tháng kế tiếp (tự động dời hạn chót +1 tháng)"
+                  >
+                    🔄 Tạo cho tháng sau (+1 tháng)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Dùng việc này làm mẫu cho một việc mới (việc gốc giữ nguyên)
+                      setTaskForm((prev: any) => ({ ...prev, id: null, task_code: undefined, logs: [], result: "", attachments: [], status: "TODO", title: `${prev.title} (bản sao)` }));
+                      showToast("Đã chuyển thành việc mới - sửa nội dung rồi bấm Tạo Công Việc", "info");
+                    }}
+                    className="px-4 py-2 rounded-xl font-bold border border-indigo-300 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 cursor-pointer"
+                    title="Tạo việc mới từ nội dung việc này, việc gốc giữ nguyên"
+                  >
+                    Nhân bản thành việc mới
+                  </button>
+                </>
               )}
               {(!taskForm.id || !isTaskReadOnlyForMe(taskForm)) && (
                 <button
@@ -22414,7 +22620,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       resourceId: scheduleForm.resourceId || defaultRoom?.id || "",
                       resourceName: scheduleForm.resourceName || defaultRoom?.name || "",
                       location: scheduleForm.location || defaultRoom?.name || "Phòng họp chính Công ty (Tầng 2)",
-                      isPublic: true,
+                      isPublic: false,
                       sendChatNotify: true,
                       sendBellNotify: true
                     });

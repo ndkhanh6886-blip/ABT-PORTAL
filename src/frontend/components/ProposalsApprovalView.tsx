@@ -3959,6 +3959,10 @@ export function ProposalsApprovalView({
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDeleteProposal = async (p: ProposalItem) => {
+    if ((p.status === "APPROVED" || p.status === "EXECUTED") && !isDirector) {
+      showToast("Đề xuất đã được phê duyệt / thực thi nên không thể xóa!", "warning");
+      return;
+    }
     if (!window.confirm(`Bạn có chắc chắn muốn xóa đề xuất [${p.proposalCode}] "${p.title}"?`)) return;
     const nextList = proposals.filter((item) => item.id !== p.id);
     await onSaveProposals(nextList);
@@ -4077,15 +4081,14 @@ export function ProposalsApprovalView({
         <meta charset="utf-8"/>
         <title>Phiếu Đề Xuất ${p.proposalCode} - ${p.title}</title>
         <style>
-          body { font-family: "Times New Roman", Arial, sans-serif; color: #0f172a; padding: 24px 32px; line-height: 1.45; }
-          @media print { .no-print { display: none !important; } body { padding: 10px; } }
+          @page { size: A4 portrait; margin: 12mm 14mm; }
+          html, body { height: auto !important; margin: 0; font-family: "Times New Roman", Arial, sans-serif; color: #0f172a; padding: 12px 18px; line-height: 1.4; box-sizing: border-box; }
+          table, tr, td, th { page-break-inside: avoid; }
+          @media print { .no-print { display: none !important; } html, body { padding: 0; margin: 0; } }
         </style>
       </head>
       <body>
-        <div class="no-print" style="margin-bottom:16px;text-align:right">
-          <button onclick="window.print()" style="background:#4f46e5;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:700;cursor:pointer">🖨️ In Phiếu / Lưu PDF (A4)</button>
-        </div>
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #0f172a;padding-bottom:12px;margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #0f172a;padding-bottom:10px;margin-bottom:12px">
           <div>
             <div style="font-weight:800;font-size:14px;text-transform:uppercase">HỆ THỐNG QUẢN TRỊ & ĐIỀU HÀNH DOANH NGHIỆP</div>
             <div style="font-size:12px;color:#334155">Bộ phận trình: <strong>${p.requesterDept}</strong></div>
@@ -7442,7 +7445,7 @@ export function ProposalsApprovalView({
                         ✏️ Chỉnh sửa / Bổ sung
                       </button>
                     )}
-                    {(isRequester || isDirector) && (
+                    {(isDirector || (isRequester && p.status !== "APPROVED" && p.status !== "EXECUTED")) && (
                       <button
                         type="button"
                         onClick={() => handleDeleteProposal(p)}

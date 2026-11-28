@@ -30,7 +30,10 @@ export function writeSafePrintDocument(
   .bar button { font: 600 13px system-ui, sans-serif; padding: 8px 14px; border-radius: 10px; border: 0; cursor: pointer; background: #0284c7; color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
   .bar button.secondary { background: #fff; color: #334155; }
   iframe { border: 0; width: 100%; height: 100%; background: #fff; display: block; }
-  @media print { .bar { display: none; } }
+  @media print {
+    html, body { height: auto !important; background: #fff !important; overflow: visible !important; }
+    .bar { display: none !important; }
+  }
 </style></head><body><div class="bar">
   <button id="tbr-orient-btn" class="secondary" type="button" title="Đổi khổ giấy dọc / ngang"></button>
   <button id="tbr-print-btn" type="button">🖨 In tài liệu</button>
