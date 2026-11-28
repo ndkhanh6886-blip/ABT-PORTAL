@@ -4386,13 +4386,42 @@ export const UnifiedWorkspace: React.FC = () => {
           if (localSt) setSalesTargets(JSON.parse(localSt));
         }
 
-        // Load persistent enterprise announcements & decisions
+        // Load persistent enterprise announcements & decisions (gộp bảo toàn danh sách acknowledgedBy từ localStorage / state hiện tại)
         try {
+          const localRaw = typeof window !== "undefined" ? localStorage.getItem("unified_announcements") : null;
+          const localParsed = localRaw ? JSON.parse(localRaw) : [];
           if (Array.isArray(batchStorageData.unified_announcements)) {
-            setAnnouncements(batchStorageData.unified_announcements);
-          } else {
-            const localAnn = typeof window !== "undefined" ? localStorage.getItem("unified_announcements") : null;
-            if (localAnn) setAnnouncements(JSON.parse(localAnn));
+            const localById = new Map<string, any>();
+            if (Array.isArray(localParsed)) {
+              for (const la of localParsed) {
+                if (la?.id) localById.set(String(la.id), la);
+              }
+            }
+            setAnnouncements((prev) => {
+              const prevById = new Map<string, any>();
+              for (const pa of prev || []) {
+                if (pa?.id) prevById.set(String(pa.id), pa);
+              }
+              return batchStorageData.unified_announcements.map((srvAnn: any) => {
+                const sid = String(srvAnn?.id || "");
+                const locAnn = localById.get(sid);
+                const prvAnn = prevById.get(sid);
+                const srvAck = Array.isArray(srvAnn?.acknowledgedBy) ? srvAnn.acknowledgedBy : [];
+                const locAck = Array.isArray(locAnn?.acknowledgedBy) ? locAnn.acknowledgedBy : [];
+                const prvAck = Array.isArray(prvAnn?.acknowledgedBy) ? prvAnn.acknowledgedBy : [];
+                if (locAck.length === 0 && prvAck.length === 0) return srvAnn;
+                const mergedAck = [...srvAck];
+                for (const extra of [...prvAck, ...locAck]) {
+                  const eName = extra?.name || extra;
+                  if (eName && !mergedAck.some((x: any) => sameStaffName(x?.name || x, eName))) {
+                    mergedAck.push(extra);
+                  }
+                }
+                return mergedAck.length !== srvAck.length ? { ...srvAnn, acknowledgedBy: mergedAck } : srvAnn;
+              });
+            });
+          } else if (Array.isArray(localParsed)) {
+            setAnnouncements(localParsed);
           }
         } catch (err) {
           const localAnn = typeof window !== "undefined" ? localStorage.getItem("unified_announcements") : null;

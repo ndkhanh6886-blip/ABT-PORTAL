@@ -149,8 +149,15 @@ function enqueue<T>(key: string, task: () => Promise<T>): Promise<T> {
   return run;
 }
 
-function recordBase(key: string, data: any, version: any) {
-  bases.set(key, { data: clone(data), version: typeof version === "number" ? version : null });
+function recordBase(key: string, data: any, version: any, fromGet = false) {
+  const incomingVer = typeof version === "number" ? version : null;
+  if (fromGet) {
+    const existing = bases.get(key);
+    if (existing && typeof existing.version === "number" && incomingVer !== null && incomingVer < existing.version) {
+      return;
+    }
+  }
+  bases.set(key, { data: clone(data), version: incomingVer });
 }
 
 async function recordFromGet(url: URL, res: Response) {
@@ -165,7 +172,7 @@ async function recordFromGet(url: URL, res: Response) {
       if (key === "data_reset_epoch" && json?.data?.epoch && !knownEpoch()) {
         setKnownEpoch(String(json.data.epoch));
       }
-      if (json && "data" in json) recordBase(key, json.data, json.version);
+      if (json && "data" in json) recordBase(key, json.data, json.version, true);
       return;
     }
     if (json && json.data && typeof json.data === "object") {
@@ -176,7 +183,7 @@ async function recordFromGet(url: URL, res: Response) {
         // `?all=true` only seeds keys this page has not loaded itself; an explicit `key`/`keys` load
         // is done by the module that owns the state, so it becomes the new reference copy.
         if (!explicitKeys && bases.has(k)) continue;
-        recordBase(k, k in json.data ? json.data[k] : null, versions[k] ?? (k in json.data ? null : 0));
+        recordBase(k, k in json.data ? json.data[k] : null, versions[k] ?? (k in json.data ? null : 0), true);
       }
     }
   } catch {
@@ -248,6 +255,7 @@ async function saveKey(key: string, nextData: any): Promise<Response> {
     if (res.ok) {
       const json = await res.clone().json().catch(() => ({}));
       recordBase(key, nextData, json.version);
+      markCacheMutated("/api/storage");
       notifySaveOk(key);
     } else if (res.status === 401) {
       window.dispatchEvent(new Event("tbr:unauthorized"));

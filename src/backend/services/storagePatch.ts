@@ -116,6 +116,61 @@ export function isEmptyPatch(patch: StoragePatch): boolean {
 }
 
 /** Applies a patch to the latest stored document. Items the client never knew about are kept. */
+function normAckPersonName(entry: any): string {
+  const raw = typeof entry === "string" ? entry : entry?.name || entry?.full_name || "";
+  return String(raw || "")
+    .normalize("NFC")
+    .toLowerCase()
+    .replace(/\s*\(.*?\)/g, "")
+    .replace(/[\s\u00a0\u200b]+/g, " ")
+    .trim();
+}
+
+/**
+ * Gộp bảo toàn danh sách `acknowledgedBy` (xác nhận đã đọc văn bản) và `comments` (thảo luận đề xuất)
+ * giữa bản đang lưu trên máy chủ (`prevItem`) và bản người dùng gửi lên (`nextItem`).
+ * Khắc phục lỗi khi nhiều nhân sự (87 người) cùng mở tab và bấm "Xác nhận: Tôi đã đọc & Nắm rõ",
+ * tab mở trước gửi danh sách `acknowledgedBy` cũ làm ghi đè mất xác nhận đọc của người vừa bấm trước đó.
+ */
+export function mergeConcurrentItemArrays(prevItem: any, nextItem: any): any {
+  if (!prevItem || !nextItem || typeof prevItem !== "object" || typeof nextItem !== "object") {
+    return nextItem;
+  }
+  let merged = nextItem;
+
+  if (Array.isArray(prevItem.acknowledgedBy) || Array.isArray(nextItem.acknowledgedBy)) {
+    const prevAck = Array.isArray(prevItem.acknowledgedBy) ? prevItem.acknowledgedBy : [];
+    const nextAck = Array.isArray(nextItem.acknowledgedBy) ? nextItem.acknowledgedBy : [];
+    const byName = new Map<string, any>();
+    for (const a of prevAck) {
+      const k = normAckPersonName(a);
+      if (k && !byName.has(k)) byName.set(k, a);
+    }
+    for (const a of nextAck) {
+      const k = normAckPersonName(a);
+      if (k && !byName.has(k)) byName.set(k, a);
+    }
+    merged = { ...merged, acknowledgedBy: Array.from(byName.values()) };
+  }
+
+  if (Array.isArray(prevItem.comments) && Array.isArray(nextItem.comments) && prevItem.comments.length > 0) {
+    const seenIds = new Set<string>();
+    const combinedComments: any[] = [];
+    for (const c of [...prevItem.comments, ...nextItem.comments]) {
+      const cid = String(c?.id || `${c?.author || ""}|${c?.time || ""}|${c?.text || ""}`);
+      if (!seenIds.has(cid)) {
+        seenIds.add(cid);
+        combinedComments.push(c);
+      }
+    }
+    if (combinedComments.length !== nextItem.comments.length) {
+      merged = { ...merged, comments: combinedComments };
+    }
+  }
+
+  return merged;
+}
+
 export function applyStoragePatch(current: any, patch: StoragePatch): any {
   if (patch.kind === "object") {
     const result: Record<string, any> = isPlainObject(current) ? { ...current } : {};
@@ -145,14 +200,16 @@ export function applyStoragePatch(current: any, patch: StoragePatch): any {
   const placed = new Set<string>();
   for (const id of patch.order || []) {
     if (deleted.has(id) || placed.has(id)) continue;
-    const item = upsertMap.has(id) ? upsertMap.get(id) : currentMap.get(id);
-    if (item === undefined) continue; // removed on the server meanwhile and not re-sent by this client
-    result.push(item);
+    const rawItem = upsertMap.has(id)
+      ? mergeConcurrentItemArrays(currentMap.get(id), upsertMap.get(id))
+      : currentMap.get(id);
+    if (rawItem === undefined) continue; // removed on the server meanwhile and not re-sent by this client
+    result.push(rawItem);
     placed.add(id);
   }
   for (const [id, item] of upsertMap) {
     if (!placed.has(id) && !deleted.has(id)) {
-      result.push(item);
+      result.push(mergeConcurrentItemArrays(currentMap.get(id), item));
       placed.add(id);
     }
   }

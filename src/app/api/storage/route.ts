@@ -2,12 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { apiErrorResponse } from "@/backend/services/apiErrors";
 import { query, logAudit, withTransaction, httpErrorStatus, HttpError } from "@/backend/db/db";
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse, setAuditActor } from "@/backend/services/authz";
-import { applyStoragePatch, StoragePatch } from "@/backend/services/storagePatch";
+import { applyStoragePatch, StoragePatch, itemIdentity, mergeConcurrentItemArrays } from "@/backend/services/storagePatch";
 import { enforceApprovalGuards } from "@/backend/services/approvalGuard";
 import { hasPermission } from "@/backend/services/permissions";
 import { stripCostFields } from "@/backend/services/costVisibility";
 import { CATALOG_KEY, readCatalog, catalogVersion, applyCatalogPatch, replaceCatalog } from "@/backend/services/catalogStore";
-import { itemIdentity } from "@/backend/services/storagePatch";
 import { EMBEDDED_FILE_KEYS, externalizeDataUrls } from "@/backend/services/externalizeDataUrls";
 import {
   PROTECTED_PROPOSAL_KEY,
@@ -383,6 +382,18 @@ export async function POST(request: NextRequest) {
       }, { status: 409 });
     }
     if (Array.isArray(data)) {
+      if (Array.isArray(stored) && (key === "unified_announcements" || key === PROTECTED_PROPOSAL_KEY)) {
+        const storedById = new Map<string, any>();
+        for (const item of stored) {
+          const id = itemIdentity(item);
+          if (id) storedById.set(id, item);
+        }
+        data = data.map((item: any) => {
+          const id = itemIdentity(item);
+          const prev = id ? storedById.get(id) : undefined;
+          return prev ? mergeConcurrentItemArrays(prev, item) : item;
+        });
+      }
       data = await enforceApprovalGuards(key, stored, data, me);
       if (key === "sales_factory_orders") {
         const { items, dropped } = await withoutDeletedOrders({ query }, data);
