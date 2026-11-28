@@ -14669,8 +14669,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         const isStockTargetReq = (targetReq.isStockOrder === true || targetReq.orderCategory === "STOCK" || String(targetReq.id || "").includes("STOCK") || isInternalStockCustomerName(targetReq.customerName));
         const loggedInCreatorName = loggedInStaff?.full_name || (user as any)?.full_name || user?.name || "";
-        const targetOrderRep = (targetReq.salesRepName && targetReq.salesRepName !== "Bộ Phận Kho Vận") ? targetReq.salesRepName : "";
-        let reqNameSync = loggedInCreatorName || targetOrderRep || "Phòng Kinh Doanh";
+        const targetOrderRep = (targetReq.salesRepName && targetReq.salesRepName !== "Bộ Phận Kho Vận" && targetReq.salesRepName !== "Phòng Kinh Doanh") ? targetReq.salesRepName : "";
+        let reqNameSync = targetOrderRep || loggedInCreatorName || "Phòng Kinh Doanh";
         const reqDeptSync = loggedInStaff?.department || "Kinh Doanh";
         void isStockTargetReq;
         const soOwnerNote = (targetOrderRep && targetOrderRep !== reqNameSync)
@@ -16307,10 +16307,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         // Slide 8: Ghi nhận đúng tên tài khoản đang đăng nhập lập PR thay vì mặc định lấy NVKD của đơn hàng
         const loggedInCreator = loggedInStaff?.full_name || (user as any)?.full_name || user?.name || "";
-        const targetOrderRealRep = (singleProcureTargetOrder.salesRepName && singleProcureTargetOrder.salesRepName !== "Bộ Phận Kho Vận")
+        const targetOrderRealRep = (singleProcureTargetOrder.salesRepName && singleProcureTargetOrder.salesRepName !== "Bộ Phận Kho Vận" && singleProcureTargetOrder.salesRepName !== "Phòng Kinh Doanh")
             ? singleProcureTargetOrder.salesRepName
             : "";
-        const targetRepNameProcure = loggedInCreator || targetOrderRealRep || "Phòng Kinh Doanh";
+        const targetRepNameProcure = targetOrderRealRep || loggedInCreator || "Phòng Kinh Doanh";
         const targetRepDeptProcure = loggedInStaff?.department || "Kinh Doanh";
         void isStockTargetOrd;
         const soOwnerSuffix = (targetOrderRealRep && targetOrderRealRep !== targetRepNameProcure)
@@ -16766,6 +16766,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         // Gộp nhiều đơn: gửi MỘT đề xuất mua hàng (PR) sang Cung ứng; PO do Cung ứng lập (Kinh doanh không tự tạo mã PO)
         void newImportPoCode; void newPoCode;
         const combinedCustomer = selectedReqs.length === 1 ? firstReq.customerName : `Gộp ${selectedReqs.length} đơn (${selectedReqs.map(r => r.customerName).join(', ')})`;
+        const combinedOrderReps = Array.from(
+            new Set(
+                selectedReqs
+                    .map((r: any) => String(r?.salesRepName || "").trim())
+                    .filter((n: string) => n && n !== "Bộ Phận Kho Vận" && n !== "Phòng Kinh Doanh")
+            )
+        );
+        const combinedRequesterName = combinedOrderReps.join(", ") || loggedInStaff?.full_name || firstReq.salesRepName || "Phòng Kinh Doanh";
         let combinedPrCode = "";
         try {
             const prRes = await fetch("/api/procurement?action=create_pr", {
@@ -16774,7 +16782,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 body: JSON.stringify({
                     title: `Đề xuất mua hàng gộp cho đơn ${selectedReqs.map(r => r.id).join(", ")} - ${combinedCustomer}`,
                     priority: "HIGH",
-                    requester_name: loggedInStaff?.full_name || firstReq.salesRepName || "Phòng Kinh Doanh",
+                    requester_name: combinedRequesterName,
                     requester_dept: "Kinh Doanh",
                     customer_name: selectedReqs.length === 1 ? firstReq.customerName : "",
                     due_date: combineProcureEstDelivery || combineMfgEstDelivery || toVNDateString(new Date(Date.now() + 7 * 86400000)),

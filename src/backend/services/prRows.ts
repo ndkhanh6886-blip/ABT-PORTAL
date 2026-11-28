@@ -24,6 +24,7 @@ const GENERIC_REP_NAMES = new Set([
   "phòng kinh doanh",
   "phòng cung ứng",
   "nhân viên kinh doanh",
+  "nguyễn đăng khánh",
   "system",
   "hệ thống",
   "system administrator",
@@ -77,7 +78,7 @@ export async function reconcileStockOrdersAndPRs(fallbackActorName?: string): Pr
           ORDER BY id ASC`
       ),
       query("SELECT data, version FROM app_storage WHERE key = 'sales_factory_orders'").catch(() => ({ rows: [] as any[] })),
-      query(`SELECT id, workflow_code, title, status, requester_name, requester_dept, description FROM workflow_requests WHERE ${PR_ROW_SQL}`),
+      query(`SELECT id, workflow_code, title, status, requester_name, requester_dept, description, logs FROM workflow_requests WHERE ${PR_ROW_SQL}`),
       query(
         `SELECT details, actor_name, actor_username
            FROM audit_logs
@@ -86,7 +87,7 @@ export async function reconcileStockOrdersAndPRs(fallbackActorName?: string): Pr
             AND TRIM(actor_name) <> ''
           ORDER BY id ASC`
       ).catch(() => ({ rows: [] as any[] })),
-      query("SELECT employee_code, full_name, department FROM company_personnel").catch(() => ({ rows: [] as any[] })),
+      query("SELECT employee_code, full_name, department FROM personnel").catch(() => ({ rows: [] as any[] })),
     ]);
 
     const personnelByName = new Map<string, { code: string; dept: string }>();
@@ -369,6 +370,87 @@ export async function reconcileStockOrdersAndPRs(fallbackActorName?: string): Pr
             existingPrs.push(insPr.rows[0]);
           }
         }
+      }
+    }
+
+    // 4. Đối soát toàn bộ phiếu PR (kể cả PR gộp nhiều đơn hoặc PR Stock):
+    //    - Nếu PR gắn với các đơn bán SO (SO26-...), luôn ưu tiên hiển thị tên Nhân viên Kinh doanh (NVKD) phụ trách các đơn SO đó
+    //    - Nếu requester_name đang là tên chung ("Bộ Phận Kho Vận", "Phòng Kinh Doanh"...), tự động truy nguyên tên NVKD từ đơn SO / nhật ký phiếu / audit_logs
+    for (const pr of existingPrs) {
+      const textToScan = `${pr.title || ""} ${pr.description || ""}`;
+      const matchedSoCodes = Array.from(
+        new Set(
+          (textToScan.match(/\bSO\d{2}-[A-Z0-9-]+\b/gi) || []).map((c) => c.toUpperCase())
+        )
+      );
+      const prCodeUpper = String(pr.workflow_code || "").trim().toUpperCase();
+      for (const [ordCode, dbOrd] of dbByCode.entries()) {
+        if (String(dbOrd?.pr_code || "").trim().toUpperCase() === prCodeUpper) {
+          if (!matchedSoCodes.includes(ordCode.toUpperCase())) {
+            matchedSoCodes.push(ordCode.toUpperCase());
+          }
+        }
+      }
+
+      const needRepFix = isGenericRepName(pr.requester_name);
+      const needDeptFix = !pr.requester_dept || String(pr.requester_dept).trim() === "Kho Vận";
+      if (!needRepFix && !needDeptFix && matchedSoCodes.length === 0) continue;
+
+      const repSet: string[] = [];
+      const pushRep = (candidate: any) => {
+        const clean = String(candidate || "").trim();
+        if (!clean || isGenericRepName(clean)) return;
+        if (!repSet.some((x) => x.toLowerCase() === clean.toLowerCase())) {
+          repSet.push(clean);
+        }
+      };
+
+      // Kiểm tra ghi chú "[Đơn SO của NVKD: ...]" hoặc "(Đơn SO của NVKD: ...)" nếu có
+      const ownerMatch = textToScan.match(/Đơn SO của NVKD:\s*([^\]\)\n•]+)/i);
+      if (ownerMatch && ownerMatch[1]) {
+        pushRep(ownerMatch[1]);
+      }
+
+      for (const soUpper of matchedSoCodes) {
+        const dbOrd = Array.from(dbByCode.values()).find(
+          (o) => String(o.order_code || "").trim().toUpperCase() === soUpper
+        );
+        const fo = Array.from(storageByCode.values()).find(
+          (o) => String(o?.order_code || o?.id || "").trim().toUpperCase() === soUpper
+        );
+        pushRep(dbOrd?.sales_rep_name);
+        pushRep(fo?.salesRepName || fo?.sales_rep_name);
+        if (repSet.length === 0) {
+          pushRep(findCreatorFromAudit(soUpper, pr.workflow_code));
+        }
+      }
+
+      if (repSet.length === 0 && needRepFix) {
+        const prLogs = parseArr(pr.logs);
+        for (const lg of prLogs) {
+          pushRep(lg?.actor);
+        }
+      }
+      if (repSet.length === 0 && needRepFix && pr.workflow_code) {
+        pushRep(findCreatorFromAudit("", pr.workflow_code));
+      }
+
+      const resolvedPrRequester = repSet.length > 0 ? repSet.join(", ") : (!needRepFix ? pr.requester_name : "");
+      const firstRepInfo = repSet.length > 0 ? personnelByName.get(repSet[0].toLowerCase()) : undefined;
+      const resolvedPrDept = firstRepInfo?.dept || (needDeptFix || matchedSoCodes.length > 0 ? "Kinh Doanh" : pr.requester_dept);
+
+      if (
+        (resolvedPrRequester && resolvedPrRequester !== pr.requester_name) ||
+        (resolvedPrDept && resolvedPrDept !== pr.requester_dept)
+      ) {
+        const nextReqName = resolvedPrRequester || pr.requester_name || "Phòng Kinh Doanh";
+        const nextReqDept = resolvedPrDept || "Kinh Doanh";
+        await query(
+          "UPDATE workflow_requests SET requester_name = $1, requester_dept = $2 WHERE id = $3",
+          [nextReqName, nextReqDept, pr.id]
+        ).catch(() => {});
+        pr.requester_name = nextReqName;
+        pr.requester_dept = nextReqDept;
       }
     }
 

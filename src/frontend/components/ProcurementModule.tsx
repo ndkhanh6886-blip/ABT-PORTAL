@@ -5308,17 +5308,17 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             <span>{pr.workflow_code}</span>
                           </button>
                         </td>
-                        <td className="py-3.5 px-3 w-[105px]">
+                        <td className="py-3.5 px-3 w-[125px]">
                           {(() => {
-                            const isStockPR = Boolean(
-                              (pr.workflow_code && pr.workflow_code.includes("STOCK")) ||
-                              (pr.title && (pr.title.includes("STOCK") || pr.title.includes("LƯU TRỮ") || pr.title.includes("DỰ PHÒNG"))) ||
-                              pr.customer_name === "STOCK"
-                            );
-                            const displayRequester = isStockPR
-                              ? "Bộ Phận Kho Vận"
-                              : (pr.requester_name === "Nguyễn Đăng Khánh" ? "Phòng Kinh Doanh" : (pr.requester_name || "Phòng Kinh Doanh"));
-                            const displayDept = isStockPR ? "Kho Vận" : (pr.requester_dept || "Kinh Doanh");
+                            const rawReq = String(pr.requester_name || "").trim();
+                            const isGeneric =
+                              !rawReq ||
+                              rawReq === "Bộ Phận Kho Vận" ||
+                              rawReq === "Nguyễn Đăng Khánh";
+                            const displayRequester = isGeneric ? "Phòng Kinh Doanh" : rawReq;
+                            const rawDept = String(pr.requester_dept || "").trim();
+                            const displayDept =
+                              !rawDept || rawDept === "Kho Vận" ? "Kinh Doanh" : rawDept;
                             return (
                               <>
                                 <div className="font-bold text-slate-900 dark:text-white">{displayRequester}</div>
