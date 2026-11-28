@@ -1621,6 +1621,46 @@ export function canUserSeeFullLeaveDetails(
 }
 
 /**
+ * Phân tách rõ Quyền THẤY (trên danh sách/bảng để phối hợp công việc, tránh trùng lịch nghỉ/công tác)
+ * và Quyền CLICK XEM CHI TIẾT BÊN TRONG (`canUserOpenProposalDetail`):
+ * - Mặc định chỉ những người liên quan trực tiếp (`isUserDirectlyInProposalFlow`: Người tạo, Người duyệt các bước,
+ *   Người thực thi, Người nhận bàn giao, Người đi cùng công tác, Người theo dõi, Trưởng bộ phận quản lý trực tiếp, Ban Giám Đốc)
+ *   mới được click mở xem chi tiết tờ trình/đề xuất hoặc in phiếu.
+ * - Phòng HCNS & Kế toán được mở xem chi tiết đơn nghỉ phép, phiếu tăng ca và đề xuất tài chính để chấm công/hạch toán.
+ * - Tờ trình điều hành chung toàn công ty (`EXECUTIVE` để chế độ `PUBLIC`) cho phép toàn công ty mở xem.
+ */
+export function canUserOpenProposalDetail(
+  p: ProposalItem,
+  currentStaffName: string,
+  userDept: string,
+  isDirector: boolean,
+  isManager: boolean,
+  personnelList?: any[],
+  template?: Partial<ProposalTemplate> | null
+): boolean {
+  if (!p) return false;
+  if (isUserDirectlyInProposalFlow(p, currentStaffName, userDept, isDirector, isManager, personnelList)) {
+    return true;
+  }
+  const codeUpper = String(p.proposalCode || "").toUpperCase();
+  const isLeaveOrOtOrFin =
+    isLeaveProposal(p) ||
+    p.templateId === "tmpl_overtime_request" ||
+    codeUpper.startsWith("DKTC") ||
+    p.category === "FINANCE";
+  if (
+    isLeaveOrOtOrFin &&
+    canUserSeeFullLeaveDetails(p, currentStaffName, userDept, isDirector, isManager, personnelList)
+  ) {
+    return true;
+  }
+  if (p.category === "EXECUTIVE" && getEffectiveProposalVisibility(p, template) === "PUBLIC") {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Kiểm tra người dùng hiện tại có quyền nhìn thấy tờ trình `p` trên danh sách hay không, theo 3 chế độ hiển thị:
  * - Bản nháp (`DRAFT`): chỉ người tạo (hoặc BGĐ) thấy.
  * - `PRIVATE` (Bảo mật theo luồng duyệt): chỉ những người trực tiếp trong luồng (`isUserDirectlyInProposalFlow`) thấy.
@@ -2618,7 +2658,25 @@ export function ProposalsApprovalView({
         (p) => String(p.id).toUpperCase() === target || String(p.proposalCode || "").toUpperCase() === target
       );
       if (matched) {
-        setSelectedProposal(matched);
+        const tmpl = templates.find((t) => t.id === matched.templateId);
+        if (
+          canUserOpenProposalDetail(
+            matched,
+            currentStaffName,
+            userDept,
+            isDirector,
+            isManager,
+            personnelList,
+            tmpl
+          )
+        ) {
+          setSelectedProposal(matched);
+        } else {
+          showToast(
+            "🔒 Bạn chỉ có quyền thấy thông tin lịch nghỉ / công tác / đề xuất để phối hợp công việc. Chỉ những người liên quan trực tiếp mới có thể click xem chi tiết bên trong!",
+            "warning"
+          );
+        }
         const isLeave =
           matched.templateId === "tmpl_leave_request" ||
           String(matched.proposalCode || "").toUpperCase().startsWith("DXNP") ||
@@ -3972,6 +4030,24 @@ export function ProposalsApprovalView({
 
   // In Phiếu Đề Xuất & Phê Duyệt chuẩn A4 (có dấu mọc Chữ ký số nội bộ)
   const handlePrintProposal = (rawProposal: ProposalItem) => {
+    const rawTmpl = templates.find((t) => t.id === rawProposal?.templateId);
+    if (
+      !canUserOpenProposalDetail(
+        rawProposal,
+        currentStaffName,
+        userDept,
+        isDirector,
+        isManager,
+        personnelList,
+        rawTmpl
+      )
+    ) {
+      showToast(
+        "🔒 Bạn chỉ có quyền thấy thông tin chung để phối hợp công việc. Chỉ những người liên quan trực tiếp mới có quyền xem chi tiết và in phiếu đề xuất này!",
+        "warning"
+      );
+      return;
+    }
     // Mọi chuỗi người dùng nhập (tiêu đề, nội dung, ý kiến duyệt, tên tệp...) được mã hóa HTML trước khi ghi vào
     // trang in: trước đây chèn thẳng nên một đề xuất có mã <script> sẽ chạy dưới quyền người bấm In (XSS).
     const p = escapeDeepHtml(rawProposal);
@@ -4154,6 +4230,28 @@ export function ProposalsApprovalView({
     }
     return m;
   }, [templates]);
+
+  const canOpenProposalDetail = (p: ProposalItem): boolean =>
+    canUserOpenProposalDetail(
+      p,
+      currentStaffName,
+      userDept,
+      isDirector,
+      isManager,
+      personnelList,
+      templateByIdMap.get(p?.templateId)
+    );
+
+  const handleOpenProposalDetail = (p: ProposalItem) => {
+    if (!canOpenProposalDetail(p)) {
+      showToast(
+        "🔒 Bạn chỉ có quyền thấy thông tin lịch nghỉ / công tác / đề xuất để phối hợp công việc. Chỉ những người liên quan trực tiếp mới có thể click xem nội dung chi tiết bên trong!",
+        "warning"
+      );
+      return;
+    }
+    setSelectedProposal(p);
+  };
 
   // Danh sách đề xuất mà người dùng hiện tại có quyền nhìn thấy theo 3 chế độ hiển thị (PRIVATE / DEPT / PUBLIC)
   const accessibleProposals = useMemo(
@@ -5568,9 +5666,9 @@ export function ProposalsApprovalView({
                   <button
                     key={p.id}
                     type="button"
-                    onClick={() => setSelectedProposal(p)}
+                    onClick={() => handleOpenProposalDetail(p)}
                     className="px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-[11px] font-bold text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/50 cursor-pointer"
-                    title={String(p.summaryReason || "")}
+                    title={canOpenProposalDetail(p) ? String(p.summaryReason || "") : "🔒 Chỉ người liên quan xem chi tiết"}
                   >
                     {p.proposalCode} · {p.requesterName}
                   </button>
@@ -5863,12 +5961,14 @@ export function ProposalsApprovalView({
                       const statusMeta = getStatusMeta(p.status);
                       const waitingMe = isProposalWaitingForUser(p, currentStaffName, userDept, isDirector, isManager);
                       const isOffToday = isOffOn(todayIsoStr) && p.status !== "REJECTED";
+                      const canOpenDetail = canOpenProposalDetail(p);
                       return (
                         <tr key={p.id} className="hover:bg-teal-50/40 dark:hover:bg-slate-800/60 transition-colors">
                           <td className="py-2.5 px-3">
                             <span
-                              onClick={() => setSelectedProposal(p)}
+                              onClick={() => handleOpenProposalDetail(p)}
                               className="px-2 py-0.5 rounded font-mono font-black text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950 cursor-pointer hover:underline"
+                              title={canOpenDetail ? "Bấm để xem chi tiết đơn" : "🔒 Chỉ người liên quan trực tiếp được mở xem chi tiết"}
                             >
                               {p.proposalCode}
                             </span>
@@ -5937,19 +6037,26 @@ export function ProposalsApprovalView({
                               )}
                               <button
                                 type="button"
-                                onClick={() => setSelectedProposal(p)}
-                                className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 font-bold text-[11px] cursor-pointer"
+                                onClick={() => handleOpenProposalDetail(p)}
+                                className={`px-2.5 py-1 rounded-lg font-bold text-[11px] cursor-pointer ${
+                                  canOpenDetail
+                                    ? "bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200"
+                                    : "bg-slate-100 dark:bg-slate-800/60 text-slate-400"
+                                }`}
+                                title={canOpenDetail ? "Xem chi tiết đơn nghỉ phép" : "🔒 Chỉ người liên quan xem chi tiết"}
                               >
-                                Chi tiết
+                                {canOpenDetail ? "Chi tiết" : "🔒 Chi tiết"}
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => handlePrintProposal(p)}
-                                className="p-1 rounded-lg text-slate-500 hover:text-indigo-600 cursor-pointer"
-                                title="In đơn xin nghỉ phép"
-                              >
-                                <Printer className="w-3.5 h-3.5" />
-                              </button>
+                              {canOpenDetail && (
+                                <button
+                                  type="button"
+                                  onClick={() => handlePrintProposal(p)}
+                                  className="p-1 rounded-lg text-slate-500 hover:text-indigo-600 cursor-pointer"
+                                  title="In đơn xin nghỉ phép"
+                                >
+                                  <Printer className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -6008,12 +6115,14 @@ export function ProposalsApprovalView({
                       const { otDate, otHours, convertedDays, timeSlot, otDayType, compensationMode, isCompensatoryLeave } = getOvertimeDetails(p);
                       const statusMeta = getStatusMeta(p.status);
                       const waitingMe = isProposalWaitingForUser(p, currentStaffName, userDept, isDirector, isManager);
+                      const canOpenDetail = canOpenProposalDetail(p);
                       return (
                         <tr key={p.id} className="hover:bg-amber-50/40 dark:hover:bg-slate-800/60 transition-colors">
                           <td className="py-2.5 px-3">
                             <span
-                              onClick={() => setSelectedProposal(p)}
+                              onClick={() => handleOpenProposalDetail(p)}
                               className="px-2 py-0.5 rounded font-mono font-black text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950 cursor-pointer hover:underline"
+                              title={canOpenDetail ? "Bấm để xem chi tiết phiếu tăng ca" : "🔒 Chỉ người liên quan xem chi tiết"}
                             >
                               {p.proposalCode}
                             </span>
@@ -6045,7 +6154,13 @@ export function ProposalsApprovalView({
                             <div className="text-[10px] text-slate-400 mt-0.5">{compensationMode}</div>
                           </td>
                           <td className="py-2.5 px-3 max-w-xs">
-                            <div className="line-clamp-2 text-slate-600 dark:text-slate-300">{p.summaryReason || p.title}</div>
+                            {canOpenDetail ? (
+                              <div className="line-clamp-2 text-slate-600 dark:text-slate-300">{p.summaryReason || p.title}</div>
+                            ) : (
+                              <div className="text-[11px] italic text-slate-400 dark:text-slate-500">
+                                🔒 Nội dung chi tiết chỉ hiển thị cho người liên quan
+                              </div>
+                            )}
                           </td>
                           <td className="py-2.5 px-3">
                             <span className={`inline-block px-2 py-0.5 rounded-lg text-[10px] font-extrabold border ${statusMeta.badgeCls}`}>
@@ -6065,19 +6180,26 @@ export function ProposalsApprovalView({
                               )}
                               <button
                                 type="button"
-                                onClick={() => setSelectedProposal(p)}
-                                className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 font-bold text-[11px] cursor-pointer"
+                                onClick={() => handleOpenProposalDetail(p)}
+                                className={`px-2.5 py-1 rounded-lg font-bold text-[11px] cursor-pointer ${
+                                  canOpenDetail
+                                    ? "bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200"
+                                    : "bg-slate-100 dark:bg-slate-800/60 text-slate-400"
+                                }`}
+                                title={canOpenDetail ? "Xem chi tiết phiếu tăng ca" : "🔒 Chỉ người liên quan xem chi tiết"}
                               >
-                                Chi tiết
+                                {canOpenDetail ? "Chi tiết" : "🔒 Chi tiết"}
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => handlePrintProposal(p)}
-                                className="p-1 rounded-lg text-slate-500 hover:text-indigo-600 cursor-pointer"
-                                title="In phiếu đăng ký tăng ca"
-                              >
-                                <Printer className="w-3.5 h-3.5" />
-                              </button>
+                              {canOpenDetail && (
+                                <button
+                                  type="button"
+                                  onClick={() => handlePrintProposal(p)}
+                                  className="p-1 rounded-lg text-slate-500 hover:text-indigo-600 cursor-pointer"
+                                  title="In phiếu đăng ký tăng ca"
+                                >
+                                  <Printer className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -6118,9 +6240,11 @@ export function ProposalsApprovalView({
               const statusMeta = getStatusMeta(p.status);
               const effVis = getEffectiveProposalVisibility(p, templateByIdMap.get(p.templateId));
               const visMeta = PROPOSAL_VISIBILITY_META[effVis] || PROPOSAL_VISIBILITY_META.PRIVATE;
+              const canOpenDetail = canOpenProposalDetail(p);
               const canSeeFullLeave =
-                !isLeaveProposal(p) ||
-                canUserSeeFullLeaveDetails(p, currentStaffName, userDept, isDirector, isManager, personnelList);
+                canOpenDetail &&
+                (!isLeaveProposal(p) ||
+                  canUserSeeFullLeaveDetails(p, currentStaffName, userDept, isDirector, isManager, personnelList));
               const waitingMe = isProposalWaitingForUser(p, currentStaffName, userDept, isDirector, isManager);
               const activeStep = (p.steps || []).find((s) => s.status === "PENDING_NOW") || p.steps?.[p.currentStepIndex];
               const isOverdue =
@@ -6189,19 +6313,21 @@ export function ProposalsApprovalView({
                     </div>
 
                     <div className="flex items-center gap-2">
-                      {p.totalAmount > 0 && (
+                      {canOpenDetail && p.totalAmount > 0 && (
                         <span className="px-3 py-1 rounded-xl bg-rose-50 dark:bg-rose-950/70 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 font-black text-xs">
                           💰 {formatMoneyVND(p.totalAmount)}
                         </span>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => handlePrintProposal(p)}
-                        className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                        title="In phiếu đề xuất / Xuất PDF chuẩn A4"
-                      >
-                        <Printer className="w-4 h-4" />
-                      </button>
+                      {canOpenDetail && (
+                        <button
+                          type="button"
+                          onClick={() => handlePrintProposal(p)}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                          title="In phiếu đề xuất / Xuất PDF chuẩn A4"
+                        >
+                          <Printer className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -6210,8 +6336,9 @@ export function ProposalsApprovalView({
                     <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
                       <div className="space-y-1.5 flex-1 min-w-0">
                         <h3
-                          onClick={() => setSelectedProposal(p)}
+                          onClick={() => handleOpenProposalDetail(p)}
                           className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer"
+                          title={canOpenDetail ? "Bấm để xem chi tiết đề xuất" : "🔒 Chỉ người liên quan trực tiếp mới có thể click xem nội dung chi tiết"}
                         >
                           {p.title}
                         </h3>
@@ -6219,9 +6346,20 @@ export function ProposalsApprovalView({
                           <p className="text-xs text-slate-600 dark:text-slate-300 line-clamp-2 whitespace-pre-line">
                             {p.summaryReason}
                           </p>
-                        ) : (
+                        ) : isLeaveProposal(p) ? (
                           <p className="text-xs italic text-slate-500 dark:text-slate-400">
-                            🏖️ Lịch nghỉ: <strong>{formatDayVN(p.formValues?.fromDate || p.neededByDate)} → {formatDayVN(p.formValues?.toDate || p.neededByDate)}</strong> ({p.formValues?.totalDays || "1"} ngày) • 🤝 Người nhận bàn giao: <strong className="text-teal-700 dark:text-teal-300">{p.formValues?.handoverStaff || "—"}</strong> • <span className="text-slate-400">🔒 Lý do cá nhân đã được ẩn bảo mật</span>
+                            🏖️ Lịch nghỉ: <strong>{formatDayVN(p.formValues?.fromDate || p.neededByDate)} → {formatDayVN(p.formValues?.toDate || p.neededByDate)}</strong> ({p.formValues?.totalDays || "1"} ngày) • 🤝 Người nhận bàn giao: <strong className="text-teal-700 dark:text-teal-300">{p.formValues?.handoverStaff || "—"}</strong> • <span className="text-slate-400">🔒 Chỉ người liên quan được click xem nội dung chi tiết</span>
+                          </p>
+                        ) : isBusinessTripProposal(p) ? (
+                          <p className="text-xs italic text-slate-500 dark:text-slate-400">
+                            ✈️ Lịch công tác: <strong>{formatDayVN(p.formValues?.fromDate || p.neededByDate)} → {formatDayVN(p.formValues?.toDate || p.formValues?.fromDate || p.neededByDate)}</strong>
+                            {p.formValues?.destination ? <> • 📍 Địa điểm: <strong>{p.formValues.destination}</strong></> : null}
+                            {" • "}
+                            <span className="text-slate-400">🔒 Chỉ người liên quan được click xem nội dung chi tiết</span>
+                          </p>
+                        ) : (
+                          <p className="text-xs italic text-slate-400 dark:text-slate-500">
+                            🔒 Bạn có quyền thấy đề xuất này để phối hợp công việc — Chỉ những người liên quan trực tiếp mới có thể click xem nội dung chi tiết bên trong.
                           </p>
                         )}
 
@@ -6231,16 +6369,16 @@ export function ProposalsApprovalView({
                           </span>
                           <span>📅 Ngày lập: {p.createdAt}</span>
                           <span>⏰ Hạn cần duyệt: <strong className="text-slate-700 dark:text-slate-200">{formatDayVN(p.neededByDate)}</strong></span>
-                          {p.customerName && (
+                          {canOpenDetail && p.customerName && (
                             <span>🏥 Khách hàng: <strong className="text-indigo-600 dark:text-indigo-400">{p.customerName}</strong></span>
                           )}
-                          {p.supplierName && (
+                          {canOpenDetail && p.supplierName && (
                             <span>🏭 Nhà cung cấp: <strong className="text-emerald-600 dark:text-emerald-400">{p.supplierName}</strong></span>
                           )}
                           {p.linkedRefCode && (
                             <span>🔗 Mã tham chiếu: <strong className="font-mono">{p.linkedRefCode}</strong></span>
                           )}
-                          {p.attachments?.length > 0 && (
+                          {canOpenDetail && p.attachments?.length > 0 && (
                             <span className="text-indigo-600 dark:text-indigo-400 font-bold">
                               📎 {p.attachments.length} chứng từ đính kèm
                             </span>
@@ -6267,7 +6405,7 @@ export function ProposalsApprovalView({
                             </button>
                             <button
                               type="button"
-                              onClick={() => setSelectedProposal(p)}
+                              onClick={() => handleOpenProposalDetail(p)}
                               className="px-2.5 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 dark:bg-amber-950/80 dark:text-amber-200 font-bold text-xs cursor-pointer"
                             >
                               🔄 Yêu cầu bổ sung / Từ chối
@@ -6298,23 +6436,30 @@ export function ProposalsApprovalView({
                                 <span>✈️ Xem trên Lịch Công Tác Tuần</span>
                               </button>
                             )}
-                            <button
-                              type="button"
-                              onClick={() => onCreateTaskFromProposal(p)}
-                              className="px-2.5 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-bold text-xs hover:bg-indigo-100 cursor-pointer"
-                            >
-                              📌 Giao việc thực thi
-                            </button>
+                            {canOpenDetail && (
+                              <button
+                                type="button"
+                                onClick={() => onCreateTaskFromProposal(p)}
+                                className="px-2.5 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-bold text-xs hover:bg-indigo-100 cursor-pointer"
+                              >
+                                📌 Giao việc thực thi
+                              </button>
+                            )}
                           </>
                         )}
 
                         <button
                           type="button"
-                          onClick={() => setSelectedProposal(p)}
-                          className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs flex items-center gap-1 cursor-pointer"
+                          onClick={() => handleOpenProposalDetail(p)}
+                          className={`px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1 cursor-pointer ${
+                            canOpenDetail
+                              ? "bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200"
+                              : "bg-slate-100 dark:bg-slate-800/60 text-slate-400"
+                          }`}
+                          title={canOpenDetail ? "Xem chi tiết & luồng ký" : "🔒 Chỉ người liên quan trực tiếp được mở xem chi tiết"}
                         >
                           <Eye className="w-3.5 h-3.5" />
-                          <span>Chi tiết &amp; Luồng ký</span>
+                          <span>{canOpenDetail ? "Chi tiết & Luồng ký" : "🔒 Chỉ người liên quan xem"}</span>
                         </button>
                       </div>
                     </div>
@@ -6330,7 +6475,7 @@ export function ProposalsApprovalView({
                           return (
                             <React.Fragment key={idx}>
                               <div
-                                onClick={() => setSelectedProposal(p)}
+                                onClick={() => handleOpenProposalDetail(p)}
                                 className={`px-3 py-1.5 rounded-xl border text-xs flex items-center gap-2 shrink-0 cursor-pointer transition-all ${
                                   isDone
                                     ? "bg-emerald-50/90 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200"

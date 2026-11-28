@@ -3703,6 +3703,25 @@ export const UnifiedWorkspace: React.FC = () => {
     setScheduleScopeMode("person");
     setScheduleWorkSearch("");
     if (item) {
+      const itemActors = [
+        ...String(item.actor || "").split(/[,;\n]+/).map((a: string) => a.trim()).filter(Boolean),
+        ...(Array.isArray(item.coActors) ? item.coActors.map((a: any) => String(a || "").trim()).filter(Boolean) : [])
+      ];
+      const isRelatedToItem =
+        isDirector ||
+        rolePerspective === "director" ||
+        Boolean(item.createdBy && sameStaffName(item.createdBy, currentStaffName)) ||
+        itemActors.some((a) => sameStaffName(a, currentStaffName)) ||
+        (isManager &&
+          (isSameWorkspaceDept(item.category, managerDept || userDept) ||
+            itemActors.some((a) => departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, a)))));
+      if (!isRelatedToItem) {
+        showToast(
+          "🔒 Bạn chỉ có quyền thấy khung giờ & nhân sự để tránh trùng lịch. Chỉ những người liên quan trực tiếp mới có thể xem hoặc chỉnh sửa chi tiết lịch này!",
+          "warning"
+        );
+        return;
+      }
       const itemDate = item.date ? String(item.date).slice(0, 10) : (viewedWeek.days.find(d => d.name === item.day)?.date || pick);
       const itemEndDate = item.endDate ? String(item.endDate).slice(0, 10) : itemDate;
       const rawTime = String(item.time || "08:30 - 11:30").trim();
@@ -3955,6 +3974,25 @@ export const UnifiedWorkspace: React.FC = () => {
   }, []);
 
   const openEditTask = (t: any) => {
+    if (t && t.id && !t.isHubItem && !isDirector && rolePerspective !== "director") {
+      const myUid = Number((user as any)?.id) || 0;
+      const isRelated =
+        (myUid > 0 && Array.isArray(t.assigneeUserIds) && t.assigneeUserIds.includes(myUid)) ||
+        taskHasAssignee(t.assignee_name, currentStaffName) ||
+        isTaskCreatedByStaff(t, currentStaffName, (user as any)?.username) ||
+        taskHasFollower(t.followers, currentStaffName) ||
+        (isManager &&
+          (isSameWorkspaceDept(t.department, managerDept || userDept) ||
+            taskInvolvesDept(t, managerDept || userDept))) ||
+        (!cleanWorkspaceAssignee(t.assignee_name) && isSameWorkspaceDept(t.department, userDept));
+      if (!isRelated) {
+        showToast(
+          "🔒 Công việc này chỉ hiển thị trạng thái để phối hợp. Chỉ người liên quan trực tiếp (người nhận việc, người giao, người theo dõi hoặc Quản lý bộ phận) mới có thể click xem nội dung chi tiết!",
+          "warning"
+        );
+        return;
+      }
+    }
     const atts = Array.isArray(t.attachments)
       ? t.attachments
       : typeof t.attachments === "string"
@@ -5404,14 +5442,11 @@ export const UnifiedWorkspace: React.FC = () => {
   }, [mergedWorkspaceTasks, rolePerspective, userDept, filterDept, selectedAssignee, taskSourceFilter, myTaskScopeFilter, currentStaffName, statusFilter, searchQuery, user, currentTodayIso, taskHasAssignee, taskHasFollower, parseTaskFollowersList, isTaskCreatedByStaff, taskInvolvesDept, taskBelongsToStaff]);
 
   // RBAC Filtered Technical Weekly Plans (Lịch phân công & Kế hoạch tuần các phòng Kỹ thuật)
+  // Toàn công ty có thể THẤY lịch phân công để tránh trùng lịch, nhưng chỉ người liên quan mới xem/mở chi tiết
   const filteredHubWeeklyPlans = useMemo(() => {
     const myUid = Number((user as any)?.id) || 0;
     return (hubWeeklyPlans || []).filter((s) => {
-      if (rolePerspective === "staff") {
-        if (myUid > 0 && s.actorUserId === myUid) return true;
-        return Boolean(s.actor) && sameStaffName(s.actor, currentStaffName);
-      }
-      if (filterDept !== "all") {
+      if (rolePerspective !== "staff" && filterDept !== "all") {
         const matchDept = isSameWorkspaceDept(s.category, filterDept);
         const matchDeptStaff = Boolean(s.actor) && departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, s.actor));
         if (!matchDept && !matchDeptStaff) return false;
@@ -5421,14 +5456,114 @@ export const UnifiedWorkspace: React.FC = () => {
         if (uid && s.actorUserId === uid) return true;
         return Boolean(s.actor) && sameStaffName(s.actor, selectedAssignee);
       }
+      void myUid;
       return true;
     });
-  }, [hubWeeklyPlans, rolePerspective, user, filterDept, departmentStaffList, selectedAssignee, currentStaffName, resolveUserIdForStaffName]);
+  }, [hubWeeklyPlans, rolePerspective, user, filterDept, departmentStaffList, selectedAssignee, resolveUserIdForStaffName]);
 
-  // RBAC Filtered Weekly Schedules (Độc lập cho Lịch Công Tác & Lịch Họp — tách biệt hoàn toàn khỏi Lịch Sử Dụng Tài Nguyên):
-  // - Staff: ONLY sees their own work/meeting schedule items (or schedules where they are among actors/coActors)
-  // - Manager: Sees all work/meeting schedule items belonging to their department (can filter by specific staff)
-  // - Director: Sees whole company or selected department (can filter by specific staff)
+  // Kiểm tra người dùng hiện tại có quyền CLICK XEM CHI TIẾT một lịch họp / lịch công tác / lịch đặt tài nguyên hay không:
+  // - Toàn công ty được THẤY thẻ lịch bận trên bảng lịch để không đặt trùng giờ / trùng phòng họp / trùng nhân sự.
+  // - Mặc định CHỈ người liên quan trực tiếp (Người tạo, Chủ trì, Thành viên tham dự, Trưởng bộ phận quản lý trực tiếp hoặc Ban Giám Đốc)
+  //   hoặc lịch được đánh dấu Công khai chi tiết toàn công ty (isPublic trên Lịch họp/Công tác) mới được click mở xem nội dung bên trong.
+  const canUserViewScheduleDetail = useCallback(
+    (s: any): boolean => {
+      if (!s) return false;
+      if (isDirector || rolePerspective === "director") return true;
+      const myUid = Number((user as any)?.id) || 0;
+      if (s.isHubWeeklyPlan) {
+        if (myUid > 0 && s.actorUserId === myUid) return true;
+        if (s.actor && sameStaffName(s.actor, currentStaffName)) return true;
+        if (isManager && isSameWorkspaceDept(s.category, managerDept || userDept)) return true;
+        return false;
+      }
+      const actorsList = [
+        ...String(s.actor || "").split(/[,;\n]+/).map((a: string) => a.trim()).filter(Boolean),
+        ...(Array.isArray(s.coActors) ? s.coActors.map((a: any) => String(a || "").trim()).filter(Boolean) : [])
+      ];
+      const isCreatedByMe = Boolean(s.createdBy && sameStaffName(s.createdBy, currentStaffName));
+      const isParticipant = isCreatedByMe || actorsList.some((a) => sameStaffName(a, currentStaffName));
+      if (isParticipant) return true;
+      // Lịch đặt tài nguyên thuần túy (eventType === "RESOURCE") luôn hiển thị khung giờ công khai nhưng chi tiết bên trong chỉ người liên quan / HCNS / Quản lý xem
+      if (Boolean(s.isPublic) && s.eventType !== "RESOURCE") return true;
+      if (s.eventType === "RESOURCE" && isSameWorkspaceDept(userDept, "Hành Chính Nhân Sự")) return true;
+      if (isManager) {
+        const activeMgrDept = managerDept || userDept;
+        if (isSameWorkspaceDept(s.category, activeMgrDept)) return true;
+        if (actorsList.some((a) => departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, a)))) {
+          return true;
+        }
+      }
+      return false;
+    },
+    [isDirector, rolePerspective, user, currentStaffName, isManager, managerDept, userDept, departmentStaffList]
+  );
+
+  const handleOpenScheduleDetail = useCallback(
+    (s: any): boolean => {
+      if (!s) return false;
+      if (!canUserViewScheduleDetail(s)) {
+        showToast(
+          "🔒 Bạn chỉ có quyền thấy khung giờ & nhân sự để tránh trùng lịch. Chỉ những người liên quan trực tiếp mới có thể click xem nội dung chi tiết!",
+          "warning"
+        );
+        return false;
+      }
+      setViewingScheduleEvent(s);
+      return true;
+    },
+    [canUserViewScheduleDetail, showToast]
+  );
+
+  // Kiểm tra quyền CLICK XEM CHI TIẾT Công việc (Task), Quy trình phối hợp (Workflow) và Văn bản thông báo (Announcement)
+  const canUserViewTaskDetail = useCallback(
+    (t: any): boolean => {
+      if (!t) return false;
+      if (isDirector || rolePerspective === "director") return true;
+      const myUid = Number((user as any)?.id) || 0;
+      if (myUid > 0 && Array.isArray(t.assigneeUserIds) && t.assigneeUserIds.includes(myUid)) return true;
+      if (taskHasAssignee(t.assignee_name, currentStaffName)) return true;
+      if (isTaskCreatedByStaff(t, currentStaffName, (user as any)?.username)) return true;
+      if (taskHasFollower(t.followers, currentStaffName)) return true;
+      if (isManager && (isSameWorkspaceDept(t.department, managerDept || userDept) || taskInvolvesDept(t, managerDept || userDept))) {
+        return true;
+      }
+      if (!cleanWorkspaceAssignee(t.assignee_name) && isSameWorkspaceDept(t.department, userDept)) return true;
+      return false;
+    },
+    [isDirector, rolePerspective, user, currentStaffName, isManager, managerDept, userDept, taskHasAssignee, isTaskCreatedByStaff, taskHasFollower, taskInvolvesDept]
+  );
+
+  const canUserViewWorkflowDetail = useCallback(
+    (wf: any): boolean => {
+      if (!wf) return false;
+      if (isDirector || rolePerspective === "director") return true;
+      if (sameStaffName(wf.requester_name, currentStaffName)) return true;
+      if (taskHasAssignee(wf.assignee_name, currentStaffName)) return true;
+      if (taskHasFollower(wf.followers, currentStaffName)) return true;
+      const steps = Array.isArray(wf.steps) ? wf.steps : [];
+      if (
+        steps.some((s: any) =>
+          taskHasAssignee(
+            Array.isArray(s?.assignees) && s.assignees.length > 0 ? s.assignees.join(", ") : s?.assignee_name,
+            currentStaffName
+          )
+        )
+      ) {
+        return true;
+      }
+      if (isManager && workflowInvolvesDept(wf, managerDept || userDept)) return true;
+      const curIdx = typeof wf.current_step_index === "number" ? wf.current_step_index : 0;
+      const curStep = steps[curIdx];
+      const curDept = curStep?.dept || wf.target_dept;
+      const curAssignee = cleanWorkspaceAssignee(curStep?.assignee_name || wf.assignee_name);
+      if (!curAssignee && curDept && isSameWorkspaceDept(curDept, userDept)) return true;
+      return false;
+    },
+    [isDirector, rolePerspective, currentStaffName, isManager, managerDept, userDept, taskHasAssignee, taskHasFollower, workflowInvolvesDept]
+  );
+
+  // RBAC Filtered Weekly Schedules (Toàn công ty đều THẤY khung giờ lịch họp & lịch công tác trên bảng lịch tuần để tránh đặt trùng lịch;
+  // nhưng nội dung chi tiết bên trong chỉ người liên quan mới click xem được qua canUserViewScheduleDetail):
   const filteredSchedules = useMemo(() => {
     return weeklySchedule.filter((s) => {
       // Các lượt đăng ký mượn/sử dụng tài nguyên thuần túy (eventType === "RESOURCE" và không phải lịch họp nội bộ) hiển thị ở bảng Lịch Sử Dụng Tài Nguyên độc lập
@@ -5441,18 +5576,10 @@ export const UnifiedWorkspace: React.FC = () => {
       ];
       const isCreatedByMe = Boolean(s.createdBy && sameStaffName(s.createdBy, currentStaffName));
       const isParticipant = isCreatedByMe || actorsList.some((a) => sameStaffName(a, currentStaffName));
-      const isMeetingItem = s.eventType === "MEETING" || isScheduleRealMeeting(s);
 
-      // Bảo mật lịch họp: Những người KHÔNG nằm trong thành phần cuộc họp sẽ không nhìn thấy lịch họp của người khác (trừ Ban Giám Đốc hoặc lịch họp được tích Công khai toàn công ty)
-      if (isMeetingItem && !s.isPublic && rolePerspective !== "director") {
-        if (!isParticipant) return false;
-      }
-
-      if (rolePerspective === "staff") {
-        if (s.isPublic || isParticipant) return true;
-        return false;
-      }
-      if (filterDept !== "all") {
+      // Khi Trưởng phòng / Ban Giám Đốc chủ động chọn lọc theo 1 phòng ban cụ thể trên thanh lọc
+      // (Còn Nhân viên xem Lịch Công Tác Tuần sẽ thấy lịch toàn công ty để biết lịch bận của đồng nghiệp & phòng họp)
+      if (rolePerspective !== "staff" && filterDept !== "all") {
         const matchScheduleDept = isSameWorkspaceDept(s.category, filterDept);
         const matchDeptStaff = actorsList.some((a) =>
           departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, a))
@@ -5467,7 +5594,7 @@ export const UnifiedWorkspace: React.FC = () => {
       }
       return true;
     });
-  }, [weeklySchedule, rolePerspective, filterDept, departmentStaffList, selectedAssignee, currentStaffName, isScheduleRealMeeting]);
+  }, [weeklySchedule, rolePerspective, filterDept, departmentStaffList, selectedAssignee, currentStaffName]);
 
   // Danh sách Lịch Sử Dụng Tài Nguyên Công Ty độc lập (chỉ gồm các đăng ký sử dụng tài nguyên eventType === "RESOURCE" và không phải lịch họp nội bộ)
   const resourceBookingSchedules = useMemo(() => {
@@ -5979,7 +6106,7 @@ export const UnifiedWorkspace: React.FC = () => {
         const rec = reconcileSchedulesWithNotifications(prev, rawPayload);
         const listToSearch = rec.added ? rec.list : prev;
         const matched = findMatchedScheduleItem(listToSearch);
-        if (matched) {
+        if (matched && canUserViewScheduleDetail(matched)) {
           setTimeout(() => setViewingScheduleEvent(matched), 50);
         }
         return rec.added ? rec.list : prev;
@@ -6003,7 +6130,7 @@ export const UnifiedWorkspace: React.FC = () => {
             }).catch(() => {});
           }
           const matched = findMatchedScheduleItem(cleaned);
-          if (matched) {
+          if (matched && canUserViewScheduleDetail(matched)) {
             setViewingScheduleEvent(matched);
           }
         })
@@ -8116,6 +8243,13 @@ export const UnifiedWorkspace: React.FC = () => {
 
   // Mở Modal chỉnh sửa quy trình & SLA cho một phiếu phối hợp đã tạo
   const handleEditWorkflowTicket = (wf: any) => {
+    if (!canUserViewWorkflowDetail(wf)) {
+      showToast(
+        "🔒 Quy trình phối hợp này không liên quan trực tiếp đến bạn. Bạn chỉ có quyền thấy tiến độ chung, không được chỉnh sửa chi tiết!",
+        "warning"
+      );
+      return;
+    }
     const rawSteps = Array.isArray(wf.steps) && wf.steps.length > 0 ? wf.steps : [];
     const stepsCopy = reindexWorkflowSteps(
       rawSteps.map((s: any, idx: number) => ({
@@ -8287,6 +8421,13 @@ export const UnifiedWorkspace: React.FC = () => {
 
   // Open Stage-Gate Step Advance Modal
   const handleOpenAdvanceStep = (wf: any) => {
+    if (!canUserViewWorkflowDetail(wf)) {
+      showToast(
+        "🔒 Quy trình phối hợp này không liên quan trực tiếp đến bạn. Chỉ nhân sự liên quan mới có thể nghiệm thu & chuyển bước!",
+        "warning"
+      );
+      return;
+    }
     const steps = Array.isArray(wf.steps) ? wf.steps : [];
     const currentIdx = typeof wf.current_step_index === "number" ? wf.current_step_index : 0;
     const currentStep = steps[currentIdx] || { title: `Bước ${currentIdx + 1}`, dept: wf.target_dept };
@@ -8432,6 +8573,13 @@ export const UnifiedWorkspace: React.FC = () => {
 
   // Open Record Result Modal for a Workflow
   const handleOpenRecordResult = (wf: any) => {
+    if (!canUserViewWorkflowDetail(wf)) {
+      showToast(
+        "🔒 Quy trình phối hợp này không liên quan trực tiếp đến bạn. Chỉ nhân sự liên quan mới có thể ghi nhận kết quả!",
+        "warning"
+      );
+      return;
+    }
     setSelectedWorkflowForRecord(wf);
     const existingAttachments = Array.isArray(wf.attachments)
       ? wf.attachments
@@ -14173,9 +14321,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 const currentStepDept = (hasSteps && wfSteps[currentIdx]?.dept) ? wfSteps[currentIdx].dept : wf.target_dept;
                 const currentAssignee = cleanWorkspaceAssignee(hasSteps && wfSteps[currentIdx]?.assignee_name ? wfSteps[currentIdx].assignee_name : wf.assignee_name);
                 const canAssignThisWf = isDirector || isSameWorkspaceDept(userDept, currentStepDept) || isSameWorkspaceDept(userDept, wf.target_dept);
+                const canSeeWfDetail = canUserViewWorkflowDetail(wf);
                 const targetDeptStaff = personnelList.filter((p: any) => isSameWorkspaceDept(p.department, currentStepDept));
                 const catMeta = getWorkflowCategoryMeta(wf);
-                const isStepsCollapsed = collapsedWfIds[wf.id] !== undefined ? collapsedWfIds[wf.id] : wfCompactMode;
+                const isStepsCollapsed = !canSeeWfDetail ? true : (collapsedWfIds[wf.id] !== undefined ? collapsedWfIds[wf.id] : wfCompactMode);
                 const dlMeta = getWfDeadlineMeta(wf);
                 const isOverdueWf = dlMeta.isAnyOverdue;
                 const activeStepObj = hasSteps ? wfSteps[currentIdx] : null;
@@ -14245,16 +14394,23 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             </div>
                             <button
                               type="button"
-                              onClick={() =>
+                              onClick={() => {
+                                if (!canSeeWfDetail) {
+                                  showToast(
+                                    "🔒 Quy trình phối hợp này không liên quan trực tiếp đến bạn. Chỉ nhân sự tham gia trong luồng hoặc người theo dõi mới có thể click xem chi tiết!",
+                                    "warning"
+                                  );
+                                  return;
+                                }
                                 setCollapsedWfIds((prev) => ({
                                   ...prev,
                                   [wf.id]: !isStepsCollapsed,
-                                }))
-                              }
+                                }));
+                              }}
                               className="px-2.5 py-0.5 rounded-lg text-[11px] font-bold bg-white/95 hover:bg-indigo-50 dark:bg-slate-800 dark:hover:bg-slate-700 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 cursor-pointer transition-colors shadow-2xs"
-                              title={isStepsCollapsed ? "Mở xem chi tiết các bước & biên bản kết quả bàn giao" : "Thu gọn chi tiết của phiếu này"}
+                              title={!canSeeWfDetail ? "🔒 Chỉ người liên quan trực tiếp mới có thể mở xem chi tiết" : (isStepsCollapsed ? "Mở xem chi tiết các bước & biên bản kết quả bàn giao" : "Thu gọn chi tiết của phiếu này")}
                             >
-                              {isStepsCollapsed ? `▼ Xem chi tiết (${wfSteps.length} bước)` : "▲ Thu gọn chi tiết"}
+                              {!canSeeWfDetail ? "🔒 Chỉ người liên quan xem chi tiết" : isStepsCollapsed ? `▼ Xem chi tiết (${wfSteps.length} bước)` : "▲ Thu gọn chi tiết"}
                             </button>
                           </div>
                         ) : (
@@ -14496,24 +14652,33 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             </button>
                           )}
 
-                          <button
-                            type="button"
-                            onClick={() => handleEditWorkflowTicket(wf)}
-                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border border-amber-300 dark:border-amber-700 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 text-amber-800 dark:text-amber-300 cursor-pointer shadow-2xs"
-                            title="Chỉnh sửa toàn bộ thông tin phiếu đã khởi tạo: Tiêu đề, Khách hàng, Sản phẩm, Hạn chót, Người thực hiện, Các bước & Thời gian SLA"
-                          >
-                            <span>✏️ Sửa / SLA</span>
-                          </button>
+                          {canSeeWfDetail && (
+                            <button
+                              type="button"
+                              onClick={() => handleEditWorkflowTicket(wf)}
+                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border border-amber-300 dark:border-amber-700 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 text-amber-800 dark:text-amber-300 cursor-pointer shadow-2xs"
+                              title="Chỉnh sửa toàn bộ thông tin phiếu đã khởi tạo: Tiêu đề, Khách hàng, Sản phẩm, Hạn chót, Người thực hiện, Các bước & Thời gian SLA"
+                            >
+                              <span>✏️ Sửa / SLA</span>
+                            </button>
+                          )}
 
                           <button
                             onClick={() => {
+                              if (!canSeeWfDetail) {
+                                showToast(
+                                  "🔒 Quy trình phối hợp này không liên quan trực tiếp đến bạn. Chỉ nhân sự tham gia trong luồng hoặc người theo dõi mới có thể click xem chi tiết!",
+                                  "warning"
+                                );
+                                return;
+                              }
                               setSelectedWorkflowDetail(wf);
                               setIsWorkflowDetailModalOpen(true);
                             }}
                             className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
                           >
                             <Eye className="w-3.5 h-3.5" />
-                            <span>Xem &amp; Trao Đổi</span>
+                            <span>{canSeeWfDetail ? "Xem & Trao Đổi" : "🔒 Chỉ người liên quan xem"}</span>
                           </button>
 
                           {(rolePerspective !== "staff" || sameStaffName(wf.requester_name, currentStaffName)) && (
@@ -14600,15 +14765,22 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               </span>
                               <button
                                 type="button"
-                                onClick={() =>
+                                onClick={() => {
+                                  if (!canSeeWfDetail) {
+                                    showToast(
+                                      "🔒 Quy trình phối hợp này không liên quan trực tiếp đến bạn. Chỉ nhân sự tham gia trong luồng hoặc người theo dõi mới có thể click xem chi tiết!",
+                                      "warning"
+                                    );
+                                    return;
+                                  }
                                   setCollapsedWfIds((prev) => ({
                                     ...prev,
                                     [wf.id]: !isStepsCollapsed,
-                                  }))
-                                }
+                                  }));
+                                }}
                                 className="px-2.5 py-0.5 rounded-lg text-[11px] font-bold bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 cursor-pointer transition-colors"
                               >
-                                {isStepsCollapsed ? "▼ Mở chi tiết bước & KQ" : "▲ Thu gọn"}
+                                {!canSeeWfDetail ? "🔒 Chỉ người liên quan xem" : isStepsCollapsed ? "▼ Mở chi tiết bước & KQ" : "▲ Thu gọn"}
                               </button>
                             </div>
                           </div>
@@ -15361,9 +15533,9 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                 {weekBookings.map((bk: any) => (
                                   <div
                                     key={`res-bk-${resItem.id}-${bk.id}`}
-                                    onClick={() => setViewingScheduleEvent(bk)}
+                                    onClick={() => handleOpenScheduleDetail(bk)}
                                     className="px-2 py-1 rounded-lg bg-slate-50 dark:bg-slate-800/80 hover:bg-emerald-50 dark:hover:bg-slate-800 border border-slate-200/70 dark:border-slate-700 cursor-pointer text-[10px]"
-                                    title="Bấm để xem chi tiết lịch đặt này"
+                                    title={canUserViewScheduleDetail(bk) ? "Bấm để xem chi tiết lịch đặt này" : "🔒 Chỉ người liên quan trực tiếp được xem chi tiết"}
                                   >
                                     <div className="font-bold text-emerald-800 dark:text-emerald-300 flex items-center justify-between gap-1">
                                       <span>📅 {bk.day} {bk.date ? `(${String(bk.date).slice(8, 10)}/${String(bk.date).slice(5, 7)})` : ""}</span>
@@ -15481,12 +15653,13 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               <div className="space-y-1.5">
                                 {dayBookings.map((bk: any) => {
                                   const matchedRes = companyResources.find((r) => matchScheduleToResource(bk, r));
+                                  const canSeeBkDetail = canUserViewScheduleDetail(bk);
                                   return (
                                     <div
                                       key={`res-grid-${bk.id}-${wd.date}`}
                                       onClick={(e) => {
                                         if ((e.target as HTMLElement).closest("button")) return;
-                                        setViewingScheduleEvent(bk);
+                                        handleOpenScheduleDetail(bk);
                                       }}
                                       className="group relative rounded-lg p-2 text-[11px] bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-800 text-slate-900 dark:text-slate-100 shadow-2xs cursor-pointer hover:ring-2 hover:ring-emerald-400"
                                     >
@@ -15494,26 +15667,28 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                         <span className="px-1.5 py-0.2 rounded bg-emerald-600 text-white text-[11px] font-extrabold truncate">
                                           {matchedRes ? `${matchedRes.icon} ${matchedRes.name}` : `🏢 ${bk.resourceName || bk.location || "Tài nguyên"}`}
                                         </span>
-                                        <span className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                                          <button
-                                            type="button"
-                                            onClick={() => openScheduleForm(undefined, bk, "RESOURCE")}
-                                            title="Sửa đăng ký tài nguyên"
-                                            className="hover:text-indigo-600 p-0.5 cursor-pointer"
-                                          >
-                                            <Pencil className="w-3 h-3" />
-                                          </button>
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              if (confirm("Hủy đăng ký sử dụng tài nguyên này?")) handleDeleteSchedule(bk.id);
-                                            }}
-                                            title="Xóa đăng ký tài nguyên"
-                                            className="hover:text-rose-600 p-0.5 cursor-pointer"
-                                          >
-                                            <X className="w-3 h-3" />
-                                          </button>
-                                        </span>
+                                        {canSeeBkDetail && (
+                                          <span className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                                            <button
+                                              type="button"
+                                              onClick={() => openScheduleForm(undefined, bk, "RESOURCE")}
+                                              title="Sửa đăng ký tài nguyên"
+                                              className="hover:text-indigo-600 p-0.5 cursor-pointer"
+                                            >
+                                              <Pencil className="w-3 h-3" />
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                if (confirm("Hủy đăng ký sử dụng tài nguyên này?")) handleDeleteSchedule(bk.id);
+                                              }}
+                                              title="Xóa đăng ký tài nguyên"
+                                              className="hover:text-rose-600 p-0.5 cursor-pointer"
+                                            >
+                                              <X className="w-3 h-3" />
+                                            </button>
+                                          </span>
+                                        )}
                                       </div>
                                       <div className="font-mono font-bold text-[10px] text-emerald-700 dark:text-emerald-300">
                                         ⏰ {bk.time}
@@ -15705,9 +15880,13 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           <button
                             key={`compact-mtg-${mtg.id}`}
                             type="button"
-                            onClick={() => setViewingScheduleEvent(mtg)}
+                            onClick={() => handleOpenScheduleDetail(mtg)}
                             className="px-2.5 py-1 rounded-xl bg-white dark:bg-slate-900 hover:bg-rose-50 dark:hover:bg-slate-800 border border-rose-200/80 dark:border-slate-700 text-left text-[11px] flex items-center gap-1.5 shadow-2xs cursor-pointer max-w-full"
-                            title={`${mtg.day} (${mtg.time}) • ${mtg.title} — Bấm để xem chi tiết`}
+                            title={
+                              canUserViewScheduleDetail(mtg)
+                                ? `${mtg.day} (${mtg.time}) • ${mtg.title} — Bấm để xem chi tiết`
+                                : `${mtg.day} (${mtg.time}) • ${mtg.title} — 🔒 Chỉ người tham dự xem chi tiết`
+                            }
                           >
                             <span className="px-1.5 py-0.2 rounded bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 font-mono font-extrabold text-[10px] shrink-0">
                               {mtg.day} {mtg.date ? `${String(mtg.date).slice(8, 10)}/${String(mtg.date).slice(5, 7)}` : ""} • {mtg.time}
@@ -15715,6 +15894,9 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             <span className="font-bold text-slate-800 dark:text-slate-200 truncate max-w-[260px]">
                               {mtg.title}
                             </span>
+                            {!canUserViewScheduleDetail(mtg) && (
+                              <span className="text-[10px] text-slate-400 shrink-0" title="Chỉ người tham dự xem chi tiết">🔒</span>
+                            )}
                           </button>
                         ))}
                       </div>
@@ -15725,6 +15907,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         const coList = Array.isArray(mtg.coActors) ? mtg.coActors : [];
                         const allAttendees = Array.from(new Set([...rawActors, ...coList]));
                         const isReminding = sendingMeetingRemindId === mtg.id;
+                        const canSeeMtgDetail = canUserViewScheduleDetail(mtg);
                         return (
                           <div
                             key={`mtg-banner-${mtg.id}`}
@@ -15736,12 +15919,12 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                   <span className="px-2 py-0.5 rounded bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 font-mono font-extrabold text-[10px]">
                                     📅 {mtg.day} {mtg.date ? `(${String(mtg.date).slice(8, 10)}/${String(mtg.date).slice(5, 7)})` : ""} • ⏰ {mtg.time}
                                   </span>
-                                  {mtg.reminderMinutes > 0 && (
+                                  {canSeeMtgDetail && mtg.reminderMinutes > 0 && (
                                     <span className="px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 text-[10px] font-bold">
                                       🔔 Tự nhắc trước {mtg.reminderMinutes >= 1440 ? "1 ngày" : `${mtg.reminderMinutes}p`}
                                     </span>
                                   )}
-                                  {mtg.lastRemindedAt && (
+                                  {canSeeMtgDetail && mtg.lastRemindedAt && (
                                     <span className="px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold">
                                       ✓ Đã nhắc lúc {mtg.lastRemindedAt}
                                     </span>
@@ -15753,26 +15936,34 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               </div>
                               <div
                                 className="font-extrabold text-slate-900 dark:text-white text-xs cursor-pointer hover:underline"
-                                onClick={() => setViewingScheduleEvent(mtg)}
-                                title="Bấm để xem chi tiết cuộc họp"
+                                onClick={() => handleOpenScheduleDetail(mtg)}
+                                title={canSeeMtgDetail ? "Bấm để xem chi tiết cuộc họp" : "🔒 Chỉ thành viên tham dự mới có quyền click xem chi tiết cuộc họp"}
                               >
                                 {mtg.title}
                               </div>
-                              {mtg.meetingAgenda && (
-                                <p className="text-[11px] text-slate-600 dark:text-slate-400 line-clamp-2">
-                                  📝 Nội dung: {mtg.meetingAgenda}
+                              {canSeeMtgDetail ? (
+                                <>
+                                  {mtg.meetingAgenda && (
+                                    <p className="text-[11px] text-slate-600 dark:text-slate-400 line-clamp-2">
+                                      📝 Nội dung: {mtg.meetingAgenda}
+                                    </p>
+                                  )}
+                                  {mtg.meetingLink && (
+                                    <a
+                                      href={mtg.meetingLink.startsWith("http") ? mtg.meetingLink : `https://${mtg.meetingLink}`}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline"
+                                    >
+                                      <ExternalLink className="w-3 h-3" />
+                                      <span>Link phòng họp trực tuyến</span>
+                                    </a>
+                                  )}
+                                </>
+                              ) : (
+                                <p className="text-[11px] italic text-slate-400 dark:text-slate-500">
+                                  🔒 Hiển thị khung giờ, phòng họp &amp; danh sách nhân sự để tránh đặt trùng lịch (nội dung chi tiết chỉ dành cho thành viên tham dự)
                                 </p>
-                              )}
-                              {mtg.meetingLink && (
-                                <a
-                                  href={mtg.meetingLink.startsWith("http") ? mtg.meetingLink : `https://${mtg.meetingLink}`}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline"
-                                >
-                                  <ExternalLink className="w-3 h-3" />
-                                  <span>Link phòng họp trực tuyến</span>
-                                </a>
                               )}
                               <div className="flex items-center gap-1 flex-wrap pt-0.5">
                                 <span className="text-[10px] font-bold text-slate-500">
@@ -15798,26 +15989,34 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               </div>
                             </div>
 
-                            <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-100 dark:border-slate-800">
-                              <button
-                                type="button"
-                                disabled={isReminding}
-                                onClick={() => handleRemindMeetingNow(mtg)}
-                                className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-[11px] flex items-center gap-1 shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
-                                title="Gửi tin nhắn Chat và thông báo chuông nhắc lịch họp ngay cho tất cả thành viên tham dự"
-                              >
-                                <Bell className="w-3 h-3" />
-                                <span>{isReminding ? "Đang gửi nhắc họp..." : "🔔 Nhắc lịch họp ngay"}</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => openScheduleForm(undefined, mtg, "MEETING")}
-                                className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-bold text-[11px] flex items-center gap-1 transition-colors cursor-pointer"
-                              >
-                                <Pencil className="w-3 h-3" />
-                                <span>Sửa / Mời thêm</span>
-                              </button>
-                            </div>
+                            {canSeeMtgDetail ? (
+                              <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-100 dark:border-slate-800">
+                                <button
+                                  type="button"
+                                  disabled={isReminding}
+                                  onClick={() => handleRemindMeetingNow(mtg)}
+                                  className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-[11px] flex items-center gap-1 shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
+                                  title="Gửi tin nhắn Chat và thông báo chuông nhắc lịch họp ngay cho tất cả thành viên tham dự"
+                                >
+                                  <Bell className="w-3 h-3" />
+                                  <span>{isReminding ? "Đang gửi nhắc họp..." : "🔔 Nhắc lịch họp ngay"}</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => openScheduleForm(undefined, mtg, "MEETING")}
+                                  className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-bold text-[11px] flex items-center gap-1 transition-colors cursor-pointer"
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                  <span>Sửa / Mời thêm</span>
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-end pt-2 border-t border-slate-100 dark:border-slate-800">
+                                <span className="text-[10px] font-semibold text-slate-400">
+                                  🔒 Chỉ thành viên tham dự xem chi tiết
+                                </span>
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -15966,15 +16165,22 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             const rawActors = String(ev.actor || "").split(/[,;\n]+/).map((s: string) => s.trim()).filter(Boolean);
                             const coList = Array.isArray(ev.coActors) ? ev.coActors : [];
                             const allAttendees = Array.from(new Set([...rawActors, ...coList]));
+                            const canSeeEvDetail = canUserViewScheduleDetail(ev);
 
                             return (
                               <div
                                 key={ev.id}
                                 onClick={(e) => {
                                   if ((e.target as HTMLElement).closest("button, a")) return;
-                                  setViewingScheduleEvent(ev);
+                                  handleOpenScheduleDetail(ev);
                                 }}
-                                title={isHubPlan ? `Kế hoạch tự động (${ev.sourceLabel || ev.category}) — Bấm để xem chi tiết` : "Bấm để xem chi tiết"}
+                                title={
+                                  canSeeEvDetail
+                                    ? isHubPlan
+                                      ? `Kế hoạch tự động (${ev.sourceLabel || ev.category}) — Bấm để xem chi tiết`
+                                      : "Bấm để xem chi tiết"
+                                    : "🔒 Bạn thấy khung giờ & nhân sự để tránh trùng lịch. Chỉ người liên quan trực tiếp được click xem chi tiết!"
+                                }
                                 className={`group relative rounded-lg p-2 text-[11px] font-medium border transition-all cursor-pointer hover:ring-2 hover:ring-indigo-300 ${
                                   isHubPlan ? "border-dashed " : ""
                                 }${
@@ -16024,7 +16230,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                     <span className="font-bold font-mono text-[10px]">⏰ {ev.time}</span>
                                   </div>
                                   {isHubPlan ? (
-                                    ev.targetTab ? (
+                                    canSeeEvDetail && ev.targetTab ? (
                                       <button
                                         type="button"
                                         onClick={() => navigateToTargetTab(ev.targetTab)}
@@ -16033,8 +16239,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                       >
                                         ↗
                                       </button>
+                                    ) : !canSeeEvDetail ? (
+                                      <span className="text-[10px] opacity-60" title="Chỉ người liên quan xem chi tiết">🔒</span>
                                     ) : null
-                                  ) : (
+                                  ) : canSeeEvDetail ? (
                                     <span className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                                       <button
                                         type="button"
@@ -16061,20 +16269,22 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                         <X className="w-3 h-3" />
                                       </button>
                                     </span>
+                                  ) : (
+                                    <span className="text-[10px] opacity-60" title="Chỉ người liên quan xem chi tiết">🔒</span>
                                   )}
                                 </div>
                                 <div className="font-semibold leading-tight line-clamp-2" title={ev.title}>{ev.title}</div>
-                                {isHubPlan && ev.sourceLabel && (
+                                {canSeeEvDetail && isHubPlan && ev.sourceLabel && (
                                   <div className="text-[11px] opacity-75 mt-0.5 font-semibold">
                                     🔗 Nguồn: {ev.sourceLabel}
                                   </div>
                                 )}
-                                {ev.meetingAgenda && (
+                                {canSeeEvDetail && ev.meetingAgenda && (
                                   <div className="text-[10px] opacity-85 mt-0.5 line-clamp-2 italic">
                                     📝 {ev.meetingAgenda}
                                   </div>
                                 )}
-                                {Array.isArray(ev.linkedTaskCodes) && ev.linkedTaskCodes.length > 0 && (
+                                {canSeeEvDetail && Array.isArray(ev.linkedTaskCodes) && ev.linkedTaskCodes.length > 0 && (
                                   <div className="flex flex-wrap gap-1 mt-1">
                                     {ev.linkedTaskCodes.map((code: string) => (
                                       <span
@@ -16093,7 +16303,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                   </span>
                                   {ev.location && <span className="truncate shrink-0">📍 {ev.location}</span>}
                                 </div>
-                                {isMeeting && (
+                                {isMeeting && canSeeEvDetail && (
                                   <div className="mt-1.5 pt-1 border-t border-current/15 flex items-center justify-between gap-1">
                                     <button
                                       type="button"
@@ -18700,6 +18910,33 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           return 0;
         };
 
+        const canUserViewAnnouncementDetail = (ann: any): boolean => {
+          if (!ann) return false;
+          if (isDirector || Boolean((user as any)?.isRootAdmin)) return true;
+          if (!ann.targetScope || ann.targetScope === "ALL") return true;
+          if (
+            sameStaffName(ann.issuerName || "", currentStaffName) ||
+            sameStaffName(ann.createdBy || "", currentStaffName) ||
+            sameStaffName(ann.approverName || "", currentStaffName) ||
+            canUserApproveAnnouncement(ann) ||
+            isUserTargetedByAnnouncement(ann)
+          ) {
+            return true;
+          }
+          return false;
+        };
+
+        const handleOpenAnnouncementDetail = (ann: any) => {
+          if (!canUserViewAnnouncementDetail(ann)) {
+            showToast(
+              "🔒 Văn bản này chỉ áp dụng cho phòng ban / nhân sự liên quan trong phạm vi nhận. Bạn chỉ có quyền thấy số hiệu & tiêu đề, không thể click xem nội dung chi tiết!",
+              "warning"
+            );
+            return;
+          }
+          setSelectedAnnouncementDetail(ann);
+        };
+
         const filteredAnnouncements = (announcements || [])
           .map((ann: any, _idx: number) => ({ ann, _idx }))
           .filter(({ ann }) => {
@@ -18711,16 +18948,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 sameStaffName(ann.issuerName || "", currentStaffName);
               if (!canSeeUnapproved) return false;
             }
-            // Bảo mật phạm vi đối tượng nhận: Văn bản giới hạn (Cấp Quản lý / Cá nhân chỉ định / Phòng ban) chỉ hiển thị cho người thuộc phạm vi, người ban hành hoặc Ban Giám Đốc / Admin
-            if (ann.targetScope && ann.targetScope !== "ALL") {
-              const canSeeRestricted =
-                isDirector ||
-                Boolean((user as any)?.isRootAdmin) ||
-                sameStaffName(ann.issuerName || "", currentStaffName) ||
-                sameStaffName(ann.createdBy || "", currentStaffName) ||
-                sameStaffName(ann.approverName || "", currentStaffName) ||
-                isUserTargetedByAnnouncement(ann);
-              if (!canSeeRestricted) return false;
+            // Văn bản cá nhân riêng tư (INDIVIDUALS) hoặc Cấp Quản lý (MANAGERS) chỉ hiển thị cho người liên quan;
+            // còn văn bản ban hành theo Phòng ban (DEPARTMENTS) hoặc Toàn công ty (ALL) cho phép thấy số hiệu & tiêu đề trên bảng nhưng chỉ người liên quan mới click xem chi tiết được.
+            if (ann.targetScope === "INDIVIDUALS" || ann.targetScope === "MANAGERS") {
+              if (!canUserViewAnnouncementDetail(ann)) return false;
             }
             // Lọc theo phòng ban đang chọn trên thanh Level 2
             if (selectedDept !== "all") {
@@ -19082,6 +19313,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   const ackPercent = targets.length > 0 ? Math.min(100, Math.round((ackedList.length / targets.length) * 100)) : 100;
                   const iAmTargeted = isUserTargetedByAnnouncement(ann);
                   const iHaveAcked = hasUserAcknowledgedAnnouncement(ann);
+                  const canSeeAnnDetail = canUserViewAnnouncementDetail(ann);
                   const scopeLabel =
                     ann.targetScope === "ALL" || !ann.targetScope
                       ? "🏢 Toàn công ty"
@@ -19143,20 +19375,28 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                           </div>
 
                           <div
-                            onClick={() => setSelectedAnnouncementDetail(ann)}
+                            onClick={() => handleOpenAnnouncementDetail(ann)}
                             className="cursor-pointer group"
                           >
                             <h3 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
                               {ann.title}
                             </h3>
-                            {ann.summary && (
-                              <p className="text-xs font-semibold text-slate-600 dark:text-slate-300 mt-1">
-                                {renderTextWithLinks(ann.summary)}
+                            {canSeeAnnDetail ? (
+                              <>
+                                {ann.summary && (
+                                  <p className="text-xs font-semibold text-slate-600 dark:text-slate-300 mt-1">
+                                    {renderTextWithLinks(ann.summary)}
+                                  </p>
+                                )}
+                                <p className="text-xs text-slate-600 dark:text-slate-400 mt-1.5 line-clamp-3 whitespace-pre-line leading-relaxed">
+                                  {renderTextWithLinks(ann.content)}
+                                </p>
+                              </>
+                            ) : (
+                              <p className="text-xs italic text-slate-400 dark:text-slate-500 mt-1.5">
+                                🔒 Văn bản áp dụng theo phạm vi ({scopeLabel}) — Chỉ nhân sự thuộc phạm vi liên quan mới có quyền click xem nội dung chi tiết &amp; tệp đính kèm.
                               </p>
                             )}
-                            <p className="text-xs text-slate-600 dark:text-slate-400 mt-1.5 line-clamp-3 whitespace-pre-line leading-relaxed">
-                              {renderTextWithLinks(ann.content)}
-                            </p>
                           </div>
 
                           {/* Metadata Row */}
@@ -19262,13 +19502,17 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
                             <button
                               type="button"
-                              onClick={() => setSelectedAnnouncementDetail(ann)}
-                              className="flex-1 py-1.5 px-2.5 rounded-lg bg-white dark:bg-slate-900 hover:bg-indigo-50 dark:hover:bg-slate-800 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-bold text-[11px] cursor-pointer"
+                              onClick={() => handleOpenAnnouncementDetail(ann)}
+                              className={`flex-1 py-1.5 px-2.5 rounded-lg border font-bold text-[11px] cursor-pointer ${
+                                canSeeAnnDetail
+                                  ? "bg-white dark:bg-slate-900 hover:bg-indigo-50 dark:hover:bg-slate-800 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800"
+                                  : "bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-700"
+                              }`}
                             >
-                              👁️ Xem chi tiết &amp; DS đọc
+                              {canSeeAnnDetail ? "👁️ Xem chi tiết & DS đọc" : "🔒 Chỉ người liên quan xem"}
                             </button>
 
-                            {unreadList.length > 0 && (
+                            {canSeeAnnDetail && unreadList.length > 0 && (
                               <button
                                 type="button"
                                 disabled={sendingAnnouncementRemindId === ann.id}
@@ -19281,6 +19525,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             )}
                           </div>
 
+                          {canSeeAnnDetail && (
                           <div className="flex items-center justify-between gap-1 pt-1 border-t border-slate-200/70 dark:border-slate-800 text-[10px]">
                             <button
                               type="button"
@@ -19313,6 +19558,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               </button>
                             </div>
                           </div>
+                          )}
                         </div>
                       </div>
                     </div>

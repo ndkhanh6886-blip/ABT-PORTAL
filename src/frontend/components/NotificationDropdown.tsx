@@ -51,6 +51,32 @@ export const NotificationDropdown: React.FC = () => {
     const [selectedCategory, setSelectedCategory] = useState<string>("all");
     const dropdownRef = useRef<HTMLDivElement>(null);
 
+    const userRoleLower = String(user?.role || "").toLowerCase();
+    const userPosLower = String((user as any)?.position || "").toLowerCase();
+    const userDeptName = String(user?.department || "").trim();
+    const isDirectorOrAdmin =
+        userRoleLower === "admin" ||
+        userRoleLower === "director" ||
+        Boolean((user as any)?.isRootAdmin) ||
+        userDeptName.toLowerCase().includes("ban giám đốc") ||
+        userPosLower.includes("giám đốc");
+    const isDeptManager =
+        !isDirectorOrAdmin &&
+        (userRoleLower.includes("head") ||
+            userRoleLower.includes("lead") ||
+            userRoleLower.includes("manager") ||
+            userPosLower.includes("trưởng") ||
+            userPosLower.includes("phó") ||
+            userPosLower.includes("quản lý"));
+
+    useEffect(() => {
+        if (!isDirectorOrAdmin && !isDeptManager && selectedEmployeeFilter !== "MINE") {
+            setSelectedEmployeeFilter("MINE");
+        } else if (isDeptManager && !isDirectorOrAdmin && selectedEmployeeFilter === "all") {
+            setSelectedEmployeeFilter("MINE");
+        }
+    }, [isDirectorOrAdmin, isDeptManager, selectedEmployeeFilter, setSelectedEmployeeFilter]);
+
     // Close on outside click
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
@@ -387,19 +413,36 @@ export const NotificationDropdown: React.FC = () => {
                         <select
                             value={selectedEmployeeFilter}
                             onChange={(e) => setSelectedEmployeeFilter(e.target.value)}
-                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 font-semibold focus:outline-none focus:border-orange-500 shadow-xs"
+                            disabled={!isDirectorOrAdmin && !isDeptManager}
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 font-semibold focus:outline-none focus:border-orange-500 shadow-xs disabled:opacity-80"
                         >
-                            <option value="MINE">-- 📌 Hoạt động của tôi & Liên quan đến tôi {user?.name ? `(${user.name})` : ""} --</option>
-                            <option value="all">-- 👥 Tất cả hoạt động toàn công ty ({notifications.length}) --</option>
-                            {Array.from(new Set(personnelList.map(p => p.department).filter(Boolean))).map((dept) => (
-                                <optgroup key={dept} label={dept}>
-                                    {personnelList.filter(p => p.department === dept).map((p) => (
-                                        <option key={p.employee_id || p.full_name} value={p.employee_id || p.full_name}>
-                                            {p.full_name} {p.position ? `(${p.position})` : ""}
-                                        </option>
-                                    ))}
-                                </optgroup>
-                            ))}
+                            <option value="MINE">-- 📌 Hoạt động của tôi &amp; Liên quan đến tôi {user?.name ? `(${user.name})` : ""} --</option>
+                            {isDirectorOrAdmin && (
+                                <option value="all">-- 👥 Tất cả hoạt động toàn công ty ({notifications.length}) --</option>
+                            )}
+                            {(isDirectorOrAdmin || isDeptManager) &&
+                                Array.from(
+                                    new Set(
+                                        personnelList
+                                            .filter((p) =>
+                                                isDirectorOrAdmin ||
+                                                !userDeptName ||
+                                                String(p.department || "").toLowerCase() === userDeptName.toLowerCase()
+                                            )
+                                            .map((p) => p.department)
+                                            .filter(Boolean)
+                                    )
+                                ).map((dept) => (
+                                    <optgroup key={dept} label={dept}>
+                                        {personnelList
+                                            .filter((p) => p.department === dept)
+                                            .map((p) => (
+                                                <option key={p.employee_id || p.full_name} value={p.employee_id || p.full_name}>
+                                                    {p.full_name} {p.position ? `(${p.position})` : ""}
+                                                </option>
+                                            ))}
+                                    </optgroup>
+                                ))}
                         </select>
                     </div>
 
