@@ -1489,10 +1489,19 @@ export const productionStepMachine = defineMachine<ProductionStepStatus, Product
           code: "MATERIALS_NOT_ISSUED",
           message: "Phải xuất kho nguyên vật liệu cho lệnh sản xuất trước khi bắt đầu công đoạn đầu tiên.",
           check: async ({ tx, row }) => {
-            const o = (
-              await tx.query("SELECT materials_issued, status FROM kit.production_order WHERE id = $1", [row.order_id])
-            ).rows[0];
-            return Boolean(o?.materials_issued) && ["CONFIRMED", "IN_PROGRESS"].includes(o?.status);
+            const o = (await tx.query("SELECT materials_issued FROM kit.production_order WHERE id = $1", [row.order_id])).rows[0];
+            return Boolean(o?.materials_issued);
+          },
+        },
+        {
+          // Kept apart from MATERIALS_NOT_ISSUED: an order on hold (cascade quarantine, failed step, "Tạm giữ lô")
+          // used to be reported as "materials not issued" although they were.
+          code: "ORDER_NOT_RUNNING",
+          message:
+            "Nguyên vật liệu đã xuất kho, nhưng lệnh sản xuất không còn ở trạng thái Đang sản xuất (đã gửi QC thành phẩm / chờ QA giải phóng, hoặc đang Tạm giữ) nên chưa bắt đầu được công đoạn này. Người có quyền quản lý lệnh sản xuất bấm \"Tạm giữ lô\" (nếu chưa giữ) rồi \"Mở giữ → Quay lại Sản xuất\", làm xong công đoạn còn lại; lệnh tự chuyển lại sang chờ QC để xác nhận Đạt và giải phóng.",
+          check: async ({ tx, row }) => {
+            const o = (await tx.query("SELECT status FROM kit.production_order WHERE id = $1", [row.order_id])).rows[0];
+            return ["CONFIRMED", "IN_PROGRESS"].includes(o?.status);
           },
         },
         {

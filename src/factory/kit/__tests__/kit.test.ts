@@ -431,6 +431,16 @@ describe("Phase 4b — Module Phòng Sản xuất Kit (kit schema)", () => {
     const s1Done = await act(productionStepMachine, checker, step1.id, "check", signed);
     expect(s1Done.status).toBe("DONE");
 
+    // An order no longer running (sent to FQC / on hold) with materials issued must say so — not "materials not issued"
+    for (const status of ["PENDING_QC", "PENDING_RELEASE", "ON_HOLD"]) {
+      await getFactoryPool().query("UPDATE kit.production_order SET status = $2 WHERE id = $1", [order.id, status]);
+      await expect(act(productionStepMachine, operator, step2.id, "start")).rejects.toMatchObject({
+        code: "GUARD_FAILED",
+        details: [{ code: "ORDER_NOT_RUNNING" }],
+      });
+    }
+    await getFactoryPool().query("UPDATE kit.production_order SET status = 'IN_PROGRESS' WHERE id = $1", [order.id]);
+
     // Step 2 is a QC step (`is_qc = true`): operator without QC permission cannot complete it
     await act(productionStepMachine, operator, step2.id, "start");
     await expect(
